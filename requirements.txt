@@ -1,0 +1,7 @@
+numpy
+numba
+scipy
+pandas
+zarr
+xarray
+fastparquet

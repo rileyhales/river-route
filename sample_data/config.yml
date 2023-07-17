@@ -1,0 +1,15 @@
+# paths to watershed files
+routing_params_file: ''
+connectivity_file: ''
+qinit_file: ''
+# inflow options
+inflow_file: ''
+# path to output files
+outflow_file: ''
+qfinal_file: ''
+aggregation_method: 'mean'
+# computation time options
+dt_total: 100000
+dt_inflows: 10
+dt_outflows: 5
+dt_routing: 1
