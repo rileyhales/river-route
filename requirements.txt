@@ -5,3 +5,4 @@ pandas
 zarr
 xarray
 fastparquet
+pyyaml

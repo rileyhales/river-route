@@ -1,25 +1,31 @@
 import json
 import logging
+import os
+import sys
 
 import numpy as np
 import pandas as pd
+import scipy
+import xarray as xr
 import yaml
-import numba as nb
-from numba import jit, njit, float64
-
-logger = logging.getLogger(__name__)
-
+from numba import float64, int64, types
+from scipy.sparse.linalg import bicgstab
 
 numba_class_specs = [
-    ()
+    ('sim_config_file', types.unicode_type),
+    ('config', types.DictType(types.unicode_type, types.unicode_type)),
+    ('N', float64[:]),
+    ('c1', float64[:]),
+    ('c2', float64[:]),
+    ('c3', float64[:]),
+    ('num_outflow_steps', int64),
+    ('num_routing_substeps_per_outflow', int64),
+    ('flow_temporal_aggregation_function', types.FunctionType),
 ]
 
 
 class RouteMuskingum:
     sim_config_file: str
-    inflow_file: str
-    q_init_file: str
-    q_final_file: str
 
     configs: dict
 
@@ -43,18 +49,13 @@ class RouteMuskingum:
             sim_config_file (str): path to the simulation config file
         """
         self.sim_config_file = sim_config_file
-        self.read_validate_configs()
-
-        logger.info('Calculating connections array')
+        self.read_and_validate_configs()
         self.calculate_connections_array()
-        logger.info('Calculating muskingum coefficients')
         self.calculate_muskingum_coefficients()
-
         self.define_flow_temporal_aggregation_function()
-
         return
 
-    def read_validate_configs(self) -> None:
+    def read_and_validate_configs(self) -> None:
         """
         Validate simulation configs
         """
@@ -77,18 +78,29 @@ class RouteMuskingum:
                               'dt_outflows',
                               'dt_routing', ]
         optional_file_paths = ['qinit_file',
-                               'qfinal_file', ]
+                               'qfinal_file',
+                               'log_file', ]
         paths_should_exist = ['routing_params_file',
                               'connectivity_file',
                               'inflow_file', ]
-        # for arg in required_file_paths + required_time_opts:
-        #     if arg not in self.configs:
-        #         raise ValueError(f'{arg} not found in config file')
-        # for arg in paths_should_exist:
-        #     if not os.path.exists(self.configs[arg]):
-        #         raise FileNotFoundError(f'{arg} not found at given path')
+        for arg in required_file_paths + required_time_opts:
+            if arg not in self.configs:
+                raise ValueError(f'{arg} not found in config file')
+        for arg in paths_should_exist:
+            if not os.path.exists(self.configs[arg]):
+                raise FileNotFoundError(f'{arg} not found at given path')
 
-        # todo check that number of rivers in the inputs matches the number in the inflows
+        # start a logger
+        log_basic_configs = {
+            'stream': sys.stdout,
+            'level': logging.INFO,
+            'format': '%(asctime)s %(levelname)s %(message)s',
+        }
+        if self.configs.get('log_file', ''):
+            log_basic_configs['filename'] = self.configs['log_file']
+            log_basic_configs['filemode'] = 'w'
+            log_basic_configs.pop('stream')
+        logging.basicConfig(**log_basic_configs)
 
         # check that time options have the correct sizes
         assert self.configs['dt_total'] >= self.configs['dt_inflows'], 'dt_total !>= dt_inflows'
@@ -108,7 +120,6 @@ class RouteMuskingum:
         # set derived datetime parameters for computation cycles later
         self.num_outflow_steps = int(self.configs.get('dt_total') / self.configs.get('dt_outflows'))
         self.num_routing_substeps_per_outflow = int(self.configs.get('dt_outflows') / self.configs.get('dt_routing'))
-        # todo calculate dates and iterate over these with enumerate later
 
         return
 
@@ -116,8 +127,10 @@ class RouteMuskingum:
         """
         Calculate the 3 Muskingum Cunge routing coefficients for each segment using given k and x
         """
-        k = self.k()
-        x = self.x()
+        logging.info('Calculating Muskingum coefficients')
+
+        k = self.get_k()
+        x = self.get_x()
 
         dt_route_half = np.ones(k.shape[0]) * self.configs['dt_routing'] / 2
         denom = k * (1 - x) + dt_route_half
@@ -131,28 +144,22 @@ class RouteMuskingum:
         """
         Calculate the connections array from the connectivity file
         """
-        logger.info('Calculating connectivity array')
+        logging.info('Calculating Connectivity array')
 
-        # df = pd.read_parquet(self.configs['connectivity_file']).reset_index(names=['topo_order'])
-        # todo replace with real connectivity file
-        df = pd.DataFrame({
-            'id': [1, 2, 3, 4, 5],
-            'us1': [-1, -1, 1, -1, 3],
-            'us2': [-1, -1, 2, -1, 4]
-        })
-        odf = df[['id', ]].copy().reset_index().rename(columns={'index': 'topo_order'})
+        df = pd.read_parquet(self.configs['connectivity_file'])
         self.N = np.zeros((df.values.shape[0], df.values.shape[0]))
         for idx, row in df.iterrows():
             upstreams = (
                 pd
-                .Series(row.values[1:])
-                .replace(-1, np.nan)
+                .Series(row.values[2:])
+                .replace(0, np.nan)
                 .dropna()
-                .apply(lambda x: odf.loc[odf['id'] == x, 'topo_order'].values[0])
+                .apply(lambda x: df.loc[df['id'] == x, 'topo_order'].values[0])
                 .values
             )
             if len(upstreams):
                 self.N[idx, upstreams] = 1
+        self.N = scipy.sparse.csc_matrix(self.N.astype(np.float32))
         return
 
     def define_flow_temporal_aggregation_function(self) -> None:
@@ -179,64 +186,112 @@ class RouteMuskingum:
             # todo check that the aggregation method is valid in read_validate_configs
             raise RuntimeError('Unrecognized aggregation method bypassed config file validation')
 
-    def k(self) -> np.array:
+    def get_k(self) -> np.array:
         """
         Reads K vector from parquet given in config file
         """
-        # return pd.read_parquet(self.configs['routing_params_file'], columns=['k', ]).values
-        return np.ones(self.N.shape[0]) * 100
+        return pd.read_parquet(self.configs['routing_params_file'], columns=['k', ]).values.flatten()
 
-    def x(self) -> np.array:
+    def get_x(self) -> np.array:
         """
         Reads X vector from parquet given in config file
         """
-        # return pd.read_parquet(self.configs['routing_params_file'], columns=['x', ]).values
-        return np.ones(self.N.shape[0]) * 0.25
+        return pd.read_parquet(self.configs['routing_params_file'], columns=['x', ]).values.flatten()
+        # return np.ones(self.N.shape[0]) * 0.25
+
+    def get_riverids(self) -> np.array:
+        """
+        Reads riverids vector from parquet given in config file
+        """
+        return pd.read_parquet(self.configs['routing_params_file'], columns=['id', ]).values.flatten()
 
     def qinit(self) -> np.array:
         qinit = self.configs.get('qinit_file', None)
         if qinit is None or qinit == '':
             return np.zeros(self.N.shape[0])
-        return pd.read_parquet(self.configs['qinit_file']).values
+        return pd.read_parquet(self.configs['qinit_file']).values.flatten()
 
     def route(self):
+        # get the list of dates for runoff data
+        logging.info('Reading Inflow Data')
+        with xr.open_dataset(self.configs['inflow_file']) as inflow_ds:
+            dates = inflow_ds['time'].values
+            inflows = inflow_ds['m3_riv'].values
+            inflows.fill(0)
+
+        logging.info('Scaffolding Outflow File')
+        self.scaffold_outflow_file(dates)
+
+        logging.info('Beginning Computation loops')
         q_t = self.qinit()
+        lhs = scipy.sparse.csc_matrix(np.diag((1 - self.c1).flatten()))
+        # preconditioner = scipy.sparse.linalg.spilu(lhs)
 
-        left_hand_side = np.diag(1 - self.c1) @ self.N
-        logger.info('Beginning computation loops')
+        outflow_array = np.zeros((self.num_outflow_steps, self.N.shape[0]))
+        for inflow_time_step, inflow_end_date in enumerate(dates):
+            q_ro = inflows[inflow_time_step, :] / self.num_routing_substeps_per_outflow
+            interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.N.shape[0]))
+            for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
+                rhs = (self.c1 * q_ro) + \
+                      (self.c2 * ((self.N @ (self.N @ q_t)) + q_ro)) + \
+                      (self.c3 * q_t)
+                q_t = bicgstab(lhs, rhs, x0=q_t)[0]
+                # rhs_pc = preconditioner.solve(rhs)
+                # q_t = bicgstab(lhs, rhs_pc, x0=q_t)[0]
+                interval_flows[routing_substep_iteration, :] = q_t
 
-        # todo this counts the number of loops to make but need a way to pair with dates
-        for outflow_interval in range(int(self.configs['dt_total'] / self.configs['dt_outflows'])):
-            q_ro = np.random.rand(self.N.shape[0], ) * 3
-            interval_flows = []
-            # todo pair with actual datetimes
-            for routing_substep in range(self.num_routing_substeps_per_outflow):
-                # todo get the correct q_ro based on the iteration and computation substep number
-                right_hand_side = (self.c1 @ q_ro) + \
-                                  (self.c2 * np.matmul(self.N, np.matmul(self.N, q_t) + q_ro)) + \
-                                  (self.c3 * q_t)
+            interval_flows[interval_flows < 0] = 0
+            interval_flows = self.flow_temporal_aggregation_function(np.array(interval_flows), axis=0)
+            outflow_array[inflow_time_step, :] = interval_flows
 
-                # q_tplusdt, residuals, rank, s = np.linalg.lstsq(left_hand_side, right_hand_side)
-                q_tplusdt, _, _, _ = np.linalg.lstsq(left_hand_side, right_hand_side, rcond=None)
-                q_tplusdt = np.clip(q_tplusdt, 0, None)
-                q_t = q_tplusdt
-                interval_flows.append(q_tplusdt)
-
-            q = self.flow_temporal_aggregation_function(np.array(interval_flows))
-            # todo write outflows to file
+        logging.info('Writing Outflow Array to File')
+        self.write_outflows(outflow_array)
 
         # write the final outflows to disc
-        if self.configs.get('qfinal_path', False):
-            logger.info('Writing Qfinal parquet')
-            pd.DataFrame(q, columns=['q', ]).astype(float).to_parquet(self.configs.get('qfinal_path'))
+        if self.configs.get('qfinal_file', False):
+            logging.info('Writing Qfinal parquet')
+            pd.DataFrame(interval_flows, columns=['Q', ]).astype(float).to_parquet(self.configs.get('qfinal_file'))
 
-        logger.info('Routing computation Loops completed')
+        logging.info('Routing computation Loops completed')
         return q_t
 
-    def scaffold_outflow_zarr(self):
-        # todo
+    def scaffold_outflow_file(self, dates) -> None:
+        xr.Dataset(
+            data_vars={
+                'Qout': (['time', 'rivid'], np.zeros((self.num_outflow_steps, self.N.shape[0]))),
+            },
+            coords={
+                'time': dates,
+                'rivid': self.get_riverids(),
+            },
+            attrs={
+                'long_name': 'Discharge at the outlet of each river reach',
+                'units': 'm3 s-1',
+                'standard_name': 'discharge',
+                'aggregation_method': 'mean',
+            },
+        ).to_netcdf(
+            self.configs['outflow_file'],
+            mode='w',
+        )
+        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
+            ds['time'].attrs['units'] = \
+                f'days since {dates[0].astype("datetime64[s]").tolist().strftime("%Y-%m-%d %H:%M:%S")}'
+
         return
 
-    def write_incremental_outflow(self):
-        # todo
+    def write_dates_to_outflow(self, dates: np.array) -> None:
+        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
+            ds['time'].attrs['units'] = \
+                f'days since {dates[0].astype("datetime64[s]").tolist().strftime("%Y-%m-%d %H:%M:%S")}'
+        return
+
+    def write_outflows(self, outflow_array) -> None:
+        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
+            ds['Qout'][:] = outflow_array
+        return
+
+    def write_incremental_outflow(self, q_t, inflow_time_step) -> None:
+        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
+            ds['Qout'][inflow_time_step, :] = q_t
         return

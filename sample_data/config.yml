@@ -1,15 +1,22 @@
+# simulation management
+log_file: ''
 # paths to watershed files
 routing_params_file: ''
 connectivity_file: ''
-qinit_file: ''
 # inflow options
 inflow_file: ''
+qinit_file: ''
 # path to output files
 outflow_file: ''
 qfinal_file: ''
 aggregation_method: 'mean'
-# computation time options
-dt_total: 100000
-dt_inflows: 10
-dt_outflows: 5
-dt_routing: 1
+# computation time parameters - all times given in seconds
+dt_total: 315619200
+dt_inflows: 86400
+dt_outflows: 86400
+dt_routing: 900
+# inflow and outflow file organization
+inflow_variable: 'm3_riv'
+inflow_time_variable: 'time'
+outflow_variable: 'Qout'
+outflow_time_variable: 'time'
