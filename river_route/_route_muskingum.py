@@ -1,27 +1,16 @@
+import datetime
 import json
 import logging
 import os
 import sys
 
+import netCDF4 as nc
 import numpy as np
 import pandas as pd
 import scipy
 import xarray as xr
 import yaml
-from numba import float64, int64, types
-from scipy.sparse.linalg import bicgstab
-
-numba_class_specs = [
-    ('sim_config_file', types.unicode_type),
-    ('config', types.DictType(types.unicode_type, types.unicode_type)),
-    ('N', float64[:]),
-    ('c1', float64[:]),
-    ('c2', float64[:]),
-    ('c3', float64[:]),
-    ('num_outflow_steps', int64),
-    ('num_routing_substeps_per_outflow', int64),
-    ('flow_temporal_aggregation_function', types.FunctionType),
-]
+from petsc4py import PETSc
 
 
 class RouteMuskingum:
@@ -73,16 +62,21 @@ class RouteMuskingum:
                                'connectivity_file',
                                'inflow_file',
                                'outflow_file', ]
+        paths_should_exist = ['routing_params_file',
+                              'connectivity_file',
+                              'inflow_file', ]
+
+        # check for required time options
         required_time_opts = ['dt_total',
                               'dt_inflows',
                               'dt_outflows',
                               'dt_routing', ]
+
+        # check for optional file paths
         optional_file_paths = ['qinit_file',
                                'qfinal_file',
                                'log_file', ]
-        paths_should_exist = ['routing_params_file',
-                              'connectivity_file',
-                              'inflow_file', ]
+
         for arg in required_file_paths + required_time_opts:
             if arg not in self.configs:
                 raise ValueError(f'{arg} not found in config file')
@@ -103,6 +97,7 @@ class RouteMuskingum:
         logging.basicConfig(**log_basic_configs)
 
         # check that time options have the correct sizes
+        logging.info('Validating time paramters')
         assert self.configs['dt_total'] >= self.configs['dt_inflows'], 'dt_total !>= dt_inflows'
         assert self.configs['dt_inflows'] >= self.configs['dt_outflows'], 'dt_inflows !>= dt_outflows'
         assert self.configs['dt_outflows'] >= self.configs['dt_routing'], 'dt_outflows !>= dt_routing'
@@ -132,12 +127,21 @@ class RouteMuskingum:
         k = self.get_k()
         x = self.get_x()
 
-        dt_route_half = np.ones(k.shape[0]) * self.configs['dt_routing'] / 2
-        denom = k * (1 - x) + dt_route_half
+        dt_route_half = self.configs['dt_routing'] / 2
+        kx = k * x
+        denom = k - kx + dt_route_half
 
-        self.c1 = (dt_route_half - k * x) / denom
-        self.c2 = (dt_route_half + k * x) / denom
-        self.c3 = k * (1 - x) - dt_route_half
+        self.c1 = (dt_route_half - kx) / denom
+        self.c2 = (dt_route_half + kx) / denom
+        self.c3 = (k - kx - dt_route_half) / denom
+
+        # sum of muskingum coefficiencts should be 1 for all segments
+        a = self.c1 + self.c2 + self.c3
+        assert np.allclose(a, 1), 'Muskingum coefficients are not approximately equal to 1'
+
+        self.c1 = scipy.sparse.csc_matrix(np.diag(self.c1))
+        self.c2 = scipy.sparse.csc_matrix(np.diag(self.c2))
+        self.c3 = scipy.sparse.csc_matrix(np.diag(self.c3))
         return
 
     def calculate_connections_array(self) -> None:
@@ -183,8 +187,13 @@ class RouteMuskingum:
         elif self.configs['aggregation_method'] == 'instantaneous':
             self.flow_temporal_aggregation_function = lambda x: x[-1]
         else:
-            # todo check that the aggregation method is valid in read_validate_configs
             raise RuntimeError('Unrecognized aggregation method bypassed config file validation')
+
+    def get_riverids(self) -> np.array:
+        """
+        Reads riverids vector from parquet given in config file
+        """
+        return pd.read_parquet(self.configs['routing_params_file'], columns=['id', ]).values.flatten()
 
     def get_k(self) -> np.array:
         """
@@ -197,54 +206,77 @@ class RouteMuskingum:
         Reads X vector from parquet given in config file
         """
         return pd.read_parquet(self.configs['routing_params_file'], columns=['x', ]).values.flatten()
-        # return np.ones(self.N.shape[0]) * 0.25
-
-    def get_riverids(self) -> np.array:
-        """
-        Reads riverids vector from parquet given in config file
-        """
-        return pd.read_parquet(self.configs['routing_params_file'], columns=['id', ]).values.flatten()
 
     def qinit(self) -> np.array:
         qinit = self.configs.get('qinit_file', None)
         if qinit is None or qinit == '':
-            return np.zeros(self.N.shape[0])
+            return np.ones(self.N.shape[0])
         return pd.read_parquet(self.configs['qinit_file']).values.flatten()
 
     def route(self):
         # get the list of dates for runoff data
         logging.info('Reading Inflow Data')
         with xr.open_dataset(self.configs['inflow_file']) as inflow_ds:
+            # read dates from the netcdf
             dates = inflow_ds['time'].values
+            # read inflows from the netcdf
             inflows = inflow_ds['m3_riv'].values
-            inflows.fill(0)
+            # convert to m3/s in each routing time step
+            inflows = inflows / self.num_routing_substeps_per_outflow / self.configs['dt_routing']
 
         logging.info('Scaffolding Outflow File')
         self.scaffold_outflow_file(dates)
 
-        logging.info('Beginning Computation loops')
-        q_t = self.qinit()
-        lhs = scipy.sparse.csc_matrix(np.diag((1 - self.c1).flatten()))
-        # preconditioner = scipy.sparse.linalg.spilu(lhs)
-
+        logging.info('Preparing Arrays for computations')
+        lhs = scipy.sparse.csc_matrix(np.eye(self.N.shape[0]) - (self.N @ self.c1))
         outflow_array = np.zeros((self.num_outflow_steps, self.N.shape[0]))
+        q_t = self.qinit()
+
+        logging.info('Init PETSc Objects and Options')
+        A = PETSc.Mat().createAIJ(size=lhs.shape, csr=(lhs.indptr, lhs.indices, lhs.data))
+        x = PETSc.Vec().createSeq(size=lhs.shape[0])
+        b = PETSc.Vec().createSeq(size=lhs.shape[0])
+        ksp = PETSc.KSP().create()
+        ksp.setType('bicg')
+        ksp.setTolerances(rtol=1e-5)
+        ksp.setOperators(A)
+
+        logging.info('Performing routing computation iterations')
+        time_start = datetime.datetime.now()
         for inflow_time_step, inflow_end_date in enumerate(dates):
-            q_ro = inflows[inflow_time_step, :] / self.num_routing_substeps_per_outflow
+            q_ro = inflows[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.N.shape[0]))
+            c1_matmul_q_ro = self.c1 @ q_ro
+
             for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
-                rhs = (self.c1 * q_ro) + \
-                      (self.c2 * ((self.N @ (self.N @ q_t)) + q_ro)) + \
-                      (self.c3 * q_t)
-                q_t = bicgstab(lhs, rhs, x0=q_t)[0]
-                # rhs_pc = preconditioner.solve(rhs)
-                # q_t = bicgstab(lhs, rhs_pc, x0=q_t)[0]
+                # solve the right hand side of the equation
+                rhs = c1_matmul_q_ro + \
+                      (self.c2 @ (self.N @ q_t + q_ro)) + \
+                      (self.c3 @ q_t)
+
+                # set current iteration values in PETSc objects and solve
+                b.setArray(rhs)
+                x.setArray(q_t)
+                ksp.solve(b, x)
+                q_t = x.getArray()
+
+                # remove negatives before other iterations
+                q_t[q_t < 0] = 0
                 interval_flows[routing_substep_iteration, :] = q_t
 
-            interval_flows[interval_flows < 0] = 0
             interval_flows = self.flow_temporal_aggregation_function(np.array(interval_flows), axis=0)
             outflow_array[inflow_time_step, :] = interval_flows
+        time_end = datetime.datetime.now()
+        logging.info(f'Routing completed in {(time_end - time_start).total_seconds()} seconds')
+
+        logging.info('Cleaning up PETSc objects')
+        A.destroy()
+        x.destroy()
+        b.destroy()
+        ksp.destroy()
 
         logging.info('Writing Outflow Array to File')
+        outflow_array = np.round(outflow_array, decimals=2)
         self.write_outflows(outflow_array)
 
         # write the final outflows to disc
@@ -274,24 +306,10 @@ class RouteMuskingum:
             self.configs['outflow_file'],
             mode='w',
         )
-        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
-            ds['time'].attrs['units'] = \
-                f'days since {dates[0].astype("datetime64[s]").tolist().strftime("%Y-%m-%d %H:%M:%S")}'
-
-        return
-
-    def write_dates_to_outflow(self, dates: np.array) -> None:
-        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
-            ds['time'].attrs['units'] = \
-                f'days since {dates[0].astype("datetime64[s]").tolist().strftime("%Y-%m-%d %H:%M:%S")}'
         return
 
     def write_outflows(self, outflow_array) -> None:
-        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
+        with nc.Dataset(self.configs['outflow_file'], mode='a') as ds:
             ds['Qout'][:] = outflow_array
-        return
-
-    def write_incremental_outflow(self, q_t, inflow_time_step) -> None:
-        with xr.open_dataset(self.configs['outflow_file'], mode='a') as ds:
-            ds['Qout'][inflow_time_step, :] = q_t
+            ds.sync()
         return

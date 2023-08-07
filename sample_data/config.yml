@@ -3,9 +3,9 @@ log_file: ''
 # paths to watershed files
 routing_params_file: ''
 connectivity_file: ''
+qinit_file: ''
 # inflow options
 inflow_file: ''
-qinit_file: ''
 # path to output files
 outflow_file: ''
 qfinal_file: ''
