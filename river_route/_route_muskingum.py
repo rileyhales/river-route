@@ -4,7 +4,9 @@ import logging
 import os
 import sys
 
+import matplotlib.pyplot as plt
 import netCDF4 as nc
+import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy
@@ -16,7 +18,7 @@ from petsc4py import PETSc
 class RouteMuskingum:
     sim_config_file: str
 
-    configs: dict
+    conf: dict
 
     N: np.array
     c1: np.array
@@ -39,21 +41,18 @@ class RouteMuskingum:
         """
         self.sim_config_file = sim_config_file
         self.read_and_validate_configs()
-        self.calculate_connections_array()
-        self.calculate_muskingum_coefficients()
-        self.define_flow_temporal_aggregation_function()
         return
 
     def read_and_validate_configs(self) -> None:
         """
-        Validate simulation configs
+        Validate simulation conf
         """
         if self.sim_config_file.endswith('.json'):
             with open(self.sim_config_file, 'r') as f:
-                self.configs = json.load(f)
+                self.conf = json.load(f)
         elif self.sim_config_file.endswith('.yml') or self.sim_config_file.endswith('.yaml'):
             with open(self.sim_config_file, 'r') as f:
-                self.configs = yaml.load(f, Loader=yaml.FullLoader)
+                self.conf = yaml.load(f, Loader=yaml.FullLoader)
         else:
             raise RuntimeError('Unrecognized simulation config file type')
 
@@ -78,10 +77,10 @@ class RouteMuskingum:
                                'log_file', ]
 
         for arg in required_file_paths + required_time_opts:
-            if arg not in self.configs:
+            if arg not in self.conf:
                 raise ValueError(f'{arg} not found in config file')
         for arg in paths_should_exist:
-            if not os.path.exists(self.configs[arg]):
+            if not os.path.exists(self.conf[arg]):
                 raise FileNotFoundError(f'{arg} not found at given path')
 
         # start a logger
@@ -90,32 +89,76 @@ class RouteMuskingum:
             'level': logging.INFO,
             'format': '%(asctime)s %(levelname)s %(message)s',
         }
-        if self.configs.get('log_file', ''):
-            log_basic_configs['filename'] = self.configs['log_file']
+        if self.conf.get('log_file', ''):
+            log_basic_configs['filename'] = self.conf['log_file']
             log_basic_configs['filemode'] = 'w'
             log_basic_configs.pop('stream')
         logging.basicConfig(**log_basic_configs)
 
         # check that time options have the correct sizes
         logging.info('Validating time paramters')
-        assert self.configs['dt_total'] >= self.configs['dt_inflows'], 'dt_total !>= dt_inflows'
-        assert self.configs['dt_inflows'] >= self.configs['dt_outflows'], 'dt_inflows !>= dt_outflows'
-        assert self.configs['dt_outflows'] >= self.configs['dt_routing'], 'dt_outflows !>= dt_routing'
+        assert self.conf['dt_total'] >= self.conf['dt_inflows'], 'dt_total !>= dt_inflows'
+        assert self.conf['dt_inflows'] >= self.conf['dt_outflows'], 'dt_inflows !>= dt_outflows'
+        assert self.conf['dt_outflows'] >= self.conf['dt_routing'], 'dt_outflows !>= dt_routing'
 
         # check that time options are evenly divisible
-        assert self.configs['dt_total'] % self.configs['dt_inflows'] == 0, \
+        assert self.conf['dt_total'] % self.conf['dt_inflows'] == 0, \
             'dt_total should be a whole number multiple of dt_inflows'
-        assert self.configs['dt_total'] % self.configs['dt_outflows'] == 0, \
+        assert self.conf['dt_total'] % self.conf['dt_outflows'] == 0, \
             'dt_total should be a whole number multiple of dt_outflows'
-        assert self.configs['dt_inflows'] % self.configs['dt_outflows'] == 0, \
+        assert self.conf['dt_inflows'] % self.conf['dt_outflows'] == 0, \
             'dt_inflows should be a whole number multiple of dt_outflows'
-        assert self.configs['dt_outflows'] % self.configs['dt_routing'] == 0, \
+        assert self.conf['dt_outflows'] % self.conf['dt_routing'] == 0, \
             'dt_outflows should be a whole number multiple of dt_routing'
 
         # set derived datetime parameters for computation cycles later
-        self.num_outflow_steps = int(self.configs.get('dt_total') / self.configs.get('dt_outflows'))
-        self.num_routing_substeps_per_outflow = int(self.configs.get('dt_outflows') / self.configs.get('dt_routing'))
+        self.num_outflow_steps = int(self.conf.get('dt_total') / self.conf.get('dt_outflows'))
+        self.num_routing_substeps_per_outflow = int(self.conf.get('dt_outflows') / self.conf.get('dt_routing'))
 
+        return
+
+    def get_connectivity(self) -> pd.DataFrame:
+        """
+        Reads connectivity matrix from parquet given in config file
+        """
+        return pd.read_parquet(self.conf['connectivity_file'])
+
+    def get_riverids(self) -> np.array:
+        """
+        Reads riverids vector from parquet given in config file
+        """
+        return pd.read_parquet(self.conf['routing_params_file'], columns=['id', ]).values.flatten()
+
+    def get_k(self) -> np.array:
+        """
+        Reads K vector from parquet given in config file
+        """
+        return pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
+
+    def get_x(self) -> np.array:
+        """
+        Reads X vector from parquet given in config file
+        """
+        return pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
+
+    def get_qinit(self) -> np.array:
+        qinit = self.conf.get('qinit_file', None)
+        if qinit is None or qinit == '':
+            return np.zeros(self.N.shape[0])
+        return pd.read_parquet(self.conf['qinit_file']).values.flatten()
+
+    def make_adjacency_array(self) -> None:
+        """
+        Calculate the connections array from the connectivity file
+        """
+        logging.info('Calculating Network Adjacency Array (N)')
+        df = self.get_connectivity()
+        G = nx.DiGraph()
+        G.add_edges_from(df[df.columns[:2]].values)
+        sorted_order = list(nx.topological_sort(G))
+        if -1 in sorted_order:
+            sorted_order.remove(-1)
+        self.N = scipy.sparse.csc_matrix(nx.to_numpy_array(G, nodelist=sorted_order).T)
         return
 
     def calculate_muskingum_coefficients(self) -> None:
@@ -127,7 +170,7 @@ class RouteMuskingum:
         k = self.get_k()
         x = self.get_x()
 
-        dt_route_half = self.configs['dt_routing'] / 2
+        dt_route_half = self.conf['dt_routing'] / 2
         kx = k * x
         denom = k - kx + dt_route_half
 
@@ -144,28 +187,6 @@ class RouteMuskingum:
         self.c3 = scipy.sparse.csc_matrix(np.diag(self.c3))
         return
 
-    def calculate_connections_array(self) -> None:
-        """
-        Calculate the connections array from the connectivity file
-        """
-        logging.info('Calculating Connectivity array')
-
-        df = pd.read_parquet(self.configs['connectivity_file'])
-        self.N = np.zeros((df.values.shape[0], df.values.shape[0]))
-        for idx, row in df.iterrows():
-            upstreams = (
-                pd
-                .Series(row.values[2:])
-                .replace(0, np.nan)
-                .dropna()
-                .apply(lambda x: df.loc[df['id'] == x, 'topo_order'].values[0])
-                .values
-            )
-            if len(upstreams):
-                self.N[idx, upstreams] = 1
-        self.N = scipy.sparse.csc_matrix(self.N.astype(np.float32))
-        return
-
     def define_flow_temporal_aggregation_function(self) -> None:
         """
         Define the function to use for temporal aggregation of flows calculated during the routing substeps between
@@ -178,59 +199,39 @@ class RouteMuskingum:
             'instantaneous' - use the flow from the last substep
         """
 
-        if self.configs['aggregation_method'] == 'mean':
+        if self.conf['aggregation_method'] == 'mean':
             self.flow_temporal_aggregation_function = np.mean
-        elif self.configs['aggregation_method'] == 'max':
+        elif self.conf['aggregation_method'] == 'max':
             self.flow_temporal_aggregation_function = np.max
-        elif self.configs['aggregation_method'] == 'min':
+        elif self.conf['aggregation_method'] == 'min':
             self.flow_temporal_aggregation_function = np.min
-        elif self.configs['aggregation_method'] == 'instantaneous':
+        elif self.conf['aggregation_method'] == 'instantaneous':
             self.flow_temporal_aggregation_function = lambda x: x[-1]
         else:
             raise RuntimeError('Unrecognized aggregation method bypassed config file validation')
 
-    def get_riverids(self) -> np.array:
-        """
-        Reads riverids vector from parquet given in config file
-        """
-        return pd.read_parquet(self.configs['routing_params_file'], columns=['id', ]).values.flatten()
+    def route(self) -> None:
+        self.make_adjacency_array()
+        self.calculate_muskingum_coefficients()
+        self.define_flow_temporal_aggregation_function()
 
-    def get_k(self) -> np.array:
-        """
-        Reads K vector from parquet given in config file
-        """
-        return pd.read_parquet(self.configs['routing_params_file'], columns=['k', ]).values.flatten()
-
-    def get_x(self) -> np.array:
-        """
-        Reads X vector from parquet given in config file
-        """
-        return pd.read_parquet(self.configs['routing_params_file'], columns=['x', ]).values.flatten()
-
-    def qinit(self) -> np.array:
-        qinit = self.configs.get('qinit_file', None)
-        if qinit is None or qinit == '':
-            return np.ones(self.N.shape[0])
-        return pd.read_parquet(self.configs['qinit_file']).values.flatten()
-
-    def route(self):
-        # get the list of dates for runoff data
         logging.info('Reading Inflow Data')
-        with xr.open_dataset(self.configs['inflow_file']) as inflow_ds:
+        with xr.open_dataset(self.conf['inflow_file']) as inflow_ds:
             # read dates from the netcdf
             dates = inflow_ds['time'].values
             # read inflows from the netcdf
             inflows = inflow_ds['m3_riv'].values
             # convert to m3/s in each routing time step
-            inflows = inflows / self.num_routing_substeps_per_outflow / self.configs['dt_routing']
+            inflows = inflows / self.num_routing_substeps_per_outflow / self.conf['dt_routing']
 
         logging.info('Scaffolding Outflow File')
         self.scaffold_outflow_file(dates)
 
-        logging.info('Preparing Arrays for computations')
+        logging.info('Preparing Arrays')
         lhs = scipy.sparse.csc_matrix(np.eye(self.N.shape[0]) - (self.N @ self.c1))
         outflow_array = np.zeros((self.num_outflow_steps, self.N.shape[0]))
-        q_t = self.qinit()
+        interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.N.shape[0]))
+        q_t = self.get_qinit()
 
         logging.info('Init PETSc Objects and Options')
         A = PETSc.Mat().createAIJ(size=lhs.shape, csr=(lhs.indptr, lhs.indices, lhs.data))
@@ -238,7 +239,7 @@ class RouteMuskingum:
         b = PETSc.Vec().createSeq(size=lhs.shape[0])
         ksp = PETSc.KSP().create()
         ksp.setType('bicg')
-        ksp.setTolerances(rtol=1e-5)
+        ksp.setTolerances(rtol=1e-2)
         ksp.setOperators(A)
 
         logging.info('Performing routing computation iterations')
@@ -280,9 +281,9 @@ class RouteMuskingum:
         self.write_outflows(outflow_array)
 
         # write the final outflows to disc
-        if self.configs.get('qfinal_file', False):
+        if self.conf.get('qfinal_file', False):
             logging.info('Writing Qfinal parquet')
-            pd.DataFrame(interval_flows, columns=['Q', ]).astype(float).to_parquet(self.configs.get('qfinal_file'))
+            pd.DataFrame(interval_flows, columns=['Q', ]).astype(float).to_parquet(self.conf.get('qfinal_file'))
 
         logging.info('Routing computation Loops completed')
         return q_t
@@ -303,13 +304,35 @@ class RouteMuskingum:
                 'aggregation_method': 'mean',
             },
         ).to_netcdf(
-            self.configs['outflow_file'],
+            self.conf['outflow_file'],
             mode='w',
         )
         return
 
     def write_outflows(self, outflow_array) -> None:
-        with nc.Dataset(self.configs['outflow_file'], mode='a') as ds:
+        with nc.Dataset(self.conf['outflow_file'], mode='a') as ds:
             ds['Qout'][:] = outflow_array
             ds.sync()
         return
+
+    def plot(self, rivid: int) -> None:
+        rivid_index = np.where(self.get_riverids() == rivid)[0][0]
+        with xr.open_dataset(self.conf['outflow_file']) as ds:
+            ds['Qout'][:, rivid_index].to_dataframe()['Qout'].plot()
+            plt.show()
+        return
+
+    def mass_balance(self) -> None:
+        outlet_ids = self.get_connectivity().values
+        outlet_ids = outlet_ids[outlet_ids[:, 1] == -1, 0]
+
+        with xr.open_dataset(self.conf['outflow_file']) as ds:
+            out_df = ds.sel(rivid=outlet_ids).to_dataframe()[['Qout', ]].groupby('time').sum().cumsum()
+            out_df = out_df * self.conf['dt_routing'] * self.num_routing_substeps_per_outflow
+        with xr.open_dataset(self.conf['inflow_file']) as ds:
+            in_df = ds.sel(rivid=outlet_ids).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
+
+        df = out_df.merge(in_df, left_index=True, right_index=True)
+        logging.info(f'\n{df.sum()}')
+        df.plot()
+        plt.show()

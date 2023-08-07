@@ -1,8 +1,9 @@
-numpy
-scipy
-pandas
-zarr
-xarray
 fastparquet
-pyyaml
+networkx
+numpy
+pandas
 petsc4py
+pyyaml
+scipy
+xarray
+zarr
