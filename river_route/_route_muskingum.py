@@ -21,6 +21,8 @@ class RouteMuskingum:
 
     conf: dict
 
+    G: nx.DiGraph
+
     A: np.array
     c1: np.array
     c2: np.array
@@ -151,10 +153,14 @@ class RouteMuskingum:
         """
         Calculate the adjacency array from the connectivity file
         """
+        if hasattr(self, 'A') and hasattr(self, 'G'):
+            return
+
         logging.info('Calculating Network Adjacency Matrix (A)')
         df = self.read_connectivity()
         G = nx.DiGraph()
         G.add_edges_from(df[df.columns[:2]].values)
+        self.G = G
         sorted_order = list(nx.topological_sort(G))
         if -1 in sorted_order:
             sorted_order.remove(-1)
@@ -228,6 +234,7 @@ class RouteMuskingum:
             inflows = np.nan_to_num(inflows, nan=0.0)
             # convert to m3/s in each routing time step
             inflows = inflows / self.num_routing_substeps_per_outflow / self.conf['dt_routing']
+            # inflows = inflows * 2
 
         logging.info('Scaffolding Outflow File')
         self.scaffold_outflow_file(dates)
@@ -246,10 +253,21 @@ class RouteMuskingum:
             interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
 
             for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
+                # # rapid equation
+                # inflow_tnext = (self.A @ q_t) + q_ro
+                # q_t = (self.c1 * q_ro) + \
+                #       (self.c2 * inflow_tnext) + \
+                #       (self.c3 * q_t)
+                # q_t = lhs @ q_t
+                # interval_flows[routing_substep_iteration, :] = q_t
+                # inflow_t = inflow_tnext
+
+                # modified equation
                 inflow_tnext = (self.A @ q_t) + q_ro
                 q_t = (self.c1 * inflow_t) + \
-                      (self.c2 * inflow_tnext) + \
+                      (self.c2 * q_ro) + \
                       (self.c3 * q_t)
+                q_t = lhs @ q_t
                 interval_flows[routing_substep_iteration, :] = q_t
                 inflow_t = inflow_tnext
 
@@ -303,15 +321,19 @@ class RouteMuskingum:
             plt.show()
         return
 
-    def mass_balance(self) -> None:
-        outlet_ids = self.read_connectivity().values
-        outlet_ids = outlet_ids[outlet_ids[:, 1] == -1, 0]
+    def mass_balance(self, rivid: int) -> None:
+        self.validate_configs()
+        self.make_adjacency_matrix()
+
+        # outlet_ids = self.read_connectivity().values
+        # outlet_ids = outlet_ids[outlet_ids[:, 1] == -1, 0]
+        upstream_ids = nx.ancestors(self.G, rivid)
 
         with xr.open_dataset(self.conf['outflow_file']) as ds:
-            out_df = ds.sel(rivid=outlet_ids).to_dataframe()[['Qout', ]].groupby('time').sum().cumsum()
+            out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].groupby('time').sum().cumsum()
             out_df = out_df * self.conf['dt_routing'] * self.num_routing_substeps_per_outflow
         with xr.open_dataset(self.conf['inflow_file']) as ds:
-            in_df = ds.sel(rivid=outlet_ids).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
+            in_df = ds.sel(rivid=list(upstream_ids)).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
 
         df = out_df.merge(in_df, left_index=True, right_index=True)
         logging.info(f'\n{df.sum()}')
