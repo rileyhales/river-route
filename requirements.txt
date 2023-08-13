@@ -2,7 +2,6 @@ fastparquet
 networkx
 numpy
 pandas
-petsc4py
 pyyaml
 scipy
 xarray
