@@ -13,6 +13,8 @@ import scipy
 import xarray as xr
 import yaml
 
+import tqdm
+
 
 class RouteMuskingum:
     sim_config_file: str
@@ -123,9 +125,9 @@ class RouteMuskingum:
 
     def read_riverids(self) -> np.array:
         """
-        Reads riverids vector from parquet given in config file
+        Reads river ids vector from parquet given in config file
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['id', ]).values.flatten()
+        return pd.read_parquet(self.conf['routing_params_file'], columns=['rivid', ]).values.flatten()
 
     def read_k(self) -> np.array:
         """
@@ -179,10 +181,6 @@ class RouteMuskingum:
         # sum of muskingum coefficiencts should be 1 for all segments
         a = self.c1 + self.c2 + self.c3
         assert np.allclose(a, 1), 'Muskingum coefficients do not approximately sum to 1'
-
-        # self.c1 = scipy.sparse.csc_matrix(np.diag(self.c1))
-        # self.c2 = scipy.sparse.csc_matrix(np.diag(self.c2))
-        # self.c3 = scipy.sparse.csc_matrix(np.diag(self.c3))
         return
 
     def define_flow_temporal_aggregation_function(self) -> None:
@@ -238,22 +236,22 @@ class RouteMuskingum:
         outflow_array = np.zeros((self.num_outflow_steps, self.A.shape[0]))
         interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
         q_t = self.read_qinit()
-        q_ro = inflows[0, :]
-        inflow_tprev = (self.A @ q_t) + q_ro
+        q_ro = np.zeros(self.A.shape[0])
+        inflow_t = (self.A @ q_t) + q_ro
 
         logging.info('Performing routing computation iterations')
         time_start = datetime.datetime.now()
-        for inflow_time_step, inflow_end_date in enumerate(dates):
+        for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Inflows Routed')):
             q_ro = inflows[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
 
             for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
-                inflow_t = (self.A @ q_t) + q_ro
-                q_t = (self.c1 * inflow_tprev) + \
-                      (self.c2 * inflow_t) + \
+                inflow_tnext = (self.A @ q_t) + q_ro
+                q_t = (self.c1 * inflow_t) + \
+                      (self.c2 * inflow_tnext) + \
                       (self.c3 * q_t)
                 interval_flows[routing_substep_iteration, :] = q_t
-                inflow_tprev = inflow_t
+                inflow_t = inflow_tnext
 
             interval_flows = self.flow_temporal_aggregation_function(np.array(interval_flows), axis=0)
             outflow_array[inflow_time_step, :] = interval_flows
