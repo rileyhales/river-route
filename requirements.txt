@@ -4,5 +4,6 @@ numpy
 pandas
 pyyaml
 scipy
+tqdm
 xarray
 zarr

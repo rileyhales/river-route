@@ -10,10 +10,9 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy
+import tqdm
 import xarray as xr
 import yaml
-
-import tqdm
 
 
 class RouteMuskingum:
@@ -202,11 +201,11 @@ class RouteMuskingum:
         """
 
         if self.conf['aggregation_method'] == 'mean':
-            self.flow_temporal_aggregation_function = np.nanmean
+            self.flow_temporal_aggregation_function = np.mean
         elif self.conf['aggregation_method'] == 'max':
-            self.flow_temporal_aggregation_function = np.nanmax
+            self.flow_temporal_aggregation_function = np.max
         elif self.conf['aggregation_method'] == 'min':
-            self.flow_temporal_aggregation_function = np.nanmin
+            self.flow_temporal_aggregation_function = np.min
         elif self.conf['aggregation_method'] == 'instantaneous':
             self.flow_temporal_aggregation_function = lambda x: x[-1]
         else:
@@ -217,68 +216,53 @@ class RouteMuskingum:
         Performs time-iterative runoff routing through the river network
         """
         self.validate_configs()
-
-        logging.info('Routing Inflows')
         self.make_adjacency_matrix()
         self.calculate_muskingum_coefficients()
         self.define_flow_temporal_aggregation_function()
 
         logging.info('Reading Inflow Data')
         with xr.open_dataset(self.conf['inflow_file']) as inflow_ds:
-            # read dates from the netcdf
-            dates = inflow_ds['time'].values
-            # read inflows from the netcdf
+            dates = inflow_ds['time'].values.astype('datetime64[s]')
             inflows = inflow_ds['m3_riv'].values
-            # catch negative and nan values
             inflows[inflows < 0] = np.nan
             inflows = np.nan_to_num(inflows, nan=0.0)
-            # convert to m3/s in each routing time step
-            inflows = inflows / self.num_routing_substeps_per_outflow / self.conf['dt_routing']
+            inflows = inflows / self.conf['dt_inflows']  # volume to volume/time
             # inflows = inflows * 2
 
         logging.info('Scaffolding Outflow File')
         self.scaffold_outflow_file(dates)
 
-        logging.info('Preparing initial value arrays')
+        logging.info('Preparing initialization arrays')
         outflow_array = np.zeros((self.num_outflow_steps, self.A.shape[0]))
         interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
         q_t = self.read_qinit()
         q_ro = np.zeros(self.A.shape[0])
         inflow_t = (self.A @ q_t) + q_ro
 
+        logging.info('Inverting LHS Matrix')
+        lhs = scipy.sparse.linalg.inv(
+            scipy.sparse.csc_matrix(np.eye(self.A.shape[0])) - scipy.sparse.csc_matrix(np.diag(self.c2)) @ self.A
+        )
+
         logging.info('Performing routing computation iterations')
-        time_start = datetime.datetime.now()
+        t1 = datetime.datetime.now()
         for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Inflows Routed')):
             q_ro = inflows[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
-
             for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
-                # # rapid equation
-                # inflow_tnext = (self.A @ q_t) + q_ro
-                # q_t = (self.c1 * q_ro) + \
-                #       (self.c2 * inflow_tnext) + \
-                #       (self.c3 * q_t)
-                # q_t = lhs @ q_t
-                # interval_flows[routing_substep_iteration, :] = q_t
-                # inflow_t = inflow_tnext
-
-                # modified equation
                 inflow_tnext = (self.A @ q_t) + q_ro
-                q_t = (self.c1 * inflow_t) + \
-                      (self.c2 * q_ro) + \
-                      (self.c3 * q_t)
-                q_t = lhs @ q_t
+                q_t = lhs @ ((self.c1 * inflow_t) + (self.c2 * q_ro) + (self.c3 * q_t))
                 interval_flows[routing_substep_iteration, :] = q_t
                 inflow_t = inflow_tnext
-
-            interval_flows = self.flow_temporal_aggregation_function(np.array(interval_flows), axis=0)
+            interval_flows = np.mean(np.array(interval_flows), axis=0)
+            interval_flows = np.round(interval_flows, decimals=2)
             outflow_array[inflow_time_step, :] = interval_flows
-        time_end = datetime.datetime.now()
-        logging.info(f'Routing completed in {(time_end - time_start).total_seconds()} seconds')
+        t2 = datetime.datetime.now()
+        logging.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
 
         logging.info('Writing Outflow Array to File')
         outflow_array = np.round(outflow_array, decimals=2)
-        self.write_outflows(outflow_array)
+        self.write_outflows(dates, outflow_array)
 
         # write the final outflows to disc
         if self.conf.get('qfinal_file', False):
@@ -289,31 +273,36 @@ class RouteMuskingum:
         return q_t
 
     def scaffold_outflow_file(self, dates) -> None:
-        xr.Dataset(
-            data_vars={
-                'Qout': (['time', 'rivid'], np.zeros((self.num_outflow_steps, self.A.shape[0]))),
-            },
-            coords={
-                'time': dates,
-                'rivid': self.read_riverids(),
-            },
-            attrs={
-                'long_name': 'Discharge at the outlet of each river reach',
-                'units': 'm3 s-1',
-                'standard_name': 'discharge',
-                'aggregation_method': 'mean',
-            },
-        ).to_netcdf(
-            self.conf['outflow_file'],
-            mode='w',
-        )
-        return
+        time_zero = datetime.datetime.utcfromtimestamp(dates[0].astype(int))
+        with nc.Dataset(self.conf['outflow_file'], mode='w') as ds:
+            ds.createDimension('time', size=dates.shape[0])
+            ds.createDimension('rivid', size=self.A.shape[0])
 
-    def write_outflows(self, outflow_array) -> None:
+            time_var = ds.createVariable('time', 'f8', ('time',))
+            time_var.units = f'seconds since {time_zero.strftime("%Y-%m-%d %H:%M:%S")}'
+
+            rivid_var = ds.createVariable('rivid', 'i4', ('rivid',))
+            rivid_var[:] = self.read_riverids()
+
+            qout_var = ds.createVariable('Qout', 'f4', ('time', 'rivid'))
+            qout_var.units = 'm3 s-1'
+            qout_var.long_name = 'Discharge at the outlet of each river reach'
+            qout_var.standard_name = 'discharge'
+            qout_var.aggregation_method = self.conf.get('aggregation_method', 'mean')
+
+    def write_outflows(self, dates, outflow_array) -> None:
+        pydates = list(map(datetime.datetime.utcfromtimestamp, dates.astype(int)))
         with nc.Dataset(self.conf['outflow_file'], mode='a') as ds:
+            ds['time'][:] = nc.date2num(pydates, units=ds['time'].units)
             ds['Qout'][:] = outflow_array
             ds.sync()
         return
+
+    def append_outflows(self, dates, date_index, outflow_array) -> None:
+        python_dates = list(map(datetime.datetime.utcfromtimestamp, dates.astype(int)))[date_index]
+        with nc.Dataset(self.conf['outflow_file'], mode='a') as ds:
+            ds['time'][:] = nc.date2num(python_dates, ds['time'].units)
+            ds['Qout'][:] = outflow_array
 
     def plot(self, rivid: int) -> None:
         with xr.open_dataset(self.conf['outflow_file']) as ds:
@@ -325,8 +314,6 @@ class RouteMuskingum:
         self.validate_configs()
         self.make_adjacency_matrix()
 
-        # outlet_ids = self.read_connectivity().values
-        # outlet_ids = outlet_ids[outlet_ids[:, 1] == -1, 0]
         upstream_ids = nx.ancestors(self.G, rivid)
 
         with xr.open_dataset(self.conf['outflow_file']) as ds:
