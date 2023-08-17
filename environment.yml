@@ -1,0 +1,14 @@
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - dask
+  - fastparquet
+  - networkx
+  - numpy
+  - pandas
+  - pyyaml
+  - scipy
+  - tqdm
+  - xarray
+  - zarr

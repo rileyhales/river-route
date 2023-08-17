@@ -1,3 +1,4 @@
+dask
 fastparquet
 networkx
 numpy
