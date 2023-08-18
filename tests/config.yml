@@ -4,18 +4,18 @@ log_file: ''
 # paths to watershed files - Required
 routing_params_file: './inputs/route_params.parquet'
 connectivity_file: './inputs/connectivity.parquet'
-qinit_file: './outputs/qinit.parquet'
-rinit_file: './outputs/rinit.parquet'
-lhs_file: './inputs/lhs.npz'  # created and cached during routing
-adj_file: './inputs/adj.npz'  # created and cached during routing
-# runoff inflows - Required - list of absolute path strings even if only one file
-runoff_file:
-  - './inflows/runoff_test_1980.nc'
-# routed discharge outputs - Required - list of absolute path strings even if only one file
-outflow_file:
-  - './outputs/qout.nc'
-qfinal_file: './outputs/qfinal.parquet'
-rfinal_file: './outputs/rfinal.parquet'
 # computation time parameters - all times given in seconds - Required
 dt_outflows: 86400
 dt_routing: 900
+# cache routing matrices - Optional
+lhs_file: './inputs/lhs.npz'
+adj_file: './inputs/adj.npz'
+# initial and final state files - Optional
+qinit_file: ''
+rinit_file: ''
+qfinal_file: './outputs/qfinal.parquet'
+rfinal_file: './outputs/rfinal.parquet'
+# runoff inflows - Required - list of absolute path strings even if only one file
+runoff_file: './inflows/runoff_test.nc'
+# routed discharge outputs - Required - list of absolute path strings even if only one file
+outflow_file: './outputs/qout.nc'

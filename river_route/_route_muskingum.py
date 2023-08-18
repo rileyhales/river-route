@@ -60,6 +60,20 @@ class RouteMuskingum:
         else:
             raise RuntimeError('Unrecognized simulation config file type')
 
+        if isinstance(self.conf['runoff_file'], str):
+            self.conf['runoff_file'] = [self.conf['runoff_file'], ]
+        if isinstance(self.conf['outflow_file'], str):
+            self.conf['outflow_file'] = [self.conf['outflow_file'], ]
+
+        for arg in [k for k in self.conf.keys() if 'file' in k]:
+            if isinstance(self.conf[arg], list):
+                self.conf[arg] = [
+                    os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), path)) \
+                    for path in self.conf[arg] if path.startswith('.')
+                ]
+            elif self.conf[arg].startswith('.'):
+                self.conf[arg] = os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), self.conf[arg]))
+
         # start a logger
         log_basic_configs = {
             'stream': sys.stdout,
@@ -75,22 +89,14 @@ class RouteMuskingum:
 
     def validate_configs(self) -> None:
         logging.info('Validating configs file')
-        # check that required file paths are given and exist
         required_file_paths = ['routing_params_file',
                                'connectivity_file',
                                'runoff_file',
                                'outflow_file', ]
         paths_should_exist = ['routing_params_file',
                               'connectivity_file', ]
-
-        # check for required time options
         required_time_opts = ['dt_outflows',
                               'dt_routing', ]
-
-        # check for optional file paths
-        optional_file_paths = ['qinit_file',
-                               'qfinal_file',
-                               'log_file', ]
 
         for arg in required_file_paths + required_time_opts:
             if arg not in self.conf:
@@ -98,9 +104,9 @@ class RouteMuskingum:
         for arg in paths_should_exist:
             if not os.path.exists(self.conf[arg]):
                 raise FileNotFoundError(f'{arg} not found at given path')
-        if isinstance(self.conf['runoff_file'], list):
-            for path in self.conf['runoff_file']:
-                assert os.path.exists(path), FileNotFoundError(f'runoff file not found at given path: {path}')
+        for path in self.conf['runoff_file']:
+            assert os.path.exists(path), FileNotFoundError(f'runoff file not found at given path: {path}')
+
         return
 
     def read_connectivity(self) -> pd.DataFrame:
@@ -248,14 +254,9 @@ class RouteMuskingum:
         self.make_adjacency_matrix()
         self.calculate_muskingum_coefficients()
 
-        if isinstance(self.conf['runoff_file'], list) and isinstance(self.conf['outflow_file'], list):
-            runoff_outflow_iter = zip(self.conf['runoff_file'], self.conf['outflow_file'])
-        else:
-            runoff_outflow_iter = [(self.conf['runoff_file'], self.conf['outflow_file'])]
-
         if self.conf.get('routing_method', 'analytical') == 'analytical':
             self.make_lhs_matrix()
-            for runoff_file, outflow_file in runoff_outflow_iter:
+            for runoff_file, outflow_file in zip(self.conf['runoff_files'], self.conf['outflow_files']):
                 self._analytical_solution(runoff_file, outflow_file)
         elif self.conf.get('routing_method', 'analytical') == 'numerical':
             raise NotImplementedError('Numerical solution is not yet implemented')
