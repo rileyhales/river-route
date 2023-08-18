@@ -1,6 +1,7 @@
 # simulation management and debugging - Optional
 job_name: 'test_suite'
 log_file: ''
+
 # paths to watershed files - Required
 routing_params_file: './inputs/route_params.parquet'
 connectivity_file: './inputs/connectivity.parquet'

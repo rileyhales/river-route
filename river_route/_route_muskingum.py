@@ -13,6 +13,7 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
+from petsc4py import PETSc
 
 
 class RouteMuskingum:
@@ -23,6 +24,7 @@ class RouteMuskingum:
     # Routing Matrices
     A: np.array or scipy.sparse.csc_matrix
     lhs: np.array or scipy.sparse.csc_matrix
+    lhsinv: np.array or scipy.sparse.csc_matrix
     c1: np.array
     c2: np.array
     c3: np.array
@@ -188,11 +190,17 @@ class RouteMuskingum:
             return
 
         logging.info('Calculating and Caching LHS matrix')
-        self.lhs = scipy.sparse.linalg.inv(
-            scipy.sparse.csc_matrix(np.eye(self.A.shape[0])) - scipy.sparse.csc_matrix(np.diag(self.c2)) @ self.A
-        )
+        self.lhs = scipy.sparse.csc_matrix(np.eye(self.A.shape[0])) - scipy.sparse.csc_matrix(np.diag(self.c2)) @ self.A
         if self.conf.get('lhs_file', ''):
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
+        return
+
+    def make_lhs_inv_matrix(self) -> None:
+        """
+        Calculate the LHS matrix for the routing problem
+        """
+        self.make_lhs_matrix()
+        self.lhsinv = scipy.sparse.linalg.inv(self.lhs)
         return
 
     def set_time_params(self, dates: np.array):
@@ -254,14 +262,33 @@ class RouteMuskingum:
         self.make_adjacency_matrix()
         self.calculate_muskingum_coefficients()
 
-        if self.conf.get('routing_method', 'analytical') == 'analytical':
-            self.make_lhs_matrix()
-            for runoff_file, outflow_file in zip(self.conf['runoff_files'], self.conf['outflow_files']):
-                self._analytical_solution(runoff_file, outflow_file)
-        elif self.conf.get('routing_method', 'analytical') == 'numerical':
-            raise NotImplementedError('Numerical solution is not yet implemented')
-        else:
-            raise NotImplementedError('Only analytical solution is currently implemented')
+        for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
+            logging.info(f'Reading Inflow Data: {runoff_file}')
+            with xr.open_dataset(runoff_file) as runoff_ds:
+                dates = runoff_ds['time'].values.astype('datetime64[s]')
+                self.set_time_params(dates)
+                runoffs = runoff_ds['m3_riv'].values
+                runoffs[runoffs < 0] = np.nan
+                runoffs = np.nan_to_num(runoffs, nan=0.0)
+                runoffs = runoffs / self.dt_runoff  # volume to volume/time
+
+            logging.info('Initializing arrays')
+            q_t = self.read_qinit()
+            r_t = self.read_rinit()
+            inflow_t = (self.A @ q_t) + r_t
+
+            if self.conf.get('routing_method', 'analytical') == 'analytical':
+                self.make_lhs_inv_matrix()
+                outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
+            elif self.conf.get('routing_method', 'analytical') == 'numerical':
+                self.make_lhs_matrix()
+                outflow_array = self._numerical_solution(dates, runoffs, q_t, r_t, inflow_t)
+            else:
+                raise ValueError('routing_method must be either analytical or numerical')
+
+            logging.info('Writing Outflow Array to File')
+            outflow_array = np.round(outflow_array, decimals=2)
+            self.write_outflows(outflow_file, dates, outflow_array)
 
         # write the final state to disc
         if self.conf.get('qfinal_file', False):
@@ -276,21 +303,13 @@ class RouteMuskingum:
         logging.info(f'Total routing time: {(t2 - t1).total_seconds()}')
         return
 
-    def _analytical_solution(self, runoff_file: str, outflow_file: str) -> None:
-        logging.info(f'Reading Inflow Data: {runoff_file}')
-        with xr.open_dataset(runoff_file) as runoff_ds:
-            dates = runoff_ds['time'].values.astype('datetime64[s]')
-            self.set_time_params(dates)
-            runoffs = runoff_ds['m3_riv'].values
-            runoffs[runoffs < 0] = np.nan
-            runoffs = np.nan_to_num(runoffs, nan=0.0)
-            runoffs = runoffs / self.dt_runoff  # volume to volume/time
-
-        logging.info('Initializing arrays')
+    def _analytical_solution(self,
+                             dates: np.array,
+                             runoffs: np.array,
+                             q_t: np.array,
+                             r_t: np.array,
+                             inflow_t: np.array) -> np.array:
         outflow_array = np.zeros((self.num_outflow_steps, self.A.shape[0]))
-        q_t = self.read_qinit()
-        r_t = self.read_rinit()
-        inflow_t = (self.A @ q_t) + r_t
 
         logging.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
@@ -299,7 +318,7 @@ class RouteMuskingum:
             interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
                 inflow_tnext = (self.A @ q_t) + r_t
-                q_t = self.lhs @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
+                q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
                 interval_flows[routing_substep_iteration, :] = q_t
                 inflow_t = inflow_tnext
             interval_flows = np.mean(np.array(interval_flows), axis=0)
@@ -310,11 +329,55 @@ class RouteMuskingum:
 
         self.qinit = q_t
         self.rinit = r_t
+        return outflow_array
 
-        logging.info('Writing Outflow Array to File')
-        outflow_array = np.round(outflow_array, decimals=2)
-        self.write_outflows(outflow_file, dates, outflow_array)
-        return
+    def _numerical_solution(self,
+                            dates: np.array,
+                            runoffs: np.array,
+                            q_t: np.array,
+                            r_t: np.array,
+                            inflow_t: np.array) -> np.array:
+        outflow_array = np.zeros((self.num_outflow_steps, self.A.shape[0]))
+
+        logging.info('Creating PETSc arrays')
+        self.lhs = scipy.sparse.csr_matrix(self.lhs)
+        A = PETSc.Mat().createAIJ(size=self.lhs.shape, csr=(self.lhs.indptr, self.lhs.indices, self.lhs.data))
+        x = PETSc.Vec().createSeq(size=self.lhs.shape[0])
+        b = PETSc.Vec().createSeq(size=self.lhs.shape[0])
+        ksp = PETSc.KSP().create()
+        ksp.setType('richardson')
+        ksp.setTolerances(rtol=1e-5)
+        ksp.setOperators(A)
+
+        logging.info('Performing routing solver iterations')
+        t1 = datetime.datetime.now()
+        for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
+            r_t = runoffs[inflow_time_step, :]
+            interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
+            for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
+                inflow_tnext = (self.A @ q_t) + r_t
+                rhs = (self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t)
+                inflow_t = inflow_tnext
+                b.setArray(rhs)
+                ksp.solve(b, x)
+                q_t = x.getArray()
+                interval_flows[routing_substep_iteration, :] = q_t
+            interval_flows = np.mean(interval_flows, axis=0)
+            interval_flows = np.round(interval_flows, decimals=2)
+            outflow_array[inflow_time_step, :] = interval_flows
+        t2 = datetime.datetime.now()
+        logging.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+
+        self.qinit = q_t
+        self.rinit = r_t
+
+        logging.info('Cleaning up PETSc objects')
+        A.destroy()
+        x.destroy()
+        b.destroy()
+        ksp.destroy()
+
+        return outflow_array
 
     def write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         pydates = list(map(datetime.datetime.utcfromtimestamp, dates.astype(int)))
