@@ -3,6 +3,7 @@ fastparquet
 networkx
 numpy
 pandas
+petsc4py
 pyyaml
 scipy
 tqdm
