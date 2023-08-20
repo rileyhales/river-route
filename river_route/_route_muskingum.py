@@ -355,10 +355,20 @@ class RouteMuskingum:
         A = PETSc.Mat().createAIJ(size=self.lhs.shape, csr=(self.lhs.indptr, self.lhs.indices, self.lhs.data))
         x = PETSc.Vec().createSeq(size=self.lhs.shape[0])
         b = PETSc.Vec().createSeq(size=self.lhs.shape[0])
+
+        # Define a KSP (Krylov Subspace Projection) solver
         ksp = PETSc.KSP().create()
-        ksp.setType('richardson')
+        ksp.setType(self.conf.get('petsc_ksp_type', 'richardson'))
         ksp.setTolerances(rtol=1e-5)
         ksp.setOperators(A)
+
+        # Define a preconditioner if specified in confg
+        if self.conf.get('petsc_preconditioner', ''):
+            pc = PETSc.PC().create()
+            pc.setType(self.conf['petsc_preconditioner'])
+            pc.setOperators(A)
+            pc.setUp()
+            ksp.setPC(pc)
 
         logging.info('Performing routing solver iterations')
         t1 = datetime.datetime.now()
@@ -387,6 +397,7 @@ class RouteMuskingum:
         x.destroy()
         b.destroy()
         ksp.destroy()
+        pc.destroy() if self.conf.get('petsc_preconditioner', '') else None
 
         return outflow_array
 
@@ -407,7 +418,7 @@ class RouteMuskingum:
             ds['Qout'].units = 'm3 s-1'
             ds['Qout'].long_name = 'Discharge at the outlet of each river reach'
             ds['Qout'].standard_name = 'discharge'
-            ds['Qout'].aggregation_method = self.conf.get('aggregation_method', 'mean')
+            ds['Qout'].aggregation_method = 'mean'
             ds['Qout'][:] = outflow_array
         return
 

@@ -12,6 +12,9 @@ dt_routing: 900
 lhs_file: './inputs/lhs.npz'
 lhsinv_file: './inputs/lhsinv.npz'
 adj_file: './inputs/adj.npz'
+# Optional - PETSc solver options
+petsc_ksp_type: 'richardson'
+petsc_pc_type: 'jacobi'
 # initial and final state files - Optional
 qinit_file: ''
 rinit_file: ''
