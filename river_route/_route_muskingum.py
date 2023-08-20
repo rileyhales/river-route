@@ -58,7 +58,7 @@ class RouteMuskingum:
         elif config_file.endswith('.yml') or config_file.endswith('.yaml'):
             with open(config_file, 'r') as f:
                 self.conf = yaml.load(f, Loader=yaml.FullLoader)
-        elif config_file is None:
+        elif config_file is None or config_file == '':
             self.conf = {}
         else:
             raise RuntimeError('Unrecognized simulation config file type')
@@ -195,6 +195,7 @@ class RouteMuskingum:
 
         logging.info('Calculating LHS Matrix')
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c2) @ self.A
+        self.lhs = self.lhs.tocsc()
         if self.conf.get('lhs_file', ''):
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
@@ -367,9 +368,9 @@ class RouteMuskingum:
         ksp.setOperators(A)
 
         # Define a preconditioner if specified in confg
-        if self.conf.get('petsc_preconditioner', ''):
+        if self.conf.get('petsc_pc_type', ''):
             pc = PETSc.PC().create()
-            pc.setType(self.conf['petsc_preconditioner'])
+            pc.setType(self.conf['petsc_pc_type'])
             pc.setOperators(A)
             pc.setUp()
             ksp.setPC(pc)
@@ -401,7 +402,7 @@ class RouteMuskingum:
         x.destroy()
         b.destroy()
         ksp.destroy()
-        pc.destroy() if self.conf.get('petsc_preconditioner', '') else None
+        pc.destroy() if self.conf.get('petsc_pc_type', '') else None
 
         return outflow_array
 
