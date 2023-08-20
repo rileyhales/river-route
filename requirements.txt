@@ -1,5 +1,7 @@
 dask
 fastparquet
+matplotlib
+netcdf4
 networkx
 numpy
 pandas

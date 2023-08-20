@@ -4,7 +4,8 @@
 The routing calculations are vectorized and use numpy and scipy which keeps the array computation times on par with faster compiled languages. 
 
 The implemented routing methods are:
-- Muskingum-Cunge Matrix Form - Analytical solution
+- Muskingum Cunge - Analytical solution
+- Muskingum Cunge - Numerical solution
 
 ## Quick Start Guide
 You will need to prepare a configuration file for the routing.

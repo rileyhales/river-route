@@ -1,9 +1,12 @@
+name: rr
 channels:
   - conda-forge
   - defaults
 dependencies:
   - dask
   - fastparquet
+  - matplotlib
+  - netcdf4
   - networkx
   - numpy
   - pandas
