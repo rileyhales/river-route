@@ -172,7 +172,7 @@ class RouteMuskingum:
         sorted_order = list(nx.topological_sort(G))
         if -1 in sorted_order:
             sorted_order.remove(-1)
-        self.A = scipy.sparse.csc_matrix(nx.to_numpy_array(G, nodelist=sorted_order).T)
+        self.A = scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(G, nodelist=sorted_order).T)
         if self.conf.get('adj_file', ''):
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
@@ -189,8 +189,8 @@ class RouteMuskingum:
             self.lhs = scipy.sparse.load_npz(self.conf['lhs_file'])
             return
 
-        logging.info('Calculating and Caching LHS matrix')
-        self.lhs = scipy.sparse.csc_matrix(np.eye(self.A.shape[0])) - scipy.sparse.csc_matrix(np.diag(self.c2)) @ self.A
+        logging.info('Calculating LHS Matrix')
+        self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c2) @ self.A
         if self.conf.get('lhs_file', ''):
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
@@ -199,8 +199,19 @@ class RouteMuskingum:
         """
         Calculate the LHS matrix for the routing problem
         """
+        if hasattr(self, 'lhsinv'):
+            return
+
+        if os.path.exists(self.conf.get('lhsinv_file', '')):
+            logging.info('Loading LHS Inverse matrix from file')
+            self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
+            return
+
         self.make_lhs_matrix()
-        self.lhsinv = scipy.sparse.linalg.inv(self.lhs)
+        logging.info('Inverting LHS Matrix')
+        self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
+        if self.conf.get('lhsinv_file', ''):
+            scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
         return
 
     def set_time_params(self, dates: np.array):
@@ -321,7 +332,7 @@ class RouteMuskingum:
                 q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
                 interval_flows[routing_substep_iteration, :] = q_t
                 inflow_t = inflow_tnext
-            interval_flows = np.mean(np.array(interval_flows), axis=0)
+            interval_flows = np.mean(interval_flows, axis=0)
             interval_flows = np.round(interval_flows, decimals=2)
             outflow_array[inflow_time_step, :] = interval_flows
         t2 = datetime.datetime.now()

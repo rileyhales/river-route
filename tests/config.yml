@@ -1,7 +1,7 @@
 # simulation management and debugging - Optional
 job_name: 'test_suite'
 log_file: ''
-
+routing_method: 'analytical'
 # paths to watershed files - Required
 routing_params_file: './inputs/route_params.parquet'
 connectivity_file: './inputs/connectivity.parquet'
@@ -10,6 +10,7 @@ dt_outflows: 86400
 dt_routing: 900
 # cache routing matrices - Optional
 lhs_file: './inputs/lhs.npz'
+lhsinv_file: './inputs/lhsinv.npz'
 adj_file: './inputs/adj.npz'
 # initial and final state files - Optional
 qinit_file: ''
