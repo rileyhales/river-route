@@ -18,7 +18,6 @@ from petsc4py import PETSc
 
 class RouteMuskingum:
     # Given configs
-    sim_config_file: str
     conf: dict
 
     # Routing Matrices
@@ -40,27 +39,32 @@ class RouteMuskingum:
     num_routing_substeps_per_outflow: int
 
     def __init__(self,
-                 sim_config_file: str,
+                 config_file: str = None,
                  **kwargs, ) -> None:
         """
         Read config files to initialize routing class
         """
-        self.sim_config_file = sim_config_file
-        self.read_configs()
+        self.read_configs(config_file, **kwargs)
         return
 
-    def read_configs(self) -> None:
+    def read_configs(self, config_file, **kwargs) -> None:
         """
         Validate simulation conf
         """
-        if self.sim_config_file.endswith('.json'):
-            with open(self.sim_config_file, 'r') as f:
+        # read the config file
+        if config_file.endswith('.json'):
+            with open(config_file, 'r') as f:
                 self.conf = json.load(f)
-        elif self.sim_config_file.endswith('.yml') or self.sim_config_file.endswith('.yaml'):
-            with open(self.sim_config_file, 'r') as f:
+        elif config_file.endswith('.yml') or config_file.endswith('.yaml'):
+            with open(config_file, 'r') as f:
                 self.conf = yaml.load(f, Loader=yaml.FullLoader)
+        elif config_file is None:
+            self.conf = {}
         else:
             raise RuntimeError('Unrecognized simulation config file type')
+
+        # overwrite configs with kwargs
+        self.conf.update(kwargs)
 
         if isinstance(self.conf['runoff_file'], str):
             self.conf['runoff_file'] = [self.conf['runoff_file'], ]
@@ -70,17 +74,17 @@ class RouteMuskingum:
         for arg in [k for k in self.conf.keys() if 'file' in k]:
             if isinstance(self.conf[arg], list):
                 self.conf[arg] = [
-                    os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), f)) \
+                    os.path.abspath(os.path.join(os.path.dirname(config_file), f))
                     if f.startswith('.') else f for f in self.conf[arg]
                 ]
             elif self.conf[arg].startswith('.'):
-                self.conf[arg] = os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), self.conf[arg]))
+                self.conf[arg] = os.path.abspath(os.path.join(os.path.dirname(config_file), self.conf[arg]))
 
         # start a logger
         log_basic_configs = {
             'stream': sys.stdout,
             'level': logging.INFO,
-            'format': '%(asctime)s %(levelname)s %(message)s',
+            'format': '%(asctime)s %(message)s',
         }
         if self.conf.get('log_file', ''):
             log_basic_configs['filename'] = self.conf['log_file']
