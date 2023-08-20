@@ -70,8 +70,8 @@ class RouteMuskingum:
         for arg in [k for k in self.conf.keys() if 'file' in k]:
             if isinstance(self.conf[arg], list):
                 self.conf[arg] = [
-                    os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), path)) \
-                    for path in self.conf[arg] if path.startswith('.')
+                    os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), f)) \
+                    if f.startswith('.') else f for f in self.conf[arg]
                 ]
             elif self.conf[arg].startswith('.'):
                 self.conf[arg] = os.path.abspath(os.path.join(os.path.dirname(self.sim_config_file), self.conf[arg]))
