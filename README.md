@@ -13,7 +13,7 @@ You will need to prepare a configuration file for the routing.
 ```python
 import river_route as rr
 
-rm = rr.RouteMuskingum('/path/to/config.yml')
+rm = rr.Muskingum('/path/to/config.yml')
 rm.route()
 
 river_id_to_inspect = 12345

@@ -16,7 +16,7 @@ import yaml
 from petsc4py import PETSc
 
 
-class RouteMuskingum:
+class Muskingum:
     # Given configs
     conf: dict
 
@@ -33,14 +33,14 @@ class RouteMuskingum:
     # Time options
     dt_total: float
     dt_runoff: float
-    dt_outflows: float
+    dt_outflow: float
     dt_routing: float
-    num_outflow_steps: int
-    num_routing_substeps_per_outflow: int
+    num_routing_steps: int
+    num_routing_steps_per_runoff: int
+    num_runoff_steps_per_outflow: int
+    num_timesteps_resample: int
 
-    def __init__(self,
-                 config_file: str = None,
-                 **kwargs, ) -> None:
+    def __init__(self, config_file: str = None, **kwargs, ) -> None:
         """
         Read config files to initialize routing class
         """
@@ -101,8 +101,7 @@ class RouteMuskingum:
                                'outflow_file', ]
         paths_should_exist = ['routing_params_file',
                               'connectivity_file', ]
-        required_time_opts = ['dt_outflows',
-                              'dt_routing', ]
+        required_time_opts = ['dt_routing', ]
 
         for arg in required_file_paths + required_time_opts:
             if arg not in self.conf:
@@ -157,7 +156,16 @@ class RouteMuskingum:
             return np.zeros(self.A.shape[0])
         return pd.read_parquet(self.conf['qinit_file']).values.flatten()
 
-    def make_adjacency_matrix(self) -> None:
+    def get_directed_graph(self) -> nx.DiGraph:
+        """
+        Returns a directed graph of the river network
+        """
+        df = self.read_connectivity()
+        G = nx.DiGraph()
+        G.add_edges_from(df.values)
+        return G
+
+    def set_adjacency_matrix(self) -> None:
         """
         Calculate the adjacency array from the connectivity file
         """
@@ -170,9 +178,7 @@ class RouteMuskingum:
             return
 
         logging.info('Calculating Network Adjacency Matrix (A)')
-        df = self.read_connectivity()
-        G = nx.DiGraph()
-        G.add_edges_from(df[df.columns[:2]].values)
+        G = self.get_directed_graph()
         sorted_order = list(nx.topological_sort(G))
         if -1 in sorted_order:
             sorted_order.remove(-1)
@@ -181,7 +187,7 @@ class RouteMuskingum:
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
-    def make_lhs_matrix(self) -> None:
+    def set_lhs_matrix(self) -> None:
         """
         Calculate the LHS matrix for the routing problem
         """
@@ -200,7 +206,7 @@ class RouteMuskingum:
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
-    def make_lhs_inv_matrix(self) -> None:
+    def set_lhs_inv_matrix(self) -> None:
         """
         Calculate the LHS matrix for the routing problem
         """
@@ -212,7 +218,7 @@ class RouteMuskingum:
             self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
             return
 
-        self.make_lhs_matrix()
+        self.set_lhs_matrix()
         logging.info('Inverting LHS Matrix')
         self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
         if self.conf.get('lhsinv_file', ''):
@@ -226,23 +232,26 @@ class RouteMuskingum:
         logging.info('Setting time parameters')
         self.dt_runoff = (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
         self.dt_total = self.dt_runoff * dates.shape[0]
-        self.dt_outflows = self.conf['dt_outflows']
+        self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
         self.dt_routing = self.conf['dt_routing']
 
         # check that time options have the correct sizes
         assert self.dt_total >= self.dt_runoff, 'dt_total !>= dt_runoff'
-        assert self.dt_runoff >= self.dt_outflows, 'dt_runoff !>= dt_outflows'
-        assert self.dt_outflows >= self.dt_routing, 'dt_outflows !>= dt_routing'
+        assert self.dt_total >= self.dt_outflow, 'dt_total !>= dt_outflow'
+        assert self.dt_outflow >= self.dt_runoff, 'dt_outflow !>= dt_runoff'
+        assert self.dt_runoff >= self.dt_routing, 'dt_runoff !>= dt_routing'
 
         # check that time options are evenly divisible
         assert self.dt_total % self.dt_runoff == 0, 'dt_total must be a whole number multiple of dt_runoff'
-        assert self.dt_total % self.dt_outflows == 0, 'dt_total must be a whole number multiple of dt_outflows'
-        assert self.dt_runoff % self.dt_outflows == 0, 'dt_runoff must be a whole number multiple of dt_outflows'
-        assert self.dt_outflows % self.dt_routing == 0, 'dt_outflows must be a whole number multiple of dt_routing'
+        assert self.dt_total % self.dt_outflow == 0, 'dt_total must be a whole number multiple of dt_outflow'
+        assert self.dt_outflow % self.dt_runoff == 0, 'dt_outflow must be a whole number multiple of dt_runoff'
+        assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be a whole number multiple of dt_routing'
 
         # set derived datetime parameters for computation cycles later
-        self.num_outflow_steps = int(self.dt_total / self.dt_outflows)
-        self.num_routing_substeps_per_outflow = int(self.dt_outflows / self.dt_routing)
+        self.num_runoff_steps_per_outflow = int(self.dt_outflow / self.dt_runoff)
+        self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
+        self.num_routing_steps = int(self.dt_total / self.dt_routing)
+        self.num_timesteps_resample = int(self.dt_outflow / self.dt_runoff)
         return
 
     def calculate_muskingum_coefficients(self) -> None:
@@ -262,20 +271,19 @@ class RouteMuskingum:
         self.c2 = (dt_route_half + kx) / denom
         self.c3 = (k - kx - dt_route_half) / denom
 
-        # sum of muskingum coefficiencts should be 1 for all segments
-        a = self.c1 + self.c2 + self.c3
-        assert np.allclose(a, 1), 'Muskingum coefficients do not approximately sum to 1'
+        # sum of muskingum coefficients should be 1 for all segments
+        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not approximately sum to 1'
         return
 
     def route(self) -> None:
         """
         Performs time-iterative runoff routing through the river network
         """
-        logging.info('Beginning routing')
+        logging.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
         self.validate_configs()
-        self.make_adjacency_matrix()
+        self.set_adjacency_matrix()
         self.calculate_muskingum_coefficients()
 
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
@@ -294,13 +302,25 @@ class RouteMuskingum:
             inflow_t = (self.A @ q_t) + r_t
 
             if self.conf.get('routing_method', 'analytical') == 'analytical':
-                self.make_lhs_inv_matrix()
+                self.set_lhs_inv_matrix()
                 outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
             elif self.conf.get('routing_method', 'analytical') == 'numerical':
-                self.make_lhs_matrix()
+                self.set_lhs_matrix()
                 outflow_array = self._numerical_solution(dates, runoffs, q_t, r_t, inflow_t)
             else:
                 raise ValueError('routing_method must be either analytical or numerical')
+
+            if self.dt_outflow > self.dt_runoff:
+                logging.info('Resampling dates and outflows to specified timestep')
+                outflow_array = (
+                    outflow_array
+                    .reshape((
+                        int(self.dt_total / self.dt_outflow),
+                        int(self.dt_outflow / self.dt_runoff),
+                        self.A.shape[0],
+                    ))
+                    .mean(axis=1)
+                )
 
             logging.info('Writing Outflow Array to File')
             outflow_array = np.round(outflow_array, decimals=2)
@@ -315,7 +335,7 @@ class RouteMuskingum:
             pd.DataFrame(self.rinit, columns=['R', ]).astype(float).to_parquet(self.conf['rfinal_file'])
 
         t2 = datetime.datetime.now()
-        logging.info('All routing computation loops completed')
+        logging.info('All runoff files routed')
         logging.info(f'Total routing time: {(t2 - t1).total_seconds()}')
         return
 
@@ -325,14 +345,14 @@ class RouteMuskingum:
                              q_t: np.array,
                              r_t: np.array,
                              inflow_t: np.array) -> np.array:
-        outflow_array = np.zeros((self.num_outflow_steps, self.A.shape[0]))
+        outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
         logging.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
         for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
             r_t = runoffs[inflow_time_step, :]
-            interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
-            for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
+            interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
+            for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
                 inflow_tnext = (self.A @ q_t) + r_t
                 q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
                 interval_flows[routing_substep_iteration, :] = q_t
@@ -353,7 +373,7 @@ class RouteMuskingum:
                             q_t: np.array,
                             r_t: np.array,
                             inflow_t: np.array) -> np.array:
-        outflow_array = np.zeros((self.num_outflow_steps, self.A.shape[0]))
+        outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
         logging.info('Creating PETSc arrays')
         self.lhs = scipy.sparse.csr_matrix(self.lhs)
@@ -367,7 +387,7 @@ class RouteMuskingum:
         ksp.setTolerances(rtol=1e-5)
         ksp.setOperators(A)
 
-        # Define a preconditioner if specified in confg
+        # Define a preconditioner if specified in config
         if self.conf.get('petsc_pc_type', ''):
             pc = PETSc.PC().create()
             pc.setType(self.conf['petsc_pc_type'])
@@ -379,8 +399,8 @@ class RouteMuskingum:
         t1 = datetime.datetime.now()
         for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
             r_t = runoffs[inflow_time_step, :]
-            interval_flows = np.zeros((self.num_routing_substeps_per_outflow, self.A.shape[0]))
-            for routing_substep_iteration in range(self.num_routing_substeps_per_outflow):
+            interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
+            for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
                 inflow_tnext = (self.A @ q_t) + r_t
                 rhs = (self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t)
                 inflow_t = inflow_tnext
@@ -407,24 +427,27 @@ class RouteMuskingum:
         return outflow_array
 
     def write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
-        pydates = list(map(datetime.datetime.utcfromtimestamp, dates.astype(int)))
+        reference_date = datetime.datetime.utcfromtimestamp(dates[0].astype(int))
+        dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
+        dates = dates - dates[0]
+
         with nc.Dataset(outflow_file, mode='w') as ds:
             ds.createDimension('time', size=dates.shape[0])
             ds.createDimension('rivid', size=self.A.shape[0])
 
             ds.createVariable('time', 'f8', ('time',))
-            ds['time'].units = f'seconds since {pydates[0].strftime("%Y-%m-%d %H:%M:%S")}'
-            ds['time'][:] = nc.date2num(pydates, units=ds['time'].units)
+            ds['time'].units = f'seconds since {reference_date.strftime("%Y-%m-%d %H:%M:%S")}'
+            ds['time'][:] = dates
 
             ds.createVariable('rivid', 'i4', ('rivid',))
             ds['rivid'][:] = self.read_riverids()
 
             ds.createVariable('Qout', 'f4', ('time', 'rivid'))
-            ds['Qout'].units = 'm3 s-1'
+            ds['Qout'][:] = outflow_array
             ds['Qout'].long_name = 'Discharge at the outlet of each river reach'
             ds['Qout'].standard_name = 'discharge'
             ds['Qout'].aggregation_method = 'mean'
-            ds['Qout'][:] = outflow_array
+            ds['Qout'].units = 'm3 s-1'
         return
 
     def plot(self, rivid: int) -> None:
@@ -435,15 +458,17 @@ class RouteMuskingum:
 
     def mass_balance(self, rivid: int) -> None:
         self.validate_configs()
-        self.make_adjacency_matrix()
+        self.set_adjacency_matrix()
 
-        upstream_ids = nx.ancestors(self.G, rivid)
+        G = self.get_directed_graph()
+        watershed_ids = nx.ancestors(G, rivid).union({rivid, })
 
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].groupby('time').sum().cumsum()
-            out_df = out_df * self.conf['dt_routing'] * self.num_routing_substeps_per_outflow
+            dt_outflow = (ds['time'].values[1] - ds['time'].values[0]).astype('timedelta64[s]').astype(int)
+            out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
+            out_df['Qout'] = out_df['Qout'] * dt_outflow
         with xr.open_mfdataset(self.conf['runoff_file']) as ds:
-            in_df = ds.sel(rivid=list(upstream_ids)).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
+            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
 
         df = out_df.merge(in_df, left_index=True, right_index=True)
         logging.info(f'\n{df.sum()}')
