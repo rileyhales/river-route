@@ -422,7 +422,7 @@ class Muskingum:
         x.destroy()
         b.destroy()
         ksp.destroy()
-        pc.destroy() if self.conf.get('petsc_pc_type', '') else None
+        pc.destroy() if self.conf.get('petsc_pc_type', '') else None  # noqa
 
         return outflow_array
 
@@ -474,3 +474,10 @@ class Muskingum:
         logging.info(f'\n{df.sum()}')
         df.plot()
         plt.show()
+
+    def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
+        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
+            df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
+            df.columns = [rivid, ]
+        df.to_csv(csv_path)
+        return
