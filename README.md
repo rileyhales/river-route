@@ -3,6 +3,10 @@
 `river-route` is a Python package for routing runoff through a river network.
 The routing calculations are vectorized and use numpy and scipy which keeps the array computation times on par with faster compiled languages. 
 
+Runoff Transformation Methods:
+- Muskingum Cunge
+- Unit Hydrograph
+
 The implemented routing methods are:
 - Muskingum Cunge - Analytical solution
 - Muskingum Cunge - Numerical solution
@@ -13,7 +17,7 @@ You will need to prepare a configuration file for the routing.
 ```python
 import river_route as rr
 
-rm = rr.Muskingum('/path/to/config.yml')
+rm = rr.MuskingumCunge('/path/to/config.yml')
 rm.route()
 
 river_id_to_inspect = 12345

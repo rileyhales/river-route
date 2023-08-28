@@ -16,7 +16,7 @@ import yaml
 from petsc4py import PETSc
 
 
-class Muskingum:
+class MuskingumCunge:
     # Given configs
     conf: dict
 
