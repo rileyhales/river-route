@@ -144,19 +144,21 @@ class UnitHydrograph:
 
             # todo read UH from file
             # todo check the uh time deltas within
-            uh = np.array([0, .05, .15, .40, .20, .125, .05, .025, 0]).reshape(-1, 1)
+            uhseries = [0, .075, .15, .225, .20, .125, .075, .05, 0.25, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+            uh = np.array(uhseries).reshape(-1, 1) / sum(uhseries) / dt_uh
             uh = np.broadcast_to(uh, (uh.shape[0], runoffs.shape[1]))
 
-            Qro = np.concatenate(
-                [np.convolve(np.repeat(runoffs[:, i], num_uh_steps_per_runoff, axis=0), uh[:, i]).reshape(-1, 1)
-                 for i in tqdm.tqdm(range(runoffs.shape[1]), desc='River Segment Convolutions')],
-                axis=1
-            )
+            Qro = np.concatenate([
+                np
+                .convolve(np.repeat(runoffs[:, i], num_uh_steps_per_runoff, axis=0), uh[:, i], mode='same')
+                .reshape(-1, 1)
+                for i in tqdm.tqdm(range(runoffs.shape[1]), desc='River Segment Convolutions')
+            ], axis=1)
 
             Qro = (
                 Qro
                 .reshape((
-                    -1,
+                    runoffs.shape[0],
                     num_uh_steps_per_runoff,
                     runoffs.shape[1],
                 ))
@@ -165,6 +167,7 @@ class UnitHydrograph:
                 [:dates.shape[0], :]  # clip to the date of the last runoff
             )
 
+        # todo read lag time from routing params file
         lag_times = np.random.randint(1, 10, size=runoffs.shape[1])
         lag_times = lag_times * dt_uh
 
@@ -178,7 +181,7 @@ class UnitHydrograph:
                 np.roll(
                     np.pad(
                         Qro
-                        [:, (self.A[column, :] == 1).toarray().squeeze()]  # select columns representing upstream segments
+                        [:, (self.A[column, :] == 1).toarray().squeeze()]  # select columns of upstream segments
                         .sum(axis=1),  # sum the upstream flows
                         lag_index_steps[column],
                         mode='constant',
