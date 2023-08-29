@@ -120,6 +120,12 @@ class UnitHydrograph:
         """
         return pd.read_parquet(self.conf['routing_params_file'], columns=['rivid', ]).values.flatten()
 
+    def read_lag_times(self) -> np.array:
+        """
+        Reads lag times vector from parquet given in config file
+        """
+        return pd.read_parquet(self.conf['routing_params_file'], columns=['lag_time', ]).values.flatten()
+
     def route(self) -> None:
         """
         Performs time-iterative runoff routing through the river network
@@ -167,45 +173,27 @@ class UnitHydrograph:
                 [:dates.shape[0], :]  # clip to the date of the last runoff
             )
 
-        # todo read lag time from routing params file
-        lag_times = np.random.randint(1, 10, size=runoffs.shape[1])
-        lag_times = lag_times * dt_uh
+            lag_index_steps = (self.read_lag_times() / dt_uh).astype(int)
 
-        lag_index_steps = lag_times / dt_uh
-        lag_index_steps = lag_index_steps.astype(int)
-
-        # for each row of Qro, add the upstreams rows from Qro but offset by the lag time for the current row
-        for column in tqdm.tqdm(range(Qro.shape[1]), desc='Lagging Upstream Flows'):
-            # select the rows from Qro which have a value of 1 in the adjacency matrix
-            Qro[:, column] += (
-                np.roll(
-                    np.pad(
-                        Qro
-                        [:, (self.A[column, :] == 1).toarray().squeeze()]  # select columns of upstream segments
-                        .sum(axis=1),  # sum the upstream flows
-                        lag_index_steps[column],
-                        mode='constant',
-                        constant_values=0  # pad with zeros
-                    ),
-                    lag_index_steps[column]
+            # for each row of Qro, add the upstreams rows from Qro but offset by the lag time for the current row
+            for column in tqdm.tqdm(range(Qro.shape[1]), desc='Lagging Upstream Flows'):
+                # select the rows from Qro which have a value of 1 in the adjacency matrix
+                Qro[:, column] += (
+                    np.roll(
+                        np.pad(
+                            Qro
+                            [:, (self.A[column, :] == 1).toarray().squeeze()]  # select columns of upstream segments
+                            .sum(axis=1),  # sum the upstream flows
+                            lag_index_steps[column],
+                            mode='constant',
+                            constant_values=0  # pad with zeros
+                        ),
+                        lag_index_steps[column]
+                    )
+                    [:Qro.shape[0]]  # clip to the length of Qro
                 )
-                [:Qro.shape[0]]  # clip to the length of Qro
-            )
 
-        # # As a list comprehension for speed but more memory usage
-        # Qro = np.array([
-        #     Qro[row, :] + (
-        #         Qro
-        #         [:, self.A[row, :] == 1]  # select columns representing upstream segments
-        #         .sum()  # sum the upstream flows
-        #         .pad(lag_index_steps[row], mode='constant', constant_values=0)  # pad with zeros
-        #         .roll(lag_index_steps[row])  # roll row putting zeros at the end
-        #         [:Qro.shape[0]]  # clip to the length of Qro
-        #     )
-        #     for row in tqdm.tqdm(range(Qro.shape[0]), desc='Lagging Upstream Flows')
-        # ])
-
-        self.write_outflows(outflow_file, dates, Qro)
+            self.write_outflows(outflow_file, dates, Qro)
 
         t2 = datetime.datetime.now()
         logging.info('All UH Convolutions Completed')
