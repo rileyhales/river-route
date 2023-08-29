@@ -6,6 +6,7 @@ import sys
 
 import matplotlib.pyplot as plt
 import netCDF4 as nc
+import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy
@@ -28,6 +29,43 @@ class UnitHydrograph:
         Read config files to initialize routing class
         """
         self.read_configs(config_file, **kwargs)
+        return
+
+    def read_connectivity(self) -> pd.DataFrame:
+        """
+        Reads connectivity matrix from parquet given in config file
+        """
+        return pd.read_parquet(self.conf['connectivity_file'])
+
+    def get_directed_graph(self) -> nx.DiGraph:
+        """
+        Returns a directed graph of the river network
+        """
+        df = self.read_connectivity()
+        G = nx.DiGraph()
+        G.add_edges_from(df.values)
+        return G
+
+    def set_adjacency_matrix(self) -> None:
+        """
+        Calculate the adjacency array from the connectivity file
+        """
+        if hasattr(self, 'A'):
+            return
+
+        if os.path.exists(self.conf.get('adj_file', '')):
+            logging.info('Loading adjacency matrix from file')
+            self.A = scipy.sparse.load_npz(self.conf['adj_file'])
+            return
+
+        logging.info('Calculating Network Adjacency Matrix (A)')
+        G = self.get_directed_graph()
+        sorted_order = list(nx.topological_sort(G))
+        if -1 in sorted_order:
+            sorted_order.remove(-1)
+        self.A = scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(G, nodelist=sorted_order).T)
+        if self.conf.get('adj_file', ''):
+            scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
     def read_configs(self, config_file, **kwargs) -> None:
@@ -86,6 +124,7 @@ class UnitHydrograph:
         """
         Performs time-iterative runoff routing through the river network
         """
+        self.set_adjacency_matrix()
         logging.info('Beginning UH Transform')
         t1 = datetime.datetime.now()
 
@@ -126,7 +165,44 @@ class UnitHydrograph:
                 [:dates.shape[0], :]  # clip to the date of the last runoff
             )
 
-            self.write_outflows(outflow_file, dates, Qro)
+        lag_times = np.random.randint(1, 10, size=runoffs.shape[1])
+        lag_times = lag_times * dt_uh
+
+        lag_index_steps = lag_times / dt_uh
+        lag_index_steps = lag_index_steps.astype(int)
+
+        # for each row of Qro, add the upstreams rows from Qro but offset by the lag time for the current row
+        for column in tqdm.tqdm(range(Qro.shape[1]), desc='Lagging Upstream Flows'):
+            # select the rows from Qro which have a value of 1 in the adjacency matrix
+            Qro[:, column] += (
+                np.roll(
+                    np.pad(
+                        Qro
+                        [:, (self.A[column, :] == 1).toarray().squeeze()]  # select columns representing upstream segments
+                        .sum(axis=1),  # sum the upstream flows
+                        lag_index_steps[column],
+                        mode='constant',
+                        constant_values=0  # pad with zeros
+                    ),
+                    lag_index_steps[column]
+                )
+                [:Qro.shape[0]]  # clip to the length of Qro
+            )
+
+        # # As a list comprehension for speed but more memory usage
+        # Qro = np.array([
+        #     Qro[row, :] + (
+        #         Qro
+        #         [:, self.A[row, :] == 1]  # select columns representing upstream segments
+        #         .sum()  # sum the upstream flows
+        #         .pad(lag_index_steps[row], mode='constant', constant_values=0)  # pad with zeros
+        #         .roll(lag_index_steps[row])  # roll row putting zeros at the end
+        #         [:Qro.shape[0]]  # clip to the length of Qro
+        #     )
+        #     for row in tqdm.tqdm(range(Qro.shape[0]), desc='Lagging Upstream Flows')
+        # ])
+
+        self.write_outflows(outflow_file, dates, Qro)
 
         t2 = datetime.datetime.now()
         logging.info('All UH Convolutions Completed')
