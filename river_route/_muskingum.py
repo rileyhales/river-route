@@ -46,9 +46,12 @@ class MuskingumCunge:
         self.read_configs(config_file, **kwargs)
         return
 
+    def __repr__(self):
+        return f'rr.MuskingumCunge({self.conf["job_name"]})'
+
     def read_configs(self, config_file, **kwargs) -> None:
         """
-        Validate simulation configuration file
+        Read values from simulation configuration file
         """
         # read the config file
         if config_file.endswith('.json'):
@@ -94,6 +97,9 @@ class MuskingumCunge:
         return
 
     def validate_configs(self) -> None:
+        """
+        Validate simulation configs separate from read function to allow calling methods which do not need all options
+        """
         logging.info('Validating configs file')
         required_file_paths = ['routing_params_file',
                                'connectivity_file',
@@ -111,14 +117,25 @@ class MuskingumCunge:
                 raise FileNotFoundError(f'{arg} not found at given path')
         for path in self.conf['runoff_file']:
             assert os.path.exists(path), FileNotFoundError(f'runoff file not found at given path: {path}')
-
         return
 
-    def read_connectivity(self) -> pd.DataFrame:
+    def get_connectivity(self) -> pd.DataFrame:
         """
-        Reads connectivity matrix from parquet given in config file
+        Reads connectivity information from parquet given in config file
+
+        Connectivity is a 2-column dataframe. The first column is a river ID and the second the ID of
+        the segment to which it drains. Use -1 to indicate a drain.
         """
         return pd.read_parquet(self.conf['connectivity_file'])
+
+    def get_directed_graph(self) -> nx.DiGraph:
+        """
+        Returns a directed graph of the river network using the connectivity information
+        """
+        df = self.get_connectivity()
+        G = nx.DiGraph()
+        G.add_edges_from(df.values)
+        return G
 
     def get_routing_param(self, param: str) -> np.array:
         """
@@ -127,6 +144,9 @@ class MuskingumCunge:
         return pd.read_parquet(self.conf['routing_params_file'], columns=[param, ]).values.flatten()
 
     def get_qinit(self) -> np.array:
+        """
+        Reads the initial flow values from the qinit file and returns it as an array
+        """
         if hasattr(self, 'qinit'):
             return self.qinit
 
@@ -136,6 +156,9 @@ class MuskingumCunge:
         return pd.read_parquet(self.conf['qinit_file']).values.flatten()
 
     def get_rinit(self) -> np.array:
+        """
+        Reads the initial runoff values from the rinit file and returns it as an array
+        """
         if hasattr(self, 'rinit'):
             return self.rinit
 
@@ -144,16 +167,7 @@ class MuskingumCunge:
             return np.zeros(self.A.shape[0])
         return pd.read_parquet(self.conf['qinit_file']).values.flatten()
 
-    def get_directed_graph(self) -> nx.DiGraph:
-        """
-        Returns a directed graph of the river network
-        """
-        df = self.read_connectivity()
-        G = nx.DiGraph()
-        G.add_edges_from(df.values)
-        return G
-
-    def set_adjacency_matrix(self) -> None:
+    def _set_adjacency_matrix(self) -> None:
         """
         Calculate the adjacency array from the connectivity file
         """
@@ -166,7 +180,7 @@ class MuskingumCunge:
             return
 
         logging.info('Calculating Network Adjacency Matrix (A)')
-        G = self.get_directed_graph()
+        G = self.get_directed_graph()  # noqa
         sorted_order = list(nx.topological_sort(G))
         if -1 in sorted_order:
             sorted_order.remove(-1)
@@ -175,7 +189,7 @@ class MuskingumCunge:
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
-    def set_lhs_matrix(self) -> None:
+    def _set_lhs_matrix(self) -> None:
         """
         Calculate the LHS matrix for the routing problem
         """
@@ -194,7 +208,7 @@ class MuskingumCunge:
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
-    def set_time_params(self, dates: np.array) -> None:
+    def _set_time_params(self, dates: np.array) -> None:
         """
         Set time parameters for the simulation
         """
@@ -223,7 +237,7 @@ class MuskingumCunge:
         self.num_timesteps_resample = int(self.dt_outflow / self.dt_runoff)
         return
 
-    def calculate_muskingum_coefficients(self) -> None:
+    def _set_muskingum_coefficients(self) -> None:
         """
         Calculate the 3 Muskingum Cunge routing coefficients for each segment using given k and x
         """
@@ -252,15 +266,15 @@ class MuskingumCunge:
         t1 = datetime.datetime.now()
 
         self.validate_configs()
-        self.set_adjacency_matrix()
-        self.calculate_muskingum_coefficients()
-        self.set_lhs_matrix()
+        self._set_adjacency_matrix()
+        self._set_muskingum_coefficients()
+        self._set_lhs_matrix()
 
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
             logging.info(f'Reading Inflow Data: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                self.set_time_params(dates)
+                self._set_time_params(dates)
                 runoffs = runoff_ds['m3_riv'].values
                 runoffs[runoffs < 0] = np.nan
                 runoffs = np.nan_to_num(runoffs, nan=0.0)
@@ -362,7 +376,10 @@ class MuskingumCunge:
 
         return outflow_array
 
-    def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
+    def _write_outflows(self,
+                        outflow_file: str,
+                        dates: np.array,
+                        outflow_array: np.array, ) -> None:
         reference_date = datetime.datetime.utcfromtimestamp(dates[0].astype(int))
         dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
         dates = dates - dates[0]
