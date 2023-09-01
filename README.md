@@ -8,8 +8,7 @@ Runoff Transformation Methods:
 - Unit Hydrograph
 
 The implemented routing methods are:
-- Muskingum Cunge - Analytical solution
-- Muskingum Cunge - Numerical solution
+- Muskingum Cunge
 
 ## Quick Start Guide
 You will need to prepare a configuration file for the routing.
@@ -31,7 +30,7 @@ These tips may help you achieve faster results.
 1. **Use fewer inflow files**: File IO operations can be relatively slow and are a probable bottleneck on HPC systems 
 when I/O operations depend on networked drives. You may achieve faster results by doing a single computation 
 covering 2 weeks instead of 14 computations covering 1 day each.
-2. **Cache routing Matrices**: The adjacency matrix and inverted I-C2@A matrix can be time consuming to compute. Provide
+2. **Cache routing Matrices**: The adjacency matrix and inverted I-C1@A matrix can be time consuming to compute. Provide
 paths to store them in the config file to cache them between simulations
 3. **Adjust the time step**: Using a longer time step will reduce the number of computations which takes less time to 
 compute. It also requires storing fewer intermediate results in memory yielding a modest reduction in memory usage. A 

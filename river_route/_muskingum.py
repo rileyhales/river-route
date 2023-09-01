@@ -23,7 +23,6 @@ class MuskingumCunge:
     # Routing Matrices
     A: np.array or scipy.sparse.csc_matrix
     lhs: np.array or scipy.sparse.csc_matrix
-    lhsinv: np.array or scipy.sparse.csc_matrix
     c1: np.array
     c2: np.array
     c3: np.array
@@ -49,7 +48,7 @@ class MuskingumCunge:
 
     def read_configs(self, config_file, **kwargs) -> None:
         """
-        Validate simulation conf
+        Validate simulation configuration file
         """
         # read the config file
         if config_file.endswith('.json'):
@@ -90,6 +89,7 @@ class MuskingumCunge:
             log_basic_configs['filename'] = self.conf['log_file']
             log_basic_configs['filemode'] = 'w'
             log_basic_configs.pop('stream')
+            self.conf['progress_bar'] = False
         logging.basicConfig(**log_basic_configs)
         return
 
@@ -120,25 +120,13 @@ class MuskingumCunge:
         """
         return pd.read_parquet(self.conf['connectivity_file'])
 
-    def read_riverids(self) -> np.array:
+    def get_routing_param(self, param: str) -> np.array:
         """
-        Reads river ids vector from parquet given in config file
+        Reads a specific column from the routing parameters file and returns it as an array
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['rivid', ]).values.flatten()
+        return pd.read_parquet(self.conf['routing_params_file'], columns=[param, ]).values.flatten()
 
-    def read_k(self) -> np.array:
-        """
-        Reads K vector from parquet given in config file
-        """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
-
-    def read_x(self) -> np.array:
-        """
-        Reads X vector from parquet given in config file
-        """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
-
-    def read_qinit(self) -> np.array:
+    def get_qinit(self) -> np.array:
         if hasattr(self, 'qinit'):
             return self.qinit
 
@@ -147,7 +135,7 @@ class MuskingumCunge:
             return np.zeros(self.A.shape[0])
         return pd.read_parquet(self.conf['qinit_file']).values.flatten()
 
-    def read_rinit(self) -> np.array:
+    def get_rinit(self) -> np.array:
         if hasattr(self, 'rinit'):
             return self.rinit
 
@@ -200,32 +188,13 @@ class MuskingumCunge:
             return
 
         logging.info('Calculating LHS Matrix')
-        self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c2) @ self.A
+        self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c1) @ self.A
         self.lhs = self.lhs.tocsc()
         if self.conf.get('lhs_file', ''):
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
-    def set_lhs_inv_matrix(self) -> None:
-        """
-        Calculate the LHS matrix for the routing problem
-        """
-        if hasattr(self, 'lhsinv'):
-            return
-
-        if os.path.exists(self.conf.get('lhsinv_file', '')):
-            logging.info('Loading LHS Inverse matrix from file')
-            self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
-            return
-
-        self.set_lhs_matrix()
-        logging.info('Inverting LHS Matrix')
-        self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
-        if self.conf.get('lhsinv_file', ''):
-            scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
-        return
-
-    def set_time_params(self, dates: np.array):
+    def set_time_params(self, dates: np.array) -> None:
         """
         Set time parameters for the simulation
         """
@@ -260,8 +229,8 @@ class MuskingumCunge:
         """
         logging.info('Calculating Muskingum coefficients')
 
-        k = self.read_k()
-        x = self.read_x()
+        k = self.get_routing_param('k')
+        x = self.get_routing_param('x')
 
         dt_route_half = self.conf['dt_routing'] / 2
         kx = k * x
@@ -285,6 +254,7 @@ class MuskingumCunge:
         self.validate_configs()
         self.set_adjacency_matrix()
         self.calculate_muskingum_coefficients()
+        self.set_lhs_matrix()
 
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
             logging.info(f'Reading Inflow Data: {runoff_file}')
@@ -296,19 +266,11 @@ class MuskingumCunge:
                 runoffs = np.nan_to_num(runoffs, nan=0.0)
                 runoffs = runoffs / self.dt_runoff  # volume to volume/time
 
-            logging.info('Initializing arrays')
-            q_t = self.read_qinit()
-            r_t = self.read_rinit()
+            logging.info('Creating Initialization Values Arrays')
+            q_t = self.get_qinit()
+            r_t = self.get_rinit()
             inflow_t = (self.A @ q_t) + r_t
-
-            if self.conf.get('routing_method', 'analytical') == 'analytical':
-                self.set_lhs_inv_matrix()
-                outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
-            elif self.conf.get('routing_method', 'analytical') == 'numerical':
-                self.set_lhs_matrix()
-                outflow_array = self._numerical_solution(dates, runoffs, q_t, r_t, inflow_t)
-            else:
-                raise ValueError('routing_method must be either analytical or numerical')
+            outflow_array = self._compute_outflows(dates, runoffs, q_t, inflow_t)
 
             if self.dt_outflow > self.dt_runoff:
                 logging.info('Resampling dates and outflows to specified timestep')
@@ -324,7 +286,7 @@ class MuskingumCunge:
 
             logging.info('Writing Outflow Array to File')
             outflow_array = np.round(outflow_array, decimals=2)
-            self.write_outflows(outflow_file, dates, outflow_array)
+            self._write_outflows(outflow_file, dates, outflow_array)
 
         # write the final state to disc
         if self.conf.get('qfinal_file', False):
@@ -339,40 +301,11 @@ class MuskingumCunge:
         logging.info(f'Total routing time: {(t2 - t1).total_seconds()}')
         return
 
-    def _analytical_solution(self,
-                             dates: np.array,
-                             runoffs: np.array,
-                             q_t: np.array,
-                             r_t: np.array,
-                             inflow_t: np.array) -> np.array:
-        outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
-
-        logging.info('Performing routing computation iterations')
-        t1 = datetime.datetime.now()
-        for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
-            r_t = runoffs[inflow_time_step, :]
-            interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
-            for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
-                inflow_tnext = (self.A @ q_t) + r_t
-                q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
-                interval_flows[routing_substep_iteration, :] = q_t
-                inflow_t = inflow_tnext
-            interval_flows = np.mean(interval_flows, axis=0)
-            interval_flows = np.round(interval_flows, decimals=2)
-            outflow_array[inflow_time_step, :] = interval_flows
-        t2 = datetime.datetime.now()
-        logging.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-
-        self.qinit = q_t
-        self.rinit = r_t
-        return outflow_array
-
-    def _numerical_solution(self,
-                            dates: np.array,
-                            runoffs: np.array,
-                            q_t: np.array,
-                            r_t: np.array,
-                            inflow_t: np.array) -> np.array:
+    def _compute_outflows(self,
+                          dates: np.array,
+                          runoffs: np.array,
+                          q_t: np.array,
+                          inflow_t: np.array, ) -> np.array:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
         logging.info('Creating PETSc arrays')
@@ -397,16 +330,19 @@ class MuskingumCunge:
 
         logging.info('Performing routing solver iterations')
         t1 = datetime.datetime.now()
-        for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
+
+        if self.conf.get('progress_bar', False):
+            dates = tqdm.tqdm(dates, desc='Runoff Routed')
+
+        for inflow_time_step, inflow_end_date in enumerate(dates):
             r_t = runoffs[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
-                inflow_tnext = (self.A @ q_t) + r_t
-                rhs = (self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t)
-                inflow_t = inflow_tnext
+                rhs = (self.c1 * r_t) + (self.c2 * inflow_t) + (self.c3 * q_t)
                 b.setArray(rhs)
                 ksp.solve(b, x)
                 q_t = x.getArray()
+                inflow_t = (self.A @ q_t) + r_t  # set for next iteration
                 interval_flows[routing_substep_iteration, :] = q_t
             interval_flows = np.mean(interval_flows, axis=0)
             interval_flows = np.round(interval_flows, decimals=2)
@@ -415,7 +351,7 @@ class MuskingumCunge:
         logging.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
 
         self.qinit = q_t
-        self.rinit = r_t
+        self.rinit = r_t  # noqa
 
         logging.info('Cleaning up PETSc objects')
         A.destroy()
@@ -426,7 +362,7 @@ class MuskingumCunge:
 
         return outflow_array
 
-    def write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
+    def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.utcfromtimestamp(dates[0].astype(int))
         dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
         dates = dates - dates[0]
@@ -440,7 +376,7 @@ class MuskingumCunge:
             ds['time'][:] = dates
 
             ds.createVariable('rivid', 'i4', ('rivid',))
-            ds['rivid'][:] = self.read_riverids()
+            ds['rivid'][:] = self.get_routing_param('rivid')
 
             ds.createVariable('Qout', 'f4', ('time', 'rivid'))
             ds['Qout'][:] = outflow_array
@@ -456,28 +392,11 @@ class MuskingumCunge:
             plt.show()
         return
 
-    def mass_balance(self, rivid: int) -> None:
-        self.validate_configs()
-        self.set_adjacency_matrix()
-
-        G = self.get_directed_graph()
-        watershed_ids = nx.ancestors(G, rivid).union({rivid, })
-
-        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            dt_outflow = (ds['time'].values[1] - ds['time'].values[0]).astype('timedelta64[s]').astype(int)
-            out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
-            out_df['Qout'] = out_df['Qout'] * dt_outflow
-        with xr.open_mfdataset(self.conf['runoff_file']) as ds:
-            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
-
-        df = out_df.merge(in_df, left_index=True, right_index=True)
-        logging.info(f'\n{df.sum()}')
-        df.plot()
-        plt.show()
-
-    def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
+    def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> pd.DataFrame or None:
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
             df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
             df.columns = [rivid, ]
+        if csv_path is None:
+            return df
         df.to_csv(csv_path)
         return
