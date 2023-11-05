@@ -44,10 +44,10 @@ class Muskingum:
         """
         Read config files to initialize routing class
         """
-        self.read_configs(config_file, **kwargs)
+        self.config(config_file, **kwargs)
         return
 
-    def read_configs(self, config_file, **kwargs) -> None:
+    def config(self, config_file, **kwargs) -> None:
         """
         Validate simulation conf
         """
@@ -93,7 +93,7 @@ class Muskingum:
         logging.basicConfig(**log_basic_configs)
         return
 
-    def validate_configs(self) -> None:
+    def _validate_configs(self) -> None:
         logging.info('Validating configs file')
         required_file_paths = ['routing_params_file',
                                'connectivity_file',
@@ -114,31 +114,31 @@ class Muskingum:
 
         return
 
-    def read_connectivity(self) -> pd.DataFrame:
+    def _read_connectivity(self) -> pd.DataFrame:
         """
         Reads connectivity matrix from parquet given in config file
         """
         return pd.read_parquet(self.conf['connectivity_file'])
 
-    def read_riverids(self) -> np.array:
+    def _read_riverids(self) -> np.array:
         """
         Reads river ids vector from parquet given in config file
         """
         return pd.read_parquet(self.conf['routing_params_file'], columns=['rivid', ]).values.flatten()
 
-    def read_k(self) -> np.array:
+    def _read_k(self) -> np.array:
         """
         Reads K vector from parquet given in config file
         """
         return pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
 
-    def read_x(self) -> np.array:
+    def _read_x(self) -> np.array:
         """
         Reads X vector from parquet given in config file
         """
         return pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
 
-    def read_qinit(self) -> np.array:
+    def _read_qinit(self) -> np.array:
         if hasattr(self, 'qinit'):
             return self.qinit
 
@@ -147,25 +147,25 @@ class Muskingum:
             return np.zeros(self.A.shape[0])
         return pd.read_parquet(self.conf['qinit_file']).values.flatten()
 
-    def read_rinit(self) -> np.array:
+    def _read_rinit(self) -> np.array:
         if hasattr(self, 'rinit'):
             return self.rinit
 
-        rinit = self.conf.get('qinit_file', None)
+        rinit = self.conf.get('rinit_file', None)
         if rinit is None or rinit == '':
             return np.zeros(self.A.shape[0])
-        return pd.read_parquet(self.conf['qinit_file']).values.flatten()
+        return pd.read_parquet(self.conf['rinit_file']).values.flatten()
 
-    def get_directed_graph(self) -> nx.DiGraph:
+    def _get_directed_graph(self) -> nx.DiGraph:
         """
         Returns a directed graph of the river network
         """
-        df = self.read_connectivity()
+        df = self._read_connectivity()
         G = nx.DiGraph()
         G.add_edges_from(df.values)
         return G
 
-    def set_adjacency_matrix(self) -> None:
+    def _set_adjacency_matrix(self) -> None:
         """
         Calculate the adjacency array from the connectivity file
         """
@@ -178,7 +178,7 @@ class Muskingum:
             return
 
         logging.info('Calculating Network Adjacency Matrix (A)')
-        G = self.get_directed_graph()
+        G = self._get_directed_graph()
         sorted_order = list(nx.topological_sort(G))
         if -1 in sorted_order:
             sorted_order.remove(-1)
@@ -187,7 +187,7 @@ class Muskingum:
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
-    def set_lhs_matrix(self) -> None:
+    def _set_lhs_matrix(self) -> None:
         """
         Calculate the LHS matrix for the routing problem
         """
@@ -206,7 +206,7 @@ class Muskingum:
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
-    def set_lhs_inv_matrix(self) -> None:
+    def _set_lhs_inv_matrix(self) -> None:
         """
         Calculate the LHS matrix for the routing problem
         """
@@ -218,14 +218,14 @@ class Muskingum:
             self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
             return
 
-        self.set_lhs_matrix()
+        self._set_lhs_matrix()
         logging.info('Inverting LHS Matrix')
         self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
         if self.conf.get('lhsinv_file', ''):
             scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
         return
 
-    def set_time_params(self, dates: np.array):
+    def _set_time_params(self, dates: np.array):
         """
         Set time parameters for the simulation
         """
@@ -254,14 +254,14 @@ class Muskingum:
         self.num_timesteps_resample = int(self.dt_outflow / self.dt_runoff)
         return
 
-    def calculate_muskingum_coefficients(self) -> None:
+    def _calculate_muskingum_coefficients(self) -> None:
         """
         Calculate the 3 Muskingum Cunge routing coefficients for each segment using given k and x
         """
         logging.info('Calculating Muskingum coefficients')
 
-        k = self.read_k()
-        x = self.read_x()
+        k = self._read_k()
+        x = self._read_x()
 
         dt_route_half = self.conf['dt_routing'] / 2
         kx = k * x
@@ -282,30 +282,30 @@ class Muskingum:
         logging.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
-        self.validate_configs()
-        self.set_adjacency_matrix()
-        self.calculate_muskingum_coefficients()
+        self._validate_configs()
+        self._set_adjacency_matrix()
+        self._calculate_muskingum_coefficients()
 
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
             logging.info(f'Reading Inflow Data: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                self.set_time_params(dates)
+                self._set_time_params(dates)
                 runoffs = runoff_ds['m3_riv'].values
                 runoffs[runoffs < 0] = np.nan
                 runoffs = np.nan_to_num(runoffs, nan=0.0)
                 runoffs = runoffs / self.dt_runoff  # volume to volume/time
 
             logging.info('Initializing arrays')
-            q_t = self.read_qinit()
-            r_t = self.read_rinit()
+            q_t = self._read_qinit()
+            r_t = self._read_rinit()
             inflow_t = (self.A @ q_t) + r_t
 
             if self.conf.get('routing_method', 'analytical') == 'analytical':
-                self.set_lhs_inv_matrix()
+                self._set_lhs_inv_matrix()
                 outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
             elif self.conf.get('routing_method', 'analytical') == 'numerical':
-                self.set_lhs_matrix()
+                self._set_lhs_matrix()
                 outflow_array = self._numerical_solution(dates, runoffs, q_t, r_t, inflow_t)
             else:
                 raise ValueError('routing_method must be either analytical or numerical')
@@ -324,7 +324,7 @@ class Muskingum:
 
             logging.info('Writing Outflow Array to File')
             outflow_array = np.round(outflow_array, decimals=2)
-            self.write_outflows(outflow_file, dates, outflow_array)
+            self._write_outflows(outflow_file, dates, outflow_array)
 
         # write the final state to disc
         if self.conf.get('qfinal_file', False):
@@ -426,7 +426,7 @@ class Muskingum:
 
         return outflow_array
 
-    def write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
+    def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.utcfromtimestamp(dates[0].astype(int))
         dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
         dates = dates - dates[0]
@@ -440,7 +440,7 @@ class Muskingum:
             ds['time'][:] = dates
 
             ds.createVariable('rivid', 'i4', ('rivid',))
-            ds['rivid'][:] = self.read_riverids()
+            ds['rivid'][:] = self._read_riverids()
 
             ds.createVariable('Qout', 'f4', ('time', 'rivid'))
             ds['Qout'][:] = outflow_array
@@ -457,10 +457,10 @@ class Muskingum:
         return
 
     def mass_balance(self, rivid: int) -> None:
-        self.validate_configs()
-        self.set_adjacency_matrix()
+        self._validate_configs()
+        self._set_adjacency_matrix()
 
-        G = self.get_directed_graph()
+        G = self._get_directed_graph()
         watershed_ids = nx.ancestors(G, rivid).union({rivid, })
 
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
