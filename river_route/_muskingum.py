@@ -20,7 +20,7 @@ class Muskingum:
     # Given configs
     conf: dict
 
-    # Routing Matrices
+    # Routing matrices
     A: np.array or scipy.sparse.csc_matrix
     lhs: np.array or scipy.sparse.csc_matrix
     lhsinv: np.array or scipy.sparse.csc_matrix
@@ -40,45 +40,46 @@ class Muskingum:
     num_runoff_steps_per_outflow: int
     num_timesteps_resample: int
 
-    def __init__(self, config_file: str = None, **kwargs, ) -> None:
+    def __init__(self, config_file: str = None, **kwargs, ):
         """
-        Read config files to initialize routing class
+        Implements Matrix Muskingum routing
         """
-        self.config(config_file, **kwargs)
+        self.set_configs(config_file, **kwargs)
         return
 
-    def config(self, config_file, **kwargs) -> None:
+    def set_configs(self, config_file, **kwargs) -> None:
         """
         Validate simulation conf
         """
         # read the config file
-        if config_file.endswith('.json'):
+        if config_file is None or config_file == '':
+            self.conf = {}
+        elif config_file.endswith('.json'):
             with open(config_file, 'r') as f:
                 self.conf = json.load(f)
         elif config_file.endswith('.yml') or config_file.endswith('.yaml'):
             with open(config_file, 'r') as f:
                 self.conf = yaml.load(f, Loader=yaml.FullLoader)
-        elif config_file is None or config_file == '':
-            self.conf = {}
         else:
-            raise RuntimeError('Unrecognized simulation config file type')
+            raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
 
-        # overwrite configs with kwargs
+        # overwrite config file values with kwargs
         self.conf.update(kwargs)
 
+        # set default values for configs when possible
+        self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
+        self.conf['routing_method'] = self.conf.get('routing_method', 'numerical')
+
+        # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
             self.conf['runoff_file'] = [self.conf['runoff_file'], ]
         if isinstance(self.conf['outflow_file'], str):
             self.conf['outflow_file'] = [self.conf['outflow_file'], ]
-
         for arg in [k for k in self.conf.keys() if 'file' in k]:
             if isinstance(self.conf[arg], list):
-                self.conf[arg] = [
-                    os.path.abspath(os.path.join(os.path.dirname(config_file), f))
-                    if f.startswith('.') else f for f in self.conf[arg]
-                ]
-            elif self.conf[arg].startswith('.'):
-                self.conf[arg] = os.path.abspath(os.path.join(os.path.dirname(config_file), self.conf[arg]))
+                self.conf[arg] = [os.path.abspath(path) for path in self.conf[arg]]
+            elif isinstance(self.conf[arg], str):
+                self.conf[arg] = os.path.abspath(self.conf[arg])
 
         # start a logger
         log_basic_configs = {
@@ -95,12 +96,10 @@ class Muskingum:
 
     def _validate_configs(self) -> None:
         logging.info('Validating configs file')
-        required_file_paths = ['routing_params_file',
-                               'connectivity_file',
+        required_file_paths = ['connectivity_file',
                                'runoff_file',
                                'outflow_file', ]
-        paths_should_exist = ['routing_params_file',
-                              'connectivity_file', ]
+        paths_should_exist = ['connectivity_file', ]
         required_time_opts = ['dt_routing', ]
 
         for arg in required_file_paths + required_time_opts:
@@ -112,6 +111,12 @@ class Muskingum:
         for path in self.conf['runoff_file']:
             assert os.path.exists(path), FileNotFoundError(f'runoff file not found at given path: {path}')
 
+        return
+
+    def _log_configs(self) -> None:
+        logging.info('Configs:')
+        for k, v in self.conf.items():
+            logging.info(f'\t{k}: {v}')
         return
 
     def _read_connectivity(self) -> pd.DataFrame:
@@ -275,14 +280,19 @@ class Muskingum:
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not approximately sum to 1'
         return
 
-    def route(self) -> None:
+    def route(self, **kwargs) -> 'Muskingum':
         """
         Performs time-iterative runoff routing through the river network
         """
         logging.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
+        if len(kwargs) > 0:
+            logging.info('Updating configs with provided kwargs')
+            self.set_configs(**kwargs)
+
         self._validate_configs()
+        self._log_configs()
         self._set_adjacency_matrix()
         self._calculate_muskingum_coefficients()
 
@@ -301,10 +311,10 @@ class Muskingum:
             r_t = self._read_rinit()
             inflow_t = (self.A @ q_t) + r_t
 
-            if self.conf.get('routing_method', 'analytical') == 'analytical':
+            if self.conf['routing_method'] == 'analytical':
                 self._set_lhs_inv_matrix()
                 outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
-            elif self.conf.get('routing_method', 'analytical') == 'numerical':
+            elif self.conf['routing_method'] == 'numerical':
                 self._set_lhs_matrix()
                 outflow_array = self._numerical_solution(dates, runoffs, q_t, r_t, inflow_t)
             else:
@@ -336,15 +346,15 @@ class Muskingum:
 
         t2 = datetime.datetime.now()
         logging.info('All runoff files routed')
-        logging.info(f'Total routing time: {(t2 - t1).total_seconds()}')
-        return
+        logging.info(f'Total job time: {(t2 - t1).total_seconds()}')
+        return self
 
     def _analytical_solution(self,
                              dates: np.array,
                              runoffs: np.array,
                              q_t: np.array,
                              r_t: np.array,
-                             inflow_t: np.array) -> np.array:
+                             inflow_t: np.array, ) -> np.array:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
         logging.info('Performing routing computation iterations')
@@ -372,7 +382,7 @@ class Muskingum:
                             runoffs: np.array,
                             q_t: np.array,
                             r_t: np.array,
-                            inflow_t: np.array) -> np.array:
+                            inflow_t: np.array, ) -> np.array:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
         logging.info('Creating PETSc arrays')
