@@ -68,7 +68,8 @@ class Muskingum:
 
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
-        self.conf['routing_method'] = self.conf.get('routing_method', 'numerical')
+        self.conf['solver'] = self.conf.get('solver', 'numerical')
+        self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'preonly')
         self.conf['progress_bar'] = self.conf.get('progress_bar', True)
 
         # type and path checking on file paths
@@ -85,7 +86,7 @@ class Muskingum:
         # start a logger
         log_basic_configs = {
             'stream': sys.stdout,
-            'level': logging.INFO,
+            'level': logging.DEBUG,
             'format': '%(asctime)s %(message)s',
         }
         if self.conf.get('log_file', ''):
@@ -115,7 +116,7 @@ class Muskingum:
         return
 
     def _log_configs(self) -> None:
-        logging.info('Configs:')
+        logging.debug('Configs:')
         for k, v in self.conf.items():
             logging.debug(f'\t{k}: {v}')
         return
@@ -235,7 +236,7 @@ class Muskingum:
         """
         Set time parameters for the simulation
         """
-        logging.info('Setting time parameters')
+        logging.info('Setting and Validating time parameters')
         self.dt_runoff = (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
         self.dt_total = self.dt_runoff * dates.shape[0]
         self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
@@ -289,7 +290,7 @@ class Muskingum:
         t1 = datetime.datetime.now()
 
         if len(kwargs) > 0:
-            logging.info('Updating configs with provided kwargs')
+            logging.info('Updating configs with kwargs')
             self.set_configs(**kwargs)
 
         self._validate_configs()
@@ -312,14 +313,14 @@ class Muskingum:
             r_t = self._read_rinit()
             inflow_t = (self.A @ q_t) + r_t
 
-            if self.conf['routing_method'] == 'analytical':
+            if self.conf['solver'] == 'analytical':
                 self._set_lhs_inv_matrix()
                 outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
-            elif self.conf['routing_method'] == 'numerical':
+            elif self.conf['solver'] == 'numerical':
                 self._set_lhs_matrix()
                 outflow_array = self._numerical_solution(dates, runoffs, q_t, r_t, inflow_t)
             else:
-                raise ValueError('routing_method must be either analytical or numerical')
+                raise ValueError('solver must be either analytical or numerical')
 
             if self.dt_outflow > self.dt_runoff:
                 logging.info('Resampling dates and outflows to specified timestep')
@@ -396,8 +397,8 @@ class Muskingum:
 
         # Define a KSP (Krylov Subspace Projection) solver
         ksp = PETSc.KSP().create()
-        ksp.setType(self.conf.get('petsc_ksp_type', 'richardson'))
-        ksp.setTolerances(rtol=1e-5)
+        ksp.setType(self.conf['petsc_ksp_type'])
+        ksp.setTolerances(atol=1e-5)
         ksp.setOperators(A)
 
         # Define a preconditioner if specified in config
