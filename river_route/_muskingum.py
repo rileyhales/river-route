@@ -69,6 +69,7 @@ class Muskingum:
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['routing_method'] = self.conf.get('routing_method', 'numerical')
+        self.conf['progress_bar'] = self.conf.get('progress_bar', True)
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
@@ -116,7 +117,7 @@ class Muskingum:
     def _log_configs(self) -> None:
         logging.info('Configs:')
         for k, v in self.conf.items():
-            logging.info(f'\t{k}: {v}')
+            logging.debug(f'\t{k}: {v}')
         return
 
     def _read_connectivity(self) -> pd.DataFrame:
@@ -359,7 +360,9 @@ class Muskingum:
 
         logging.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
-        for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
+        if self.conf['progress_bar']:
+            dates = tqdm.tqdm(dates, desc='Runoff Routed')
+        for inflow_time_step, inflow_end_date in enumerate(dates):
             r_t = runoffs[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
@@ -407,7 +410,9 @@ class Muskingum:
 
         logging.info('Performing routing solver iterations')
         t1 = datetime.datetime.now()
-        for inflow_time_step, inflow_end_date in enumerate(tqdm.tqdm(dates, desc='Runoff Routed')):
+        if self.conf['progress_bar']:
+            dates = tqdm.tqdm(dates, desc='Runoff Routed')
+        for inflow_time_step, inflow_end_date in enumerate(dates):
             r_t = runoffs[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
