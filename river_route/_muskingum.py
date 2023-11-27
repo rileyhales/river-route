@@ -21,9 +21,9 @@ class Muskingum:
     conf: dict
 
     # Routing matrices
-    A: np.array or scipy.sparse.csc_matrix
-    lhs: np.array or scipy.sparse.csc_matrix
-    lhsinv: np.array or scipy.sparse.csc_matrix
+    A: scipy.sparse.csc_matrix
+    lhs: scipy.sparse.csc_matrix
+    lhsinv: scipy.sparse.csc_matrix
     c1: np.array
     c2: np.array
     c3: np.array
@@ -69,8 +69,9 @@ class Muskingum:
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['solver'] = self.conf.get('solver', 'numerical')
-        self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'preonly')
+        self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'richardson')
         self.conf['progress_bar'] = self.conf.get('progress_bar', True)
+        self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
@@ -87,7 +88,7 @@ class Muskingum:
         log_basic_configs = {
             'stream': sys.stdout,
             'level': logging.DEBUG,
-            'format': '%(asctime)s %(message)s',
+            'format': '%(asctime)s - %(levelname)s - %(message)s',
         }
         if self.conf.get('log_file', ''):
             log_basic_configs['filename'] = self.conf['log_file']
@@ -236,23 +237,27 @@ class Muskingum:
         """
         Set time parameters for the simulation
         """
-        logging.info('Setting and Validating time parameters')
+        logging.info('Setting and validating time parameters')
         self.dt_runoff = (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
         self.dt_total = self.dt_runoff * dates.shape[0]
         self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
         self.dt_routing = self.conf['dt_routing']
 
-        # check that time options have the correct sizes
-        assert self.dt_total >= self.dt_runoff, 'dt_total !>= dt_runoff'
-        assert self.dt_total >= self.dt_outflow, 'dt_total !>= dt_outflow'
-        assert self.dt_outflow >= self.dt_runoff, 'dt_outflow !>= dt_runoff'
-        assert self.dt_runoff >= self.dt_routing, 'dt_runoff !>= dt_routing'
+        try:
+            # check that time options have the correct sizes
+            assert self.dt_total >= self.dt_runoff, 'dt_total !>= dt_runoff'
+            assert self.dt_total >= self.dt_outflow, 'dt_total !>= dt_outflow'
+            assert self.dt_outflow >= self.dt_runoff, 'dt_outflow !>= dt_runoff'
+            assert self.dt_runoff >= self.dt_routing, 'dt_runoff !>= dt_routing'
 
-        # check that time options are evenly divisible
-        assert self.dt_total % self.dt_runoff == 0, 'dt_total must be a whole number multiple of dt_runoff'
-        assert self.dt_total % self.dt_outflow == 0, 'dt_total must be a whole number multiple of dt_outflow'
-        assert self.dt_outflow % self.dt_runoff == 0, 'dt_outflow must be a whole number multiple of dt_runoff'
-        assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be a whole number multiple of dt_routing'
+            # check that time options are evenly divisible
+            assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
+            assert self.dt_total % self.dt_outflow == 0, 'dt_total must be an integer multiple of dt_outflow'
+            assert self.dt_outflow % self.dt_runoff == 0, 'dt_outflow must be an integer multiple of dt_runoff'
+            assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
+        except AssertionError as e:
+            logging.error(e)
+            raise AssertionError('Time options are not valid')
 
         # set derived datetime parameters for computation cycles later
         self.num_runoff_steps_per_outflow = int(self.dt_outflow / self.dt_runoff)
@@ -299,16 +304,18 @@ class Muskingum:
         self._calculate_muskingum_coefficients()
 
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
-            logging.info(f'Reading Inflow Data: {runoff_file}')
+            logging.info(f'Reading runoff volumes file: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
+                logging.info('Reading time array')
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
                 self._set_time_params(dates)
-                runoffs = runoff_ds['m3_riv'].values
+                logging.info(f'Reading runoff array: {runoff_file}')
+                runoffs = runoff_ds[self.conf['runoff_volume_var']].values
                 runoffs[runoffs < 0] = np.nan
                 runoffs = np.nan_to_num(runoffs, nan=0.0)
                 runoffs = runoffs / self.dt_runoff  # volume to volume/time
 
-            logging.info('Initializing arrays')
+            logging.debug('Getting initial value arrays')
             q_t = self._read_qinit()
             r_t = self._read_rinit()
             inflow_t = (self.A @ q_t) + r_t
@@ -389,7 +396,7 @@ class Muskingum:
                             inflow_t: np.array, ) -> np.array:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
-        logging.info('Creating PETSc arrays')
+        logging.debug('Creating PETSc objects')
         self.lhs = scipy.sparse.csr_matrix(self.lhs)
         A = PETSc.Mat().createAIJ(size=self.lhs.shape, csr=(self.lhs.indptr, self.lhs.indices, self.lhs.data))
         x = PETSc.Vec().createSeq(size=self.lhs.shape[0])
@@ -413,6 +420,7 @@ class Muskingum:
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
             dates = tqdm.tqdm(dates, desc='Runoff Routed')
+
         for inflow_time_step, inflow_end_date in enumerate(dates):
             r_t = runoffs[inflow_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
@@ -433,7 +441,7 @@ class Muskingum:
         self.qinit = q_t
         self.rinit = r_t
 
-        logging.info('Cleaning up PETSc objects')
+        logging.debug('Cleaning up PETSc objects')
         A.destroy()
         x.destroy()
         b.destroy()
@@ -443,7 +451,7 @@ class Muskingum:
         return outflow_array
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
-        reference_date = datetime.datetime.utcfromtimestamp(dates[0].astype(int))
+        reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
         dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
         dates = dates - dates[0]
 
@@ -484,7 +492,7 @@ class Muskingum:
             out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
             out_df['Qout'] = out_df['Qout'] * dt_outflow
         with xr.open_mfdataset(self.conf['runoff_file']) as ds:
-            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[['m3_riv', ]].groupby('time').sum().cumsum()
+            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[[self.conf['runoff_volume_var'], ]].groupby('time').sum().cumsum()
 
         df = out_df.merge(in_df, left_index=True, right_index=True)
         logging.info(f'\n{df.sum()}')
