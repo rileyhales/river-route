@@ -35,8 +35,6 @@ setup(
         'Topic :: Scientific/Engineering :: Hydrology',
     ],
     entry_points={
-        'console_scripts': [
-            'rr=river_route.cli:main',
-        ]
+        'console_scripts': ['river-route=river_route._cli:main', ]
     },
 )
