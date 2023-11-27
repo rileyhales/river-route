@@ -1,7 +1,8 @@
 # simulation management and debugging - Optional
 job_name: 'test_suite'
 log_file: ''
-routing_method: 'analytical'  # 'analytical' or 'numerical'
+routing_method: 'numerical'  # 'analytical' or 'numerical'
+progress_bar: True
 # paths to watershed files - Required
 routing_params_file: './inputs/route_params.parquet'
 connectivity_file: './inputs/connectivity.parquet'
@@ -22,5 +23,6 @@ qfinal_file: './outputs/qfinal.parquet'
 rfinal_file: './outputs/rfinal.parquet'
 # runoff inflows - Required - list of absolute path strings even if only one file
 runoff_file: './inflows/runoff_test.nc'
+runoff_volume_var: 'm3_riv'
 # routed discharge outputs - Required - list of absolute path strings even if only one file
 outflow_file: './outputs/qout.nc'

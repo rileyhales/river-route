@@ -397,7 +397,6 @@ class Muskingum:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
         logging.debug('Creating PETSc objects')
-        self.lhs = scipy.sparse.csr_matrix(self.lhs)
         A = PETSc.Mat().createAIJ(size=self.lhs.shape, csr=(self.lhs.indptr, self.lhs.indices, self.lhs.data))
         x = PETSc.Vec().createSeq(size=self.lhs.shape[0])
         b = PETSc.Vec().createSeq(size=self.lhs.shape[0])
