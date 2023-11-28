@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 
 
@@ -21,6 +23,9 @@ def configs_from_rapid(riv_bas_id: str,
     Returns:
         None
     """
+    for f in [riv_bas_id, k, x, rapid_connect]:
+        assert os.path.isfile(f), FileNotFoundError(f)
+
     pd.concat([
         pd.read_csv(riv_bas_id, header=None, names=['rivid']),
         pd.read_csv(x, header=None, names=['x']),
