@@ -66,6 +66,13 @@ class Muskingum:
         # overwrite config file values with kwargs
         self.conf.update(kwargs)
 
+        # set default values for required arguments
+        required_args = {'routing_params_file', 'connectivity_file', 'runoff_file', 'outflow_file', 'dt_routing', }
+        for arg in required_args:
+            self.conf[arg] = self.conf.get(arg, None)
+            if self.conf[arg] is None:
+                logging.warning(f'Required parameter "{arg}" not given in config file or by kwargs')
+
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['solver'] = self.conf.get('solver', 'numerical')
@@ -238,10 +245,10 @@ class Muskingum:
         Set time parameters for the simulation
         """
         logging.info('Setting and validating time parameters')
-        self.dt_runoff = (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
-        self.dt_total = self.dt_runoff * dates.shape[0]
-        self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
         self.dt_routing = self.conf['dt_routing']
+        self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
+        self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
+        self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
 
         try:
             # check that time options have the correct sizes
@@ -491,7 +498,8 @@ class Muskingum:
             out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
             out_df['Qout'] = out_df['Qout'] * dt_outflow
         with xr.open_mfdataset(self.conf['runoff_file']) as ds:
-            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[[self.conf['runoff_volume_var'], ]].groupby('time').sum().cumsum()
+            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[[self.conf['runoff_volume_var'], ]].groupby(
+                'time').sum().cumsum()
 
         df = out_df.merge(in_df, left_index=True, right_index=True)
         logging.info(f'\n{df.sum()}')
