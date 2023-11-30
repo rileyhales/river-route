@@ -66,19 +66,13 @@ class Muskingum:
         # overwrite config file values with kwargs
         self.conf.update(kwargs)
 
-        # set default values for required arguments
-        required_args = {'routing_params_file', 'connectivity_file', 'runoff_file', 'outflow_file', 'dt_routing', }
-        for arg in required_args:
-            self.conf[arg] = self.conf.get(arg, None)
-            if self.conf[arg] is None:
-                logging.warning(f'Required parameter "{arg}" not given in config file or by kwargs')
-
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['solver'] = self.conf.get('solver', 'numerical')
         self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'richardson')
         self.conf['progress_bar'] = self.conf.get('progress_bar', True)
         self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
+        self.conf['dt_routing'] = self.conf.get('dt_routing', 300)
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
@@ -114,7 +108,7 @@ class Muskingum:
 
         for arg in required_file_paths + required_time_opts:
             if arg not in self.conf:
-                raise ValueError(f'{arg} not found in config file')
+                raise ValueError(f'{arg} not found in configs')
         for arg in paths_should_exist:
             if not os.path.exists(self.conf[arg]):
                 raise FileNotFoundError(f'{arg} not found at given path')
@@ -480,13 +474,11 @@ class Muskingum:
             ds['Qout'].units = 'm3 s-1'
         return
 
-    def plot(self, rivid: int) -> None:
+    def plot(self, rivid: int) -> plt.Figure:
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
-            plt.show()
-        return
+            return ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
 
-    def mass_balance(self, rivid: int) -> None:
+    def mass_balance(self, rivid: int) -> plt.Figure:
         self._validate_configs()
         self._set_adjacency_matrix()
 
@@ -498,13 +490,19 @@ class Muskingum:
             out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
             out_df['Qout'] = out_df['Qout'] * dt_outflow
         with xr.open_mfdataset(self.conf['runoff_file']) as ds:
-            in_df = ds.sel(rivid=list(watershed_ids)).to_dataframe()[[self.conf['runoff_volume_var'], ]].groupby(
-                'time').sum().cumsum()
+            in_df = (
+                ds
+                .sel(rivid=list(watershed_ids))
+                .to_dataframe()
+                [[self.conf['runoff_volume_var'], ]]
+                .groupby('time')
+                .sum()
+                .cumsum()
+            )
 
         df = out_df.merge(in_df, left_index=True, right_index=True)
         logging.info(f'\n{df.sum()}')
-        df.plot()
-        plt.show()
+        return df.plot()
 
     def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
