@@ -10,6 +10,7 @@ dependencies:
   - networkx
   - numpy
   - pandas
+  - petsc
   - petsc4py
   - pyyaml
   - scipy
