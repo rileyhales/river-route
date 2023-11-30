@@ -474,11 +474,14 @@ class Muskingum:
             ds['Qout'].units = 'm3 s-1'
         return
 
-    def plot(self, rivid: int) -> plt.Figure:
+    def plot(self, rivid: int, show: bool = False) -> plt.Figure:
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            return ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
+            figure = ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
+        if show:
+            plt.show()
+        return figure
 
-    def mass_balance(self, rivid: int) -> plt.Figure:
+    def mass_balance(self, rivid: int, show: bool = False) -> plt.Figure:
         self._validate_configs()
         self._set_adjacency_matrix()
 
@@ -502,7 +505,10 @@ class Muskingum:
 
         df = out_df.merge(in_df, left_index=True, right_index=True)
         logging.info(f'\n{df.sum()}')
-        return df.plot()
+        figure = df.plot()
+        if show:
+            plt.show()
+        return figure
 
     def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
