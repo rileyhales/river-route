@@ -16,6 +16,5 @@
   "qinit_file": {"required": false, "help": "Path to the initial flows file.", "type": "string"},
   "rinit_file": {"required": false, "help": "Path to the initial runoff file.", "type": "string"},
   "qfinal_file": {"required": false, "help": "Path where the final flows file should be saved.", "type": "string"},
-  "rfinal_file": {"required": false, "help": "Path where the final runoff file should be saved.", "type": "string"},
-  "runoff_volume_var": {"required": false, "help": "Name of the runoff volume variable in the runoff file.", "type": "string"}
+  "rfinal_file": {"required": false, "help": "Path where the final runoff file should be saved.", "type": "string"}
 }
