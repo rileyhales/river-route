@@ -10,6 +10,7 @@ The implemented routing methods are:
 - Matrix Form Muskingum Cunge - Numerical solution
 
 ## Quick Start Guide
+
 You will need to prepare a configuration file for the routing.
 
 ```python
@@ -21,6 +22,7 @@ import river_route as rr
     .route()
 )
 ```
+
 ## Configuration File
 
 The minimum required inputs in the configuration file are:
@@ -55,7 +57,6 @@ You can modify how the routing computations are performed with these parameters:
 
 - `routing_method` - method for solving routing equations: 'numerical' or 'analytical'. Defaults to 'numerical'.
 - `petsc_ksp_type` - name of the PETSC solver used when using the numerical solution. Recommend 'preonly' if you have a well-prepared network and 'richardson' otherwise.
-
 
 A diagram of the possible configuration file parameters and their role in the routing computations is shown below.
 
@@ -104,7 +105,7 @@ Inputs & TimeParameters & Initialization ==> Routing
 Routing ==> Result & CachedFiles
 ```
 
-| Parameter Name      | Required | Type      | Group                  | Help                                                               |                                                                                
+| Parameter Name      | Required | Type      | Group                  | Description                                                        |                                                                                
 |---------------------|----------|-----------|------------------------|--------------------------------------------------------------------|
 | routing_params_file | True     | File Path | Stream Network Details | Path to the routing parameters parquet file.                       |                                                
 | connectivity_file   | True     | File Path | Stream Network Details | Path to the network connectivity parquet file.                     |                                              
@@ -114,8 +115,8 @@ Routing ==> Result & CachedFiles
 | dt_outflows         | False    | Integer   | Time Parameter         | Time interval in seconds between writing flows to disc.            |                             
 | qinit_file          | False    | File Path | Initialization Data    | Path to the initial flows file.                                    |                                                     
 | rinit_file          | False    | File Path | Initialization Data    | Path to the initial runoff file.                                   |                                                    
-| qfinal_file         | False    | File Path | Output File Path       | Path where the final flows file should be saved.                   |                                    
-| rfinal_file         | False    | File Path | Output File Path       | Path where the final runoff file should be saved.                  |                                   
+| qfinal_file         | False    | File Path | Cachable State File    | Path where the final flows file should be saved.                   |                                    
+| rfinal_file         | False    | File Path | Cachable State File    | Path where the final runoff file should be saved.                  |                                   
 | lhs_file            | False    | File Path | Cachable Network File  | Path where the LHS matrix should be cached.                        |                                         
 | lhsinv_file         | False    | File Path | Cachable Network File  | Path where the LHS inverse matrix should be cached.                |                                 
 | adj_file            | False    | File Path | Cachable Network File  | Path where the adjacency matrix should be cached.                  |                                   
@@ -124,6 +125,28 @@ Routing ==> Result & CachedFiles
 | progress_bar        | False    | Boolean   | Logging Options        | Display a computations progress bar in logs: true or false.        | 
 | routing_method      | False    | String    | Solving Options        | Method for solving routing equations: 'numerical' or 'analytical'. |       
 | petsc_ksp_type      | False    | String    | Solving Options        | Name of the PETSC solver used when using the numerical solution.   | 
+
+## Input File Schema
+
+### Routing Parameters
+
+The routing parameters file is a parquet file with 3 columns and 1 row per river in the watershed. The index is ignored
+index.
+
+| Column | Data Type | Description                                                             |
+|--------|-----------|-------------------------------------------------------------------------|
+| rivid  | integer   | Unique ID of a river segment                                            |
+| k      | float     | the k parameter of the Muskingum Cunge routing equation length / velocity |
+| x      | float     | the x parameter of the Muskingum Cunge routing equation. x : [0, 0.5]   |
+
+### Connectivity File
+
+The connectivity files is a csv with 2 columns and 1 row per river in the watershed. The index is ignored.
+
+| Column           | Data Type | Description                               |
+|------------------|-----------|-------------------------------------------|
+| rivid            | integer   | Unique ID of a river segment              |
+| downstream_rivid | integer   | Unique ID of the downstream river segment |
 
 ## Time Parameters
 

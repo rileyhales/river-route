@@ -15,6 +15,11 @@ import xarray as xr
 import yaml
 from petsc4py import PETSc
 
+from .tools import adjacency_matrix
+from .tools import connectivity_to_digraph
+
+__all__ = ['Muskingum', ]
+
 
 class Muskingum:
     # Given configs
@@ -123,12 +128,6 @@ class Muskingum:
             logging.debug(f'\t{k}: {v}')
         return
 
-    def _read_connectivity(self) -> pd.DataFrame:
-        """
-        Reads connectivity matrix from parquet given in config file
-        """
-        return pd.read_parquet(self.conf['connectivity_file'])
-
     def _read_riverids(self) -> np.array:
         """
         Reads river ids vector from parquet given in config file
@@ -165,14 +164,11 @@ class Muskingum:
             return np.zeros(self.A.shape[0])
         return pd.read_parquet(self.conf['rinit_file']).values.flatten()
 
-    def _get_directed_graph(self) -> nx.DiGraph:
+    def _get_digraph(self) -> nx.DiGraph:
         """
         Returns a directed graph of the river network
         """
-        df = self._read_connectivity()
-        G = nx.DiGraph()
-        G.add_edges_from(df.values)
-        return G
+        return connectivity_to_digraph(self.conf['connectivity_file'])
 
     def _set_adjacency_matrix(self) -> None:
         """
@@ -187,11 +183,7 @@ class Muskingum:
             return
 
         logging.info('Calculating Network Adjacency Matrix (A)')
-        G = self._get_directed_graph()
-        sorted_order = list(nx.topological_sort(G))
-        if -1 in sorted_order:
-            sorted_order.remove(-1)
-        self.A = scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(G, nodelist=sorted_order).T)
+        self.A = adjacency_matrix(self.conf['connectivity_file'])
         if self.conf.get('adj_file', ''):
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
@@ -476,7 +468,7 @@ class Muskingum:
         self._validate_configs()
         self._set_adjacency_matrix()
 
-        G = self._get_directed_graph()
+        G = self._get_digraph()
         watershed_ids = nx.ancestors(G, rivid).union({rivid, })
 
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:

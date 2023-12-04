@@ -1,6 +1,7 @@
 import argparse
-import json
 import os
+
+import pandas as pd
 
 import river_route as rr
 
@@ -17,16 +18,16 @@ def _json_to_python_type(json_type):
 
 
 def _add_args_from_file(parser, params):
-    for k, v in params.items():
-        v['type'] = _json_to_python_type(v['type'])
+    for param in params:
+        param['Type'] = _json_to_python_type(param['Type'])
         kwargs = {
-            'help': v['help'],
-            'type': v['type'],
-            'action': 'store' if v['type'] != bool else 'store_true',
+            'help': param['Description'],
+            'type': param['Type'],
+            'action': 'store' if param['Type'] != bool else 'store_true',
         }
-        if v['type'] is bool:
+        if param['Type'] is bool:
             kwargs.pop('type')
-        parser.add_argument(f'--{k}', **kwargs, )
+        parser.add_argument(f'--{param["Parameter Name"]}', **kwargs, )
     return
 
 
@@ -43,9 +44,8 @@ def main():
         required=True,
     )
 
-    description_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config_files', 'descriptions.json')
-    with open(description_file, 'r') as f:
-        _add_args_from_file(parser, json.load(f))
+    description_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config_files', 'descriptions.csv')
+    _add_args_from_file(parser, pd.read_csv(description_file).to_dict('records'))
 
     args = parser.parse_args()
 

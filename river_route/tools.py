@@ -1,6 +1,8 @@
 import os
 
+import networkx as nx
 import pandas as pd
+import scipy
 
 
 def configs_from_rapid(riv_bas_id: str,
@@ -39,3 +41,23 @@ def configs_from_rapid(riv_bas_id: str,
         .to_parquet(out_connectivity)
     )
     return
+
+
+def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
+    """
+    Generate directed graph from connectivity file
+    """
+    G = nx.DiGraph()
+    G.add_edges_from(pd.read_parquet(connectivity_file).values)
+    return G
+
+
+def adjacency_matrix(connectivity_file: str) -> scipy.sparse.csc_matrix:
+    """
+    Generate adjacency matrix from connectivity file
+    """
+    G = connectivity_to_digraph(connectivity_file)
+    sorted_order = list(nx.topological_sort(G))
+    if -1 in sorted_order:
+        sorted_order.remove(-1)
+    return scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(G, nodelist=sorted_order).T)
