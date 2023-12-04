@@ -464,35 +464,6 @@ class Muskingum:
             plt.show()
         return figure
 
-    def mass_balance(self, rivid: int, show: bool = False) -> plt.Figure:
-        self._validate_configs()
-        self._set_adjacency_matrix()
-
-        G = self._get_digraph()
-        watershed_ids = nx.ancestors(G, rivid).union({rivid, })
-
-        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            dt_outflow = (ds['time'].values[1] - ds['time'].values[0]).astype('timedelta64[s]').astype(int)
-            out_df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
-            out_df['Qout'] = out_df['Qout'] * dt_outflow
-        with xr.open_mfdataset(self.conf['runoff_file']) as ds:
-            in_df = (
-                ds
-                .sel(rivid=list(watershed_ids))
-                .to_dataframe()
-                [[self.conf['runoff_volume_var'], ]]
-                .groupby('time')
-                .sum()
-                .cumsum()
-            )
-
-        df = out_df.merge(in_df, left_index=True, right_index=True)
-        logging.info(f'\n{df.sum()}')
-        figure = df.plot()
-        if show:
-            plt.show()
-        return figure
-
     def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
             df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
