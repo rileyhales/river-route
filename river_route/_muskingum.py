@@ -408,14 +408,6 @@ class Muskingum:
         ksp.setTolerances(atol=1e-5)
         ksp.setOperators(A)
 
-        # Define a preconditioner if specified in config
-        if self.conf.get('petsc_pc_type', ''):
-            pc = PETSc.PC().create()
-            pc.setType(self.conf['petsc_pc_type'])
-            pc.setOperators(A)
-            pc.setUp()
-            ksp.setPC(pc)
-
         logging.info('Performing routing solver iterations')
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
@@ -446,7 +438,6 @@ class Muskingum:
         x.destroy()
         b.destroy()
         ksp.destroy()
-        pc.destroy() if self.conf.get('petsc_pc_type', '') else None  # noqa
 
         return outflow_array
 

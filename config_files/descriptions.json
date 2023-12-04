@@ -1,0 +1,21 @@
+{
+  "routing_params_file": {"required": true, "help": "Path to the routing parameters file.", "type": "string"},
+  "connectivity_file": {"required": true, "help": "Path to the network connectivity file.", "type": "string"},
+  "runoff_file": {"required": true, "help": "Path to the file with runoff values to be routed.", "type": "string"},
+  "outflow_file": {"required": true, "help": "Path where the outflows file should be saved.", "type": "string"},
+  "job_name": {"required": false, "help": "A name for this job to be printed in debug statements.", "type": "string"},
+  "log_file": {"required": false, "help": "Path to a file where the log will be written.", "type": "string"},
+  "routing_method": {"required": false, "help": "Method for solving the routing equations: either 'numerical' or 'analytical'.", "type": "string"},
+  "petsc_ksp_type": {"required": false, "help": "Name of the solver method to be used by PETSC when the routing method is numerical.", "type": "string"},
+  "progress_bar": {"required": false, "help": "Indicates whether or not to show a progress bar in debug statements: true or false.", "type": "boolean"},
+  "dt_outflows": {"required": false, "help": "Time interval in seconds between writing flows to disc.", "type": "number"},
+  "dt_routing": {"required": false, "help": "Time interval in seconds between routing computations.", "type": "number"},
+  "lhs_file": {"required": false, "help": "Path where the LHS matrix should be cached.", "type": "string"},
+  "lhsinv_file": {"required": false, "help": "Path where the LHS inverse matrix should be cached.", "type": "string"},
+  "adj_file": {"required": false, "help": "Path where the adjacency matrix should be cached.", "type": "string"},
+  "qinit_file": {"required": false, "help": "Path to the initial flows file.", "type": "string"},
+  "rinit_file": {"required": false, "help": "Path to the initial runoff file.", "type": "string"},
+  "qfinal_file": {"required": false, "help": "Path where the final flows file should be saved.", "type": "string"},
+  "rfinal_file": {"required": false, "help": "Path where the final runoff file should be saved.", "type": "string"},
+  "runoff_volume_var": {"required": false, "help": "Name of the runoff volume variable in the runoff file.", "type": "string"}
+}
