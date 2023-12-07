@@ -216,17 +216,17 @@ class Muskingum:
         if hasattr(self, 'lhsinv'):
             return
 
-        if os.path.exists(self.conf.get('lhsinv_file', '')):
+        if os.path.exists(self.conf.get('lhs_inv_file', '')):
             logging.info('Loading LHS Inverse matrix from file')
-            self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
+            self.lhsinv = scipy.sparse.load_npz(self.conf['lhs_inv_file'])
             return
 
         self._set_lhs_matrix()
         logging.info('Inverting LHS Matrix')
         self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
-        if self.conf.get('lhsinv_file', ''):
+        if self.conf.get('lhs_inv_file', ''):
             logging.info('Saving LHS Inverse matrix to file')
-            scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
+            scipy.sparse.save_npz(self.conf['lhs_inv_file'], self.lhsinv)
         return
 
     def _set_time_params(self, dates: np.array):
