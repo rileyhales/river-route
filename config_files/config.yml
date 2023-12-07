@@ -15,7 +15,7 @@ routing_method: ''
 progress_bar: True
 # cache routing matrices - Optional
 lhs_file: ''
-lhsinv_file: ''
+lhs_inv_file: ''
 adj_file: ''
 # Optional - PETSc solver options
 petsc_ksp_type: ''
