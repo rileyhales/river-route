@@ -185,6 +185,7 @@ class Muskingum:
         logging.info('Calculating Network Adjacency Matrix (A)')
         self.A = adjacency_matrix(self.conf['connectivity_file'])
         if self.conf.get('adj_file', ''):
+            logging.info('Saving adjacency matrix to file')
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
@@ -204,6 +205,7 @@ class Muskingum:
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c2) @ self.A
         self.lhs = self.lhs.tocsc()
         if self.conf.get('lhs_file', ''):
+            logging.info('Saving LHS matrix to file')
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
@@ -223,6 +225,7 @@ class Muskingum:
         logging.info('Inverting LHS Matrix')
         self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
         if self.conf.get('lhsinv_file', ''):
+            logging.info('Saving LHS Inverse matrix to file')
             scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
         return
 
