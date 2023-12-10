@@ -40,8 +40,12 @@ It is recommended that you also provide these parameters:
   computations for a substantial speed gain.
 - `adj_file` - path where the adjacency matrix will be cached (npz file). This parameter can be given instead of the
   connectivity file in future computations for a speed gain.
+
+You can modify how the routing computations are performed with these parameters:
 - `dt_routing` - an integer time in seconds for the routing time step. Will default to 300s or 5 minutes
 - `dt_outflows` - an integer time in seconds for the outflow time step. Will default to the inflow time step
+- `min_q` - a float for the minimum flow value enforced after each routing calculation.
+- `max_q` - a float for the maximum flow value enforced after each routing calculation.
 
 You can provide initial conditions/state and save final conditions/state with these parameters:
 
@@ -57,10 +61,11 @@ You can provide logging options with these parameters:
 - `log_file` - path to a file where the log will be written. Defaults to stdout (logs not saved to file).
 - `job_name` - a name for this job printed in logs and debug statements.
 - `progress_bar` - display a computations progress bar in logs: True or False. Defaults to True.
+- `log_level` - the level of logging messages to be printed e.g. DEBUG, INFO. Defaults to INFO.
 
 You can modify how the routing computations are performed with these parameters:
 
-- `routing_method` - method for solving routing equations: 'numerical' or 'analytical'. Defaults to 'numerical'.
+- `routing_method` - method for solving routing equations: 'numerical' or 'analytical'. Defaults to 'analytical'.
 - `petsc_ksp_type` - name of the PETSC solver used when using the numerical solution. Recommend 'preonly' if you have a
   well-prepared network and 'richardson' otherwise.
 
