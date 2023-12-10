@@ -5,6 +5,8 @@ runoff_file,string,Path to the file with runoff values to be routed.
 outflow_file,string,Path where the outflows file should be saved.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.
+min_q,number,Minimum flow value allowed after each routing computation.
+max_q,number,Maximum flow value allowed after each routing computation.
 qinit_file,string,Path to the initial flows file.
 rinit_file,string,Path to the initial runoff file.
 qfinal_file,string,Path where the final flows file should be saved.

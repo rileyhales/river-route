@@ -118,8 +118,8 @@ graph LR
 | outflow_file        | True     | File Path | Required Input        | Path where the outflows netCDF file should be saved.               |                                       
 | dt_routing          | True     | Integer   | Compute Options       | Time interval in seconds between routing computations.             |                              
 | dt_outflows         | False    | Integer   | Compute Options       | Time interval in seconds between writing flows to disc.            |
-| minimum_q           | False    | Float     | Compute Options       | Minimum flow value enforced after each routing calculation         |
-| maximum_q           | False    | Float     | Compute Options       | Maximum flow value enforced after each routing calculation         |
+| min_q               | False    | Float     | Compute Options       | Minimum flow value enforced after each routing calculation         |
+| max_q               | False    | Float     | Compute Options       | Maximum flow value enforced after each routing calculation         |
 | solver_type         | False    | String    | Compute Options       | Method for solving routing equations: 'numerical' or 'analytical'. |
 | qinit_file          | False    | File Path | Initialization Data   | Path to the initial flows file.                                    |                                                     
 | rinit_file          | False    | File Path | Initialization Data   | Path to the initial runoff file.                                   |                                                    
@@ -166,7 +166,7 @@ Only 1 time option is a required input in the configuration file:
 - `dt_routing` - the time interval, in seconds, between routing calculation steps. It must be constant across all rivers
   and for the full simulation.
 
-3 other time parameters are optional. They may be provided in the configuration file or they will be derived from the
+3 other time parameters are optional. They may be provided in the configuration file, or they will be derived from the
 runoff data.
 
 - `dt_runoff` - the time interval, in seconds, between runoff values. It must be constant between all time steps of
@@ -219,7 +219,7 @@ These tips may help you achieve faster results.
 1. **Use fewer inflow files**: File IO operations can be relatively slow and are a probable bottleneck on HPC systems
    when I/O operations depend on networked drives. You may achieve faster results by doing a single computation
    covering 2 weeks instead of 14 computations covering 1 day each.
-2. **Cache routing Matrices**: The adjacency matrix and inverted I-C2@A matrix can be time consuming to compute. Provide
+2. **Cache routing Matrices**: The adjacency matrix and inverted I-C2@A matrix can be time-consuming to compute. Provide
    paths to store them in the config file to cache them between simulations
 3. **Adjust the time step**: Using a longer time step will reduce the number of computations which takes less time to
    compute. It also requires storing fewer intermediate results in memory yielding a modest reduction in memory usage. A

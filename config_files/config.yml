@@ -6,8 +6,8 @@ outflow_file: ''
 # Compute Options
 dt_routing: 300
 dt_outflows: 0
-minimum_q: 0
-maximum_q: None
+min_q: 0
+max_q: None
 solver_type: 'analytical'
 # simulation management and debugging - Optional
 job_name: ''

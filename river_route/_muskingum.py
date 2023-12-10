@@ -79,6 +79,8 @@ class Muskingum:
         self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
         self.conf['dt_routing'] = self.conf.get('dt_routing', 300)
         self.conf['log_level'] = self.conf.get('log_level', 'DEBUG')
+        self.conf['min_q'] = self.conf.get('min_q', False)
+        self.conf['max_q'] = self.conf.get('max_q', False)
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
@@ -363,7 +365,7 @@ class Muskingum:
                              inflow_t: np.array, ) -> np.array:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
-        enforce_flow_intervals = self.conf.get('minimum_q', False) or self.conf.get('maximum_q', False)
+        force_min_max = self.conf['min_q'] or self.conf['max_q']
 
         logging.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
@@ -375,7 +377,7 @@ class Muskingum:
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
                 inflow_tnext = (self.A @ q_t) + r_t
                 q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
-                q_t = q_t if not enforce_flow_intervals else np.clip(q_t, a_min=self.conf.get('minimum_q', None), a_max=self.conf.get('maximum_q', None))
+                q_t = q_t if not force_min_max else np.clip(q_t, a_min=self.conf['min_q'], a_max=self.conf['max_q'])
                 interval_flows[routing_substep_iteration, :] = q_t
                 inflow_t = inflow_tnext
             interval_flows = np.mean(interval_flows, axis=0)
