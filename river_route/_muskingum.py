@@ -15,7 +15,7 @@ import xarray as xr
 import yaml
 from petsc4py import PETSc
 
-from .tools import adjacency_matrix
+from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
 __all__ = ['Muskingum', ]
@@ -74,10 +74,11 @@ class Muskingum:
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['solver'] = self.conf.get('solver', 'numerical')
-        self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'richardson')
+        self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'preonly')
         self.conf['progress_bar'] = self.conf.get('progress_bar', True)
         self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
         self.conf['dt_routing'] = self.conf.get('dt_routing', 300)
+        self.conf['log_level'] = self.conf.get('log_level', 'DEBUG')
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
@@ -93,7 +94,7 @@ class Muskingum:
         # start a logger
         log_basic_configs = {
             'stream': sys.stdout,
-            'level': logging.DEBUG,
+            'level': self.conf['log_level'],
             'format': '%(asctime)s - %(levelname)s - %(message)s',
         }
         if self.conf.get('log_file', ''):
@@ -183,7 +184,7 @@ class Muskingum:
             return
 
         logging.info('Calculating Network Adjacency Matrix (A)')
-        self.A = adjacency_matrix(self.conf['connectivity_file'])
+        self.A = connectivity_to_adjacency_matrix(self.conf['connectivity_file'])
         if self.conf.get('adj_file', ''):
             logging.info('Saving adjacency matrix to file')
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
@@ -362,6 +363,8 @@ class Muskingum:
                              inflow_t: np.array, ) -> np.array:
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
+        enforce_flow_intervals = self.conf.get('minimum_q', False) or self.conf.get('maximum_q', False)
+
         logging.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
@@ -372,6 +375,7 @@ class Muskingum:
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
                 inflow_tnext = (self.A @ q_t) + r_t
                 q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
+                q_t = q_t if not enforce_flow_intervals else np.clip(q_t, a_min=self.conf.get('minimum_q', None), a_max=self.conf.get('maximum_q', None))
                 interval_flows[routing_substep_iteration, :] = q_t
                 inflow_t = inflow_tnext
             interval_flows = np.mean(interval_flows, axis=0)

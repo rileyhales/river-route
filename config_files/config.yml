@@ -1,23 +1,25 @@
-# paths to watershed files - Required
+# Required Input/Output Files
 routing_params_file: ''
 connectivity_file: ''
-# runoff inflows - Required
 runoff_file: ''
-# routed discharge outputs - Required - list of absolute path strings even if only one file
 outflow_file: ''
-# computation time parameters - all times given in seconds - Required
-dt_outflows: 0
+# Compute Options
 dt_routing: 300
+dt_outflows: 0
+minimum_q: 0
+maximum_q: None
+solver_type: 'analytical'
 # simulation management and debugging - Optional
 job_name: ''
 log_file: ''
-routing_method: ''
 progress_bar: True
+log_level: 'DEBUG'
 # cache routing matrices - Optional
 lhs_file: ''
 lhs_inv_file: ''
 adj_file: ''
 # Optional - PETSc solver options
+routing_method: ''
 petsc_ksp_type: ''
 # initial and final state files - Optional
 qinit_file: ''

@@ -4,6 +4,12 @@ import networkx as nx
 import pandas as pd
 import scipy
 
+__all__ = [
+    'configs_from_rapid',
+    'connectivity_to_digraph',
+    'connectivity_to_adjacency_matrix',
+]
+
 
 def configs_from_rapid(riv_bas_id: str,
                        k: str,
@@ -52,7 +58,7 @@ def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
     return G
 
 
-def adjacency_matrix(connectivity_file: str) -> scipy.sparse.csc_matrix:
+def connectivity_to_adjacency_matrix(connectivity_file: str) -> scipy.sparse.csc_matrix:
     """
     Generate adjacency matrix from connectivity file
     """

@@ -34,9 +34,12 @@ The minimum required inputs in the configuration file are:
 
 It is recommended that you also provide these parameters:
 
-- `lhs_file` - path where the LHS matrix will be cached (npz file). This parameter can be provided to future computations for a speed gain.
-- `lhsinv_file` - path where the LHS inverse matrix will be cached (npz file). This parameter can be provided to future computations for a substantial speed gain.
-- `adj_file` - path where the adjacency matrix will be cached (npz file). This parameter can be given instead of the connectivity file in future computations for a speed gain. 
+- `lhs_file` - path where the LHS matrix will be cached (npz file). This parameter can be provided to future
+  computations for a speed gain.
+- `lhsinv_file` - path where the LHS inverse matrix will be cached (npz file). This parameter can be provided to future
+  computations for a substantial speed gain.
+- `adj_file` - path where the adjacency matrix will be cached (npz file). This parameter can be given instead of the
+  connectivity file in future computations for a speed gain.
 - `dt_routing` - an integer time in seconds for the routing time step. Will default to 300s or 5 minutes
 - `dt_outflows` - an integer time in seconds for the outflow time step. Will default to the inflow time step
 
@@ -44,8 +47,10 @@ You can provide initial conditions/state and save final conditions/state with th
 
 - `qinit_file` - path to the initial flows file (parquet). Defaults to 0.0 for all rivers.
 - `rinit_file` - path to the initial runoff file (netCDF). Defaults to 0.0 for all rivers.
-- `qfinal_file` - path where the final flows file will be saved (parquet). It will not be saved if a path is not provided.
-- `rfinal_file` - path where the final runoff file will be saved (netCDF). It will not be saved if a path is not provided.
+- `qfinal_file` - path where the final flows file will be saved (parquet). It will not be saved if a path is not
+  provided.
+- `rfinal_file` - path where the final runoff file will be saved (netCDF). It will not be saved if a path is not
+  provided.
 
 You can provide logging options with these parameters:
 
@@ -56,75 +61,79 @@ You can provide logging options with these parameters:
 You can modify how the routing computations are performed with these parameters:
 
 - `routing_method` - method for solving routing equations: 'numerical' or 'analytical'. Defaults to 'numerical'.
-- `petsc_ksp_type` - name of the PETSC solver used when using the numerical solution. Recommend 'preonly' if you have a well-prepared network and 'richardson' otherwise.
+- `petsc_ksp_type` - name of the PETSC solver used when using the numerical solution. Recommend 'preonly' if you have a
+  well-prepared network and 'richardson' otherwise.
 
 A diagram of the possible configuration file parameters and their role in the routing computations is shown below.
 
 ```mermaid
+---
+Title: River Route Process Diagram
+---
 graph LR
-subgraph "Required Inputs"
-Inputs["
-Routing Parameters
-Connectivity or Adjacency
-Runoff Data
-Outflow File
-"]
-end
+    subgraph "RequiredInputs"
+        Inputs["Routing Parameters \n Connectivity or Adjacency \n Runoff Data \n Outflow File"]
+    end
 
-subgraph "Time Options"
-TimeParameters["
-Routing Timestep
-Outflow Timestep
-"]
-end
+    subgraph "ComputeOptions"
+        co1["Routing Timestep \n Outflow Timestep \n Minimum Q \n Maximum Q \n Solver Type"]
+    end
 
-subgraph "Init Files"
-Initialization["
-Initial Flows
-Initial Runoff
-"]
-end
+    subgraph "Initialization"
+        i1["Initial Flows File \n Initial Runoff File"]
+    end
 
-Routing[Perform Routing]
+    subgraph "LoggingOptions"
+        management["Log File Path \n Job Name \n Progress Bar \n Log Level"]
+    end
 
-subgraph "Main Output"
-Result[Routed Discharge]
-end
+    subgraph "Computations"
+        direction TB
+        a[Calculate LHS & LHS<sup>-1</sup>] --> b
+        b[Divide Runoff Data by \n Number of Steps] --> c
+        c[Iterate On Runoff Intervals] --> d
+        d[Solving Matrix \n Muskingum] --> e
+        e[Enforce Min and Max Q] --> f & c
+        f[Write Outflows to Disk] --> g
+        g[Cache Final State]
+    end
 
-subgraph "Cached Files"
-CachedFiles["
-Final Flows State
-Final Runoff State
-LHS Matrix
-LHS Inverse Matrix
-Adjacency Matrix
-"]
-end
+    subgraph "MainOutput"
+        Result[Routed Discharge]
+    end
 
-Inputs & TimeParameters & Initialization ==> Routing
-Routing ==> Result & CachedFiles
+    subgraph "CachableFiles"
+        CachedFiles["Final Flows State \n Final Runoff State \n LHS Matrix \n LHS Inverse Matrix \n Adjacency Matrix"]
+    end
+
+    RequiredInputs & ComputeOptions & Initialization & LoggingOptions ==> Computations
+    Computations ==> MainOutput & CachableFiles
 ```
 
-| Parameter Name      | Required | Type      | Group                  | Description                                                        |                                                                                
-|---------------------|----------|-----------|------------------------|--------------------------------------------------------------------|
-| routing_params_file | True     | File Path | Stream Network Details | Path to the routing parameters parquet file.                       |                                                
-| connectivity_file   | True     | File Path | Stream Network Details | Path to the network connectivity parquet file.                     |                                              
-| runoff_file         | True     | File Path | Input Runoff           | Path to the netCDF with runoff values to be routed.                |                                   
-| outflow_file        | True     | File Path | Output Discharge       | Path where the outflows netCDF file should be saved.               |                                       
-| dt_routing          | True     | Integer   | Time Parameter         | Time interval in seconds between routing computations.             |                              
-| dt_outflows         | False    | Integer   | Time Parameter         | Time interval in seconds between writing flows to disc.            |                             
-| qinit_file          | False    | File Path | Initialization Data    | Path to the initial flows file.                                    |                                                     
-| rinit_file          | False    | File Path | Initialization Data    | Path to the initial runoff file.                                   |                                                    
-| qfinal_file         | False    | File Path | Cachable State File    | Path where the final flows file should be saved.                   |                                    
-| rfinal_file         | False    | File Path | Cachable State File    | Path where the final runoff file should be saved.                  |                                   
-| lhs_file            | False    | File Path | Cachable Network File  | Path where the LHS matrix should be cached.                        |                                         
-| lhs inv_file        | False    | File Path | Cachable Network File  | Path where the LHS inverse matrix should be cached.                |                                 
-| adj_file            | False    | File Path | Cachable Network File  | Path where the adjacency matrix should be cached.                  |                                   
-| log_file            | False    | File Path | Logging Options        | Path to a file where the log will be written.                      |                                       
-| job_name            | False    | String    | Logging Options        | A name for this job printed in logs and debug statements.          |                           
-| progress_bar        | False    | Boolean   | Logging Options        | Display a computations progress bar in logs: true or false.        | 
-| routing_method      | False    | String    | Solving Options        | Method for solving routing equations: 'numerical' or 'analytical'. |       
-| petsc_ksp_type      | False    | String    | Solving Options        | Name of the PETSC solver used when using the numerical solution.   | 
+| Parameter Name      | Required | Type      | Group                 | Description                                                        |                                                                                
+|---------------------|----------|-----------|-----------------------|--------------------------------------------------------------------|
+| routing_params_file | True     | File Path | Required Input        | Path to the routing parameters parquet file.                       |                                                
+| connectivity_file   | True     | File Path | Required Input        | Path to the network connectivity parquet file.                     |                                              
+| runoff_file         | True     | File Path | Required Input        | Path to the netCDF with runoff values to be routed.                |                                   
+| outflow_file        | True     | File Path | Required Input        | Path where the outflows netCDF file should be saved.               |                                       
+| dt_routing          | True     | Integer   | Compute Options       | Time interval in seconds between routing computations.             |                              
+| dt_outflows         | False    | Integer   | Compute Options       | Time interval in seconds between writing flows to disc.            |
+| minimum_q           | False    | Float     | Compute Options       | Minimum flow value enforced after each routing calculation         |
+| maximum_q           | False    | Float     | Compute Options       | Maximum flow value enforced after each routing calculation         |
+| solver_type         | False    | String    | Compute Options       | Method for solving routing equations: 'numerical' or 'analytical'. |
+| qinit_file          | False    | File Path | Initialization Data   | Path to the initial flows file.                                    |                                                     
+| rinit_file          | False    | File Path | Initialization Data   | Path to the initial runoff file.                                   |                                                    
+| qfinal_file         | False    | File Path | Cachable State File   | Path where the final flows file should be saved.                   |                                    
+| rfinal_file         | False    | File Path | Cachable State File   | Path where the final runoff file should be saved.                  |                                   
+| lhs_file            | False    | File Path | Cachable Network File | Path where the LHS matrix should be cached.                        |                                         
+| lhs inv_file        | False    | File Path | Cachable Network File | Path where the LHS inverse matrix should be cached.                |                                 
+| adj_file            | False    | File Path | Cachable Network File | Path where the adjacency matrix should be cached.                  |                                   
+| log_file            | False    | File Path | Logging Options       | Path to a file where the log will be written.                      |                                       
+| job_name            | False    | String    | Logging Options       | A name for this job printed in logs and debug statements.          |                           
+| log_level           | False    | String    | Logging Options       | The level of logging messages to be printed e.g. DEBUG, INFO       |
+| progress_bar        | False    | Boolean   | Logging Options       | Display a computations progress bar in logs: true or false.        | 
+| routing_method      | False    | String    | Solving Options       | Method for solving routing equations: 'numerical' or 'analytical'. |       
+| petsc_ksp_type      | False    | String    | Solving Options       | Name of the PETSC solver used when using the numerical solution.   | 
 
 ## Input File Schema
 
@@ -133,11 +142,11 @@ Routing ==> Result & CachedFiles
 The routing parameters file is a parquet file with 3 columns and 1 row per river in the watershed. The index is ignored
 index.
 
-| Column | Data Type | Description                                                             |
-|--------|-----------|-------------------------------------------------------------------------|
-| rivid  | integer   | Unique ID of a river segment                                            |
+| Column | Data Type | Description                                                               |
+|--------|-----------|---------------------------------------------------------------------------|
+| rivid  | integer   | Unique ID of a river segment                                              |
 | k      | float     | the k parameter of the Muskingum Cunge routing equation length / velocity |
-| x      | float     | the x parameter of the Muskingum Cunge routing equation. x : [0, 0.5]   |
+| x      | float     | the x parameter of the Muskingum Cunge routing equation. x : [0, 0.5]     |
 
 ### Connectivity File
 
