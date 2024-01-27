@@ -43,6 +43,7 @@ import river_route as rr
         'runoff_file': '/path/to/runoff.nc',
         'outflow_file': '/path/to/outflow.nc',
     })
+    .route()
 )
 ```
 
@@ -151,7 +152,6 @@ graph LR
 | dt_outflows         | False    | Integer   | Compute Options       | Time interval in seconds between writing flows to disc.            |
 | min_q               | False    | Float     | Compute Options       | Minimum flow value enforced after each routing calculation         |
 | max_q               | False    | Float     | Compute Options       | Maximum flow value enforced after each routing calculation         |
-| solver_type         | False    | String    | Compute Options       | Method for solving routing equations: 'numerical' or 'analytical'. |
 | qinit_file          | False    | File Path | Initialization Data   | Path to the initial flows file.                                    |                                                     
 | rinit_file          | False    | File Path | Initialization Data   | Path to the initial runoff file.                                   |                                                    
 | qfinal_file         | False    | File Path | Cachable State File   | Path where the final flows file should be saved.                   |                                    
