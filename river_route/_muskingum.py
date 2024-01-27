@@ -53,10 +53,16 @@ class Muskingum:
 
     def set_configs(self, config_file, **kwargs) -> None:
         """
-        Validate simulation conf
+        Validate simulation configs given by json, yaml, or kwargs
 
         Args:
+            config_file: path to a json or yaml file containing configs. See README for list of all recognized options
 
+        Keyword Args:
+            See README for list of all recognized configuration options
+
+        Returns:
+            None
         """
         # read the config file
         if config_file is None or config_file == '':
