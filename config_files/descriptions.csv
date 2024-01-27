@@ -12,11 +12,9 @@ rinit_file,string,Path to the initial runoff file.
 qfinal_file,string,Path where the final flows file should be saved.
 rfinal_file,string,Path where the final runoff file should be saved.
 lhs_file,string,Path where the LHS matrix should be cached.
-lhs_inv_file,string,Path where the LHS inverse matrix should be cached.
+lhsinv_file,string,Path where the LHS inverse matrix should be cached.
 adj_file,string,Path where the adjacency matrix should be cached.
 log_file,string,Path to a file where the log will be written.
 log_level,string,Level of logging: either 'debug', 'info', 'warning', 'error', or 'critical'.
 job_name,string,A name for this job to be printed in debug statements.
 progress_bar,boolean,Indicates whether or not to show a progress bar in debug statements: true or false.
-routing_method,string,Method for solving the routing equations: either 'numerical' or 'analytical'.
-petsc_ksp_type,string,Name of the solver method to be used by PETSC when the routing method is numerical.

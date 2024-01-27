@@ -5,7 +5,6 @@ netcdf4
 networkx
 numpy
 pandas
-petsc4py
 pyyaml
 scipy
 tqdm

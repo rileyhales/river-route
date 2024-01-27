@@ -8,7 +8,6 @@ dt_routing: 300
 dt_outflows: 0
 min_q: 0
 max_q: None
-solver_type: 'analytical'
 # simulation management and debugging - Optional
 job_name: ''
 log_file: ''
