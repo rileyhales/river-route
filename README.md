@@ -17,6 +17,16 @@ import river_route as rr
     .Muskingum('/path/to/config.yml')
     .route()
 )
+
+(
+    rr
+    .Muskingum(**{
+        'routing_params_file': '/path/to/routing_params.parquet',
+        'connectivity_file': '/path/to/connectivity.parquet',
+        'runoff_file': '/path/to/runoff.nc',
+        'outflow_file': '/path/to/outflow.nc',
+    })
+)
 ```
 
 ## Configuration File
@@ -30,12 +40,9 @@ The minimum required inputs in the configuration file are:
 
 It is recommended that you also provide these parameters:
 
-- `lhs_file` - path where the LHS matrix will be cached (npz file). This parameter can be provided to future
-  computations for a speed gain.
-- `lhsinv_file` - path where the LHS inverse matrix will be cached (npz file). This parameter can be provided to future
-  computations for a substantial speed gain.
-- `adj_file` - path where the adjacency matrix will be cached (npz file). This parameter can be given instead of the
-  connectivity file in future computations for a speed gain.
+- `lhs_file` - path where the LHS matrix will be cached (npz file). This parameter can be provided to future computations for a speed gain.
+- `lhsinv_file` - path where the LHS inverse matrix will be cached (npz file). This parameter can be provided to future computations for a substantial speed gain.
+- `adj_file` - path where the adjacency matrix will be cached (npz file). This parameter can be given instead of the connectivity file in future computations for a speed gain.
 
 You can modify how the routing computations are performed with these parameters:
 
@@ -48,10 +55,8 @@ You can provide initial conditions/state and save final conditions/state with th
 
 - `qinit_file` - path to the initial flows file (parquet). Defaults to 0.0 for all rivers.
 - `rinit_file` - path to the initial runoff file (netCDF). Defaults to 0.0 for all rivers.
-- `qfinal_file` - path where the final flows file will be saved (parquet). It will not be saved if a path is not
-  provided.
-- `rfinal_file` - path where the final runoff file will be saved (netCDF). It will not be saved if a path is not
-  provided.
+- `qfinal_file` - path where the final flows file will be saved (parquet). It will not be saved if a path is not provided.
+- `rfinal_file` - path where the final runoff file will be saved (netCDF). It will not be saved if a path is not provided.
 
 You can provide logging options with these parameters:
 
@@ -144,12 +149,20 @@ index.
 
 ### Connectivity File
 
-The connectivity files is a csv with 2 columns and 1 row per river in the watershed. The index is ignored.
+The connectivity files is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file controls
+the topology of the rivers in the watershed. Each river segment must have at least 1 downstream segment. If the river is an outlet
+then it should have a downstream ID of -1.
 
-| Column           | Data Type | Description                               |
-|------------------|-----------|-------------------------------------------|
-| rivid            | integer   | Unique ID of a river segment              |
-| downstream_rivid | integer   | Unique ID of the downstream river segment |
+To specify the connectivity of braided rivers, a single river ID may have multiple rows with difference IDs given as the downstream segment.
+In this case, use the 3rd column to specify the percentage (decimal in the range (0, 1)) of discharge from the river segment that flows to
+the downstream segment given on that row. All rivers that are not braided should have a weight of 1.0. The weights column of rivers that are 
+braided should sum to exactly 1.0 or else water will be deleted or magically inserted into the rivers.
+
+| Column           | Data Type | Description                                                                                         |
+|------------------|-----------|-----------------------------------------------------------------------------------------------------|
+| rivid            | integer   | Unique ID of a river segment                                                                        |
+| downstream_rivid | integer   | Unique ID of the downstream river segment                                                           |
+| weight           | float     | Optional, the percentage of discharge from this river that should be routed to the downstream river |
 
 ## Time Parameters
 
@@ -157,18 +170,13 @@ The connectivity files is a csv with 2 columns and 1 row per river in the waters
 
 Only 1 time option is a required input in the configuration file:
 
-- `dt_routing` - the time interval, in seconds, between routing calculation steps. It must be constant across all rivers
-  and for the full simulation.
+- `dt_routing` - the time interval, in seconds, between routing calculation steps. It must be constant across all rivers and for the full simulation.
 
-3 other time parameters are optional. They may be provided in the configuration file, or they will be derived from the
-runoff data.
+3 other time parameters are optional. They may be provided in the configuration file, or they will be derived from the runoff data.
 
-- `dt_runoff` - the time interval, in seconds, between runoff values. It must be constant between all time steps of
-  runoff.
-- `dt_outflow` - the time interval, in seconds, between outflow values which get written to disc. It must be constant
-  between all time steps of outflow.
-- `dt_total` - the total time, in seconds, of the runoff data. It is equal to the number of time steps multiplied
-  by `dt_runoff`.
+- `dt_runoff` - the time interval, in seconds, between runoff values. It must be constant between all time steps of runoff.
+- `dt_outflow` - the time interval, in seconds, between outflow values which get written to disc. It must be constant between all time steps of outflow.
+- `dt_total` - the total time, in seconds, of the runoff data. It is equal to the number of time steps multiplied by `dt_runoff`.
 
 ### Parameter Relationships
 
@@ -178,8 +186,7 @@ dt_total >= dt_outflow >= dt_runoff >= dt_routing
 
 - The total time of the runoff data must be greater than or equal to the time interval between outflow values.
 - The time interval between outflow values must be greater than or equal to the time interval between runoff values.
-- The time interval between runoff values must be greater than or equal to the time interval between routing
-  calculations.
+- The time interval between runoff values must be greater than or equal to the time interval between routing calculations.
 
 ```
 dt_total % dt_outflow == 0
@@ -187,8 +194,7 @@ dt_outflow % dt_runoff == 0
 dt_runoff % dt_routing == 0
 ```
 
-- Each time interval must be evenly divisible by the next smallest time interval so that the loops of calculations can
-  be automatically constructed.
+- Each time interval must be evenly divisible by the next smallest time interval so that the loops of calculations can be automatically constructed.
 
 ```
 dt_total === dt_runoff * number_of_time_steps

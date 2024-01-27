@@ -1,8 +1,11 @@
+import logging
 import os
 
 import networkx as nx
 import pandas as pd
 import scipy
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     'configs_from_rapid',
@@ -54,7 +57,26 @@ def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
     Generate directed graph from connectivity file
     """
     G = nx.DiGraph()
-    G.add_edges_from(pd.read_parquet(connectivity_file).values)
+    df = pd.read_parquet(connectivity_file)
+    if len(df.columns) == 3:  # ID, DownstreamID, Weight
+        # check that the weights are all positive and sum to 1 for each unique ID
+        id_col, downstream_col, weight_col = df.columns
+        weight_check = df.groupby(id_col)[weight_col].sum()
+        if not weight_check.ge(0).all():
+            logger.error(f'Weights are not all positive')
+            logger.debug('The following IDs have negative weights')
+            logger.debug(weight_check[~weight_check.ge(0)].index.tolist())
+            raise ValueError(f'Weights must be positive')
+        if not weight_check.eq(1).all():
+            logger.error(f'Weights do not sum to 1.0 for each unique ID')
+            logger.debug('The following IDs have weights that do not sum to 1.0')
+            logger.debug(weight_check[~weight_check.eq(1)].index.tolist())
+            raise ValueError(f'Weights must sum to 1 for each unique ID')
+        G.add_weighted_edges_from(df.values)
+    elif len(df.columns) == 2:  # ID, DownstreamID
+        G.add_edges_from(df.values)
+    else:
+        raise ValueError(f'Connectivity file should have 2 or 3 columns, not {len(df.columns)}')
     return G
 
 
