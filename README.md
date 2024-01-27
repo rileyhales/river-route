@@ -1,13 +1,23 @@
 # River Route
 
-`river-route` is a Python package for routing runoff through a river network.
+`river-route` is a Python package for routing runoff through a river network. Routing calculations are vectorized with 
+numpy and scipy which keeps the array computation times on par with faster compiled languages.
 
-Routing calculations are vectorized with numpy and scipy which keeps the array computation times on par with
-faster compiled languages.
+## Installation
+
+Install river-route from source using conda/mamba such as with the following commands:
+
+```bash
+git clone https://github.com/rileyhales/river-route
+cd river-route
+mamba env create -f environment.yml
+mamba activate rr
+python setup.py install
+```
 
 ## Quick Start Guide
 
-You will need to prepare a configuration file for the routing.
+You will need to prepare a configuration file for the routing computations, see the [Configuration File](#configuration-file) section for more details.
 
 ```python
 import river_route as rr
@@ -17,7 +27,12 @@ import river_route as rr
     .Muskingum('/path/to/config.yml')
     .route()
 )
+```
 
+Or you can provide all configuration parameters as keyword arguments such as with the following syntax:
+
+```python
+import river_route as rr
 (
     rr
     .Muskingum(**{
@@ -33,8 +48,8 @@ import river_route as rr
 
 The minimum required inputs in the configuration file are:
 
-- `routing_params_file` - path to the routing parameters file (parquet)
-- `connectivity_file` - path to the river network connectivity file (parquet)
+- `routing_params_file` - path to the [routing parameters file](#routing-parameters) (parquet)
+- `connectivity_file` - path to the river network [connectivity file](#connectivity-file) (parquet)
 - `runoff_file` - path to the prepared runoff data file (netCDF)
 - `outflow_file` - path where the routed flows will be saved (netCDF)
 
