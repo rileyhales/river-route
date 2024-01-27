@@ -1,13 +1,9 @@
 # River Route
 
 `river-route` is a Python package for routing runoff through a river network.
-The routing calculations are vectorized and use numpy and scipy which keeps the array computation times on par with
+
+Routing calculations are vectorized with numpy and scipy which keeps the array computation times on par with
 faster compiled languages.
-
-The implemented routing methods are:
-
-- Matrix Form Muskingum Cunge - Analytical solution
-- Matrix Form Muskingum Cunge - Numerical solution
 
 ## Quick Start Guide
 
@@ -60,9 +56,9 @@ You can provide initial conditions/state and save final conditions/state with th
 You can provide logging options with these parameters:
 
 - `log_file` - path to a file where the log will be written. Defaults to stdout (logs not saved to file).
+- `log_level` - the level of logging messages to be printed e.g. DEBUG, INFO. Defaults to INFO.
 - `job_name` - a name for this job printed in logs and debug statements.
 - `progress_bar` - display a computations progress bar in logs: True or False. Defaults to True.
-- `log_level` - the level of logging messages to be printed e.g. DEBUG, INFO. Defaults to INFO.
 
 A diagram of the possible configuration file parameters and their role in the routing computations is shown below.
 
