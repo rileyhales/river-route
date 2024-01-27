@@ -3,26 +3,22 @@ routing_params_file: ''
 connectivity_file: ''
 runoff_file: ''
 outflow_file: ''
+# cache routing matrices - Optional
+lhs_file: ''
+lhs_inv_file: ''
+adj_file: ''
 # Compute Options
 dt_routing: 300
 dt_outflows: 0
 min_q: 0
 max_q: None
-# simulation management and debugging - Optional
-job_name: ''
-log_file: ''
-progress_bar: True
-log_level: 'DEBUG'
-# cache routing matrices - Optional
-lhs_file: ''
-lhs_inv_file: ''
-adj_file: ''
-# Optional - PETSc solver options
-routing_method: ''
-petsc_ksp_type: ''
 # initial and final state files - Optional
 qinit_file: ''
 rinit_file: ''
 qfinal_file: ''
 rfinal_file: ''
-
+# simulation management and debugging - Optional
+log_level: 'INFO'
+log_file: ''
+job_name: ''
+progress_bar: True
