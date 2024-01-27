@@ -54,6 +54,9 @@ class Muskingum:
     def set_configs(self, config_file, **kwargs) -> None:
         """
         Validate simulation conf
+
+        Args:
+
         """
         # read the config file
         if config_file is None or config_file == '':
@@ -72,8 +75,6 @@ class Muskingum:
 
         # set default values for configs when possible
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
-        self.conf['solver'] = self.conf.get('solver', 'numerical')
-        self.conf['petsc_ksp_type'] = self.conf.get('petsc_ksp_type', 'preonly')
         self.conf['progress_bar'] = self.conf.get('progress_bar', True)
         self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
         self.conf['dt_routing'] = self.conf.get('dt_routing', 300)
@@ -288,13 +289,19 @@ class Muskingum:
     def route(self, **kwargs) -> 'Muskingum':
         """
         Performs time-iterative runoff routing through the river network
+
+        Args:
+            **kwargs: optional keyword arguments to override and update previously calculated or given configs
+
+        Returns:
+            river_route.Muskingum
         """
         logging.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
         if len(kwargs) > 0:
             logging.info('Updating configs with kwargs')
-            self.set_configs(**kwargs)
+            self.conf.update(kwargs)
 
         self._validate_configs()
         self._log_configs()
@@ -409,6 +416,16 @@ class Muskingum:
         return
 
     def plot(self, rivid: int, show: bool = False) -> plt.Figure:
+        """
+        Create a plot of the hydrograph for a given river id with matplotlib and optionally display it
+
+        Args:
+            rivid: the ID of a river reach in the output files
+            show: boolean flag to display the figure or not
+
+        Returns:
+            matplotlib.pyplot.Figure
+        """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
             figure = ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
         if show:
@@ -416,8 +433,31 @@ class Muskingum:
         return figure
 
     def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
+        """
+        Save the hydrograph for a given river id to a csv file
+
+        Args:
+            rivid: the ID of a river reach in the output files
+            csv_path: the file path where the csv will be written
+
+        Returns:
+            None
+        """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
             df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
             df.columns = [rivid, ]
         df.to_csv(csv_path)
+        return
+
+    def save_configs(self, path: str) -> None:
+        """
+        Save the current configs of the class to a json file
+        Args:
+            path: the file path where the json will be written
+
+        Returns:
+            None
+        """
+        with open(path, 'w') as f:
+            json.dump(self.conf, f)
         return
