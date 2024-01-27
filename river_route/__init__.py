@@ -4,7 +4,7 @@ from river_route.tools import configs_from_rapid
 from river_route.tools import connectivity_to_digraph
 from river_route.tools import connectivity_to_adjacency_matrix
 
-__version__ = '0.3.0'
+__version__ = '0.4.0'
 __author__ = 'Riley Hales PhD'
 __url__ = 'https://github.com/rileyhales/river-route'
 
