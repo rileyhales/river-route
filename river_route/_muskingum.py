@@ -438,22 +438,62 @@ class Muskingum:
             plt.show()
         return figure
 
-    def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
+    def hydrograph(self, rivid: int) -> pd.DataFrame:
         """
-        Save the hydrograph for a given river id to a csv file
+        Get the hydrograph for a given river id as a pandas dataframe
 
         Args:
             rivid: the ID of a river reach in the output files
-            csv_path: the file path where the csv will be written
 
         Returns:
-            None
+            pandas.DataFrame
         """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
             df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
             df.columns = [rivid, ]
-        df.to_csv(csv_path)
-        return
+        return df
+
+    def mass_balance(self, rivid: int, ancestors: list = None) -> pd.DataFrame:
+        """
+        Get the mass balance for a given river id as a pandas dataframe
+
+        Args:
+            rivid: the ID of a river reach in the output files
+            ancestors: a list of the given rivid and all rivers upstream of that river
+
+        Returns:
+            pandas.DataFrame
+        """
+        if type(rivid) is not int:
+            raise TypeError(f'rivid should be an integer ID of a river to mass balance')
+        if ancestors is None:
+            G = connectivity_to_digraph(self.conf['connectivity_file'])
+            ancestors = list(nx.ancestors(G, rivid))
+        with xr.open_mfdataset(self.conf['runoff_file']) as ds:
+            vdf = (
+                ds
+                .sel(rivid=ancestors)
+                .m3_riv
+                .to_dataframe()
+                [['m3_riv', ]]
+                .reset_index()
+                .set_index('time')
+                .pivot(columns='rivid', values='m3_riv')
+                .sum(axis=1)
+                .cumsum()
+                .rename('runoff_volume')
+            )
+        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
+            qdf = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
+            # convert to discharged volume - multiply by the time delta in seconds
+            qdf = qdf * (qdf.index[1] - qdf.index[0]).total_seconds()
+            qdf.columns = ['discharged_volume', ]
+
+        df = qdf.join(vdf)
+        if not df['runoff_volume'].gt(df['discharged_volume']).all():
+            logging.warning(f'More discharge than runoff volumes mass balance for rivid: {rivid}')
+
+        return qdf.join(vdf)
 
     def save_configs(self, path: str) -> None:
         """
