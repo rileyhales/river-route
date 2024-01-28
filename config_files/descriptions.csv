@@ -3,17 +3,18 @@ routing_params_file,string,Path to the routing parameters file.
 connectivity_file,string,Path to the network connectivity file.
 runoff_file,string,Path to the file with runoff values to be routed.
 outflow_file,string,Path where the outflows file should be saved.
+lhs_file,string,Path where the LHS matrix should be cached.
+lhsinv_file,string,Path where the LHS inverse matrix should be cached.
+adj_file,string,Path where the adjacency matrix should be cached.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.
+min_q,number,Minimum flow value allowed after each routing computation.
+max_q,number,Maximum flow value allowed after each routing computation.
 qinit_file,string,Path to the initial flows file.
 rinit_file,string,Path to the initial runoff file.
 qfinal_file,string,Path where the final flows file should be saved.
 rfinal_file,string,Path where the final runoff file should be saved.
-lhs_file,string,Path where the LHS matrix should be cached.
-lhsinv_file,string,Path where the LHS inverse matrix should be cached.
-adj_file,string,Path where the adjacency matrix should be cached.
 log_file,string,Path to a file where the log will be written.
+log_level,string,Level of logging: either 'debug', 'info', 'warning', 'error', or 'critical'.
 job_name,string,A name for this job to be printed in debug statements.
 progress_bar,boolean,Indicates whether or not to show a progress bar in debug statements: true or false.
-routing_method,string,Method for solving the routing equations: either 'numerical' or 'analytical'.
-petsc_ksp_type,string,Name of the solver method to be used by PETSC when the routing method is numerical.
