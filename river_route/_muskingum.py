@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 
-import matplotlib.pyplot as plt
 import netCDF4 as nc
 import networkx as nx
 import numpy as np
@@ -322,9 +321,8 @@ class Muskingum:
                 self._set_time_params(dates)
                 logging.info(f'Reading runoff array: {runoff_file}')
                 runoffs = runoff_ds[self.conf['runoff_volume_var']].values
-                runoffs[runoffs < 0] = np.nan
-                runoffs = np.nan_to_num(runoffs, nan=0.0)
-                runoffs = runoffs / self.dt_runoff  # volume to volume/time
+                runoffs = runoffs / self.num_routing_steps_per_runoff  # scale by number of routing calculations
+                runoffs = runoffs / self.dt_routing  # convert volume -> volume/time
 
             logging.debug('Getting initial value arrays')
             q_t = self._read_qinit()
@@ -378,8 +376,8 @@ class Muskingum:
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
             dates = tqdm.tqdm(dates, desc='Runoff Routed')
-        for inflow_time_step, inflow_end_date in enumerate(dates):
-            r_t = runoffs[inflow_time_step, :]
+        for runoff_time_step, runoff_end_date in enumerate(dates):
+            r_t = runoffs[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
                 inflow_tnext = (self.A @ q_t) + r_t
@@ -389,7 +387,7 @@ class Muskingum:
                 inflow_t = inflow_tnext
             interval_flows = np.mean(interval_flows, axis=0)
             interval_flows = np.round(interval_flows, decimals=2)
-            outflow_array[inflow_time_step, :] = interval_flows
+            outflow_array[runoff_time_step, :] = interval_flows
         t2 = datetime.datetime.now()
         logging.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
 
@@ -421,23 +419,6 @@ class Muskingum:
             ds['Qout'].units = 'm3 s-1'
         return
 
-    def plot(self, rivid: int, show: bool = False) -> plt.Figure:
-        """
-        Create a plot of the hydrograph for a given river id with matplotlib and optionally display it
-
-        Args:
-            rivid: the ID of a river reach in the output files
-            show: boolean flag to display the figure or not
-
-        Returns:
-            matplotlib.pyplot.Figure
-        """
-        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            figure = ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
-        if show:
-            plt.show()
-        return figure
-
     def hydrograph(self, rivid: int) -> pd.DataFrame:
         """
         Get the hydrograph for a given river id as a pandas dataframe
@@ -449,7 +430,7 @@ class Muskingum:
             pandas.DataFrame
         """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
+            df = ds.Qout.sel(rivid=rivid).to_dataframe()[['Qout', ]]
             df.columns = [rivid, ]
         return df
 
@@ -487,13 +468,14 @@ class Muskingum:
             qdf = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
             # convert to discharged volume - multiply by the time delta in seconds
             qdf = qdf * (qdf.index[1] - qdf.index[0]).total_seconds()
-            qdf.columns = ['discharged_volume', ]
+            qdf.columns = ['discharge_volume', ]
 
         df = qdf.join(vdf)
-        if not df['runoff_volume'].gt(df['discharged_volume']).all():
-            logging.warning(f'More discharge than runoff volumes mass balance for rivid: {rivid}')
+        df['runoff-discharge'] = df['runoff_volume'] - df['discharge_volume']
+        if not df['runoff-discharge'].gt(0).all():
+            logging.warning(f'More discharge than runoff volume for river {rivid}')
 
-        return qdf.join(vdf)
+        return df
 
     def save_configs(self, path: str) -> None:
         """
