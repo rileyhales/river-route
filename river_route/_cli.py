@@ -41,10 +41,12 @@ def main():
         type=str,
         help='Path to routing configuration file',
         default=None,
-        required=True,
+        required=False,
     )
 
     description_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config_files', 'descriptions.csv')
+    print(description_file)
+    print('/Users/rchales/code/river-route/config_files/descriptions.csv')
     _add_args_from_file(parser, pd.read_csv(description_file).to_dict('records'))
 
     args = parser.parse_args()
