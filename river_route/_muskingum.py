@@ -115,8 +115,7 @@ class Muskingum:
             elif isinstance(log_destination, str):
                 LOG.addHandler(logging.FileHandler(log_destination))
             LOG.handlers[0].setFormatter(logging.Formatter(log_format))
-
-        LOG.debug('Logger initialized')
+            LOG.debug('Logger initialized')
         return
 
     def _validate_configs(self) -> None:
