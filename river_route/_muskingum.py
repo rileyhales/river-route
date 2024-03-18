@@ -13,6 +13,7 @@ import tqdm
 import xarray as xr
 import yaml
 
+from ._meta import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
@@ -44,7 +45,6 @@ class Muskingum:
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_outflow: int
-    num_timesteps_resample: int
 
     def __init__(self, config_file: str = None, **kwargs, ):
         """
@@ -82,6 +82,7 @@ class Muskingum:
         self.conf.update(kwargs)
 
         # set default values for configs when possible
+        self.conf['river-route-version'] = VERSION
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['log'] = bool(self.conf.get('log', False))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
@@ -138,6 +139,7 @@ class Muskingum:
         return
 
     def _log_configs(self) -> None:
+        LOG.debug(f'river-route version: {VERSION}')
         LOG.debug('Configs:')
         for k, v in self.conf.items():
             LOG.debug(f'\t{k}: {v}')
@@ -274,7 +276,6 @@ class Muskingum:
         self.num_runoff_steps_per_outflow = int(self.dt_outflow / self.dt_runoff)
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
-        self.num_timesteps_resample = int(self.dt_outflow / self.dt_runoff)
         return
 
     def _calculate_muskingum_coefficients(self) -> None:
@@ -325,7 +326,7 @@ class Muskingum:
             with xr.open_dataset(runoff_file) as runoff_ds:
                 LOG.info('Reading time array')
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                LOG.info(f'Reading runoff array: {runoff_file}')
+                LOG.info('Reading runoff array')
                 runoffs = runoff_ds[self.conf['runoff_volume_var']].values
 
             self._set_time_params(dates)
@@ -404,7 +405,7 @@ class Muskingum:
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
-        dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
+        dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
         dates = dates - dates[0]
 
         with nc.Dataset(outflow_file, mode='w') as ds:
