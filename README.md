@@ -89,7 +89,8 @@ You can provide initial conditions/state and save final conditions/state with th
 
 You can provide logging options with these parameters:
 
-- `log_file` - path to a file where the log will be written. Defaults to stdout (logs not saved to file).
+- `log` - a boolean to enable or disable logging. Defaults to False.
+- `log_stream` - the destination for logged messages. Either 'stdout', 'stderr' or a file path,
 - `log_level` - the level of logging messages to be printed e.g. DEBUG, INFO. Defaults to INFO.
 - `job_name` - a name for this job printed in logs and debug statements.
 - `progress_bar` - display a computations progress bar in logs: True or False. Defaults to True.

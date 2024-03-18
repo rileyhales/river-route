@@ -14,7 +14,8 @@
   "rinit_file": "",
   "qfinal_file": "",
   "rfinal_file": "",
-  "log_file": "",
+  "log": false,
+  "log_stream": "",
   "log_level": "",
   "job_name": "",
   "progress_bar": ""

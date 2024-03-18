@@ -14,7 +14,8 @@ qinit_file,string,Path to the initial flows file.
 rinit_file,string,Path to the initial runoff file.
 qfinal_file,string,Path where the final flows file should be saved.
 rfinal_file,string,Path where the final runoff file should be saved.
-log_file,string,Path to a file where the log will be written.
-log_level,string,Level of logging: either 'debug', 'info', 'warning', 'error', or 'critical'.
+log,boolean,whether or not to display log messages defaulting to False
+log_stream,string,the destination for logged messages: stdout stderr or a file path. default to stdout
+log_level,string,Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
 job_name,string,A name for this job to be printed in debug statements.
 progress_bar,boolean,Indicates whether or not to show a progress bar in debug statements: true or false.

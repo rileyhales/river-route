@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 
-import matplotlib.pyplot as plt
 import netCDF4 as nc
 import networkx as nx
 import numpy as np
@@ -14,10 +13,14 @@ import tqdm
 import xarray as xr
 import yaml
 
+from ._meta import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
 __all__ = ['Muskingum', ]
+
+LOG = logging.getLogger('river_route')
+LOG.disabled = True
 
 
 class Muskingum:
@@ -42,7 +45,6 @@ class Muskingum:
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_outflow: int
-    num_timesteps_resample: int
 
     def __init__(self, config_file: str = None, **kwargs, ):
         """
@@ -80,10 +82,12 @@ class Muskingum:
         self.conf.update(kwargs)
 
         # set default values for configs when possible
+        self.conf['river-route-version'] = VERSION
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
-        self.conf['progress_bar'] = self.conf.get('progress_bar', True)
+        self.conf['log'] = bool(self.conf.get('log', False))
+        self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
-        self.conf['dt_routing'] = self.conf.get('dt_routing', 300)
+        self.conf['dt_routing'] = self.conf.get('dt_routing', 60)
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
         self.conf['min_q'] = self.conf.get('min_q', False)
         self.conf['max_q'] = self.conf.get('max_q', False)
@@ -99,21 +103,23 @@ class Muskingum:
             elif isinstance(self.conf[arg], str):
                 self.conf[arg] = os.path.abspath(self.conf[arg])
 
-        # start a logger
-        log_basic_configs = {
-            'stream': sys.stdout,
-            'level': self.conf['log_level'],
-            'format': '%(asctime)s - %(levelname)s - %(message)s',
-        }
-        if self.conf.get('log_file', ''):
-            log_basic_configs['filename'] = self.conf['log_file']
-            log_basic_configs['filemode'] = 'w'
-            log_basic_configs.pop('stream')
-        logging.basicConfig(**log_basic_configs)
+        if self.conf['log']:
+            LOG.disabled = False
+            LOG.setLevel(self.conf.get('log_level', 'DEBUG'))
+            log_destination = self.conf.get('log_stream', 'stdout')
+            log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
+            if log_destination == 'stdout':
+                LOG.addHandler(logging.StreamHandler(sys.stdout))
+            elif log_destination == 'stderr':
+                LOG.addHandler(logging.StreamHandler(sys.stderr))
+            elif isinstance(log_destination, str):
+                LOG.addHandler(logging.FileHandler(log_destination))
+            LOG.handlers[0].setFormatter(logging.Formatter(log_format))
+            LOG.debug('Logger initialized')
         return
 
     def _validate_configs(self) -> None:
-        logging.info('Validating configs file')
+        LOG.info('Validating configs file')
         required_file_paths = ['connectivity_file',
                                'runoff_file',
                                'outflow_file', ]
@@ -132,9 +138,10 @@ class Muskingum:
         return
 
     def _log_configs(self) -> None:
-        logging.debug('Configs:')
+        LOG.debug(f'river-route version: {VERSION}')
+        LOG.debug('Configs:')
         for k, v in self.conf.items():
-            logging.debug(f'\t{k}: {v}')
+            LOG.debug(f'\t{k}: {v}')
         return
 
     def _read_riverids(self) -> np.array:
@@ -187,14 +194,14 @@ class Muskingum:
             return
 
         if os.path.exists(self.conf.get('adj_file', '')):
-            logging.info('Loading adjacency matrix from file')
+            LOG.info('Loading adjacency matrix from file')
             self.A = scipy.sparse.load_npz(self.conf['adj_file'])
             return
 
-        logging.info('Calculating Network Adjacency Matrix (A)')
+        LOG.info('Calculating Network Adjacency Matrix (A)')
         self.A = connectivity_to_adjacency_matrix(self.conf['connectivity_file'])
         if self.conf.get('adj_file', ''):
-            logging.info('Saving adjacency matrix to file')
+            LOG.info('Saving adjacency matrix to file')
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
@@ -206,15 +213,15 @@ class Muskingum:
             return
 
         if os.path.exists(self.conf.get('lhs_file', '')):
-            logging.info('Loading LHS matrix from file')
+            LOG.info('Loading LHS matrix from file')
             self.lhs = scipy.sparse.load_npz(self.conf['lhs_file'])
             return
 
-        logging.info('Calculating LHS Matrix')
+        LOG.info('Calculating LHS Matrix')
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c2) @ self.A
         self.lhs = self.lhs.tocsc()
         if self.conf.get('lhs_file', ''):
-            logging.info('Saving LHS matrix to file')
+            LOG.info('Saving LHS matrix to file')
             scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
@@ -226,15 +233,15 @@ class Muskingum:
             return
 
         if os.path.exists(self.conf.get('lhsinv_file', '')):
-            logging.info('Loading LHS Inverse matrix from file')
+            LOG.info('Loading LHS Inverse matrix from file')
             self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
             return
 
         self._set_lhs_matrix()
-        logging.info('Inverting LHS Matrix')
+        LOG.info('Inverting LHS Matrix')
         self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
         if self.conf.get('lhsinv_file', ''):
-            logging.info('Saving LHS Inverse matrix to file')
+            LOG.info('Saving LHS Inverse matrix to file')
             scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
         return
 
@@ -242,7 +249,7 @@ class Muskingum:
         """
         Set time parameters for the simulation
         """
-        logging.info('Setting and validating time parameters')
+        LOG.info('Setting and validating time parameters')
         self.dt_routing = self.conf['dt_routing']
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
         self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
@@ -261,21 +268,20 @@ class Muskingum:
             assert self.dt_outflow % self.dt_runoff == 0, 'dt_outflow must be an integer multiple of dt_runoff'
             assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
         except AssertionError as e:
-            logging.error(e)
+            LOG.error(e)
             raise AssertionError('Time options are not valid')
 
         # set derived datetime parameters for computation cycles later
         self.num_runoff_steps_per_outflow = int(self.dt_outflow / self.dt_runoff)
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
-        self.num_timesteps_resample = int(self.dt_outflow / self.dt_runoff)
         return
 
     def _calculate_muskingum_coefficients(self) -> None:
         """
         Calculate the 3 Muskingum Cunge routing coefficients for each segment using given k and x
         """
-        logging.info('Calculating Muskingum coefficients')
+        LOG.info('Calculating Muskingum coefficients')
 
         k = self._read_k()
         x = self._read_x()
@@ -302,11 +308,11 @@ class Muskingum:
         Returns:
             river_route.Muskingum
         """
-        logging.info(f'Beginning routing: {self.conf["job_name"]}')
+        LOG.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
         if len(kwargs) > 0:
-            logging.info('Updating configs with kwargs')
+            LOG.info('Updating configs with kwargs')
             self.conf.update(kwargs)
 
         self._validate_configs()
@@ -315,18 +321,17 @@ class Muskingum:
         self._calculate_muskingum_coefficients()
 
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
-            logging.info(f'Reading runoff volumes file: {runoff_file}')
+            LOG.info(f'Reading runoff volumes file: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
-                logging.info('Reading time array')
+                LOG.info('Reading time array')
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                self._set_time_params(dates)
-                logging.info(f'Reading runoff array: {runoff_file}')
+                LOG.info('Reading runoff array')
                 runoffs = runoff_ds[self.conf['runoff_volume_var']].values
-                runoffs[runoffs < 0] = np.nan
-                runoffs = np.nan_to_num(runoffs, nan=0.0)
-                runoffs = runoffs / self.dt_runoff  # volume to volume/time
 
-            logging.debug('Getting initial value arrays')
+            self._set_time_params(dates)
+            runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
+
+            LOG.debug('Getting initial value arrays')
             q_t = self._read_qinit()
             r_t = self._read_rinit()
             inflow_t = (self.A @ q_t) + r_t
@@ -336,7 +341,7 @@ class Muskingum:
             outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
 
             if self.dt_outflow > self.dt_runoff:
-                logging.info('Resampling dates and outflows to specified timestep')
+                LOG.info('Resampling dates and outflows to specified timestep')
                 outflow_array = (
                     outflow_array
                     .reshape((
@@ -347,21 +352,21 @@ class Muskingum:
                     .mean(axis=1)
                 )
 
-            logging.info('Writing Outflow Array to File')
+            LOG.info('Writing Outflow Array to File')
             outflow_array = np.round(outflow_array, decimals=2)
             self._write_outflows(outflow_file, dates, outflow_array)
 
         # write the final state to disc
         if self.conf.get('qfinal_file', False):
-            logging.info('Writing Qfinal parquet')
+            LOG.info('Writing Qfinal parquet')
             pd.DataFrame(self.qinit, columns=['Q', ]).astype(float).to_parquet(self.conf['qfinal_file'])
         if self.conf.get('rfinal_file', False):
-            logging.info('Writing Rfinal parquet')
+            LOG.info('Writing Rfinal parquet')
             pd.DataFrame(self.rinit, columns=['R', ]).astype(float).to_parquet(self.conf['rfinal_file'])
 
         t2 = datetime.datetime.now()
-        logging.info('All runoff files routed')
-        logging.info(f'Total job time: {(t2 - t1).total_seconds()}')
+        LOG.info('All runoff files routed')
+        LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
     def _analytical_solution(self,
@@ -374,12 +379,12 @@ class Muskingum:
 
         force_min_max = self.conf['min_q'] or self.conf['max_q']
 
-        logging.info('Performing routing computation iterations')
+        LOG.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
             dates = tqdm.tqdm(dates, desc='Runoff Routed')
-        for inflow_time_step, inflow_end_date in enumerate(dates):
-            r_t = runoffs[inflow_time_step, :]
+        for runoff_time_step, runoff_end_date in enumerate(dates):
+            r_t = runoffs[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
                 inflow_tnext = (self.A @ q_t) + r_t
@@ -389,9 +394,9 @@ class Muskingum:
                 inflow_t = inflow_tnext
             interval_flows = np.mean(interval_flows, axis=0)
             interval_flows = np.round(interval_flows, decimals=2)
-            outflow_array[inflow_time_step, :] = interval_flows
+            outflow_array[runoff_time_step, :] = interval_flows
         t2 = datetime.datetime.now()
-        logging.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+        LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
 
         self.qinit = q_t
         self.rinit = r_t
@@ -399,7 +404,7 @@ class Muskingum:
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
-        dates = dates[::self.num_timesteps_resample].astype('datetime64[s]')
+        dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
         dates = dates - dates[0]
 
         with nc.Dataset(outflow_file, mode='w') as ds:
@@ -421,39 +426,63 @@ class Muskingum:
             ds['Qout'].units = 'm3 s-1'
         return
 
-    def plot(self, rivid: int, show: bool = False) -> plt.Figure:
+    def hydrograph(self, rivid: int) -> pd.DataFrame:
         """
-        Create a plot of the hydrograph for a given river id with matplotlib and optionally display it
+        Get the hydrograph for a given river id as a pandas dataframe
 
         Args:
             rivid: the ID of a river reach in the output files
-            show: boolean flag to display the figure or not
 
         Returns:
-            matplotlib.pyplot.Figure
+            pandas.DataFrame
         """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            figure = ds['Qout'].sel(rivid=rivid).to_dataframe()['Qout'].plot()
-        if show:
-            plt.show()
-        return figure
-
-    def hydrograph_to_csv(self, rivid: int, csv_path: str = None) -> None:
-        """
-        Save the hydrograph for a given river id to a csv file
-
-        Args:
-            rivid: the ID of a river reach in the output files
-            csv_path: the file path where the csv will be written
-
-        Returns:
-            None
-        """
-        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            df = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]]
+            df = ds.Qout.sel(rivid=rivid).to_dataframe()[['Qout', ]]
             df.columns = [rivid, ]
-        df.to_csv(csv_path)
-        return
+        return df
+
+    def mass_balance(self, rivid: int, ancestors: list = None) -> pd.DataFrame:
+        """
+        Get the mass balance for a given river id as a pandas dataframe
+
+        Args:
+            rivid: the ID of a river reach in the output files
+            ancestors: a list of the given rivid and all rivers upstream of that river
+
+        Returns:
+            pandas.DataFrame
+        """
+        if type(rivid) is not int:
+            raise TypeError(f'rivid should be an integer ID of a river to mass balance')
+        if ancestors is None:
+            G = connectivity_to_digraph(self.conf['connectivity_file'])
+            ancestors = list(nx.ancestors(G, rivid))
+        with xr.open_mfdataset(self.conf['runoff_file']) as ds:
+            vdf = (
+                ds
+                .sel(rivid=ancestors)
+                .m3_riv
+                .to_dataframe()
+                [['m3_riv', ]]
+                .reset_index()
+                .set_index('time')
+                .pivot(columns='rivid', values='m3_riv')
+                .sum(axis=1)
+                .cumsum()
+                .rename('runoff_volume')
+            )
+        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
+            qdf = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
+            # convert to discharged volume - multiply by the time delta in seconds
+            qdf = qdf * (qdf.index[1] - qdf.index[0]).total_seconds()
+            qdf.columns = ['discharge_volume', ]
+
+        df = qdf.join(vdf)
+        df['runoff-discharge'] = df['runoff_volume'] - df['discharge_volume']
+        if not df['runoff-discharge'].gt(0).all():
+            LOG.warning(f'More discharge than runoff volume for river {rivid}')
+
+        return df
 
     def save_configs(self, path: str) -> None:
         """

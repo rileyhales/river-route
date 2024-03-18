@@ -18,7 +18,8 @@ rinit_file: ''
 qfinal_file: ''
 rfinal_file: ''
 # simulation management and debugging - Optional
+log: False
 log_level: 'INFO'
-log_file: ''
+log_stream: ''
 job_name: ''
 progress_bar: True
