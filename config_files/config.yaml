@@ -5,11 +5,12 @@ runoff_file: ''
 outflow_file: ''
 # cache routing matrices - Optional
 lhs_file: ''
-lhs_inv_file: ''
+lhsinv_file: ''
 adj_file: ''
 # Compute Options
 dt_routing: 300
 dt_outflows: 0
+routing: 'linear'
 min_q: 0
 max_q: None
 # initial and final state files - Optional
@@ -19,7 +20,7 @@ qfinal_file: ''
 rfinal_file: ''
 # simulation management and debugging - Optional
 log: False
-log_level: 'INFO'
+log_level: 'DEBUG'
 log_stream: ''
 job_name: ''
 progress_bar: True

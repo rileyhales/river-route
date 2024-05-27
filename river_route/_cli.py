@@ -54,5 +54,5 @@ def main():
 
     kwargs = vars(args)
     kwargs.pop('config')
-    rr.Muskingum(args.config, **kwargs).route()
+    rr.MuskingumCunge(args.config, **kwargs).route()
     return

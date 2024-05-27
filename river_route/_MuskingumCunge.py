@@ -17,15 +17,16 @@ from ._meta import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
-__all__ = ['Muskingum', ]
+__all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
 LOG.disabled = True
 
 
-class Muskingum:
+class MuskingumCunge:
     # Given configs
     conf: dict
+    log: logging.Logger
 
     # Routing matrices
     A: scipy.sparse.csc_matrix
@@ -48,7 +49,7 @@ class Muskingum:
 
     def __init__(self, config_file: str = None, **kwargs, ):
         """
-        Implements Matrix Muskingum routing
+        Implements Matrix MuskingumCunge routing
         """
         self.set_configs(config_file, **kwargs)
         return
@@ -277,28 +278,28 @@ class Muskingum:
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
         return
 
-    def _calculate_muskingum_coefficients(self) -> None:
+    def _calculate_muskingum_coefficients(self, k: np.ndarray = None, x: np.ndarray = None) -> None:
         """
-        Calculate the 3 Muskingum Cunge routing coefficients for each segment using given k and x
+        Calculate the 3 MuskingumCunge routing coefficients for each segment using given k and x
         """
-        LOG.info('Calculating Muskingum coefficients')
+        LOG.info('Calculating MuskingumCunge coefficients')
 
-        k = self._read_k()
-        x = self._read_x()
+        if k is None:
+            k = self._read_k()
+        if x is None:
+            x = self._read_x()
 
-        dt_route_half = self.conf['dt_routing'] / 2
-        kx = k * x
-        denom = k - kx + dt_route_half
-
-        self.c1 = (dt_route_half - kx) / denom
-        self.c2 = (dt_route_half + kx) / denom
-        self.c3 = (k - kx - dt_route_half) / denom
+        dt_div_k = self.conf['dt_routing'] / k
+        denom = dt_div_k + (2 * (1 - x))
+        self.c1 = (dt_div_k + (2 * x)) / denom
+        self.c2 = (dt_div_k - (2 * x)) / denom
+        self.c3 = ((2 * (1 - x)) - dt_div_k) / denom
 
         # sum of muskingum coefficients should be 1 for all segments
-        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not approximately sum to 1'
+        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not approximately sum to 1'
         return
 
-    def route(self, **kwargs) -> 'Muskingum':
+    def route(self, **kwargs) -> 'MuskingumCunge':
         """
         Performs time-iterative runoff routing through the river network
 
@@ -306,7 +307,7 @@ class Muskingum:
             **kwargs: optional keyword arguments to override and update previously calculated or given configs
 
         Returns:
-            river_route.Muskingum
+            river_route.MuskingumCunge
         """
         LOG.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
@@ -334,11 +335,14 @@ class Muskingum:
             LOG.debug('Getting initial value arrays')
             q_t = self._read_qinit()
             r_t = self._read_rinit()
-            inflow_t = (self.A @ q_t) + r_t
 
             # begin the analytical solution
-            self._set_lhs_inv_matrix()
-            outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
+            if self.conf['routing'] == 'linear':
+                outflow_array = self._solver_linear(dates, runoffs, q_t, r_t)
+            elif self.conf['routing'] == 'nonlinear':
+                outflow_array = self._solver_nonlinear(dates, runoffs, q_t, r_t)
+            else:
+                raise ValueError('Routing method not recognized')
 
             if self.dt_outflow > self.dt_runoff:
                 LOG.info('Resampling dates and outflows to specified timestep')
@@ -369,15 +373,19 @@ class Muskingum:
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def _analytical_solution(self,
-                             dates: np.array,
-                             runoffs: np.array,
-                             q_t: np.array,
-                             r_t: np.array,
-                             inflow_t: np.array, ) -> np.array:
+    def _solver_linear(self,
+                       dates: np.array,
+                       runoffs: np.array,
+                       q_init: np.array,
+                       r_init: np.array, ) -> np.array:
+        self._set_lhs_inv_matrix()
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
 
-        force_min_max = self.conf['min_q'] or self.conf['max_q']
+        # set initial values
+        q_t = np.zeros_like(q_init)
+        q_t[:] = q_init
+        r_prev = np.zeros_like(r_init)
+        r_prev[:] = r_init
 
         LOG.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
@@ -387,19 +395,50 @@ class Muskingum:
             r_t = runoffs[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
-                inflow_tnext = (self.A @ q_t) + r_t
-                q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
-                q_t = q_t if not force_min_max else np.clip(q_t, a_min=self.conf['min_q'], a_max=self.conf['max_q'])
+                q_t = self.lhsinv @ ((self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t))
                 interval_flows[routing_substep_iteration, :] = q_t
-                inflow_t = inflow_tnext
-            interval_flows = np.mean(interval_flows, axis=0)
-            interval_flows = np.round(interval_flows, decimals=2)
+            r_prev[:] = r_t
+            interval_flows = np.round(np.mean(interval_flows, axis=0), decimals=2)
             outflow_array[runoff_time_step, :] = interval_flows
         t2 = datetime.datetime.now()
         LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
 
         self.qinit = q_t
-        self.rinit = r_t
+        self.rinit = r_prev
+        return outflow_array
+
+    def _solver_nonlinear(self,
+                          dates: np.array,
+                          runoffs: np.array,
+                          q_init: np.array,
+                          r_init: np.array, ) -> np.array:
+        self._set_lhs_matrix()
+        outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
+
+        # set initial values
+        q_t = np.zeros_like(q_init)
+        q_t[:] = q_init
+        r_prev = np.zeros_like(r_init)
+        r_prev[:] = r_init
+
+        LOG.info('Performing routing computation iterations')
+        t1 = datetime.datetime.now()
+        if self.conf['progress_bar']:
+            dates = tqdm.tqdm(dates, desc='Runoff Routed')
+        for runoff_time_step, runoff_end_date in enumerate(dates):
+            r_t = runoffs[runoff_time_step, :]
+            interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
+            for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
+                rhs = ((self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t))
+                q_t[:] = scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t)[0]
+                interval_flows[routing_substep_iteration, :] = q_t
+            outflow_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
+            r_prev[:] = r_t
+
+        t2 = datetime.datetime.now()
+        LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+        self.qinit = q_t
+        self.rinit = r_prev
         return outflow_array
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
@@ -407,7 +446,7 @@ class Muskingum:
         dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
         dates = dates - dates[0]
 
-        with nc.Dataset(outflow_file, mode='w') as ds:
+        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=dates.shape[0])
             ds.createDimension('rivid', size=self.A.shape[0])
 
