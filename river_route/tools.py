@@ -1,25 +1,28 @@
+import glob
 import logging
 import os
 
 import networkx as nx
 import pandas as pd
 import scipy
+from natsort import natsorted
+import json
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    'configs_from_rapid',
+    'routing_files_from_RAPID',
     'connectivity_to_digraph',
     'connectivity_to_adjacency_matrix',
 ]
 
 
-def configs_from_rapid(riv_bas_id: str,
-                       k: str,
-                       x: str,
-                       rapid_connect: str,
-                       out_params: str,
-                       out_connectivity: str, ) -> None:
+def routing_files_from_RAPID(riv_bas_id: str,
+                             k: str,
+                             x: str,
+                             rapid_connect: str,
+                             out_params: str,
+                             out_connectivity: str, ) -> None:
     """
     Generate river-route configuration files from input files for RAPID
 
@@ -89,3 +92,91 @@ def connectivity_to_adjacency_matrix(connectivity_file: str) -> scipy.sparse.csc
     if -1 in sorted_order:
         sorted_order.remove(-1)
     return scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(G, nodelist=sorted_order).T)
+
+
+def job_file(
+        routing_params_file: str = None,
+        connectivity_file: str = None,
+        runoff_file: str = None,
+        outflow_file: str = None,
+        adj_file: str = None,
+        dt_routing: str = None,
+        dt_outflows: str = None,
+        min_q: str = None,
+        initial_state_file: str = '',
+        final_state_file: str = '',
+        log: bool = True,
+        log_stream: str = '',
+        log_level: str = 'INFO',
+        job_name: str = '',
+        progress_bar: bool = True,
+):
+    """
+
+    Args:
+        routing_params_file: (string), Path to the routing parameters file.
+        connectivity_file: (string), Path to the network connectivity file.
+        runoff_file: (string), Path to the file with runoff values to be routed.
+        outflow_file: (string), Path where the outflows file should be saved.
+        adj_file: (string), Path where the adjacency matrix should be cached.
+        dt_routing: (int), Time interval in seconds between routing computations.
+        dt_outflows: (int), Time interval in seconds between writing flows to disc.
+        min_q: (number), Minimum flow value allowed after each routing computation.
+        initial_state_file: (string), Path to the file with initial state values.
+        final_state_file: (string), Path to the file with final state values.
+        log: (boolean), whether to display log messages defaulting to False
+        log_stream: (string), the destination for logged messages: stdout stderr or a file path. default to stdout
+        log_level: (string), Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
+        job_name: (string), A name for this job to be printed in debug statements.
+        progress_bar: (boolean), Indicates whether or not to show a progress bar in debug statements: true or false.
+
+    Returns:
+
+    """
+    return
+
+
+def job_files_from_directories(vpu_dir: str, inflows_dir: str, jobs_dir: str, states_dir: str, outputs_dir: str,
+                               runoff_type: str = 'sequential', dt_routing: int = 900,
+                               logs_dir: str = None, progress_bar: bool = True) -> None:
+    """
+    Generate river-route job files for all VPUs and for all runoff files in given directories
+    """
+    vpus = natsorted(glob.glob(os.path.join(vpu_dir, '*')))
+    vpus = [os.path.basename(x) for x in vpus if os.path.isdir(x)]
+
+    for vpu in vpus:
+        runoffs = natsorted(glob.glob(os.path.join(inflows_dir, vpu, '*.nc')))
+        # todo runoff_type == sequential, 1 start state for first runoff, 1 last state from last runoff end time
+
+        if runoff_type == 'sequential':
+            output_files = [os.path.join(outputs_dir, os.path.basename(r).replace('m3_', 'Qout_', 1)) for r in runoffs]
+            start_state = os.path.join(states_dir, vpu, 'state_{date}.parquet')
+            final_state = os.path.join(states_dir, vpu, 'state_{date}.parquet')
+
+        for runoff in runoffs:
+            # todo search for final state before start date
+            # todo runoff_type == ensemble, 1 start state for each runoff, 1 last state for each runoff end time
+            start_date = pd.to_datetime(os.path.basename(runoff).split('_')[2], format='%Y%m%d')
+            start_state = os.path.join(states_dir, vpu, 'state_{date}.parquet')
+            final_state = os.path.join(states_dir, vpu, 'state_{date}.parquet')
+
+            job_file = os.path.join(jobs_dir, f'{vpu}_{runoff}.json')
+            with open(job_file, 'w') as f:
+                json.dumps({})
+            job = {
+                "routing_params_file": os.path.join(vpu_dir, vpu, 'params.parquet'),
+                "connectivity_file": os.path.join(vpu_dir, vpu, 'connectivity.parquet'),
+                "runoff_file": runoff,
+                "outflow_file": os.path.join(outputs_dir, os.path.basename(runoff).replace('m3_', 'Qout_', 1)),
+                "routing": "linear",
+                "adj_file": os.path.join(vpu_dir, vpu, 'adj.npz'),
+                "dt_routing": dt_routing,
+                "min_q": 0,
+                "start_state_file": start_state,
+                "final_state_file": final_state,
+                "log": True,
+                "log_level": "DEBUG",
+                "job_name": f'{vpu}_{start_date}_{runoff}',
+                "progress_bar": True
+            }

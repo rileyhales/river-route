@@ -1,26 +1,21 @@
-# Required Input/Output Files
+# Required Watershed Files
 routing_params_file: ''
 connectivity_file: ''
+adj_file: ''  # Optional - if it does not exist, it will be cached at this location
+# Routing Input and Output
 runoff_file: ''
 outflow_file: ''
-# cache routing matrices - Optional
-lhs_file: ''
-lhsinv_file: ''
-adj_file: ''
-# Compute Options
-dt_routing: 300
-dt_outflows: 0
+# Compute Options - Optional
 routing: 'linear'
-min_q: 0
-max_q: None
+positive_flow: True
+dt_routing: 0
+dt_outflows: 0
 # initial and final state files - Optional
-qinit_file: ''
-rinit_file: ''
-qfinal_file: ''
-rfinal_file: ''
+initial_state_file: ''
+final_state_file: ''
 # simulation management and debugging - Optional
 log: False
+progress_bar: False
 log_level: 'DEBUG'
 log_stream: ''
 job_name: ''
-progress_bar: True
