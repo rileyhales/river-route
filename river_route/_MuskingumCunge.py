@@ -31,7 +31,6 @@ class MuskingumCunge:
     # Routing matrices
     A: scipy.sparse.csc_matrix
     lhs: scipy.sparse.csc_matrix
-    lhsinv: scipy.sparse.csc_matrix
     k: np.array
     x: np.array
     c1: np.array
@@ -251,26 +250,6 @@ class MuskingumCunge:
         self.lhs = self.lhs.tocsc()
         return
 
-    def _set_lhs_inv_matrix(self) -> None:
-        """
-        Calculate the LHS matrix for the routing problem
-        """
-        if hasattr(self, 'lhsinv'):
-            return
-
-        if os.path.exists(self.conf.get('lhsinv_file', '')):
-            LOG.info('Loading LHS Inverse matrix from file')
-            self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
-            return
-
-        self._set_lhs_matrix()
-        LOG.info('Inverting LHS Matrix')
-        self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
-        if self.conf.get('lhsinv_file', ''):
-            LOG.info('Saving LHS Inverse matrix to file')
-            scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
-        return
-
     def _set_time_params(self, dates: np.array):
         """
         Set time parameters for the simulation
@@ -446,9 +425,6 @@ class MuskingumCunge:
         return outflow_array
 
     def _solver(self, rhs: np.array) -> np.array:
-        # todo allow choosing analytical or iterative solvers
-        # self.set_lhs_inv_matrix()
-        # return self.lhsinv @ rhs
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, )[0]
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
