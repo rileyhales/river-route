@@ -249,11 +249,6 @@ class MuskingumCunge:
     def _calculate_lhs_matrix(self) -> None:
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
         self.lhs = self.lhs.tocsc()
-
-        # LOG.info('Calculating LHS Matrix')
-        # if self.conf.get('lhs_file', ''):
-        #     LOG.info('Saving LHS matrix to file')
-        #     scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
     def _set_lhs_inv_matrix(self) -> None:
@@ -280,9 +275,6 @@ class MuskingumCunge:
         """
         Set time parameters for the simulation
         """
-        # todo if the 4 time vars exist, check if they are consistent with dates.
-        #  else, reset self.c1, self.c2, self.c3 and proceed
-
         LOG.debug('Setting and validating time parameters')
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
         self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
@@ -316,13 +308,12 @@ class MuskingumCunge:
         """
         Calculate the 3 MuskingumCunge routing coefficients for each segment using given k and x
         """
-        # todo - if self.c1, self.c2, self.c3 are already set, return
         LOG.debug('Calculating MuskingumCunge coefficients')
 
-        if k is None:
-            k = self._read_k()
-        if x is None:
-            x = self._read_x()
+        if not hasattr(self, 'k'):
+            self._read_k()
+        if not hasattr(self, 'x'):
+            self._read_x()
 
         dt_div_k = self.dt_routing / k
         denom = dt_div_k + (2 * (1 - x))
@@ -331,28 +322,19 @@ class MuskingumCunge:
         self.c2 = (dt_div_k - _2x) / denom
         self.c3 = ((2 * (1 - x)) - dt_div_k) / denom
 
-        # sum of muskingum coefficients should be 1 for all segments
-        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not approximately sum to 1'
+        # sum of coefficients should be 1 (or arbitrarily close) for all segments
+        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not sum to 1'
         return
 
     def _recalculate_nonlinear_coefficients(self, q_t: np.array) -> None:
-        # todo
-        #  - calculate k and x as a function of q_t
-        #  - calculate muskingum coefficients
-        #  - update the lhs matrix
-        # how many thresholds, and how to specify them?
+        if not hasattr(self, 'nonlinear_thresholds'):
+            self.nonlinear_thresholds = pd.read_parquet(self.conf['nonlinear_thresholds_file'])
+        threshold_columns = sorted(self.nonlinear_thresholds.columns)
+        if not np.any(q_t > self.nonlinear_thresholds[threshold_columns[0]]):
+            return
 
         if not hasattr(self, 'nonlinear_k_table'):
             self.nonlinear_k_table = pd.read_parquet(self.conf['nonlinear_routing_params_file'])
-        if not hasattr(self, 'nonlinear_thresholds'):
-            self.nonlinear_thresholds = pd.read_parquet(self.conf['nonlinear_thresholds_file'])
-
-        threshold_columns = sorted(self.nonlinear_thresholds.columns)
-
-        # todo store the linear routing (e.g. nonlinear base case) lhs and coefficients
-        #     todo - set the base case lhs and coefficient vectors
-        if not np.any(q_t > self.nonlinear_thresholds[threshold_columns[0]]):
-            return
 
         k = self._read_k()
 
@@ -362,7 +344,7 @@ class MuskingumCunge:
             k[values_to_change] = self.nonlinear_k_table[f'k_{threshold}'][values_to_change]
 
         self._calculate_muskingum_coefficients(k=k)
-        self._calculate_lhs_matrix()  # todo change logic to allow overwriting the matrix
+        self._calculate_lhs_matrix()
         return
 
     def route(self, **kwargs) -> 'MuskingumCunge':
