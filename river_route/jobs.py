@@ -6,11 +6,11 @@ from natsort import natsorted
 import pandas as pd
 
 __all__ = [
-    'job_file',
+    'job_configs',
 ]
 
 
-def job_file(
+def job_configs(
         routing_params_file: str,
         connectivity_file: str,
         adj_file: str,
@@ -98,60 +98,38 @@ def job_files_from_directories(
     vpus = natsorted(glob.glob(join(vpu_dir, '*')))
     vpus = [basename(x) for x in vpus if isdir(x)]
 
-    job_files = []
+    jobs = []
 
-    if sim_type == 'sequential':
-        for vpu in vpus:
-            routing_params_file = join(vpu_dir, vpu, 'params.parquet')
-            connectivity_file = join(vpu_dir, vpu, 'connectivity.parquet')
-            adj_file = join(vpu_dir, vpu, 'adj.npz')
-            runvol_files = natsorted(glob.glob(join(inflows_dir, vpu, '*.nc')))
-            output_files = [join(outputs_dir, basename(f).replace('m3_', 'Qout_')) for f in runvol_files]
+    for vpu in vpus:
+        routing_params_file = join(vpu_dir, vpu, 'params.parquet')
+        connectivity_file = join(vpu_dir, vpu, 'connectivity.parquet')
+        adj_file = join(vpu_dir, vpu, 'adj.npz')
+        runvol_files = natsorted(glob.glob(join(inflows_dir, vpu, '*.nc')))
+        output_files = [join(outputs_dir, basename(f).replace('m3_', 'Qout_')) for f in runvol_files]
+
+        if sim_type == 'sequential':
             start_date = pd.to_datetime(basename(runvol_files[0]).split('_')[2], format='%Y%m%d')
             final_state = join(states_dir, vpu, f'finalstate_{vpu}_{start_date}.parquet')
-            job_files.append(
-                job_file(
-                    routing_params_file=routing_params_file,
-                    connectivity_file=connectivity_file,
-                    adj_file=adj_file,
-                    runoff_file=runvol_files,
-                    outflow_file=output_files,
-                    dt_routing=dt_routing,
-                    dt_outflows=dt_outflows,
-                    initial_state_file=initial_state_file,
-                    final_state_file=final_state,
-                    job_name=f'jobfile_{vpu}_{start_date}_{sim_type}',
-                    **kwargs
-                )
+            jobs.append(
+                job_configs(routing_params_file=routing_params_file, connectivity_file=connectivity_file,
+                            adj_file=adj_file, runoff_file=runvol_files, outflow_file=output_files,
+                            dt_routing=dt_routing, dt_outflows=dt_outflows, initial_state_file=initial_state_file,
+                            final_state_file=final_state, job_name=f'job_{vpu}_{start_date}_{sim_type}', **kwargs)
             )
-    elif sim_type == 'ensemble':
-        for vpu in vpus:
-            routing_params_file = join(vpu_dir, vpu, 'params.parquet')
-            connectivity_file = join(vpu_dir, vpu, 'connectivity.parquet')
-            adj_file = join(vpu_dir, vpu, 'adj.npz')
-            runvol_files = natsorted(glob.glob(join(inflows_dir, vpu, '*.nc')))
-            output_files = [join(outputs_dir, basename(f).replace('m3_', 'Qout_')) for f in runvol_files]
+
+        elif sim_type == 'ensemble':
             for runvol_file, output_file in zip(runvol_files, output_files):
                 start_date = pd.to_datetime(basename(runvol_file).split('_')[2], format='%Y%m%d')
                 final_state = join(states_dir, vpu, f'finalstate_{vpu}_{start_date}.parquet')
-                job_files.append(
-                    job_file(
-                        routing_params_file=routing_params_file,
-                        connectivity_file=connectivity_file,
-                        adj_file=adj_file,
-                        runoff_file=runvol_file,
-                        outflow_file=output_file,
-                        dt_routing=dt_routing,
-                        dt_outflows=dt_outflows,
-                        initial_state_file=initial_state_file,
-                        final_state_file=final_state,
-                        job_name=f'jobfile_{vpu}_{start_date}_{sim_type}',
-                        **kwargs
-                    )
+                jobs.append(
+                    job_configs(routing_params_file=routing_params_file, connectivity_file=connectivity_file,
+                                adj_file=adj_file, runoff_file=runvol_file, outflow_file=output_file,
+                                dt_routing=dt_routing, dt_outflows=dt_outflows, initial_state_file=initial_state_file,
+                                final_state_file=final_state, job_name=f'job_{vpu}_{start_date}_{sim_type}', **kwargs)
                 )
 
-    for job in job_files:
+    for job in jobs:
         with open(join(jobs_dir, f'{job["job_name"]}.json'), 'w') as f:
             json.dump(job, f)
 
-    return job_files
+    return jobs
