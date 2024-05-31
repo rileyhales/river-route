@@ -318,7 +318,6 @@ class MuskingumCunge:
         k = self._read_k()
 
         for threshold in threshold_columns:  # small to large
-            # print('changed a threshold')
             values_to_change = (q_t > self.nonlinear_thresholds[threshold]).values
             k[values_to_change] = self.nonlinear_k_table[f'k_{threshold}'][values_to_change]
 
