@@ -32,6 +32,8 @@ class MuskingumCunge:
     A: scipy.sparse.csc_matrix
     lhs: scipy.sparse.csc_matrix
     lhsinv: scipy.sparse.csc_matrix
+    k: np.array
+    x: np.array
     c1: np.array
     c2: np.array
     c3: np.array
@@ -94,6 +96,13 @@ class MuskingumCunge:
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
         self.conf['positive_flow'] = self.conf.get('positive_flow', True)
 
+        # check that the routing params files are given depending on the routing method
+        if self.conf['routing'] == 'nonlinear':
+            assert 'nonlinear_routing_params_file' in self.conf, 'Nonlinear routing requires nonlinear routing params'
+            assert 'nonlinear_thresholds_file' in self.conf, 'Nonlinear routing requires nonlinear thresholds'
+        else:
+            assert 'routing_params_file' in self.conf, 'Linear routing requires linear routing params'
+
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
             self.conf['runoff_file'] = [self.conf['runoff_file'], ]
@@ -127,6 +136,12 @@ class MuskingumCunge:
                                'outflow_file', ]
         paths_should_exist = ['connectivity_file', ]
 
+        if self.conf['routing'] == 'linear':
+            required_file_paths.append('routing_params_file')
+        else:
+            required_file_paths.append('nonlinear_routing_params_file')
+            required_file_paths.append('nonlinear_thresholds_file')
+
         for arg in required_file_paths:
             if arg not in self.conf:
                 raise ValueError(f'{arg} not found in configs')
@@ -140,6 +155,7 @@ class MuskingumCunge:
 
     def _log_configs(self) -> None:
         LOG.debug(f'river-route version: {VERSION}')
+        LOG.debug(f'Number of Rivers: {self._read_river_ids().shape[0]}')
         LOG.debug('Configs:')
         for k, v in self.conf.items():
             LOG.debug(f'\t{k}: {v}')
@@ -155,13 +171,19 @@ class MuskingumCunge:
         """
         Reads K vector from parquet given in config file
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
+        if hasattr(self, 'k'):
+            return self.k
+        self.k = pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
+        return self.k
 
     def _read_x(self) -> np.array:
         """
         Reads X vector from parquet given in config file
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
+        if hasattr(self, 'x'):
+            return self.x
+        self.x = pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
+        return self.x
 
     def _read_initial_state(self) -> (np.array, np.array):
         if hasattr(self, 'initial_state'):
@@ -221,12 +243,17 @@ class MuskingumCunge:
             self.lhs = scipy.sparse.load_npz(self.conf['lhs_file'])
             return
 
-        LOG.info('Calculating LHS Matrix')
+        self._calculate_lhs_matrix()
+        return
+
+    def _calculate_lhs_matrix(self) -> None:
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
         self.lhs = self.lhs.tocsc()
-        if self.conf.get('lhs_file', ''):
-            LOG.info('Saving LHS matrix to file')
-            scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
+
+        # LOG.info('Calculating LHS Matrix')
+        # if self.conf.get('lhs_file', ''):
+        #     LOG.info('Saving LHS matrix to file')
+        #     scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
         return
 
     def _set_lhs_inv_matrix(self) -> None:
@@ -306,6 +333,36 @@ class MuskingumCunge:
 
         # sum of muskingum coefficients should be 1 for all segments
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not approximately sum to 1'
+        return
+
+    def _recalculate_nonlinear_coefficients(self, q_t: np.array) -> None:
+        # todo
+        #  - calculate k and x as a function of q_t
+        #  - calculate muskingum coefficients
+        #  - update the lhs matrix
+        # how many thresholds, and how to specify them?
+
+        if not hasattr(self, 'nonlinear_k_table'):
+            self.nonlinear_k_table = pd.read_parquet(self.conf['nonlinear_routing_params_file'])
+        if not hasattr(self, 'nonlinear_thresholds'):
+            self.nonlinear_thresholds = pd.read_parquet(self.conf['nonlinear_thresholds_file'])
+
+        threshold_columns = sorted(self.nonlinear_thresholds.columns)
+
+        # todo store the linear routing (e.g. nonlinear base case) lhs and coefficients
+        #     todo - set the base case lhs and coefficient vectors
+        if not np.any(q_t > self.nonlinear_thresholds[threshold_columns[0]]):
+            return
+
+        k = self._read_k()
+
+        for threshold in threshold_columns:  # small to large
+            # print('changed a threshold')
+            values_to_change = (q_t > self.nonlinear_thresholds[threshold]).values
+            k[values_to_change] = self.nonlinear_k_table[f'k_{threshold}'][values_to_change]
+
+        self._calculate_muskingum_coefficients(k=k)
+        self._calculate_lhs_matrix()  # todo change logic to allow overwriting the matrix
         return
 
     def route(self, **kwargs) -> 'MuskingumCunge':
@@ -390,18 +447,16 @@ class MuskingumCunge:
             r_t = runoffs[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
-                # todo - if routing is nonlinear
-                #  - calculate k and x as a function of q_t
-                #  - calculate muskingum coefficients
-                #  - update the lhs matrix
+                if self.conf['routing'] == 'nonlinear':
+                    self._recalculate_nonlinear_coefficients(q_t)
                 rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
                 q_t[:] = self._solver(rhs)
                 interval_flows[routing_sub_iteration_num, :] = q_t
             outflow_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
             r_prev[:] = r_t
 
-        # if self.conf['positive_flow']:
-        #     outflow_array[outflow_array < 0] = 0
+        if self.conf['positive_flow']:
+            outflow_array[outflow_array < 0] = 0
 
         t2 = datetime.datetime.now()
         LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
@@ -412,7 +467,7 @@ class MuskingumCunge:
         # todo allow choosing analytical or iterative solvers
         # self.set_lhs_inv_matrix()
         # return self.lhsinv @ rhs
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs)[0]
+        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, )[0]
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
