@@ -10,7 +10,7 @@ Install river-route from source using conda/mamba such as with the following com
 ```bash
 git clone https://github.com/rileyhales/river-route
 cd river-route
-mamba env create -f environment.yml
+mamba env create -f environment.yaml
 mamba activate rr
 python setup.py install
 ```
@@ -25,7 +25,7 @@ import river_route as rr
 
 (
     rr
-    .Muskingum('/path/to/config.yml')
+    .MuskingumCunge('/path/to/config.yaml')
     .route()
 )
 ```
@@ -37,7 +37,7 @@ import river_route as rr
 
 (
     rr
-    .Muskingum(**{
+    .MuskingumCunge(**{
         'routing_params_file': '/path/to/routing_params.parquet',
         'connectivity_file': '/path/to/connectivity.parquet',
         'runoff_file': '/path/to/runoff.nc',
@@ -125,7 +125,7 @@ graph LR
         a[Calculate LHS & LHS<sup>-1</sup>] --> b
         b[Divide Runoff Data by \n Number of Steps] --> c
         c[Iterate On Runoff Intervals] --> d
-        d[Solving Matrix \n Muskingum] --> e
+        d[Solving Matrix \n MuskingumCunge] --> e
         e[Enforce Min and Max Q] --> f & c
         f[Write Outflows to Disk] --> g
         g[Cache Final State]
@@ -175,8 +175,8 @@ index.
 | Column | Data Type | Description                                                               |
 |--------|-----------|---------------------------------------------------------------------------|
 | rivid  | integer   | Unique ID of a river segment                                              |
-| k      | float     | the k parameter of the Muskingum Cunge routing equation length / velocity |
-| x      | float     | the x parameter of the Muskingum Cunge routing equation. x : [0, 0.5]     |
+| k      | float     | the k parameter of the MuskingumCunge Cunge routing equation length / velocity |
+| x      | float     | the x parameter of the MuskingumCunge Cunge routing equation. x : [0, 0.5]     |
 
 ### Connectivity File
 

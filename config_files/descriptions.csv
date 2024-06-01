@@ -8,13 +8,11 @@ lhsinv_file,string,Path where the LHS inverse matrix should be cached.
 adj_file,string,Path where the adjacency matrix should be cached.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.
-min_q,number,Minimum flow value allowed after each routing computation.
-max_q,number,Maximum flow value allowed after each routing computation.
-qinit_file,string,Path to the initial flows file.
-rinit_file,string,Path to the initial runoff file.
-qfinal_file,string,Path where the final flows file should be saved.
-rfinal_file,string,Path where the final runoff file should be saved.
-log,boolean,whether or not to display log messages defaulting to False
+routing,string,Either 'linear' or 'nonlinear' routing- default 'linear'.
+positive_flows,boolean,Force minimum flow value to be >= 0.
+initial_state_file,string,Path to the file with initial state values.
+final_state_file,string,Path to the file with final state values.
+log,boolean,whether to display log messages defaulting to False
 log_stream,string,the destination for logged messages: stdout stderr or a file path. default to stdout
 log_level,string,Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
 job_name,string,A name for this job to be printed in debug statements.

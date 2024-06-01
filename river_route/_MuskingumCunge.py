@@ -17,25 +17,26 @@ from ._meta import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
-__all__ = ['Muskingum', ]
+__all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
 LOG.disabled = True
 
 
-class Muskingum:
+class MuskingumCunge:
     # Given configs
     conf: dict
+    log: logging.Logger
 
     # Routing matrices
     A: scipy.sparse.csc_matrix
     lhs: scipy.sparse.csc_matrix
-    lhsinv: scipy.sparse.csc_matrix
+    k: np.array
+    x: np.array
     c1: np.array
     c2: np.array
     c3: np.array
-    qinit: np.array
-    rinit: np.array
+    initial_state: (np.array, np.array)  # Q init, R init
 
     # Time options
     dt_total: float
@@ -47,9 +48,6 @@ class Muskingum:
     num_runoff_steps_per_outflow: int
 
     def __init__(self, config_file: str = None, **kwargs, ):
-        """
-        Implements Matrix Muskingum routing
-        """
         self.set_configs(config_file, **kwargs)
         return
 
@@ -87,10 +85,19 @@ class Muskingum:
         self.conf['log'] = bool(self.conf.get('log', False))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
-        self.conf['dt_routing'] = self.conf.get('dt_routing', 60)
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
-        self.conf['min_q'] = self.conf.get('min_q', False)
-        self.conf['max_q'] = self.conf.get('max_q', False)
+
+        # routing and solver options - time is validated at route time
+        self.conf['routing'] = self.conf.get('routing', 'linear')
+        assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
+        self.conf['positive_flow'] = self.conf.get('positive_flow', True)
+
+        # check that the routing params files are given depending on the routing method
+        if self.conf['routing'] == 'nonlinear':
+            assert 'nonlinear_routing_params_file' in self.conf, 'Nonlinear routing requires nonlinear routing params'
+            assert 'nonlinear_thresholds_file' in self.conf, 'Nonlinear routing requires nonlinear thresholds'
+        else:
+            assert 'routing_params_file' in self.conf, 'Linear routing requires linear routing params'
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_file'], str):
@@ -103,9 +110,10 @@ class Muskingum:
             elif isinstance(self.conf[arg], str):
                 self.conf[arg] = os.path.abspath(self.conf[arg])
 
+        # Enable logging options
         if self.conf['log']:
             LOG.disabled = False
-            LOG.setLevel(self.conf.get('log_level', 'DEBUG'))
+            LOG.setLevel(self.conf.get('log_level', 'INFO'))
             log_destination = self.conf.get('log_stream', 'stdout')
             log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
             if log_destination == 'stdout':
@@ -124,9 +132,14 @@ class Muskingum:
                                'runoff_file',
                                'outflow_file', ]
         paths_should_exist = ['connectivity_file', ]
-        required_time_opts = ['dt_routing', ]
 
-        for arg in required_file_paths + required_time_opts:
+        if self.conf['routing'] == 'linear':
+            required_file_paths.append('routing_params_file')
+        else:
+            required_file_paths.append('nonlinear_routing_params_file')
+            required_file_paths.append('nonlinear_thresholds_file')
+
+        for arg in required_file_paths:
             if arg not in self.conf:
                 raise ValueError(f'{arg} not found in configs')
         for arg in paths_should_exist:
@@ -139,46 +152,56 @@ class Muskingum:
 
     def _log_configs(self) -> None:
         LOG.debug(f'river-route version: {VERSION}')
+        LOG.debug(f'Number of Rivers: {self._read_river_ids().shape[0]}')
         LOG.debug('Configs:')
         for k, v in self.conf.items():
             LOG.debug(f'\t{k}: {v}')
         return
 
-    def _read_riverids(self) -> np.array:
+    def _read_river_ids(self) -> np.array:
         """
         Reads river ids vector from parquet given in config file
         """
         return pd.read_parquet(self.conf['routing_params_file'], columns=['rivid', ]).values.flatten()
 
-    def _read_k(self) -> np.array:
+    def _read_linear_k(self) -> np.array:
         """
         Reads K vector from parquet given in config file
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
+        if hasattr(self, 'k'):
+            return self.k
+        self.k = pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
+        return self.k
 
-    def _read_x(self) -> np.array:
+    def _read_linear_x(self) -> np.array:
         """
         Reads X vector from parquet given in config file
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
+        if hasattr(self, 'x'):
+            return self.x
+        self.x = pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
+        return self.x
 
-    def _read_qinit(self) -> np.array:
-        if hasattr(self, 'qinit'):
-            return self.qinit
+    def _read_initial_state(self) -> (np.array, np.array):
+        if hasattr(self, 'initial_state'):
+            return self.initial_state
 
-        qinit = self.conf.get('qinit_file', None)
-        if qinit is None or qinit == '':
-            return np.zeros(self.A.shape[0])
-        return pd.read_parquet(self.conf['qinit_file']).values.flatten()
+        state_file = self.conf.get('initial_state_file', '')
+        if state_file == '':
+            LOG.debug('Setting initial state to zeros')
+            return np.zeros(self.A.shape[0]), np.zeros(self.A.shape[0])
+        assert os.path.exists(state_file), FileNotFoundError(f'Initial state file not found at: {state_file}')
+        LOG.debug('Reading Initial State from Parquet')
+        initial_state = pd.read_parquet(state_file).values
+        initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
+        self.initial_state = initial_state
 
-    def _read_rinit(self) -> np.array:
-        if hasattr(self, 'rinit'):
-            return self.rinit
-
-        rinit = self.conf.get('rinit_file', None)
-        if rinit is None or rinit == '':
-            return np.zeros(self.A.shape[0])
-        return pd.read_parquet(self.conf['rinit_file']).values.flatten()
+    def _write_final_state(self) -> None:
+        final_state_file = self.conf.get('final_state_file', '')
+        if final_state_file == '':
+            return
+        LOG.debug('Writing Final State to Parquet')
+        pd.DataFrame(self.initial_state, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
 
     def _get_digraph(self) -> nx.DiGraph:
         """
@@ -194,66 +217,33 @@ class Muskingum:
             return
 
         if os.path.exists(self.conf.get('adj_file', '')):
-            LOG.info('Loading adjacency matrix from file')
+            LOG.debug('Loading adjacency matrix from file')
             self.A = scipy.sparse.load_npz(self.conf['adj_file'])
             return
 
-        LOG.info('Calculating Network Adjacency Matrix (A)')
+        LOG.debug('Calculating Network Adjacency Matrix (A)')
         self.A = connectivity_to_adjacency_matrix(self.conf['connectivity_file'])
         if self.conf.get('adj_file', ''):
             LOG.info('Saving adjacency matrix to file')
             scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
-    def _set_lhs_matrix(self) -> None:
-        """
-        Calculate the LHS matrix for the routing problem
-        """
-        if hasattr(self, 'lhs'):
-            return
-
-        if os.path.exists(self.conf.get('lhs_file', '')):
-            LOG.info('Loading LHS matrix from file')
-            self.lhs = scipy.sparse.load_npz(self.conf['lhs_file'])
-            return
-
-        LOG.info('Calculating LHS Matrix')
-        self.lhs = scipy.sparse.eye(self.A.shape[0]) - scipy.sparse.diags(self.c2) @ self.A
+    def _calculate_lhs_matrix(self) -> None:
+        self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
         self.lhs = self.lhs.tocsc()
-        if self.conf.get('lhs_file', ''):
-            LOG.info('Saving LHS matrix to file')
-            scipy.sparse.save_npz(self.conf['lhs_file'], self.lhs)
-        return
-
-    def _set_lhs_inv_matrix(self) -> None:
-        """
-        Calculate the LHS matrix for the routing problem
-        """
-        if hasattr(self, 'lhsinv'):
-            return
-
-        if os.path.exists(self.conf.get('lhsinv_file', '')):
-            LOG.info('Loading LHS Inverse matrix from file')
-            self.lhsinv = scipy.sparse.load_npz(self.conf['lhsinv_file'])
-            return
-
-        self._set_lhs_matrix()
-        LOG.info('Inverting LHS Matrix')
-        self.lhsinv = scipy.sparse.csc_matrix(scipy.sparse.linalg.inv(self.lhs))
-        if self.conf.get('lhsinv_file', ''):
-            LOG.info('Saving LHS Inverse matrix to file')
-            scipy.sparse.save_npz(self.conf['lhsinv_file'], self.lhsinv)
         return
 
     def _set_time_params(self, dates: np.array):
         """
         Set time parameters for the simulation
         """
-        LOG.info('Setting and validating time parameters')
-        self.dt_routing = self.conf['dt_routing']
+        LOG.debug('Setting and validating time parameters')
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
         self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
         self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
+        if self.conf.get('dt_routing', 0):
+            LOG.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
+        self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
 
         try:
             # check that time options have the correct sizes
@@ -261,7 +251,6 @@ class Muskingum:
             assert self.dt_total >= self.dt_outflow, 'dt_total !>= dt_outflow'
             assert self.dt_outflow >= self.dt_runoff, 'dt_outflow !>= dt_runoff'
             assert self.dt_runoff >= self.dt_routing, 'dt_runoff !>= dt_routing'
-
             # check that time options are evenly divisible
             assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
             assert self.dt_total % self.dt_outflow == 0, 'dt_total must be an integer multiple of dt_outflow'
@@ -277,28 +266,49 @@ class Muskingum:
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
         return
 
-    def _calculate_muskingum_coefficients(self) -> None:
+    def _calculate_muskingum_coefficients(self, k: np.ndarray = None, x: np.ndarray = None) -> None:
         """
-        Calculate the 3 Muskingum Cunge routing coefficients for each segment using given k and x
+        Calculate the 3 MuskingumCunge routing coefficients for each segment using given k and x
         """
-        LOG.info('Calculating Muskingum coefficients')
+        LOG.debug('Calculating MuskingumCunge coefficients')
 
-        k = self._read_k()
-        x = self._read_x()
+        if not hasattr(self, 'k'):
+            self._read_linear_k()
+        if not hasattr(self, 'x'):
+            self._read_linear_x()
 
-        dt_route_half = self.conf['dt_routing'] / 2
-        kx = k * x
-        denom = k - kx + dt_route_half
+        dt_div_k = self.dt_routing / k
+        denom = dt_div_k + (2 * (1 - x))
+        _2x = 2 * x
+        self.c1 = (dt_div_k + _2x) / denom
+        self.c2 = (dt_div_k - _2x) / denom
+        self.c3 = ((2 * (1 - x)) - dt_div_k) / denom
 
-        self.c1 = (dt_route_half - kx) / denom
-        self.c2 = (dt_route_half + kx) / denom
-        self.c3 = (k - kx - dt_route_half) / denom
-
-        # sum of muskingum coefficients should be 1 for all segments
-        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not approximately sum to 1'
+        # sum of coefficients should be 1 (or arbitrarily close) for all segments
+        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not sum to 1'
         return
 
-    def route(self, **kwargs) -> 'Muskingum':
+    def _calculate_nonlinear_coefficients(self, q_t: np.array) -> None:
+        if not hasattr(self, 'nonlinear_thresholds'):
+            self.nonlinear_thresholds = pd.read_parquet(self.conf['nonlinear_thresholds_file'])
+        threshold_columns = sorted(self.nonlinear_thresholds.columns)
+        if not np.any(q_t > self.nonlinear_thresholds[threshold_columns[0]]):
+            return
+
+        if not hasattr(self, 'nonlinear_k_table'):
+            self.nonlinear_k_table = pd.read_parquet(self.conf['nonlinear_routing_params_file'])
+
+        k = self._read_linear_k()
+
+        for threshold in threshold_columns:  # small to large
+            values_to_change = (q_t > self.nonlinear_thresholds[threshold]).values
+            k[values_to_change] = self.nonlinear_k_table[f'k_{threshold}'][values_to_change]
+
+        self._calculate_muskingum_coefficients(k=k)
+        self._calculate_lhs_matrix()
+        return
+
+    def route(self, **kwargs) -> 'MuskingumCunge':
         """
         Performs time-iterative runoff routing through the river network
 
@@ -306,7 +316,7 @@ class Muskingum:
             **kwargs: optional keyword arguments to override and update previously calculated or given configs
 
         Returns:
-            river_route.Muskingum
+            river_route.MuskingumCunge
         """
         LOG.info(f'Beginning routing: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
@@ -318,27 +328,22 @@ class Muskingum:
         self._validate_configs()
         self._log_configs()
         self._set_adjacency_matrix()
-        self._calculate_muskingum_coefficients()
 
+        LOG.debug('Getting initial value arrays')
         for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
+            LOG.info('-' * 80)
             LOG.info(f'Reading runoff volumes file: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
-                LOG.info('Reading time array')
+                LOG.debug('Reading time array')
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                LOG.info('Reading runoff array')
+                LOG.debug('Reading runoff array')
                 runoffs = runoff_ds[self.conf['runoff_volume_var']].values
 
             self._set_time_params(dates)
+            self._calculate_muskingum_coefficients()
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
-
-            LOG.debug('Getting initial value arrays')
-            q_t = self._read_qinit()
-            r_t = self._read_rinit()
-            inflow_t = (self.A @ q_t) + r_t
-
-            # begin the analytical solution
-            self._set_lhs_inv_matrix()
-            outflow_array = self._analytical_solution(dates, runoffs, q_t, r_t, inflow_t)
+            q_t, r_t = self._read_initial_state()
+            outflow_array = self._router(dates, runoffs, q_t, r_t)
 
             if self.dt_outflow > self.dt_runoff:
                 LOG.info('Resampling dates and outflows to specified timestep')
@@ -357,27 +362,25 @@ class Muskingum:
             self._write_outflows(outflow_file, dates, outflow_array)
 
         # write the final state to disc
-        if self.conf.get('qfinal_file', False):
-            LOG.info('Writing Qfinal parquet')
-            pd.DataFrame(self.qinit, columns=['Q', ]).astype(float).to_parquet(self.conf['qfinal_file'])
-        if self.conf.get('rfinal_file', False):
-            LOG.info('Writing Rfinal parquet')
-            pd.DataFrame(self.rinit, columns=['R', ]).astype(float).to_parquet(self.conf['rfinal_file'])
+        self._write_final_state()
 
         t2 = datetime.datetime.now()
         LOG.info('All runoff files routed')
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def _analytical_solution(self,
-                             dates: np.array,
-                             runoffs: np.array,
-                             q_t: np.array,
-                             r_t: np.array,
-                             inflow_t: np.array, ) -> np.array:
+    def _router(self,
+                dates: np.array,
+                runoffs: np.array,
+                q_init: np.array,
+                r_init: np.array, ) -> np.array:
+        # set initial values
+        self._calculate_lhs_matrix()
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
-
-        force_min_max = self.conf['min_q'] or self.conf['max_q']
+        q_t = np.zeros_like(q_init)
+        q_t[:] = q_init
+        r_prev = np.zeros_like(r_init)
+        r_prev[:] = r_init
 
         LOG.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
@@ -386,28 +389,32 @@ class Muskingum:
         for runoff_time_step, runoff_end_date in enumerate(dates):
             r_t = runoffs[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
-            for routing_substep_iteration in range(self.num_routing_steps_per_runoff):
-                inflow_tnext = (self.A @ q_t) + r_t
-                q_t = self.lhsinv @ ((self.c1 * inflow_t) + (self.c2 * r_t) + (self.c3 * q_t))
-                q_t = q_t if not force_min_max else np.clip(q_t, a_min=self.conf['min_q'], a_max=self.conf['max_q'])
-                interval_flows[routing_substep_iteration, :] = q_t
-                inflow_t = inflow_tnext
-            interval_flows = np.mean(interval_flows, axis=0)
-            interval_flows = np.round(interval_flows, decimals=2)
-            outflow_array[runoff_time_step, :] = interval_flows
+            for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
+                if self.conf['routing'] == 'nonlinear':
+                    self._calculate_nonlinear_coefficients(q_t)
+                rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
+                q_t[:] = self._solver(rhs)
+                interval_flows[routing_sub_iteration_num, :] = q_t
+            outflow_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
+            r_prev[:] = r_t
+
+        if self.conf['positive_flow']:
+            outflow_array[outflow_array < 0] = 0
+
         t2 = datetime.datetime.now()
         LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-
-        self.qinit = q_t
-        self.rinit = r_t
+        self.initial_state = (q_t, r_prev)
         return outflow_array
+
+    def _solver(self, rhs: np.array) -> np.array:
+        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, )[0]
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
         dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
         dates = dates - dates[0]
 
-        with nc.Dataset(outflow_file, mode='w') as ds:
+        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=dates.shape[0])
             ds.createDimension('rivid', size=self.A.shape[0])
 
@@ -416,7 +423,7 @@ class Muskingum:
             ds['time'][:] = dates
 
             ds.createVariable('rivid', 'i4', ('rivid',))
-            ds['rivid'][:] = self._read_riverids()
+            ds['rivid'][:] = self._read_river_ids()
 
             ds.createVariable('Qout', 'f4', ('time', 'rivid'))
             ds['Qout'][:] = outflow_array
@@ -426,19 +433,19 @@ class Muskingum:
             ds['Qout'].units = 'm3 s-1'
         return
 
-    def hydrograph(self, rivid: int) -> pd.DataFrame:
+    def hydrograph(self, river_id: int) -> pd.DataFrame:
         """
         Get the hydrograph for a given river id as a pandas dataframe
 
         Args:
-            rivid: the ID of a river reach in the output files
+            river_id: the ID of a river reach in the output files
 
         Returns:
             pandas.DataFrame
         """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            df = ds.Qout.sel(rivid=rivid).to_dataframe()[['Qout', ]]
-            df.columns = [rivid, ]
+            df = ds.Qout.sel(rivid=river_id).to_dataframe()[['Qout', ]]
+            df.columns = [river_id, ]
         return df
 
     def mass_balance(self, rivid: int, ancestors: list = None) -> pd.DataFrame:
@@ -465,8 +472,7 @@ class Muskingum:
                 .to_dataframe()
                 [['m3_riv', ]]
                 .reset_index()
-                .set_index('time')
-                .pivot(columns='rivid', values='m3_riv')
+                .pivot(index='time', columns='rivid', values='m3_riv')
                 .sum(axis=1)
                 .cumsum()
                 .rename('runoff_volume')

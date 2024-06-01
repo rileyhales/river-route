@@ -1,6 +1,6 @@
-from river_route._muskingum import Muskingum
+from river_route._MuskingumCunge import MuskingumCunge
 
-from river_route.tools import configs_from_rapid
+from river_route.tools import routing_files_from_RAPID
 from river_route.tools import connectivity_to_digraph
 from river_route.tools import connectivity_to_adjacency_matrix
 
@@ -9,9 +9,9 @@ from ._meta import __author__
 from ._meta import __url__
 
 __all__ = [
-    'Muskingum',
+    'MuskingumCunge',
 
-    'configs_from_rapid',
+    'routing_files_from_RAPID',
     'connectivity_to_digraph',
     'connectivity_to_adjacency_matrix',
 

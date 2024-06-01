@@ -8,18 +8,18 @@ import scipy
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    'configs_from_rapid',
+    'routing_files_from_RAPID',
     'connectivity_to_digraph',
     'connectivity_to_adjacency_matrix',
 ]
 
 
-def configs_from_rapid(riv_bas_id: str,
-                       k: str,
-                       x: str,
-                       rapid_connect: str,
-                       out_params: str,
-                       out_connectivity: str, ) -> None:
+def routing_files_from_RAPID(riv_bas_id: str,
+                             k: str,
+                             x: str,
+                             rapid_connect: str,
+                             out_params: str,
+                             out_connectivity: str, ) -> None:
     """
     Generate river-route configuration files from input files for RAPID
 

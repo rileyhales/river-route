@@ -1,6 +1,7 @@
 dask
 fastparquet
 matplotlib
+natsort
 netcdf4
 networkx
 numpy
