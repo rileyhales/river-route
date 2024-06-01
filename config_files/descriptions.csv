@@ -1,7 +1,7 @@
 Parameter Name,Type,Description
 routing_params_file,string,Path to the routing parameters file.
 connectivity_file,string,Path to the network connectivity file.
-runoff_file,string,Path to the file with runoff values to be routed.
+runoff_volumes_file,string,Path to the file with catchment level runoff volumes to be routed.
 outflow_file,string,Path where the outflows file should be saved.
 lhs_file,string,Path where the LHS matrix should be cached.
 lhsinv_file,string,Path where the LHS inverse matrix should be cached.

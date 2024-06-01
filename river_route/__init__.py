@@ -1,19 +1,16 @@
+import river_route.runoff
+import river_route.tools
 from river_route._MuskingumCunge import MuskingumCunge
 
-from river_route.tools import routing_files_from_RAPID
-from river_route.tools import connectivity_to_digraph
-from river_route.tools import connectivity_to_adjacency_matrix
-
-from ._meta import __version__
-from ._meta import __author__
-from ._meta import __url__
+__version__ = '0.7.0'
+__author__ = 'Riley Hales PhD'
+__url__ = 'https://github.com/rileyhales/river-route'
 
 __all__ = [
     'MuskingumCunge',
 
-    'routing_files_from_RAPID',
-    'connectivity_to_digraph',
-    'connectivity_to_adjacency_matrix',
+    'runoff',
+    'tools',
 
     '__version__',
     '__author__',

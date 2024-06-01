@@ -1,7 +1,7 @@
 {
   "routing_params_file": "",
   "connectivity_file": "",
-  "runoff_file": "",
+  "runoff_volumes_file": "",
   "outflow_file": "",
   "routing": "",
   "lhs_file": "",

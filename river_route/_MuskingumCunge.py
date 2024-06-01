@@ -84,7 +84,7 @@ class MuskingumCunge:
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['log'] = bool(self.conf.get('log', False))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
-        self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'm3_riv')
+        self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'ro_vol')
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
 
         # routing and solver options - time is validated at route time
@@ -100,8 +100,8 @@ class MuskingumCunge:
             assert 'routing_params_file' in self.conf, 'Linear routing requires linear routing params'
 
         # type and path checking on file paths
-        if isinstance(self.conf['runoff_file'], str):
-            self.conf['runoff_file'] = [self.conf['runoff_file'], ]
+        if isinstance(self.conf['runoff_volumes_file'], str):
+            self.conf['runoff_volumes_file'] = [self.conf['runoff_volumes_file'], ]
         if isinstance(self.conf['outflow_file'], str):
             self.conf['outflow_file'] = [self.conf['outflow_file'], ]
         for arg in [k for k in self.conf.keys() if 'file' in k]:
@@ -129,7 +129,7 @@ class MuskingumCunge:
     def _validate_configs(self) -> None:
         LOG.info('Validating configs file')
         required_file_paths = ['connectivity_file',
-                               'runoff_file',
+                               'runoff_volumes_file',
                                'outflow_file', ]
         paths_should_exist = ['connectivity_file', ]
 
@@ -145,7 +145,7 @@ class MuskingumCunge:
         for arg in paths_should_exist:
             if not os.path.exists(self.conf[arg]):
                 raise FileNotFoundError(f'{arg} not found at given path')
-        for path in self.conf['runoff_file']:
+        for path in self.conf['runoff_volumes_file']:
             assert os.path.exists(path), FileNotFoundError(f'runoff file not found at given path: {path}')
 
         return
@@ -330,7 +330,7 @@ class MuskingumCunge:
         self._set_adjacency_matrix()
 
         LOG.debug('Getting initial value arrays')
-        for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
+        for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
             LOG.info('-' * 80)
             LOG.info(f'Reading runoff volumes file: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
@@ -464,7 +464,7 @@ class MuskingumCunge:
         if ancestors is None:
             G = connectivity_to_digraph(self.conf['connectivity_file'])
             ancestors = list(nx.ancestors(G, rivid))
-        with xr.open_mfdataset(self.conf['runoff_file']) as ds:
+        with xr.open_mfdataset(self.conf['runoff_volumes_file']) as ds:
             vdf = (
                 ds
                 .sel(rivid=ancestors)

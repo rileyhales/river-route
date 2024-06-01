@@ -1,9 +1,10 @@
-from typing import List, Dict, Any
+import glob
 import json
 from os.path import join, basename, isdir
-import glob
-from natsort import natsorted
+from typing import List, Dict, Any
+
 import pandas as pd
+from natsort import natsorted
 
 __all__ = [
     'job_configs',
@@ -14,7 +15,7 @@ def job_configs(
         routing_params_file: str,
         connectivity_file: str,
         adj_file: str,
-        runoff_file: str or List[str],
+        runoff_volumes_file: str or List[str],
         outflow_file: str or List[str],
         dt_routing: int = 0,
         dt_outflows: int = 0,
@@ -37,22 +38,26 @@ def job_configs(
         routing_params_file: (string), Path to the routing parameters file.
         connectivity_file: (string), Path to the network connectivity file.
         adj_file: (string), Path where the adjacency matrix should be cached.
-        runoff_file: (string), Path to the file with runoff values to be routed.
+
+        runoff_volumes_file: (string), Path to the file with runoff values to be routed.
         outflow_file: (string), Path where the outflows file should be saved.
+
         dt_routing: (int), Time interval in seconds between routing computations.
         dt_outflows: (int), Time interval in seconds between writing flows to disc.
         positive_flow: (boolean), Whether to enforce positive flows.
+
         routing: (string), Routing method to use: either 'linear' or 'nonlinear'.
         nonlinear_routing_params_file: (string), Path to the nonlinear routing parameters file.
         nonlinear_thresholds_file: (string), Path to the nonlinear routing thresholds file.
+
         initial_state_file: (string), Path to the file with initial state values.
         final_state_file: (string), Path to the file with final state values.
+
         log: (boolean), whether to display log messages defaulting to False
         log_stream: (string), the destination for logged messages: stdout stderr or a file path. default to stdout
         log_level: (string), Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
         job_name: (string), A name for this job to be printed in debug statements.
         progress_bar: (boolean), Indicates whether to show a progress bar in debug statements: true or false.
-
     Returns:
         (dict), A dictionary with parameters to be passed to MuskingumCunge class init.
     """
@@ -65,7 +70,7 @@ def job_configs(
         'connectivity_file': connectivity_file,
         'adj_file': adj_file,
         # Routing Input and Output
-        'runoff_file': runoff_file,
+        'runoff_file': runoff_volumes_file,
         'outflow_file': outflow_file,
         # Compute Options - Optional
         'positive_flow': positive_flow,
@@ -112,7 +117,7 @@ def job_files_from_directories(
             final_state = join(states_dir, vpu, f'finalstate_{vpu}_{start_date}.parquet')
             jobs.append(
                 job_configs(routing_params_file=routing_params_file, connectivity_file=connectivity_file,
-                            adj_file=adj_file, runoff_file=runvol_files, outflow_file=output_files,
+                            adj_file=adj_file, runoff_volumes_file=runvol_files, outflow_file=output_files,
                             dt_routing=dt_routing, dt_outflows=dt_outflows, initial_state_file=initial_state_file,
                             final_state_file=final_state, job_name=f'job_{vpu}_{start_date}_{sim_type}', **kwargs)
             )
@@ -123,7 +128,7 @@ def job_files_from_directories(
                 final_state = join(states_dir, vpu, f'finalstate_{vpu}_{start_date}.parquet')
                 jobs.append(
                     job_configs(routing_params_file=routing_params_file, connectivity_file=connectivity_file,
-                                adj_file=adj_file, runoff_file=runvol_file, outflow_file=output_file,
+                                adj_file=adj_file, runoff_volumes_file=runvol_file, outflow_file=output_file,
                                 dt_routing=dt_routing, dt_outflows=dt_outflows, initial_state_file=initial_state_file,
                                 final_state_file=final_state, job_name=f'job_{vpu}_{start_date}_{sim_type}', **kwargs)
                 )
