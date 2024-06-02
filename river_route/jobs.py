@@ -1,20 +1,21 @@
-from typing import List, Dict, Any
+import glob
 import json
 from os.path import join, basename, isdir
-import glob
-from natsort import natsorted
+from typing import List, Dict, Any
+
 import pandas as pd
+from natsort import natsorted
 
 __all__ = [
     'job_configs',
+    'job_files_from_directories',
 ]
 
 
 def job_configs(
         routing_params_file: str,
         connectivity_file: str,
-        adj_file: str,
-        runoff_file: str or List[str],
+        runoff_volumes_file: str or List[str],
         outflow_file: str or List[str],
         dt_routing: int = 0,
         dt_outflows: int = 0,
@@ -25,10 +26,13 @@ def job_configs(
         initial_state_file: str = '',
         final_state_file: str = '',
         log: bool = True,
-        log_stream: str = 'stdout',
-        log_level: str = 'INFO',
-        job_name: str = 'untitled_job',
         progress_bar: bool = True,
+        job_name: str = 'untitled_job',
+        log_level: str = 'INFO',
+        log_stream: str = 'stdout',
+        var_runoff_volumes: str = 'ro_vol',
+        var_river_id: str = 'river_id',
+        var_discharge: str = 'Q',
 ):
     """
     Constructs a dictionary with all necessary parameters for a river routing job
@@ -36,23 +40,30 @@ def job_configs(
     Args:
         routing_params_file: (string), Path to the routing parameters file.
         connectivity_file: (string), Path to the network connectivity file.
-        adj_file: (string), Path where the adjacency matrix should be cached.
-        runoff_file: (string), Path to the file with runoff values to be routed.
+
+        runoff_volumes_file: (string), Path to the file with runoff values to be routed.
         outflow_file: (string), Path where the outflows file should be saved.
+
         dt_routing: (int), Time interval in seconds between routing computations.
         dt_outflows: (int), Time interval in seconds between writing flows to disc.
-        positive_flow: (boolean), Whether to enforce positive flows.
-        routing: (string), Routing method to use: either 'linear' or 'nonlinear'.
-        nonlinear_routing_params_file: (string), Path to the nonlinear routing parameters file.
-        nonlinear_thresholds_file: (string), Path to the nonlinear routing thresholds file.
-        initial_state_file: (string), Path to the file with initial state values.
-        final_state_file: (string), Path to the file with final state values.
-        log: (boolean), whether to display log messages defaulting to False
-        log_stream: (string), the destination for logged messages: stdout stderr or a file path. default to stdout
-        log_level: (string), Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
-        job_name: (string), A name for this job to be printed in debug statements.
-        progress_bar: (boolean), Indicates whether to show a progress bar in debug statements: true or false.
+        positive_flow: (Bool), Whether to enforce positive flows.
 
+        routing: (str), Routing method to use: either 'linear' or 'nonlinear'.
+        nonlinear_routing_params_file: (str), Path to the nonlinear routing parameters file.
+        nonlinear_thresholds_file: (str), Path to the nonlinear routing thresholds file.
+
+        initial_state_file: (str), Path to the file with initial state values.
+        final_state_file: (str), Path to the file with final state values.
+
+        log: (Bool), whether to display log messages defaulting to False.
+        progress_bar: (Bool), whether to show a progress bar in debug statements: true or false.
+        job_name: (str), A name for this job to be printed in debug statements.
+        log_level: (str), Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
+        log_stream: (str), the destination for logged messages: stdout stderr or a file path. default to stdout.
+
+        var_runoff_volumes: (str), the name of the runoff volumes variable in runoff_volumes_file
+        var_river_id: (str), the name of the river id variable in all files
+        var_discharge: (str), the name of the discharge variable in outflow_file
     Returns:
         (dict), A dictionary with parameters to be passed to MuskingumCunge class init.
     """
@@ -63,27 +74,30 @@ def job_configs(
         # Required Watershed Files
         'routing_params_file': routing_params_file,
         'connectivity_file': connectivity_file,
-        'adj_file': adj_file,
         # Routing Input and Output
-        'runoff_file': runoff_file,
+        'runoff_file': runoff_volumes_file,
         'outflow_file': outflow_file,
-        # Compute Options - Optional
-        'positive_flow': positive_flow,
+        # Timestep Options - Optional
         'dt_routing': dt_routing,
         'dt_outflows': dt_outflows,
         # Routing Method - Optional
         'routing': routing,
+        'positive_flow': positive_flow,
         'nonlinear_routing_params_file': nonlinear_routing_params_file,
         'nonlinear_thresholds_file': nonlinear_thresholds_file,
-        # initial and final state files - Optional
+        # Initial and Final State files - Optional
         'initial_state_file': initial_state_file,
         'final_state_file': final_state_file,
-        # simulation management and debugging - Optional
+        # Logging, Management, and Debugging - Optional
         'log': log,
         'progress_bar': progress_bar,
+        'job_name': job_name,
         'log_level': log_level,
         'log_stream': log_stream,
-        'job_name': job_name,
+        # Variable Names - Optional
+        'var_runoff_volumes': var_runoff_volumes,
+        'var_river_id': var_river_id,
+        'var_discharge': var_discharge,
     }
 
 
@@ -112,8 +126,8 @@ def job_files_from_directories(
             final_state = join(states_dir, vpu, f'finalstate_{vpu}_{start_date}.parquet')
             jobs.append(
                 job_configs(routing_params_file=routing_params_file, connectivity_file=connectivity_file,
-                            adj_file=adj_file, runoff_file=runvol_files, outflow_file=output_files,
-                            dt_routing=dt_routing, dt_outflows=dt_outflows, initial_state_file=initial_state_file,
+                            runoff_volumes_file=runvol_files, outflow_file=output_files, dt_routing=dt_routing,
+                            dt_outflows=dt_outflows, initial_state_file=initial_state_file,
                             final_state_file=final_state, job_name=f'job_{vpu}_{start_date}_{sim_type}', **kwargs)
             )
 
@@ -123,8 +137,8 @@ def job_files_from_directories(
                 final_state = join(states_dir, vpu, f'finalstate_{vpu}_{start_date}.parquet')
                 jobs.append(
                     job_configs(routing_params_file=routing_params_file, connectivity_file=connectivity_file,
-                                adj_file=adj_file, runoff_file=runvol_file, outflow_file=output_file,
-                                dt_routing=dt_routing, dt_outflows=dt_outflows, initial_state_file=initial_state_file,
+                                runoff_volumes_file=runvol_file, outflow_file=output_file, dt_routing=dt_routing,
+                                dt_outflows=dt_outflows, initial_state_file=initial_state_file,
                                 final_state_file=final_state, job_name=f'job_{vpu}_{start_date}_{sim_type}', **kwargs)
                 )
 
