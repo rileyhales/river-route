@@ -1,10 +1,13 @@
 # Required Watershed Files
 routing_params_file: ''
 connectivity_file: ''
-adj_file: ''  # Optional - if it does not exist, it will be cached at this location
 # Routing Input and Output
 runoff_volumes_file: ''
 outflow_file: ''
+# Input and Output file structure - Optional
+var_runoff_volume: 'ro_vol'
+var_river_id: 'river_id'
+var_outflow: 'Q'
 # Compute Options - Optional
 routing: 'linear'
 positive_flow: True

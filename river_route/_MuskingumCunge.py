@@ -13,7 +13,7 @@ import tqdm
 import xarray as xr
 import yaml
 
-from ._meta import __version__ as VERSION
+from .__metadata__ import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
@@ -84,8 +84,10 @@ class MuskingumCunge:
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['log'] = bool(self.conf.get('log', False))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
-        self.conf['runoff_volume_var'] = self.conf.get('runoff_volume_var', 'ro_vol')
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
+        self.conf['var_runoff_volume'] = self.conf.get('var_runoff_volume', 'ro_vol')
+        self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
+        self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
         # routing and solver options - time is validated at route time
         self.conf['routing'] = self.conf.get('routing', 'linear')
@@ -162,7 +164,7 @@ class MuskingumCunge:
         """
         Reads river ids vector from parquet given in config file
         """
-        return pd.read_parquet(self.conf['routing_params_file'], columns=['rivid', ]).values.flatten()
+        return pd.read_parquet(self.conf['routing_params_file'], columns=[self.conf['var_river_id'], ]).values.flatten()
 
     def _read_linear_k(self) -> np.array:
         """
@@ -215,17 +217,8 @@ class MuskingumCunge:
         """
         if hasattr(self, 'A'):
             return
-
-        if os.path.exists(self.conf.get('adj_file', '')):
-            LOG.debug('Loading adjacency matrix from file')
-            self.A = scipy.sparse.load_npz(self.conf['adj_file'])
-            return
-
         LOG.debug('Calculating Network Adjacency Matrix (A)')
         self.A = connectivity_to_adjacency_matrix(self.conf['connectivity_file'])
-        if self.conf.get('adj_file', ''):
-            LOG.info('Saving adjacency matrix to file')
-            scipy.sparse.save_npz(self.conf['adj_file'], self.A)
         return
 
     def _calculate_lhs_matrix(self) -> None:
@@ -272,10 +265,10 @@ class MuskingumCunge:
         """
         LOG.debug('Calculating MuskingumCunge coefficients')
 
-        if not hasattr(self, 'k'):
-            self._read_linear_k()
-        if not hasattr(self, 'x'):
-            self._read_linear_x()
+        if k is None:
+            k = self._read_linear_k()
+        if x is None:
+            x = self._read_linear_x()
 
         dt_div_k = self.dt_routing / k
         denom = dt_div_k + (2 * (1 - x))
@@ -337,7 +330,7 @@ class MuskingumCunge:
                 LOG.debug('Reading time array')
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
                 LOG.debug('Reading runoff array')
-                runoffs = runoff_ds[self.conf['runoff_volume_var']].values
+                runoffs = runoff_ds[self.conf['var_runoff_volume']].values
 
             self._set_time_params(dates)
             self._calculate_muskingum_coefficients()
@@ -416,21 +409,21 @@ class MuskingumCunge:
 
         with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=dates.shape[0])
-            ds.createDimension('rivid', size=self.A.shape[0])
+            ds.createDimension(self.conf['var_river_id'], size=outflow_array.shape[1])
 
-            ds.createVariable('time', 'f8', ('time',))
-            ds['time'].units = f'seconds since {reference_date.strftime("%Y-%m-%d %H:%M:%S")}'
-            ds['time'][:] = dates
+            time_var = ds.createVariable('time', 'f8', ('time',))
+            time_var.units = f'seconds since {reference_date.strftime("%Y-%m-%d %H:%M:%S")}'
+            time_var[:] = dates
 
-            ds.createVariable('rivid', 'i4', ('rivid',))
-            ds['rivid'][:] = self._read_river_ids()
+            id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
+            id_var[:] = self._read_river_ids()
 
-            ds.createVariable('Qout', 'f4', ('time', 'rivid'))
-            ds['Qout'][:] = outflow_array
-            ds['Qout'].long_name = 'Discharge at the outlet of each river reach'
-            ds['Qout'].standard_name = 'discharge'
-            ds['Qout'].aggregation_method = 'mean'
-            ds['Qout'].units = 'm3 s-1'
+            flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
+            flow_var[:] = outflow_array
+            flow_var.long_name = 'Discharge at catchment outlet'
+            flow_var.standard_name = 'discharge'
+            flow_var.aggregation_method = 'mean'
+            flow_var.units = 'm3 s-1'
         return
 
     def hydrograph(self, river_id: int) -> pd.DataFrame:
@@ -444,41 +437,53 @@ class MuskingumCunge:
             pandas.DataFrame
         """
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            df = ds.Qout.sel(rivid=river_id).to_dataframe()[['Qout', ]]
+            df = (
+                ds
+                [self.conf['var_discharge']]
+                .sel(**{self.conf['var_river_id']: river_id})
+                .to_dataframe()
+                [[self.conf['var_discharge'], ]]
+            )
             df.columns = [river_id, ]
         return df
 
-    def mass_balance(self, rivid: int, ancestors: list = None) -> pd.DataFrame:
+    def mass_balance(self, river_id: int, ancestors: list = None) -> pd.DataFrame:
         """
         Get the mass balance for a given river id as a pandas dataframe
 
         Args:
-            rivid: the ID of a river reach in the output files
-            ancestors: a list of the given rivid and all rivers upstream of that river
+            river_id: the ID of a river reach in the output files
+            ancestors: a list of the given river_id and all rivers upstream of that river
 
         Returns:
             pandas.DataFrame
         """
-        if type(rivid) is not int:
-            raise TypeError(f'rivid should be an integer ID of a river to mass balance')
+        if type(river_id) is not int:
+            raise TypeError(f'river_id should be an integer ID of a river to mass balance')
         if ancestors is None:
             G = connectivity_to_digraph(self.conf['connectivity_file'])
-            ancestors = list(nx.ancestors(G, rivid))
+            ancestors = set(list(nx.ancestors(G, river_id)) + [river_id, ])
         with xr.open_mfdataset(self.conf['runoff_volumes_file']) as ds:
             vdf = (
                 ds
-                .sel(rivid=ancestors)
-                .m3_riv
+                .sel(**{self.conf['var_river_id']: ancestors})
+                [self.conf['var_runoff_volume']]
                 .to_dataframe()
-                [['m3_riv', ]]
+                [[self.conf['var_runoff_volume'], ]]
                 .reset_index()
-                .pivot(index='time', columns='rivid', values='m3_riv')
+                .pivot(index='time', columns=self.conf['var_river_id'], values=self.conf['var_runoff_volume'])
                 .sum(axis=1)
                 .cumsum()
                 .rename('runoff_volume')
             )
         with xr.open_mfdataset(self.conf['outflow_file']) as ds:
-            qdf = ds.sel(rivid=rivid).to_dataframe()[['Qout', ]].cumsum()
+            qdf = (
+                ds
+                .sel(**{self.conf['var_river_id']: river_id})
+                .to_dataframe()
+                [[self.conf['var_discharge'], ]]
+                .cumsum()
+            )
             # convert to discharged volume - multiply by the time delta in seconds
             qdf = qdf * (qdf.index[1] - qdf.index[0]).total_seconds()
             qdf.columns = ['discharge_volume', ]
@@ -486,7 +491,7 @@ class MuskingumCunge:
         df = qdf.join(vdf)
         df['runoff-discharge'] = df['runoff_volume'] - df['discharge_volume']
         if not df['runoff-discharge'].gt(0).all():
-            LOG.warning(f'More discharge than runoff volume for river {rivid}')
+            LOG.warning(f'More discharge than runoff volume for river {river_id}')
 
         return df
 

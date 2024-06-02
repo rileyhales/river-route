@@ -2,9 +2,7 @@ import river_route.runoff
 import river_route.tools
 from river_route._MuskingumCunge import MuskingumCunge
 
-__version__ = '0.7.0'
-__author__ = 'Riley Hales PhD'
-__url__ = 'https://github.com/rileyhales/river-route'
+from .__metadata__ import __version__, __author__, __url__
 
 __all__ = [
     'MuskingumCunge',
