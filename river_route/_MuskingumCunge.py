@@ -12,7 +12,6 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
-from scipy.optimize import minimize
 from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__ as VERSION
@@ -366,7 +365,7 @@ class MuskingumCunge:
 
     def calibrate(self, measured_values: pd.DataFrame, **kwargs) -> 'MuskingumCunge':
         """
-        Placeholder for optimization routine
+        Find the optimal scalar value which changes all k values to minimize MSE between measured and modeled flows
 
         Keyword Args:
             **kwargs: optional keyword arguments to override and update previously calculated or given configs
@@ -380,9 +379,6 @@ class MuskingumCunge:
         self._read_linear_k()
         self._read_linear_x()
 
-        # randomly multiply the k and x values by a scalar to get a starting point
-        self.k = self.k * np.random.uniform(0.75, 1.25, size=self.k.shape)
-
         if len(kwargs) > 0:
             LOG.info('Updating configs with kwargs')
             self.conf.update(kwargs)
@@ -394,49 +390,75 @@ class MuskingumCunge:
         # find the indices of the rivers which have observed flows
         river_numbers = self._read_river_ids()
         river_numbers = [np.where(river_numbers == rivid)[0][0] for rivid in measured_values.columns]
-        N_ITER = 0
 
-        def _objective_function(scalar: np.array) -> np.array:
-            nonlocal N_ITER
-            N_ITER += 1
+        # variables that the objective function will need to
+        solver_iterations = 0
+
+        def _objective(scalar: np.array) -> np.array:
+            nonlocal solver_iterations
+            nonlocal river_numbers
+            solver_iterations += 1
+
+            LOG.info(f'Iteration {solver_iterations} - Testing scalar: {scalar}')
             solution = pd.DataFrame(columns=river_numbers)
-            for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
+            LOG.disabled = True
+
+            # set iteration k and x depending on the routing type in the configs and the size of the scalar
+            if self.conf['routing'] == 'nonlinear':
+                self._calculate_nonlinear_coefficients()
+            else:
+                k = self.k * scalar
+                x = self._read_linear_x()
+
+            self.conf['progress_bar'] = False
+            for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
                 with xr.open_dataset(runoff_file) as runoff_ds:
                     dates = runoff_ds['time'].values.astype('datetime64[s]')
-                    runoffs = runoff_ds[self.conf['runoff_volume_var']].values
-                # add the dates to the solution dataframe
-                if solution.shape[0] == 0:
-                    solution = pd.DataFrame(dates, columns=['time'])
+                    runoffs = runoff_ds[self.conf['var_runoff_volume']].values
                 self._set_time_params(dates)
                 self._calculate_muskingum_coefficients(k=self.k * scalar)
                 runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
                 q_t, r_t = self._read_initial_state()
                 outflow_array = self._router(dates, runoffs, q_t, r_t)
-                solution = pd.concat([solution, pd.DataFrame(outflow_array, index=dates)[river_numbers]], axis=0)
-            rmse = np.sum(np.mean((solution.values - measured_values.values) ** 2, axis=0))
-            solution.to_parquet(f'/Users/rchales/data/route/calibration_{N_ITER}.parquet')
-            print(N_ITER)
-            print(rmse)
-            print(scalar)
-            return rmse
+                if solution.empty:
+                    solution = pd.DataFrame(outflow_array, index=dates)[river_numbers]
+                else:
+                    solution = pd.concat([solution, pd.DataFrame(outflow_array, index=dates)[river_numbers]], axis=0)
+            LOG.disabled = False
+            self.conf['progress_bar'] = True
+            mse = np.sum(np.mean((solution.values - measured_values.values) ** 2, axis=0))
+            LOG.info(f'Iteration {solver_iterations} - MSE: {mse}')
+            return mse
 
-        initial_log_state = LOG.disabled
-        initial_progress_state = self.conf['progress_bar']
-        LOG.disabled = True
-        self.conf['progress_bar'] = False
-        # initial = np.array(self.k.tolist())
-        # result = minimize(_objective_function, method='Nelder-Mead', tol=0.1, x0=initial,
-        #                   options={'disp': True, 'eps': 0.1, 'finite_diff_rel_step': 0.1, 'adaptive': True}, )
-        result = minimize_scalar(_objective_function, method='bounded', bounds=(0, 2), options={'disp': True})
-        LOG.disabled = initial_log_state
-        self.conf['progress_bar'] = initial_progress_state
+        from scipy.optimize import differential_evolution
+        if self.conf['routing_type'] == 'linear':
+            result = minimize_scalar(_objective, method='bounded', bounds=(0.6, 1.4), options={'disp': True}, tol=1e-2)
+        else:
+            """
+            (noflow), qlow1, qlow2, qbase , qup1, qup2
+            k1      , k2   , k3   , (base), k4  , k5
+            """
+            # 3 divisions
+            objective_vector = np.array([
+                1.0, 1.2, 1.4,
+                1.0, 0.8, 0.6,
+            ])
+            bounds = np.array([
+                (x + (0.2 * x), x - (0.2 * x)) for x in objective_vector
+            ])
 
-        LOG.info('Optimization Results:')
+            result = differential_evolution(
+                _objective, x0=objective_vector, bounds=bounds, disp=True, tol=1e-2, workers=10,
+            )
+
+        LOG.info('Optimization Results')
         LOG.info(result)
-        LOG.info(f'Optimization complete in {result.nit} iterations')
+        LOG.info('Setting optimized k values')
+        self.k = self.k * result.x
+        LOG.info('Writing optimized k values to file')
+        pd.DataFrame(self.k, columns=['k', ]).to_parquet(self.conf['calibrated_linear_params_file'])
 
         t2 = datetime.datetime.now()
-        LOG.info('Optimization complete')
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
