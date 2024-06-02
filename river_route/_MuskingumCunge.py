@@ -12,6 +12,8 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
+from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
@@ -322,8 +324,7 @@ class MuskingumCunge:
         self._log_configs()
         self._set_adjacency_matrix()
 
-        LOG.debug('Getting initial value arrays')
-        for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
+        for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
             LOG.info('-' * 80)
             LOG.info(f'Reading runoff volumes file: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
@@ -335,6 +336,7 @@ class MuskingumCunge:
             self._set_time_params(dates)
             self._calculate_muskingum_coefficients()
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
+            LOG.debug('Getting initial value arrays')
             q_t, r_t = self._read_initial_state()
             outflow_array = self._router(dates, runoffs, q_t, r_t)
 
@@ -359,6 +361,82 @@ class MuskingumCunge:
 
         t2 = datetime.datetime.now()
         LOG.info('All runoff files routed')
+        LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
+        return self
+
+    def calibrate(self, measured_values: pd.DataFrame, **kwargs) -> 'MuskingumCunge':
+        """
+        Placeholder for optimization routine
+
+        Keyword Args:
+            **kwargs: optional keyword arguments to override and update previously calculated or given configs
+
+        Returns:
+            river_route.MuskingumCunge
+        """
+        LOG.info(f'Beginning optimization: {self.conf["job_name"]}')
+        t1 = datetime.datetime.now()
+
+        self._read_linear_k()
+        self._read_linear_x()
+
+        # randomly multiply the k and x values by a scalar to get a starting point
+        self.k = self.k * np.random.uniform(0.75, 1.25, size=self.k.shape)
+
+        if len(kwargs) > 0:
+            LOG.info('Updating configs with kwargs')
+            self.conf.update(kwargs)
+
+        self._validate_configs()
+        self._log_configs()
+        self._set_adjacency_matrix()
+
+        # find the indices of the rivers which have observed flows
+        river_numbers = self._read_river_ids()
+        river_numbers = [np.where(river_numbers == rivid)[0][0] for rivid in measured_values.columns]
+        N_ITER = 0
+
+        def _objective_function(scalar: np.array) -> np.array:
+            nonlocal N_ITER
+            N_ITER += 1
+            solution = pd.DataFrame(columns=river_numbers)
+            for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
+                with xr.open_dataset(runoff_file) as runoff_ds:
+                    dates = runoff_ds['time'].values.astype('datetime64[s]')
+                    runoffs = runoff_ds[self.conf['runoff_volume_var']].values
+                # add the dates to the solution dataframe
+                if solution.shape[0] == 0:
+                    solution = pd.DataFrame(dates, columns=['time'])
+                self._set_time_params(dates)
+                self._calculate_muskingum_coefficients(k=self.k * scalar)
+                runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
+                q_t, r_t = self._read_initial_state()
+                outflow_array = self._router(dates, runoffs, q_t, r_t)
+                solution = pd.concat([solution, pd.DataFrame(outflow_array, index=dates)[river_numbers]], axis=0)
+            rmse = np.sum(np.mean((solution.values - measured_values.values) ** 2, axis=0))
+            solution.to_parquet(f'/Users/rchales/data/route/calibration_{N_ITER}.parquet')
+            print(N_ITER)
+            print(rmse)
+            print(scalar)
+            return rmse
+
+        initial_log_state = LOG.disabled
+        initial_progress_state = self.conf['progress_bar']
+        LOG.disabled = True
+        self.conf['progress_bar'] = False
+        # initial = np.array(self.k.tolist())
+        # result = minimize(_objective_function, method='Nelder-Mead', tol=0.1, x0=initial,
+        #                   options={'disp': True, 'eps': 0.1, 'finite_diff_rel_step': 0.1, 'adaptive': True}, )
+        result = minimize_scalar(_objective_function, method='bounded', bounds=(0, 2), options={'disp': True})
+        LOG.disabled = initial_log_state
+        self.conf['progress_bar'] = initial_progress_state
+
+        LOG.info('Optimization Results:')
+        LOG.info(result)
+        LOG.info(f'Optimization complete in {result.nit} iterations')
+
+        t2 = datetime.datetime.now()
+        LOG.info('Optimization complete')
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
@@ -400,7 +478,7 @@ class MuskingumCunge:
         return outflow_array
 
     def _solver(self, rhs: np.array) -> np.array:
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, )[0]
+        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, atol=1, rtol=1e-2)[0]
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
