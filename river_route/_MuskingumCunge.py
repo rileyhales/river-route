@@ -455,27 +455,24 @@ class MuskingumCunge:
     def _solver(self, rhs: np.array) -> np.array:
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, atol=1, rtol=1e-2)[0]
 
-    def _calibration_objective(self,
-                               iteration_array: np.array,
-                               observed_df: pd.DataFrame,
-                               river_indices: np.array) -> np.float64:
+    def _calibration_objective(self, iteration: np.array, observed: pd.DataFrame, riv_indices: np.array) -> np.float64:
         """
         Objective function for calibration
 
         Args:
-            iteration_array: a scalar value to multiply the k values by
-            river_indices: array of the indices of rivers with observations in the river id list from params
+            iteration: a scalar value to multiply the k values by
+            riv_indices: array of the indices of rivers with observations in the river id list from params
 
         Returns:
             np.float64
         """
         self._calibration_iteration_number += 1
-        LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration_array}')
-        iter_df = pd.DataFrame(columns=river_indices)
+        LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
+        iter_df = pd.DataFrame(columns=riv_indices)
         LOG.disabled = True
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        k = self.k * iteration_array
+        k = self.k * iteration
         x = self.x
 
         self.conf['progress_bar'] = False
@@ -489,13 +486,13 @@ class MuskingumCunge:
             q_t, r_t = self._read_initial_state()
             outflow_array = self._router(dates, runoffs, q_t, r_t)
             if iter_df.empty:
-                iter_df = pd.DataFrame(outflow_array, index=dates)[river_indices]
+                iter_df = pd.DataFrame(outflow_array, index=dates)[riv_indices]
             else:
-                iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates)[river_indices]])
+                iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates)[riv_indices]])
         LOG.disabled = False
         self.conf['progress_bar'] = True
         # todo clip by date ranges, merge dataframes, fill with nans, calculate error metric
-        mse = np.sum(np.mean((iter_df.values - observed_df.values) ** 2, axis=0))
+        mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
         LOG.info(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
         return mse
 
