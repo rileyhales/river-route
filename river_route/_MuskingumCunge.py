@@ -368,12 +368,15 @@ class MuskingumCunge:
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def calibrate(self, observed_df: pd.DataFrame) -> 'MuskingumCunge':
+    def calibrate(self, observed_df: pd.DataFrame, run_calibrated: bool = True) -> 'MuskingumCunge':
         """
         Calibrate K and X to given measured_values using optimization algorithms
 
         Args:
             observed_df: A pandas DataFrame with a datetime index, river id column names, and discharge values
+
+        Keyword Args:
+            run_calibrated: (bool), whether to run the model with the calibrated parameters after optimization
 
         Returns:
             river_route.MuskingumCunge
@@ -410,6 +413,10 @@ class MuskingumCunge:
 
         t2 = datetime.datetime.now()
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
+
+        if run_calibrated:
+            LOG.info('Rerunning model with calibrated parameters')
+            self.route()
         return self
 
     def _router(self, dates: np.array, runoffs: np.array, q_init: np.array, r_init: np.array, ) -> np.array:
@@ -457,7 +464,7 @@ class MuskingumCunge:
 
         Args:
             iteration_array: a scalar value to multiply the k values by
-            river_indices:
+            river_indices: array of the indices of rivers with observations in the river id list from params
 
         Returns:
             np.float64
@@ -468,8 +475,8 @@ class MuskingumCunge:
         LOG.disabled = True
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        k = self.k * iteration_array[0]
-        x = self.x * iteration_array[1]
+        k = self.k * iteration_array
+        x = self.x
 
         self.conf['progress_bar'] = False
         for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
