@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+from functools import partial
 
 import netCDF4 as nc
 import networkx as nx
@@ -12,6 +13,7 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
+from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
@@ -26,7 +28,6 @@ LOG.disabled = True
 class MuskingumCunge:
     # Given configs
     conf: dict
-    log: logging.Logger
 
     # Routing matrices
     A: scipy.sparse.csc_matrix
@@ -46,6 +47,9 @@ class MuskingumCunge:
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_outflow: int
+
+    # Calibration variables
+    _calibration_iteration_number: int
 
     def __init__(self, config_file: str = None, **kwargs, ):
         self.set_configs(config_file, **kwargs)
@@ -197,6 +201,7 @@ class MuskingumCunge:
         initial_state = pd.read_parquet(state_file).values
         initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
         self.initial_state = initial_state
+        return
 
     def _write_final_state(self) -> None:
         final_state_file = self.conf.get('final_state_file', '')
@@ -204,6 +209,7 @@ class MuskingumCunge:
             return
         LOG.debug('Writing Final State to Parquet')
         pd.DataFrame(self.initial_state, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
+        return
 
     def _get_digraph(self) -> nx.DiGraph:
         """
@@ -221,12 +227,14 @@ class MuskingumCunge:
         self.A = connectivity_to_adjacency_matrix(self.conf['connectivity_file'])
         return
 
-    def _calculate_lhs_matrix(self) -> None:
+    def _set_lhs_matrix(self, c2: np.array = None) -> None:
+        if c2 is None:
+            c2 = self.c2
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
         self.lhs = self.lhs.tocsc()
         return
 
-    def _set_time_params(self, dates: np.array):
+    def _set_time_params(self, dates: np.array) -> None:
         """
         Set time parameters for the simulation
         """
@@ -259,7 +267,7 @@ class MuskingumCunge:
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
         return
 
-    def _calculate_muskingum_coefficients(self, k: np.ndarray = None, x: np.ndarray = None) -> None:
+    def _set_muskingum_coefficients(self, k: np.ndarray = None, x: np.ndarray = None) -> None:
         """
         Calculate the 3 MuskingumCunge routing coefficients for each segment using given k and x
         """
@@ -281,7 +289,7 @@ class MuskingumCunge:
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not sum to 1'
         return
 
-    def _calculate_nonlinear_coefficients(self, q_t: np.array) -> None:
+    def _set_nonlinear_muskingum_coefficients(self, q_t: np.array) -> None:
         if not hasattr(self, 'nonlinear_thresholds'):
             self.nonlinear_thresholds = pd.read_parquet(self.conf['nonlinear_thresholds_file'])
         threshold_columns = sorted(self.nonlinear_thresholds.columns)
@@ -297,8 +305,8 @@ class MuskingumCunge:
             values_to_change = (q_t > self.nonlinear_thresholds[threshold]).values
             k[values_to_change] = self.nonlinear_k_table[f'k_{threshold}'][values_to_change]
 
-        self._calculate_muskingum_coefficients(k=k)
-        self._calculate_lhs_matrix()
+        self._set_muskingum_coefficients(k=k)
+        self._set_lhs_matrix()
         return
 
     def route(self, **kwargs) -> 'MuskingumCunge':
@@ -322,7 +330,6 @@ class MuskingumCunge:
         self._log_configs()
         self._set_adjacency_matrix()
 
-        LOG.debug('Getting initial value arrays')
         for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
             LOG.info('-' * 80)
             LOG.info(f'Reading runoff volumes file: {runoff_file}')
@@ -333,8 +340,9 @@ class MuskingumCunge:
                 runoffs = runoff_ds[self.conf['var_runoff_volume']].values
 
             self._set_time_params(dates)
-            self._calculate_muskingum_coefficients()
+            self._set_muskingum_coefficients()
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
+            LOG.debug('Getting initial value arrays')
             q_t, r_t = self._read_initial_state()
             outflow_array = self._router(dates, runoffs, q_t, r_t)
 
@@ -362,13 +370,58 @@ class MuskingumCunge:
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def _router(self,
-                dates: np.array,
-                runoffs: np.array,
-                q_init: np.array,
-                r_init: np.array, ) -> np.array:
+    def calibrate(self, observed_df: pd.DataFrame, run_calibrated: bool = True) -> 'MuskingumCunge':
+        """
+        Calibrate K and X to given measured_values using optimization algorithms
+
+        Args:
+            observed_df: A pandas DataFrame with a datetime index, river id column names, and discharge values
+            run_calibrated: whether to run the model with the calibrated parameters after optimization
+
+        Returns:
+            river_route.MuskingumCunge
+        """
+        LOG.info(f'Beginning optimization: {self.conf["job_name"]}')
+        t1 = datetime.datetime.now()
+
+        # todo nonlinear calibration
+        if self.conf['routing'] == 'nonlinear':
+            raise NotImplementedError('Nonlinear calibration not yet implemented')
+
+        self._calibration_iteration_number = 0
+        self._read_linear_k()
+        self._read_linear_x()
+        self._validate_configs()
+        self._log_configs()
+        self._set_adjacency_matrix()
+
+        # find the indices of the rivers which have observed flows
+        # todo create the smallest subgraph containing only the observed rivers for faster routing
+        river_indices = self._read_river_ids()
+        river_indices = [np.where(river_indices == r)[0][0] for r in observed_df.columns]
+        objective = partial(self._calibration_objective, observed_df=observed_df, river_indices=river_indices)
+        result = minimize_scalar(objective, method='bounded', bounds=(0.75, 1.25), options={'disp': True}, tol=1e-2)
+
+        LOG.info('Optimization Results')
+        LOG.info(result)
+        self.k = self.k * result.x
+        if self.conf['calibrated_linear_params_file']:
+            LOG.info('Writing optimized k values to file')
+            df = pd.read_parquet(self.conf['routing_params_file'])
+            df['k'] = self.k
+            df.to_parquet(self.conf['calibrated_linear_params_file'])
+
+        t2 = datetime.datetime.now()
+        LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
+
+        if run_calibrated:
+            LOG.info('Rerunning model with calibrated parameters')
+            self.route()
+        return self
+
+    def _router(self, dates: np.array, runoffs: np.array, q_init: np.array, r_init: np.array, ) -> np.array:
         # set initial values
-        self._calculate_lhs_matrix()
+        self._set_lhs_matrix()
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
         q_t = np.zeros_like(q_init)
         q_t[:] = q_init
@@ -384,7 +437,7 @@ class MuskingumCunge:
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
                 if self.conf['routing'] == 'nonlinear':
-                    self._calculate_nonlinear_coefficients(q_t)
+                    self._set_nonlinear_muskingum_coefficients(q_t)
                 rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
                 q_t[:] = self._solver(rhs)
                 interval_flows[routing_sub_iteration_num, :] = q_t
@@ -400,7 +453,48 @@ class MuskingumCunge:
         return outflow_array
 
     def _solver(self, rhs: np.array) -> np.array:
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, )[0]
+        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, atol=1, rtol=1e-2)[0]
+
+    def _calibration_objective(self, iteration: np.array, observed: pd.DataFrame, riv_indices: np.array) -> np.float64:
+        """
+        Objective function for calibration
+
+        Args:
+            iteration: a scalar value to multiply the k values by
+            riv_indices: array of the indices of rivers with observations in the river id list from params
+
+        Returns:
+            np.float64
+        """
+        self._calibration_iteration_number += 1
+        LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
+        iter_df = pd.DataFrame(columns=riv_indices)
+        LOG.disabled = True
+
+        # set iteration k and x depending on the routing type in the configs and the size of the scalar
+        k = self.k * iteration
+        x = self.x
+
+        self.conf['progress_bar'] = False
+        for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
+            with xr.open_dataset(runoff_file) as runoff_ds:
+                dates = runoff_ds['time'].values.astype('datetime64[s]')
+                runoffs = runoff_ds[self.conf['var_runoff_volume']].values
+            self._set_time_params(dates)
+            self._set_muskingum_coefficients(k=k, x=x)
+            runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
+            q_t, r_t = self._read_initial_state()
+            outflow_array = self._router(dates, runoffs, q_t, r_t)
+            if iter_df.empty:
+                iter_df = pd.DataFrame(outflow_array, index=dates)[riv_indices]
+            else:
+                iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates)[riv_indices]])
+        LOG.disabled = False
+        self.conf['progress_bar'] = True
+        # todo clip by date ranges, merge dataframes, fill with nans, calculate error metric
+        mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
+        LOG.info(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        return mse
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
         reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
