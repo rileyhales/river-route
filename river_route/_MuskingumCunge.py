@@ -376,9 +376,7 @@ class MuskingumCunge:
 
         Args:
             observed_df: A pandas DataFrame with a datetime index, river id column names, and discharge values
-
-        Keyword Args:
-            run_calibrated: (bool), whether to run the model with the calibrated parameters after optimization
+            run_calibrated: whether to run the model with the calibrated parameters after optimization
 
         Returns:
             river_route.MuskingumCunge
