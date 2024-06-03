@@ -13,7 +13,6 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
-from scipy.optimize import differential_evolution
 from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__ as VERSION
@@ -382,6 +381,10 @@ class MuskingumCunge:
         LOG.info(f'Beginning optimization: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
+        # todo nonlinear calibration
+        if self.conf['routing'] == 'nonlinear':
+            raise NotImplementedError('Nonlinear calibration not yet implemented')
+
         self._calibration_iteration_number = 0
         self._read_linear_k()
         self._read_linear_x()
@@ -390,31 +393,20 @@ class MuskingumCunge:
         self._set_adjacency_matrix()
 
         # find the indices of the rivers which have observed flows
+        # todo create the smallest subgraph containing only the observed rivers for faster routing
         river_indices = self._read_river_ids()
         river_indices = [np.where(river_indices == r)[0][0] for r in observed_df.columns]
         objective = partial(self._calibration_objective, observed_df=observed_df, river_indices=river_indices)
-
-        if self.conf['routing'] == 'linear':
-            result = minimize_scalar(objective, method='bounded', bounds=(0.6, 1.4), options={'disp': True}, tol=1e-2)
-            # todo calibrate k and x simultaneously
-        else:
-            """
-            (noflow), qlow1, qlow2, qbase , qup1, qup2
-            k1      , k2   , k3   , (base), k4  , k5
-            """
-            # 3 divisions
-            objective_vector = np.array([1.0, 1.2, 1.4, 1.0, 0.8, 0.6, ])
-            bounds = np.array([[x + (0.2 * x), x - (0.2 * x)] for x in objective_vector]).reshape(-1, 2)
-            result = differential_evolution(
-                objective, x0=objective_vector, bounds=bounds, disp=True, tol=1e-2, workers=12,
-            )
+        result = minimize_scalar(objective, method='bounded', bounds=(0.75, 1.25), options={'disp': True}, tol=1e-2)
 
         LOG.info('Optimization Results')
         LOG.info(result)
-        LOG.info('Setting optimized k values')
         self.k = self.k * result.x
-        LOG.info('Writing optimized k values to file')
-        pd.DataFrame(self.k, columns=['k', ]).to_parquet(self.conf['calibrated_linear_params_file'])
+        if self.conf['calibrated_linear_params_file']:
+            LOG.info('Writing optimized k values to file')
+            df = pd.read_parquet(self.conf['routing_params_file'])
+            df['k'] = self.k
+            df.to_parquet(self.conf['calibrated_linear_params_file'])
 
         t2 = datetime.datetime.now()
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
@@ -466,6 +458,9 @@ class MuskingumCunge:
         Args:
             iteration_array: a scalar value to multiply the k values by
             river_indices:
+
+        Returns:
+            np.float64
         """
         self._calibration_iteration_number += 1
         LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration_array}')
@@ -473,13 +468,8 @@ class MuskingumCunge:
         LOG.disabled = True
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        if self.conf['routing'] == 'linear':
-            k = self.k * iteration_array
-            x = self._read_linear_x()
-        else:
-            # todo
-            k = ''
-            x = ''
+        k = self.k * iteration_array[0]
+        x = self.x * iteration_array[1]
 
         self.conf['progress_bar'] = False
         for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
