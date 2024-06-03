@@ -328,7 +328,7 @@ class MuskingumCunge:
         self._log_configs()
         self._set_adjacency_matrix()
 
-        for runoff_file, outflow_file in zip(self.conf['runoff_file'], self.conf['outflow_file']):
+        for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
             LOG.info('-' * 80)
             LOG.info(f'Reading runoff volumes file: {runoff_file}')
             with xr.open_dataset(runoff_file) as runoff_ds:
