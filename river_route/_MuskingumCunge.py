@@ -201,6 +201,7 @@ class MuskingumCunge:
         initial_state = pd.read_parquet(state_file).values
         initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
         self.initial_state = initial_state
+        return
 
     def _write_final_state(self) -> None:
         final_state_file = self.conf.get('final_state_file', '')
@@ -208,6 +209,7 @@ class MuskingumCunge:
             return
         LOG.debug('Writing Final State to Parquet')
         pd.DataFrame(self.initial_state, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
+        return
 
     def _get_digraph(self) -> nx.DiGraph:
         """
