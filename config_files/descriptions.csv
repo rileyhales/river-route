@@ -6,9 +6,6 @@ outflow_file,string,Path where the outflows file should be saved.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.
 routing,string,Either 'linear' or 'nonlinear' routing- default 'linear'.
-nonlinear_routing_params_file,string,Path to the file with nonlinear routing parameters.
-nonlinear_thresholds_file,string,Path to the file with nonlinear routing thresholds.
-positive_flows,boolean,Force minimum flow value to be >= 0.
 initial_state_file,string,Path to the file with initial state values.
 final_state_file,string,Path to the file with final state values.
 log,boolean,whether to display log messages defaulting to False

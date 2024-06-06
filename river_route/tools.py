@@ -38,7 +38,7 @@ def routing_files_from_RAPID(riv_bas_id: str,
         assert os.path.isfile(f), FileNotFoundError(f)
 
     pd.concat([
-        pd.read_csv(riv_bas_id, header=None, names=['rivid']),
+        pd.read_csv(riv_bas_id, header=None, names=['river_id']),
         pd.read_csv(x, header=None, names=['x']),
         pd.read_csv(k, header=None, names=['k']),
     ], axis=1).to_parquet(out_params)
@@ -46,7 +46,7 @@ def routing_files_from_RAPID(riv_bas_id: str,
         pd
         .read_csv(rapid_connect, header=None)
         .iloc[:, :2]
-        .rename(columns={0: 'rivid', 1: 'downstream_rivid'})
+        .rename(columns={0: 'river_id', 1: 'ds_river_id'})
         .to_parquet(out_connectivity)
     )
     return

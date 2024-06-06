@@ -8,10 +8,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-LOG = logging.getLogger('river-route')
-LOG.setLevel(logging.DEBUG)
-LOG.disabled = True
-
 __all__ = [
     'calc_runoff_volumes',
     'write_runoff_volumes',
@@ -20,7 +16,6 @@ __all__ = [
 
 
 def _cumulative_to_incremental(df) -> pd.DataFrame:
-    logging.info('Converting to incremental values')
     return pd.DataFrame(
         np.vstack([df.values[0, :], np.diff(df.values, axis=0)]),
         index=df.index,
@@ -29,7 +24,6 @@ def _cumulative_to_incremental(df) -> pd.DataFrame:
 
 
 def _incremental_to_cumulative(df) -> pd.DataFrame:
-    logging.info('Converting to cumulative values')
     return df.cumsum()
 
 
@@ -37,7 +31,6 @@ def _guess_variable_name(var_name: str, possible_matches: list) -> str:
     if len(possible_matches) == 0:
         raise ValueError(f"No {var_name} variable found in LSM data. Check dataset or specify {var_name}_var")
     if len(possible_matches) == 1:
-        logging.info(f'Found {var_name} variable: "{possible_matches[0]}"')
         return possible_matches[0]
     elif len(possible_matches) > 1:
         raise ValueError(f"Multiple {var_name} variables found. Specify with {var_name}_var: {possible_matches}")
@@ -51,10 +44,10 @@ def _search_for_weight_table(input_dir: str, x0: int or float, y0: int or float,
     tables = glob.glob(os.path.join(input_dir, f'weight_*'))
     tables = [x for x in tables if re.match(fr'weight_.*x0={x0}.*y0={y0}.*dx={dx}.*dy={dy}.*', x)]
     if not len(tables):
-        LOG.error(f'No weight table found in {input_dir} which matches the dataset')
+        logging.error(f'No weight table found in {input_dir} which matches the dataset')
         raise FileNotFoundError(f'Could not find a weight table in {input_dir} which matches the dataset')
     if len(tables) > 1:
-        LOG.error(f'Multiple weight tables found in {input_dir}. Please specify weight_table')
+        logging.error(f'Multiple weight tables found in {input_dir}. Please specify weight_table')
         raise ValueError(f'Multiple weight tables found in {input_dir}. Please specify weight_table')
     return tables[0]
 
@@ -94,7 +87,7 @@ def calc_runoff_volumes(
         # this is correct, a list of files is allowed
         assert all([os.path.exists(x) for x in runoff_data]), 'Not all files in the list exist'
     elif os.path.isdir(runoff_data):
-        LOG.warning(f'{runoff_data} is a directory. Guessing which files to use.')
+        logging.warning(f'{runoff_data} is a directory. Guessing which files to use.')
         runoff_data = os.path.join(runoff_data, '*.nc*')
     elif os.path.isfile(runoff_data):
         ...  # this is correct, a single file is allowed
@@ -145,7 +138,6 @@ def calc_runoff_volumes(
             weight_table = _search_for_weight_table(vpu_dir, x0, y0, dx, dy)
 
         # load in weight table and get some information
-        logging.debug(f'Using weight table: {weight_table}')
         weight_df = pd.read_csv(weight_table)
 
         # todo replace with routing params file or the order of the entries in weight_df
@@ -157,10 +149,8 @@ def calc_runoff_volumes(
         ds = ds[runoff_var]
 
         # get the time array from the dataset
-        logging.info('Reading Time values')
         datetime_array = ds[time_var].to_numpy()
 
-        logging.info('Reading Runoff values')
         # todo use Dataset.sel(**kwargs) using a dictionary of time, y_var, x_var key/values
         if ds.ndim == 3:
             vol_df = ds.values[:, weight_df['lat_index'].values, weight_df['lon_index'].values]
@@ -181,16 +171,15 @@ def calc_runoff_volumes(
     vol_df = vol_df.T.groupby(by=stream_ids).sum().T
     vol_df = vol_df[sorted_rivid_array]
 
-    # Check that all timesteps are the same
+    # Check that all time steps are the same
     time_diff = np.diff(datetime_array)
     if not np.all(time_diff == datetime_array[1] - datetime_array[0]) and force_uniform_timesteps:
-        logging.warning('Timesteps are not all uniform, resampling to the first timestep')
-        timestep = datetime_array[1] - datetime_array[0]
-        logging.warning(f'The first timedelta is: {timestep.astype("timedelta64[s]")} seconds')
+        timestep = (datetime_array[1] - datetime_array[0]).astype('timedelta64[s]').astype(int)
+        logging.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
         # everything is forced to be incremental before this step so we can use cumsum to get the cumulative values
         vol_df = (
             _incremental_to_cumulative(vol_df)
-            .resample(rule=f'{timestep.astype("timedelta64[s]").astype(int)}S')
+            .resample(rule=f'{timestep}S')
             .interpolate(method='linear')
         )
         vol_df = _cumulative_to_incremental(vol_df)
@@ -220,31 +209,28 @@ def write_runoff_volumes(vol_df: pd.DataFrame, output_dir: str, vpu_name: str, f
     if file_label is not None:
         file_name = f'm3_{vpu_name}_{start_date}_{end_date}_{file_label}.nc'
     inflow_file_path = os.path.join(output_dir, file_name)
-    logging.debug(f'Writing inflow file to {inflow_file_path}')
 
     with nc.Dataset(inflow_file_path, "w", format="NETCDF4") as ds:
         ds.createDimension('time', vol_df.shape[0])
         ds.createDimension('river_id', vol_df.shape[1])
 
-        ro_vol_var = ds.createVariable('ro_vol', 'f4', ('time', 'river_id'), zlib=True, complevel=9)
+        ro_vol_var = ds.createVariable('volume', 'f4', ('time', 'river_id'), zlib=True, complevel=9)
         ro_vol_var[:] = vol_df.to_numpy()
         ro_vol_var.long_name = 'Incremental catchment runoff volume'
         ro_vol_var.units = 'm3'
 
         id_var = ds.createVariable('river_id', 'i4', ('river_id',), zlib=True, complevel=9)
         id_var[:] = vol_df.columns.astype(int)
-        id_var.long_name = 'unique identifier for each river reach'
-        id_var.units = '1'
-        id_var.cf_role = 'timeseries_id'
+        id_var.long_name = 'unique ID number for each river'
 
-        time_step = (vol_df.index[1] - vol_df.index[0]).astype('timedelta64[s]')
+        timestep = (vol_df.index[1] - vol_df.index[0]).seconds
         time_var = ds.createVariable('time', 'i4', ('time',), zlib=True, complevel=9)
-        time_var[:] = (vol_df.index - vol_df.index[0]).astype('timedelta64[s]').astype
+        time_var[:] = (vol_df.index - vol_df.index[0]).astype('timedelta64[s]').astype(int)
         time_var.long_name = 'time'
         time_var.standard_name = 'time'
-        time_var.units = f'seconds since {vol_df.index[0].astype("datetime64[s]")}'
+        time_var.units = f'seconds since {vol_df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
         time_var.axis = 'T'
-        time_var.time_step = f'{time_step.astype(int)}'
+        time_var.time_step = f'{timestep}'
     return
 
 
@@ -283,6 +269,9 @@ def create_runoff_volumes_files(runoff_data: str,
                                  cumulative=cumulative, force_positive_runoff=force_positive_runoff,
                                  force_uniform_timesteps=True, runoff_var=runoff_var, x_var=x_var, y_var=y_var,
                                  time_var=time_var)
+
+    vpu_name = vpu_name if vpu_name is not None else os.path.basename(vpu_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     # Write the inflow file
     write_runoff_volumes(vol_df, output_dir, vpu_name, file_label)

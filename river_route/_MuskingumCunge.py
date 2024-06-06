@@ -22,22 +22,27 @@ from .tools import connectivity_to_digraph
 __all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
-LOG.disabled = True
 
 
 class MuskingumCunge:
     # Given configs
     conf: dict
 
-    # Routing matrices
-    A: scipy.sparse.csc_matrix
-    lhs: scipy.sparse.csc_matrix
-    k: np.array
-    x: np.array
-    c1: np.array
-    c2: np.array
-    c3: np.array
+    # Routing matrices and vectors
+    A: scipy.sparse.csc_matrix  # n x n - adjacency matrix => f(n, connectivity)
+    lhs: scipy.sparse.csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
+    k: np.array  # n x 1 - K values for each segment
+    x: np.array  # n x 1 - X values for each segment
+    c1: np.array  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
+    c2: np.array  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
+    c3: np.array  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
     initial_state: (np.array, np.array)  # Q init, R init
+
+    # Nonlinear routing parameters - persisted because of frequent reuse during routing
+    nonlinear_table: pd.DataFrame
+    q_columns: list
+    k_columns: list
+    x_columns: list
 
     # Time options
     dt_total: float
@@ -86,24 +91,17 @@ class MuskingumCunge:
         # set default values for configs when possible
         self.conf['river-route-version'] = VERSION
         self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
-        self.conf['log'] = bool(self.conf.get('log', False))
+        self.conf['log'] = bool(self.conf.get('log', True))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
-        self.conf['var_runoff_volume'] = self.conf.get('var_runoff_volume', 'ro_vol')
+        self.conf['var_runoff_volume'] = self.conf.get('var_runoff_volume', 'volume')
         self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
         self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
         # routing and solver options - time is validated at route time
+        assert 'routing_params_file' in self.conf, 'Requires routing params file'
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
-        self.conf['positive_flow'] = self.conf.get('positive_flow', True)
-
-        # check that the routing params files are given depending on the routing method
-        if self.conf['routing'] == 'nonlinear':
-            assert 'nonlinear_routing_params_file' in self.conf, 'Nonlinear routing requires nonlinear routing params'
-            assert 'nonlinear_thresholds_file' in self.conf, 'Nonlinear routing requires nonlinear thresholds'
-        else:
-            assert 'routing_params_file' in self.conf, 'Linear routing requires linear routing params'
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_volumes_file'], str):
@@ -116,34 +114,25 @@ class MuskingumCunge:
             elif isinstance(self.conf[arg], str):
                 self.conf[arg] = os.path.abspath(self.conf[arg])
 
-        # Enable logging options
-        if self.conf['log']:
-            LOG.disabled = False
-            LOG.setLevel(self.conf.get('log_level', 'INFO'))
-            log_destination = self.conf.get('log_stream', 'stdout')
-            log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
-            if log_destination == 'stdout':
-                LOG.addHandler(logging.StreamHandler(sys.stdout))
-            elif log_destination == 'stderr':
-                LOG.addHandler(logging.StreamHandler(sys.stderr))
-            elif isinstance(log_destination, str):
-                LOG.addHandler(logging.FileHandler(log_destination))
-            LOG.handlers[0].setFormatter(logging.Formatter(log_format))
-            LOG.debug('Logger initialized')
+        LOG.setLevel(self.conf.get('log_level', 'INFO'))
+        log_destination = self.conf.get('log_stream', 'stdout')
+        log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
+        if log_destination == 'stdout':
+            LOG.addHandler(logging.StreamHandler(sys.stdout))
+        elif log_destination == 'stderr':
+            LOG.addHandler(logging.StreamHandler(sys.stderr))
+        elif isinstance(log_destination, str):
+            LOG.addHandler(logging.FileHandler(log_destination))
+        LOG.handlers[0].setFormatter(logging.Formatter(log_format))
+        LOG.debug('Logger initialized')
+        if not self.conf.get('log', True):
+            LOG.disabled = True
         return
 
     def _validate_configs(self) -> None:
         LOG.info('Validating configs file')
-        required_file_paths = ['connectivity_file',
-                               'runoff_volumes_file',
-                               'outflow_file', ]
-        paths_should_exist = ['connectivity_file', ]
-
-        if self.conf['routing'] == 'linear':
-            required_file_paths.append('routing_params_file')
-        else:
-            required_file_paths.append('nonlinear_routing_params_file')
-            required_file_paths.append('nonlinear_thresholds_file')
+        required_file_paths = ['routing_params_file', 'connectivity_file', 'runoff_volumes_file', 'outflow_file', ]
+        paths_should_exist = ['routing_params_file', 'connectivity_file', ]
 
         for arg in required_file_paths:
             if arg not in self.conf:
@@ -170,23 +159,15 @@ class MuskingumCunge:
         """
         return pd.read_parquet(self.conf['routing_params_file'], columns=[self.conf['var_river_id'], ]).values.flatten()
 
-    def _read_linear_k(self) -> np.array:
+    def _set_linear_routing_params(self) -> None:
         """
         Reads K vector from parquet given in config file
         """
-        if hasattr(self, 'k'):
-            return self.k
+        if hasattr(self, 'k') and hasattr(self, 'x'):
+            return
         self.k = pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
-        return self.k
-
-    def _read_linear_x(self) -> np.array:
-        """
-        Reads X vector from parquet given in config file
-        """
-        if hasattr(self, 'x'):
-            return self.x
         self.x = pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
-        return self.x
+        return
 
     def _read_initial_state(self) -> (np.array, np.array):
         if hasattr(self, 'initial_state'):
@@ -228,9 +209,8 @@ class MuskingumCunge:
         return
 
     def _set_lhs_matrix(self, c2: np.array = None) -> None:
-        if c2 is None:
-            c2 = self.c2
-        self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
+        c2 = c2 if c2 is not None else self.c2
+        self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(c2) @ self.A)
         self.lhs = self.lhs.tocsc()
         return
 
@@ -273,10 +253,9 @@ class MuskingumCunge:
         """
         LOG.debug('Calculating MuskingumCunge coefficients')
 
-        if k is None:
-            k = self._read_linear_k()
-        if x is None:
-            x = self._read_linear_x()
+        self._set_linear_routing_params()
+        k = k if k is not None else self.k
+        x = x if x is not None else self.x
 
         dt_div_k = self.dt_routing / k
         denom = dt_div_k + (2 * (1 - x))
@@ -289,23 +268,41 @@ class MuskingumCunge:
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not sum to 1'
         return
 
-    def _set_nonlinear_muskingum_coefficients(self, q_t: np.array) -> None:
-        if not hasattr(self, 'nonlinear_thresholds'):
-            self.nonlinear_thresholds = pd.read_parquet(self.conf['nonlinear_thresholds_file'])
-        threshold_columns = sorted(self.nonlinear_thresholds.columns)
-        if not np.any(q_t > self.nonlinear_thresholds[threshold_columns[0]]):
+    def _set_nonlinear_routing_table(self) -> None:
+        """
+        Sets class properties for nonlinear routing - nonlinear_table, q_columns, k_columns, x_columns
+
+        Returns:
+            None
+        """
+        if hasattr(self, 'nonlinear_table'):
             return
 
-        if not hasattr(self, 'nonlinear_k_table'):
-            self.nonlinear_k_table = pd.read_parquet(self.conf['nonlinear_routing_params_file'])
+        self.nonlinear_table = pd.read_parquet(self.conf['routing_params_file'])
+        self.q_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('q_')])
+        self.k_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('k_')])
+        self.x_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('x_')])
+        if len(self.k_columns) == 0 or len(self.x_columns) == 0 or len(self.q_columns) == 0:
+            LOG.error('No nonlinear q or k or x columns found in routing params file')
+            LOG.debug(f'k columns: {self.k_columns}')
+            LOG.debug(f'x columns: {self.x_columns}')
+            LOG.debug(f'q columns: {self.q_columns}')
+            raise ValueError('No nonlinear q or k or x columns found in routing params file')
+        self.nonlinear_table = self.nonlinear_table[self.k_columns + self.x_columns + self.q_columns]
+        return
 
-        k = self._read_linear_k()
+    def _set_nonlinear_muskingum_coefficients(self, q_t: np.array) -> None:
+        self._set_nonlinear_routing_table()
 
-        for threshold in threshold_columns:  # small to large
-            values_to_change = (q_t > self.nonlinear_thresholds[threshold]).values
-            k[values_to_change] = self.nonlinear_k_table[f'k_{threshold}'][values_to_change]
+        k = self.nonlinear_table[self.k_columns[0]].values
+        x = self.nonlinear_table[self.x_columns[0]].values
 
-        self._set_muskingum_coefficients(k=k)
+        for q_col, k_col, x_col in zip(self.q_columns, self.k_columns, self.x_columns):  # small to large
+            values_to_change = (q_t > self.nonlinear_table[q_col]).values
+            k[values_to_change] = self.nonlinear_table[k_col][values_to_change]
+            x[values_to_change] = self.nonlinear_table[x_col][values_to_change]
+
+        self._set_muskingum_coefficients(k=k, x=x)
         self._set_lhs_matrix()
         return
 
@@ -389,8 +386,7 @@ class MuskingumCunge:
             raise NotImplementedError('Nonlinear calibration not yet implemented')
 
         self._calibration_iteration_number = 0
-        self._read_linear_k()
-        self._read_linear_x()
+        self._set_linear_routing_params()
         self._validate_configs()
         self._log_configs()
         self._set_adjacency_matrix()
@@ -428,10 +424,11 @@ class MuskingumCunge:
         r_prev = np.zeros_like(r_init)
         r_prev[:] = r_init
 
-        LOG.info('Performing routing computation iterations')
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
             dates = tqdm.tqdm(dates, desc='Runoff Routed')
+        else:
+            LOG.info('Performing routing computation iterations')
         for runoff_time_step, runoff_end_date in enumerate(dates):
             r_t = runoffs[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
@@ -439,21 +436,21 @@ class MuskingumCunge:
                 if self.conf['routing'] == 'nonlinear':
                     self._set_nonlinear_muskingum_coefficients(q_t)
                 rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
-                q_t[:] = self._solver(rhs)
+                q_t[:] = self._solver(rhs, q_t)
                 interval_flows[routing_sub_iteration_num, :] = q_t
             outflow_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
             r_prev[:] = r_t
 
-        if self.conf['positive_flow']:
-            outflow_array[outflow_array < 0] = 0
+        # Enforce positive flows in case of negative solver results
+        outflow_array[outflow_array < 0] = 0
 
         t2 = datetime.datetime.now()
         LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         self.initial_state = (q_t, r_prev)
         return outflow_array
 
-    def _solver(self, rhs: np.array) -> np.array:
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=rhs, atol=1, rtol=1e-2)[0]
+    def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
+        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=1e-3, rtol=1e-3)[0]
 
     def _calibration_objective(self, iteration: np.array, observed: pd.DataFrame, riv_indices: np.array) -> np.float64:
         """
@@ -469,13 +466,11 @@ class MuskingumCunge:
         self._calibration_iteration_number += 1
         LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
         iter_df = pd.DataFrame(columns=riv_indices)
-        LOG.disabled = True
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
         k = self.k * iteration
         x = self.x
 
-        self.conf['progress_bar'] = False
         for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
@@ -489,8 +484,6 @@ class MuskingumCunge:
                 iter_df = pd.DataFrame(outflow_array, index=dates)[riv_indices]
             else:
                 iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates)[riv_indices]])
-        LOG.disabled = False
-        self.conf['progress_bar'] = True
         # todo clip by date ranges, merge dataframes, fill with nans, calculate error metric
         mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
         LOG.info(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')

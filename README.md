@@ -5,7 +5,8 @@ numpy and scipy which keeps the array computation times on par with faster compi
 
 ## Installation
 
-Install river-route from source using conda/mamba such as with the following commands:
+Install river-route from source using conda/mamba. It is recommended that you make a dedicated environment for this
+package.
 
 ```bash
 git clone https://github.com/rileyhales/river-route
@@ -40,7 +41,7 @@ import river_route as rr
     .MuskingumCunge(**{
         'routing_params_file': '/path/to/routing_params.parquet',
         'connectivity_file': '/path/to/connectivity.parquet',
-        'runoff_file': '/path/to/runoff.nc',
+        'runoff_volumes_file': '/path/to/runoff.nc',
         'outflow_file': '/path/to/outflow.nc',
     })
     .route()
@@ -53,21 +54,8 @@ The minimum required inputs in the configuration file are:
 
 - `routing_params_file` - path to the [routing parameters file](#routing-parameters) (parquet)
 - `connectivity_file` - path to the river network [connectivity file](#connectivity-file) (parquet)
-- `runoff_file` - path to the prepared [runoff volumes file](#runoff-data) (netCDF)
+- `runoff_volumes_file` - path to the prepared [runoff volumes file](#runoff-data) (netCDF)
 - `outflow_file` - path where the [routed flows](#discharge-data) output file will be saved (netCDF)
-
-You should also provide these parameters where intermediate results can be cached or read (if existing) for speed gains
-on future simulations. **You need to delete and regenerate these files if you change the network topology** (e.g. remove
-rivers, add rivers, create braided river connectivity, etc) **or the routing parameters** (k or x):
-
-- `lhs_file` - a file path where the LHS matrix will be cached (npz file). This parameter can be provided to future
-  computations for a speed gain. This only needs to be created and cached 1 time unless you change the network
-  topology (e.g. remove rivers, create braided river connectivity, etc)
-- `lhsinv_file` - path where the LHS inverse matrix will be cached (npz file). This parameter can be provided to future
-  computations for a substantial speed gain. This only needs to be created and cached 1 time unless you change the river
-  topology.
-- `adj_file` - path where the adjacency matrix will be cached (npz file). This parameter can be given instead of the
-  connectivity file in future computations for a speed gain. This
 
 You can modify how the routing computations are performed with these parameters:
 
@@ -104,79 +92,83 @@ A diagram of the possible configuration file parameters and their role in the ro
 Title: River Route Process Diagram
 ---
 graph LR
-    subgraph "RequiredInputs"
-        Inputs["Routing Parameters \n Connectivity or Adjacency \n Runoff Data \n Outflow File"]
+    subgraph "Required-Inputs"
+        Inputs["Routing Parameters\nConnectivity File\nRunoff Volumes\nOutflow File"]
     end
 
-    subgraph "ComputeOptions"
-        co1["Routing Timestep \n Outflow Timestep \n Minimum Q \n Maximum Q"]
+    subgraph "Compute-Options"
+        co1["Routing Timestep\nOutflow Timestep"]
     end
 
     subgraph "Initialization"
-        i1["Initial Flows File \n Initial Runoff File"]
+        i1["Initial State File"]
     end
 
-    subgraph "LoggingOptions"
-        management["Log File Path \n Log Level \n Job Name \n Progress Bar"]
+    subgraph "Logging-Options"
+        management["Log File Path\nProgress Bar\nLog Level\nJob Name"]
     end
 
     subgraph "Computations"
         direction TB
-        a[Calculate LHS & LHS<sup>-1</sup>] --> b
-        b[Divide Runoff Data by \n Number of Steps] --> c
-        c[Iterate On Runoff Intervals] --> d
-        d[Solving Matrix \n MuskingumCunge] --> e
-        e[Enforce Min and Max Q] --> f & c
+        a[Calculate LHS] --> b
+        b[Read Runoff Volumes] --> c
+        c[Iterate On Routing Intervals] --> d
+        d[Solving Matrix\nMuskingum Cunge] --> e
+        e[Enforce Positive Flows] --> f & c
         f[Write Outflows to Disk] --> g
         g[Cache Final State]
     end
 
-    subgraph "MainOutput"
+    subgraph "Main-Output"
         Result[Routed Discharge]
     end
 
-    subgraph "CachableFiles"
-        CachedFiles["Final Flows State \n Final Runoff State \n LHS Matrix \n LHS Inverse Matrix \n Adjacency Matrix"]
+    subgraph "Cachable-Files"
+        CachedFiles["Final State File"]
     end
 
-    RequiredInputs & ComputeOptions & Initialization & LoggingOptions ==> Computations
-    Computations ==> MainOutput & CachableFiles
+    Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
+    Computations ==> Main-Output & Cachable-Files
 ```
 
-| Parameter Name      | Required | Type      | Group                 | Description                                                        |                                                                                
-|---------------------|----------|-----------|-----------------------|--------------------------------------------------------------------|
-| routing_params_file | True     | File Path | Required Input        | Path to the routing parameters parquet file.                       |                                                
-| connectivity_file   | True     | File Path | Required Input        | Path to the network connectivity parquet file.                     |                                              
-| runoff_file         | True     | File Path | Required Input        | Path to the netCDF with runoff values to be routed.                |                                   
-| outflow_file        | True     | File Path | Required Input        | Path where the outflows netCDF file should be saved.               |                                       
-| dt_routing          | True     | Integer   | Compute Options       | Time interval in seconds between routing computations.             |                              
-| dt_outflows         | False    | Integer   | Compute Options       | Time interval in seconds between writing flows to disc.            |
-| min_q               | False    | Float     | Compute Options       | Minimum flow value enforced after each routing calculation         |
-| max_q               | False    | Float     | Compute Options       | Maximum flow value enforced after each routing calculation         |
-| qinit_file          | False    | File Path | Initialization Data   | Path to the initial flows file.                                    |                                                     
-| rinit_file          | False    | File Path | Initialization Data   | Path to the initial runoff file.                                   |                                                    
-| qfinal_file         | False    | File Path | Cachable State File   | Path where the final flows file should be saved.                   |                                    
-| rfinal_file         | False    | File Path | Cachable State File   | Path where the final runoff file should be saved.                  |                                   
-| lhs_file            | False    | File Path | Cachable Network File | Path where the LHS matrix should be cached.                        |                                         
-| lhsinv_file         | False    | File Path | Cachable Network File | Path where the LHS inverse matrix should be cached.                |                                 
-| adj_file            | False    | File Path | Cachable Network File | Path where the adjacency matrix should be cached.                  |                                   
-| log_file            | False    | File Path | Logging Options       | Path to a file where the log will be written.                      |                                       
-| log_level           | False    | String    | Logging Options       | The level of logging messages to be printed e.g. DEBUG, INFO       |
-| job_name            | False    | String    | Logging Options       | A name for this job printed in logs and debug statements.          |                           
-| progress_bar        | False    | Boolean   | Logging Options       | Display a computations progress bar in logs: true or false.        | 
+| Parameter Name            | Required | Type      | Group               | Description                                                           |                                                                                
+|---------------------------|----------|-----------|---------------------|-----------------------------------------------------------------------|
+| routing_params_file       | True     | File Path | Required Input      | Path to the routing parameters parquet file.                          |                                                
+| connectivity_file         | True     | File Path | Required Input      | Path to the network connectivity parquet file.                        |                                              
+| runoff_volumes_file       | True     | File Path | Required Input      | Path to the netCDF with runoff values to be routed.                   |                                   
+| outflow_file              | True     | File Path | Required Input      | Path where the outflows netCDF file should be saved.                  |                                       
+| dt_routing                | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                |                              
+| dt_outflows               | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.               |
+| routing                   | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                   |
+| initial_state_file        | False    | File Path | Initialization Data | Path to the initial state file.                                       |                                                     
+| final_state_file          | False    | File Path | Initialization Data | Path where the final state file should be saved.                      |                                    
+| log                       | False    | Boolean   | Logging Options     | Whether to enable logging.                                            |                                       
+| progress_bar              | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                        |
+| log_level                 | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING            |
+| log_stream                | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path. |
+| job_name                  | False    | String    | Logging Options     | A name for this job printed in logs and debug statements.             |                           
+| var_runoff_volume         | False    | String    | File Management     | Name of the variable in files containing runoff volumes               |
+| var_river_id              | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.        |
+| var_outflow               | False    | String    | File Management     | Name of the variable in the outflows file that contains the outflows. |
 
 ## Input File Schemas
 
 ### Routing Parameters
 
-The routing parameters file is a parquet file with 3 columns and 1 row per river in the watershed. The index is ignored
-index.
+The routing parameters file is a parquet file with 3 columns and 1 row per river in the watershed. The index is ignored.
+If you use nonlinear routing, you can provide more columns with k and x values to use at different thresholds of Q.
+Nonlinear routing columns should be named k_1, x_1, q_1, followed by k_2, x_2, q_2, for as many thresholds as you chose.
+You may provide as many columns as you wish as long as you also provide a thresholds file.
+The rows (rivers) **must be sorted in topological order** from upstream to downstream.
 
-| Column | Data Type | Description                                                               |
-|--------|-----------|---------------------------------------------------------------------------|
-| rivid  | integer   | Unique ID of a river segment                                              |
-| k      | float     | the k parameter of the MuskingumCunge Cunge routing equation length / velocity |
-| x      | float     | the x parameter of the MuskingumCunge Cunge routing equation. x : [0, 0.5]     |
+| Column   | Data Type | Description                                                                    |
+|----------|-----------|--------------------------------------------------------------------------------|
+| river_id | integer   | Unique ID of a river segment                                                   |
+| k        | float     | the k parameter of the MuskingumCunge Cunge routing equation length / velocity |
+| x        | float     | the x parameter of the MuskingumCunge Cunge routing equation. x : [0, 0.5]     |
+| k_1      | float     | Optional, the k parameter of the MuskingumCunge Cunge routing equation at Q_1  |
+| x_1      | float     | Optional, the x parameter of the MuskingumCunge Cunge routing equation at Q_1  |
+| q_1      | float     | Optional, the minimu value of Q at which to start using use k_1 and x_1        |
 
 ### Connectivity File
 
@@ -190,28 +182,28 @@ discharge from the river segment that flows to the downstream segment given on t
 should have a weight of 1.0. The weights column of rivers that are braided should sum to exactly 1.0 or else water will
 be deleted or magically inserted into the rivers.
 
-| Column           | Data Type | Description                                                                                         |
-|------------------|-----------|-----------------------------------------------------------------------------------------------------|
-| rivid            | integer   | Unique ID of a river segment                                                                        |
-| downstream_rivid | integer   | Unique ID of the downstream river segment                                                           |
-| weight           | float     | Optional, the percentage of discharge from this river that should be routed to the downstream river |
+| Column              | Data Type | Description                                                                                         |
+|---------------------|-----------|-----------------------------------------------------------------------------------------------------|
+| river_id            | integer   | Unique ID of a river segment                                                                        |
+| downstream_river_id | integer   | Unique ID of the downstream river segment                                                           |
+| weight              | float     | Optional, the percentage of discharge from this river that should be routed to the downstream river |
 
-### Runoff Data
+### Runoff and Catchment Volumes Data
 
-Runoff volumes are given in a netCDF file. The file should have 2 dimensions: time and rivid.
+Runoff volumes are given in a netCDF file. The file should have 2 dimensions: time and river_id.
 The times can be given in any unit with a recognizable units string e.g. 'hours since 2000-01-01 00:00:00'.
-The rivid dimension should have exactly the same IDs *AND* be sorted in the same order given in the rivid column of the
-routing parameters file. Runoff values should be in a variable named "m3", in an array of shape (time, rivid), and dtype
-float.
+The river_id dimension should have exactly the same IDs *AND* be sorted in the same order given in the river_id column
+of the routing parameters file. Runoff values should be in a variable named "m3", in an array of shape (time, river_id),
+and dtype float.
 
 ## Output File Schemas
 
 ### Discharge Data
 
-Discharge data are given in a netCDF file. The file has 2 dimensions: time and rivid.
+Discharge data are given in a netCDF file. The file has 2 dimensions: time and river_id.
 The times given will exactly match the times given in the runoff data unless a different time interval was specified.
-The rivid dimension will exactly match the IDs given in the rivid column of the routing parameters file. Discharge
-values will be in a variable named "Qout", in an array of shape (time, rivid), and dtype float.
+The river_id dimension will exactly match the IDs given in the river_id column of the routing parameters file. Discharge
+values will be in a variable named "Q", in an array of shape (time, river_id), and dtype float.
 
 ## Time Parameters
 
@@ -260,10 +252,9 @@ dt_total === dt_runoff * number_of_time_steps
 
 ### Limitations
 
-1. You may not write to disc more frequently than the runoff interval.
-2. You must route each interval of runoff data at least 1 time before the next interval of runoff data. You should
+1. You must route each interval of runoff data at least 1 time before the next interval of runoff data. You should
    resample the runoff data to larger or smaller time intervals using your own methods before routing.
-3. You cannot run the routing calculations for longer than runoff data are available. If the runoff data cover 10 days,
+2. You cannot run the routing calculations for longer than runoff data are available. If the runoff data cover 10 days,
    the routing computations will only last 10 days. Routing longer can be accomplished by padding the runoff data with
    zero values for more time steps.
 
@@ -274,10 +265,8 @@ These tips may help you achieve faster results.
 
 1. **Use fewer inflow files**: File IO operations can be relatively slow and are a probable bottleneck on HPC systems
    when I/O operations depend on networked drives. You may achieve faster results by doing a single computation
-   covering 2 weeks instead of 14 computations covering 1 day each.
-2. **Cache routing Matrices**: The adjacency matrix and inverted I-C2@A matrix can be time-consuming to compute. Provide
-   paths to store them in the config file to cache them between simulations
-3. **Adjust the time step**: Using a longer time step will reduce the number of computations which takes less time to
-   compute. It also requires storing fewer intermediate results in memory yielding a modest reduction in memory usage. A
-   longer time step can increase performance if it does not induce numerical instability in the outflows.
-
+   covering 2 weeks instead of 14 computations covering 1 day each. The trade-off is that larger arrays consume more
+   memory which could eventually become too large if your river network is very large.
+2. **Adjust the time step**: Using a longer time step will reduce the number of computations and therefore take less
+   time to compute. It also requires storing fewer intermediate results in memory yielding a modest reduction in memory
+   usage. A longer time step can increase performance if it does not induce numerical instability in the outflows.
