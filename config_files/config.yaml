@@ -10,7 +10,6 @@ var_river_id: 'river_id'
 var_outflow: 'Q'
 # Compute Options - Optional
 routing: 'linear'
-nonlinear_thresholds_file: ''
 dt_routing: 0
 dt_outflows: 0
 # initial and final state files - Optional

@@ -99,13 +99,9 @@ class MuskingumCunge:
         self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
         # routing and solver options - time is validated at route time
+        assert 'routing_params_file' in self.conf, 'Requires routing params file'
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
-
-        # check that the routing params files are given depending on the routing method
-        assert 'routing_params_file' in self.conf, 'Requires routing params file'
-        if self.conf['routing'] == 'nonlinear':
-            assert 'nonlinear_thresholds_file' in self.conf, 'Nonlinear routing requires nonlinear thresholds'
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_volumes_file'], str):
@@ -135,17 +131,8 @@ class MuskingumCunge:
 
     def _validate_configs(self) -> None:
         LOG.info('Validating configs file')
-        required_file_paths = [
-            'routing_params_file',
-            'connectivity_file',
-            'runoff_volumes_file',
-            'outflow_file',
-        ]
+        required_file_paths = ['routing_params_file', 'connectivity_file', 'runoff_volumes_file', 'outflow_file', ]
         paths_should_exist = ['routing_params_file', 'connectivity_file', ]
-
-        if self.conf['routing'] == 'nonlinear':
-            required_file_paths.append('nonlinear_thresholds_file')
-            paths_should_exist.append('nonlinear_thresholds_file')
 
         for arg in required_file_paths:
             if arg not in self.conf:
@@ -283,7 +270,7 @@ class MuskingumCunge:
 
     def _set_nonlinear_routing_table(self) -> None:
         """
-        Sets class properties for nonlinear routing - nonlinear_k_table, nonlinear_thresholds
+        Sets class properties for nonlinear routing - nonlinear_table, q_columns, k_columns, x_columns
 
         Returns:
             None

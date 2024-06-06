@@ -140,7 +140,6 @@ graph LR
 | dt_routing                | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                |                              
 | dt_outflows               | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.               |
 | routing                   | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                   |
-| nonlinear_thresholds_file | False    | File Path | Compute Options     | Path to routing thresholds parquet file if routing="nonlinear"        |
 | initial_state_file        | False    | File Path | Initialization Data | Path to the initial state file.                                       |                                                     
 | final_state_file          | False    | File Path | Initialization Data | Path where the final state file should be saved.                      |                                    
 | log                       | False    | Boolean   | Logging Options     | Whether to enable logging.                                            |                                       
