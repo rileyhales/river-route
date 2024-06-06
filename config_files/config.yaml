@@ -5,12 +5,12 @@ connectivity_file: ''
 runoff_volumes_file: ''
 outflow_file: ''
 # Input and Output file structure - Optional
-var_runoff_volume: 'ro_vol'
+var_runoff_volume: 'volume'
 var_river_id: 'river_id'
 var_outflow: 'Q'
 # Compute Options - Optional
 routing: 'linear'
-positive_flow: True
+nonlinear_thresholds_file: ''
 dt_routing: 0
 dt_outflows: 0
 # initial and final state files - Optional
