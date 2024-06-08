@@ -14,7 +14,6 @@ import tqdm
 import xarray as xr
 import yaml
 from scipy.optimize import minimize_scalar
-from scipy.optimize import minimize
 
 from .__metadata__ import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
@@ -356,7 +355,7 @@ class MuskingumCunge:
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def calibrate(self, observed: pd.DataFrame) -> 'MuskingumCunge':
+    def calibrate(self, observed: pd.DataFrame, overwrite_params_file: bool = False) -> 'MuskingumCunge':
         """
         Calibrate K and X to given measured_values using optimization algorithms
 
@@ -399,7 +398,7 @@ class MuskingumCunge:
         if self.conf['routing'] == 'linear':
             self._calibration_iteration_number = 0
             obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='k')
-            result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded')
+            result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
             self.k = self.k * result_k.x
             LOG.calibrate(f'Optimal k scalar: {result_k.x}')
             LOG.calibrate(result_k)
@@ -408,16 +407,16 @@ class MuskingumCunge:
 
             self._calibration_iteration_number = 0
             obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='x')
-            result_x = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded')
+            result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
             self.x = self.x * result_x.x
             LOG.calibrate(f'Optimal x scalar: {result_x.x}')
             LOG.calibrate(result_x)
 
-            if self.conf.get('calibrated_params_file', False):
+            if overwrite_params_file:
                 df = pd.read_parquet(self.conf['routing_params_file'])
                 df['k'] = df['k'] * result_k.x
                 df['x'] = df['x'] * result_x.x
-                df.to_parquet(self.conf['calibrated_params_file'])
+                df.to_parquet(self.conf['routing_params_file'])
 
             LOG.calibrate('-' * 80)
             LOG.calibrate(f'Final k scalar: {result_k.x}')
@@ -529,8 +528,12 @@ class MuskingumCunge:
                 iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:
                 iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates, columns=observed.columns)])
-        # todo clip by date ranges, merge dataframes, fill with nans, calculate error metric
-        assert iter_df.shape == observed.shape, 'Calibration and observed dataframes are not the same shape'
+        assert iter_df.shape == observed.shape, \
+            'Observed flows dataframe does not match calculated flows shape'
+        assert (iter_df.index == observed.index).all(), \
+            'Observed flows dataframe has a different index than calculated flows'
+        assert (iter_df.columns == observed.columns).all(), \
+            'Observed flows dataframe has different columns than calculated flows'
         mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
         LOG.calibrate(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
         del self.initial_state
