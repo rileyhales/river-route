@@ -14,6 +14,7 @@ import tqdm
 import xarray as xr
 import yaml
 from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize
 
 from .__metadata__ import __version__ as VERSION
 from .tools import connectivity_to_adjacency_matrix
@@ -22,6 +23,9 @@ from .tools import connectivity_to_digraph
 __all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
+# make a CALIBRATE logging level
+logging.addLevelName(logging.INFO + 5, 'CALIBRATE')
+setattr(LOG, 'calibrate', lambda msg, *args: LOG._log(logging.INFO + 5, msg, args))
 
 
 class MuskingumCunge:
@@ -117,6 +121,11 @@ class MuskingumCunge:
         LOG.setLevel(self.conf.get('log_level', 'INFO'))
         log_destination = self.conf.get('log_stream', 'stdout')
         log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
+
+        # create a new log level 1 point above INFO, between INFO and CRITICAL
+        logging.addLevelName(logging.INFO + 5, 'CALIBRATE')
+        setattr(LOG, 'calibrate', lambda msg, *args: LOG._log(logging.INFO + 5, msg, args))
+
         if log_destination == 'stdout':
             LOG.addHandler(logging.StreamHandler(sys.stdout))
         elif log_destination == 'stderr':
@@ -360,11 +369,6 @@ class MuskingumCunge:
         LOG.info(f'Beginning optimization: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
-        # todo nonlinear calibration
-        if self.conf['routing'] == 'nonlinear':
-            raise NotImplementedError('Nonlinear calibration not yet implemented')
-
-        self._calibration_iteration_number = 0
         self._set_linear_routing_params()
         self._validate_configs()
         self._log_configs()
@@ -391,22 +395,50 @@ class MuskingumCunge:
         self.x = self.x[riv_idxs]
         self.A = self.A[riv_idxs, :][:, riv_idxs]
 
-        objective = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs)
-        result = minimize_scalar(objective, method='bounded', bounds=(0.75, 1.25), options={'disp': True}, tol=1e-2)
+        LOG.setLevel('CALIBRATE')
+        if self.conf['routing'] == 'linear':
+            self._calibration_iteration_number = 0
+            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='k')
+            result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded')
+            self.k = self.k * result_k.x
+            LOG.calibrate(f'Optimal k scalar: {result_k.x}')
+            LOG.calibrate(result_k)
 
-        LOG.info('Optimization Results')
-        LOG.info(result)
-        self.k = self.k * result.x
-        if self.conf.get('calibrated_linear_params_file', ''):
-            LOG.info('Writing optimized k values to file')
-            df = pd.read_parquet(self.conf['routing_params_file'])
-            df['k'] = self.k
-            df.to_parquet(self.conf['calibrated_linear_params_file'])
+            LOG.calibrate('-' * 80)
+
+            self._calibration_iteration_number = 0
+            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='x')
+            result_x = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded')
+            self.x = self.x * result_x.x
+            LOG.calibrate(f'Optimal x scalar: {result_x.x}')
+            LOG.calibrate(result_x)
+
+            if self.conf.get('calibrated_params_file', False):
+                df = pd.read_parquet(self.conf['routing_params_file'])
+                df['k'] = df['k'] * result_k.x
+                df['x'] = df['x'] * result_x.x
+                df.to_parquet(self.conf['calibrated_params_file'])
+
+            LOG.calibrate('-' * 80)
+            LOG.calibrate(f'Final k scalar: {result_k.x}')
+            LOG.calibrate(f'Final x scalar: {result_x.x}')
+            LOG.calibrate(f'Total iterations: {result_k.nit + result_x.nit}')
+            LOG.calibrate('-' * 80)
+
+        elif self.conf['routing'] == 'nonlinear':
+            self._calibration_iteration_number = 0
+            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs)
+            # todo implement nonlinear calibration
+            raise NotImplementedError('Nonlinear calibration not yet implemented')
+        else:
+            raise ValueError('Routing method not recognized')
+        LOG.setLevel(self.conf.get('log_level', 'INFO'))
 
         t2 = datetime.datetime.now()
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
 
         # delete calibration arrays to force recalculation
+        LOG.debug('Deleting routing related arrays affected by calibration process')
         del self.k
         del self.x
         del self.A
@@ -414,9 +446,7 @@ class MuskingumCunge:
         del self.c1
         del self.c2
         del self.c3
-        del self.initial_state
         self._set_linear_routing_params()
-        self.k = self.k * result.x
         return self
 
     def _router(self, dates: np.array, runoffs: np.array, q_init: np.array, r_init: np.array, ) -> np.array:
@@ -457,8 +487,8 @@ class MuskingumCunge:
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=1e-3, rtol=1e-3)[0]
 
     def _calibration_objective(self,
-                               iteration: np.array, observed: pd.DataFrame,
-                               riv_idxs: np.array, obs_idxs: np.ndarray, ) -> np.float64:
+                               iteration: np.array, *, observed: pd.DataFrame,
+                               riv_idxs: np.array, obs_idxs: np.ndarray, var: str = None) -> np.float64:
         """
         Objective function for calibration
 
@@ -471,12 +501,20 @@ class MuskingumCunge:
             np.float64
         """
         self._calibration_iteration_number += 1
-        LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
+        LOG.calibrate(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
         iter_df = pd.DataFrame(columns=riv_idxs)
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        k = self.k * iteration
-        x = self.x
+        if self.conf['routing'] == 'linear' and var is not None:
+            assert var in ['k', 'x'], 'Calibration variable must be k or x for linear calibration'
+            k = self.k if var != 'k' else self.k * iteration
+            x = self.x if var != 'x' else self.x * iteration
+        elif self.conf['routing'] == 'nonlinear':
+            # todo implement nonlinear calibration
+            k = self.k * iteration[0]
+            x = self.x * iteration[1]
+        else:
+            raise NotImplementedError('Calibration iteration must be a scalar or a 2-element array')
 
         for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
             with xr.open_dataset(runoff_file) as runoff_ds:
@@ -494,7 +532,8 @@ class MuskingumCunge:
         # todo clip by date ranges, merge dataframes, fill with nans, calculate error metric
         assert iter_df.shape == observed.shape, 'Calibration and observed dataframes are not the same shape'
         mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
-        LOG.info(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        LOG.calibrate(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        del self.initial_state
         return mse
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
