@@ -22,6 +22,9 @@ from .tools import connectivity_to_digraph
 __all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
+# make a CALIBRATE logging level
+lvl_calibrate = logging.INFO + 5
+logging.addLevelName(lvl_calibrate, 'CALIBRATE')
 
 
 class MuskingumCunge:
@@ -117,6 +120,11 @@ class MuskingumCunge:
         LOG.setLevel(self.conf.get('log_level', 'INFO'))
         log_destination = self.conf.get('log_stream', 'stdout')
         log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
+
+        # create a new log level 1 point above INFO, between INFO and CRITICAL
+        logging.addLevelName(logging.INFO + 5, 'CALIBRATE')
+        setattr(LOG, 'calibrate', lambda msg, *args: LOG._log(logging.INFO + 5, msg, args))
+
         if log_destination == 'stdout':
             LOG.addHandler(logging.StreamHandler(sys.stdout))
         elif log_destination == 'stderr':
@@ -132,17 +140,9 @@ class MuskingumCunge:
     def _validate_configs(self) -> None:
         LOG.info('Validating configs file')
         required_file_paths = ['routing_params_file', 'connectivity_file', 'runoff_volumes_file', 'outflow_file', ]
-        paths_should_exist = ['routing_params_file', 'connectivity_file', ]
-
         for arg in required_file_paths:
             if arg not in self.conf:
                 raise ValueError(f'{arg} not found in configs')
-        for arg in paths_should_exist:
-            if not os.path.exists(self.conf[arg]):
-                raise FileNotFoundError(f'{arg} not found at given path')
-        for path in self.conf['runoff_volumes_file']:
-            assert os.path.exists(path), FileNotFoundError(f'runoff file not found at given path: {path}')
-
         return
 
     def _log_configs(self) -> None:
@@ -154,15 +154,9 @@ class MuskingumCunge:
         return
 
     def _read_river_ids(self) -> np.array:
-        """
-        Reads river ids vector from parquet given in config file
-        """
         return pd.read_parquet(self.conf['routing_params_file'], columns=[self.conf['var_river_id'], ]).values.flatten()
 
     def _set_linear_routing_params(self) -> None:
-        """
-        Reads K vector from parquet given in config file
-        """
         if hasattr(self, 'k') and hasattr(self, 'x'):
             return
         self.k = pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
@@ -193,15 +187,9 @@ class MuskingumCunge:
         return
 
     def _get_digraph(self) -> nx.DiGraph:
-        """
-        Returns a directed graph of the river network
-        """
         return connectivity_to_digraph(self.conf['connectivity_file'])
 
     def _set_adjacency_matrix(self) -> None:
-        """
-        Calculate the adjacency array from the connectivity file
-        """
         if hasattr(self, 'A'):
             return
         LOG.debug('Calculating Network Adjacency Matrix (A)')
@@ -222,7 +210,7 @@ class MuskingumCunge:
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
         self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
         self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
-        if self.conf.get('dt_routing', 0):
+        if not self.conf.get('dt_routing', 0):
             LOG.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
         self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
 
@@ -367,13 +355,12 @@ class MuskingumCunge:
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def calibrate(self, observed_df: pd.DataFrame, run_calibrated: bool = True) -> 'MuskingumCunge':
+    def calibrate(self, observed: pd.DataFrame, overwrite_params_file: bool = False) -> 'MuskingumCunge':
         """
         Calibrate K and X to given measured_values using optimization algorithms
 
         Args:
-            observed_df: A pandas DataFrame with a datetime index, river id column names, and discharge values
-            run_calibrated: whether to run the model with the calibrated parameters after optimization
+            observed: A pandas DataFrame with a datetime index, river id column names, and discharge values
 
         Returns:
             river_route.MuskingumCunge
@@ -381,38 +368,84 @@ class MuskingumCunge:
         LOG.info(f'Beginning optimization: {self.conf["job_name"]}')
         t1 = datetime.datetime.now()
 
-        # todo nonlinear calibration
-        if self.conf['routing'] == 'nonlinear':
-            raise NotImplementedError('Nonlinear calibration not yet implemented')
-
-        self._calibration_iteration_number = 0
         self._set_linear_routing_params()
         self._validate_configs()
         self._log_configs()
         self._set_adjacency_matrix()
 
         # find the indices of the rivers which have observed flows
-        # todo create the smallest subgraph containing only the observed rivers for faster routing
-        river_indices = self._read_river_ids()
-        river_indices = [np.where(river_indices == r)[0][0] for r in observed_df.columns]
-        objective = partial(self._calibration_objective, observed_df=observed_df, river_indices=river_indices)
-        result = minimize_scalar(objective, method='bounded', bounds=(0.75, 1.25), options={'disp': True}, tol=1e-2)
+        G = self._get_digraph()
+        subgraph_rivers = set()
+        for river_id in observed.columns:
+            subgraph_rivers.update([river_id, ])
+            subgraph_rivers.update(nx.ancestors(G, river_id))
+        # sort the river IDs to match the order they appear in the routing parameters file
+        river_ids = pd.Series(self._read_river_ids())
+        subgraph_rivers = pd.Series(list(subgraph_rivers))
+        sorted_indices = subgraph_rivers.map(pd.Series(river_ids.index, index=river_ids.values)).sort_values().index
+        subgraph_rivers = subgraph_rivers[sorted_indices].reset_index(drop=True).values
 
-        LOG.info('Optimization Results')
-        LOG.info(result)
-        self.k = self.k * result.x
-        if self.conf['calibrated_linear_params_file']:
-            LOG.info('Writing optimized k values to file')
-            df = pd.read_parquet(self.conf['routing_params_file'])
-            df['k'] = self.k
-            df.to_parquet(self.conf['calibrated_linear_params_file'])
+        # make boolean selectors to subset the inputs and select rivers to compare with observed values
+        riv_idxs = river_ids.isin(subgraph_rivers).values
+        river_ids = river_ids[riv_idxs].reset_index(drop=True)
+        obs_idxs = river_ids[river_ids.isin(observed.columns)].index.values
+
+        self.k = self.k[riv_idxs]
+        self.x = self.x[riv_idxs]
+        self.A = self.A[riv_idxs, :][:, riv_idxs]
+
+        LOG.setLevel('CALIBRATE')
+        if self.conf['routing'] == 'linear':
+            self._calibration_iteration_number = 0
+            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='k')
+            result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
+            self.k = self.k * result_k.x
+            LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
+            LOG.log(lvl_calibrate, result_k)
+
+            LOG.log(lvl_calibrate, '-' * 80)
+
+            self._calibration_iteration_number = 0
+            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='x')
+            result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
+            self.x = self.x * result_x.x
+            LOG.log(lvl_calibrate, f'Optimal x scalar: {result_x.x}')
+            LOG.log(lvl_calibrate, result_x)
+
+            if overwrite_params_file:
+                df = pd.read_parquet(self.conf['routing_params_file'])
+                df['k'] = df['k'] * result_k.x
+                df['x'] = df['x'] * result_x.x
+                df.to_parquet(self.conf['routing_params_file'])
+
+            LOG.log(lvl_calibrate, '-' * 80)
+            LOG.log(lvl_calibrate, f'Final k scalar: {result_k.x}')
+            LOG.log(lvl_calibrate, f'Final x scalar: {result_x.x}')
+            LOG.log(lvl_calibrate, f'Total iterations: {result_k.nit + result_x.nit}')
+            LOG.log(lvl_calibrate, '-' * 80)
+
+        elif self.conf['routing'] == 'nonlinear':
+            self._calibration_iteration_number = 0
+            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs)
+            # todo implement nonlinear calibration
+            raise NotImplementedError('Nonlinear calibration not yet implemented')
+        else:
+            raise ValueError('Routing method not recognized')
+        LOG.setLevel(self.conf.get('log_level', 'INFO'))
 
         t2 = datetime.datetime.now()
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
 
-        if run_calibrated:
-            LOG.info('Rerunning model with calibrated parameters')
-            self.route()
+        # delete calibration arrays to force recalculation
+        LOG.debug('Deleting routing related arrays affected by calibration process')
+        del self.k
+        del self.x
+        del self.A
+        del self.lhs
+        del self.c1
+        del self.c2
+        del self.c3
+        self._set_linear_routing_params()
         return self
 
     def _router(self, dates: np.array, runoffs: np.array, q_init: np.array, r_init: np.array, ) -> np.array:
@@ -452,41 +485,58 @@ class MuskingumCunge:
     def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=1e-3, rtol=1e-3)[0]
 
-    def _calibration_objective(self, iteration: np.array, observed: pd.DataFrame, riv_indices: np.array) -> np.float64:
+    def _calibration_objective(self,
+                               iteration: np.array, *, observed: pd.DataFrame,
+                               riv_idxs: np.array, obs_idxs: np.ndarray, var: str = None) -> np.float64:
         """
         Objective function for calibration
 
         Args:
             iteration: a scalar value to multiply the k values by
-            riv_indices: array of the indices of rivers with observations in the river id list from params
+            riv_idxs: array of the indices of rivers with observations in the river id list from params
+            obs_idxs: array of the indices of observed rivers in the river id list from params
 
         Returns:
             np.float64
         """
         self._calibration_iteration_number += 1
-        LOG.info(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
-        iter_df = pd.DataFrame(columns=riv_indices)
+        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
+        iter_df = pd.DataFrame(columns=riv_idxs)
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        k = self.k * iteration
-        x = self.x
+        if self.conf['routing'] == 'linear' and var is not None:
+            assert var in ['k', 'x'], 'Calibration variable must be k or x for linear calibration'
+            k = self.k if var != 'k' else self.k * iteration
+            x = self.x if var != 'x' else self.x * iteration
+        elif self.conf['routing'] == 'nonlinear':
+            # todo implement nonlinear calibration
+            k = self.k * iteration[0]
+            x = self.x * iteration[1]
+        else:
+            raise NotImplementedError('Calibration iteration must be a scalar or a 2-element array')
 
         for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                runoffs = runoff_ds[self.conf['var_runoff_volume']].values
+                runoffs = runoff_ds[self.conf['var_runoff_volume']].values[:, riv_idxs]
             self._set_time_params(dates)
             self._set_muskingum_coefficients(k=k, x=x)
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
             q_t, r_t = self._read_initial_state()
-            outflow_array = self._router(dates, runoffs, q_t, r_t)
+            outflow_array = self._router(dates, runoffs, q_t, r_t)[:, obs_idxs]
             if iter_df.empty:
-                iter_df = pd.DataFrame(outflow_array, index=dates)[riv_indices]
+                iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:
-                iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates)[riv_indices]])
-        # todo clip by date ranges, merge dataframes, fill with nans, calculate error metric
+                iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates, columns=observed.columns)])
+        assert iter_df.shape == observed.shape, \
+            'Observed flows dataframe does not match calculated flows shape'
+        assert (iter_df.index == observed.index).all(), \
+            'Observed flows dataframe has a different index than calculated flows'
+        assert (iter_df.columns == observed.columns).all(), \
+            'Observed flows dataframe has different columns than calculated flows'
         mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
-        LOG.info(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        del self.initial_state
         return mse
 
     def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
