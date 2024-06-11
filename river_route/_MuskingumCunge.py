@@ -23,8 +23,8 @@ __all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
 # make a CALIBRATE logging level
-logging.addLevelName(logging.INFO + 5, 'CALIBRATE')
-setattr(LOG, 'calibrate', lambda msg, *args: LOG._log(logging.INFO + 5, msg, args))
+lvl_calibrate = logging.INFO + 5
+logging.addLevelName(lvl_calibrate, 'CALIBRATE')
 
 
 class MuskingumCunge:
@@ -400,17 +400,17 @@ class MuskingumCunge:
             obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='k')
             result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
             self.k = self.k * result_k.x
-            LOG.calibrate(f'Optimal k scalar: {result_k.x}')
-            LOG.calibrate(result_k)
+            LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
+            LOG.log(lvl_calibrate, result_k)
 
-            LOG.calibrate('-' * 80)
+            LOG.log(lvl_calibrate, '-' * 80)
 
             self._calibration_iteration_number = 0
             obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='x')
             result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
             self.x = self.x * result_x.x
-            LOG.calibrate(f'Optimal x scalar: {result_x.x}')
-            LOG.calibrate(result_x)
+            LOG.log(lvl_calibrate, f'Optimal x scalar: {result_x.x}')
+            LOG.log(lvl_calibrate, result_x)
 
             if overwrite_params_file:
                 df = pd.read_parquet(self.conf['routing_params_file'])
@@ -418,11 +418,11 @@ class MuskingumCunge:
                 df['x'] = df['x'] * result_x.x
                 df.to_parquet(self.conf['routing_params_file'])
 
-            LOG.calibrate('-' * 80)
-            LOG.calibrate(f'Final k scalar: {result_k.x}')
-            LOG.calibrate(f'Final x scalar: {result_x.x}')
-            LOG.calibrate(f'Total iterations: {result_k.nit + result_x.nit}')
-            LOG.calibrate('-' * 80)
+            LOG.log(lvl_calibrate, '-' * 80)
+            LOG.log(lvl_calibrate, f'Final k scalar: {result_k.x}')
+            LOG.log(lvl_calibrate, f'Final x scalar: {result_x.x}')
+            LOG.log(lvl_calibrate, f'Total iterations: {result_k.nit + result_x.nit}')
+            LOG.log(lvl_calibrate, '-' * 80)
 
         elif self.conf['routing'] == 'nonlinear':
             self._calibration_iteration_number = 0
@@ -500,7 +500,7 @@ class MuskingumCunge:
             np.float64
         """
         self._calibration_iteration_number += 1
-        LOG.calibrate(f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
+        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
         iter_df = pd.DataFrame(columns=riv_idxs)
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
@@ -535,7 +535,7 @@ class MuskingumCunge:
         assert (iter_df.columns == observed.columns).all(), \
             'Observed flows dataframe has different columns than calculated flows'
         mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
-        LOG.calibrate(f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
         del self.initial_state
         return mse
 
