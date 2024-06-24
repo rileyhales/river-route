@@ -12,6 +12,8 @@ var_outflow: 'Q'
 routing: 'linear'
 dt_routing: 0
 dt_outflows: 0
+# Solver Options - Optional
+solver_atol: 0.00001
 # initial and final state files - Optional
 initial_state_file: ''
 final_state_file: ''

@@ -63,17 +63,11 @@ You can modify how the routing computations are performed with these parameters:
   See [Time Parameters](#time-parameters).
 - `dt_outflows` - an integer time in seconds for the outflow time step. Will default to the inflow time step.
   See [Time Parameters](#time-parameters).
-- `min_q` - a float for the minimum flow value enforced after each routing calculation.
-- `max_q` - a float for the maximum flow value enforced after each routing calculation.
 
 You can provide initial conditions/state and save final conditions/state with these parameters:
 
-- `qinit_file` - path to the initial flows file (parquet). Defaults to 0.0 for all rivers.
-- `rinit_file` - path to the initial runoff file (netCDF). Defaults to 0.0 for all rivers.
-- `qfinal_file` - path where the final flows file will be saved (parquet). It will not be saved if a path is not
-  provided.
-- `rfinal_file` - path where the final runoff file will be saved (netCDF). It will not be saved if a path is not
-  provided.
+- `initial_state_file` - path to the initial state file (parquet). It will not be loaded if a path is not provided.
+- `final_state_file` - path where the final flows file will be saved (parquet). It will not be saved if a path is not provided.
 
 You can provide logging options with these parameters:
 
@@ -150,7 +144,7 @@ graph LR
 | var_runoff_volume         | False    | String    | File Management     | Name of the variable in files containing runoff volumes               |
 | var_river_id              | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.        |
 | var_outflow               | False    | String    | File Management     | Name of the variable in the outflows file that contains the outflows. |
-
+| solver_atol               | False    | Float     | Solver Options      | Absolute tolerance for the solver.                                   |
 ## Input File Schemas
 
 ### Routing Parameters
@@ -168,7 +162,7 @@ The rows (rivers) **must be sorted in topological order** from upstream to downs
 | x        | float     | the x parameter of the MuskingumCunge Cunge routing equation. x : [0, 0.5]     |
 | k_1      | float     | Optional, the k parameter of the MuskingumCunge Cunge routing equation at Q_1  |
 | x_1      | float     | Optional, the x parameter of the MuskingumCunge Cunge routing equation at Q_1  |
-| q_1      | float     | Optional, the minimu value of Q at which to start using use k_1 and x_1        |
+| q_1      | float     | Optional, the minimum value of Q at which to start using use k_1 and x_1       |
 
 ### Connectivity File
 

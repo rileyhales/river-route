@@ -56,6 +56,9 @@ class MuskingumCunge:
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_outflow: int
 
+    # Solver options
+    _solver_atol: float = 1e-5
+
     # Calibration variables
     _calibration_iteration_number: int
 
@@ -105,6 +108,11 @@ class MuskingumCunge:
         assert 'routing_params_file' in self.conf, 'Requires routing params file'
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
+
+        # update solver options if given
+        self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
+        if 'solver_atol' in self.conf:
+            del self.conf['solver_atol']
 
         # type and path checking on file paths
         if isinstance(self.conf['runoff_volumes_file'], str):
@@ -483,7 +491,7 @@ class MuskingumCunge:
         return outflow_array
 
     def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=1e-3, rtol=1e-3)[0]
+        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
     def _calibration_objective(self,
                                iteration: np.array, *, observed: pd.DataFrame,
