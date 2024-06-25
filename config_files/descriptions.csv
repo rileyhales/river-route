@@ -6,6 +6,7 @@ outflow_file,string,Path where the outflows file should be saved.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.
 routing,string,Either 'linear' or 'nonlinear' routing- default 'linear'.
+runoff_type,string,Type of runoff data: either sequential or ensemble.
 solver_atol,number,Absolute tolerance for the solver.
 initial_state_file,string,Path to the file with initial state values.
 final_state_file,string,Path to the file with final state values.

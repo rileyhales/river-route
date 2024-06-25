@@ -104,12 +104,12 @@ class MuskingumCunge:
         self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
         self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
-        # routing and solver options - time is validated at route time
+        # compute, routing, solver options (time is validated separately at compute step)
         assert 'routing_params_file' in self.conf, 'Requires routing params file'
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
-
-        # update solver options if given
+        self.conf['runoff_type'] = self.conf.get('runoff_type', 'sequential')
+        assert self.conf['runoff_type'] in ['sequential', 'ensemble'], 'Runoff type not recognized'
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
         if 'solver_atol' in self.conf:
             del self.conf['solver_atol']
@@ -128,10 +128,6 @@ class MuskingumCunge:
         LOG.setLevel(self.conf.get('log_level', 'INFO'))
         log_destination = self.conf.get('log_stream', 'stdout')
         log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
-
-        # create a new log level 1 point above INFO, between INFO and CRITICAL
-        logging.addLevelName(logging.INFO + 5, 'CALIBRATE')
-        setattr(LOG, 'calibrate', lambda msg, *args: LOG._log(logging.INFO + 5, msg, args))
 
         if log_destination == 'stdout':
             LOG.addHandler(logging.StreamHandler(sys.stdout))
@@ -171,14 +167,15 @@ class MuskingumCunge:
         self.x = pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
         return
 
-    def _read_initial_state(self) -> (np.array, np.array):
+    def _read_initial_state(self) -> None:
         if hasattr(self, 'initial_state'):
-            return self.initial_state
+            return
 
         state_file = self.conf.get('initial_state_file', '')
         if state_file == '':
             LOG.debug('Setting initial state to zeros')
-            return np.zeros(self.A.shape[0]), np.zeros(self.A.shape[0])
+            self.initial_state = (np.zeros(self.A.shape[0]), np.zeros(self.A.shape[0]))
+            return
         assert os.path.exists(state_file), FileNotFoundError(f'Initial state file not found at: {state_file}')
         LOG.debug('Reading Initial State from Parquet')
         initial_state = pd.read_parquet(state_file).values
@@ -335,9 +332,7 @@ class MuskingumCunge:
             self._set_time_params(dates)
             self._set_muskingum_coefficients()
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
-            LOG.debug('Getting initial value arrays')
-            q_t, r_t = self._read_initial_state()
-            outflow_array = self._router(dates, runoffs, q_t, r_t)
+            outflow_array = self._router(dates, runoffs)
 
             if self.dt_outflow > self.dt_runoff:
                 LOG.info('Resampling dates and outflows to specified timestep')
@@ -456,7 +451,11 @@ class MuskingumCunge:
         self._set_linear_routing_params()
         return self
 
-    def _router(self, dates: np.array, runoffs: np.array, q_init: np.array, r_init: np.array, ) -> np.array:
+    def _router(self, dates: np.array, runoffs: np.array) -> np.array:
+        LOG.debug('Getting initial state arrays')
+        self._read_initial_state()
+        q_init, r_init = self.initial_state
+
         # set initial values
         self._set_lhs_matrix()
         outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
@@ -485,9 +484,13 @@ class MuskingumCunge:
         # Enforce positive flows in case of negative solver results
         outflow_array[outflow_array < 0] = 0
 
+        # if simulation type is ensemble, then do not overwrite the initial state
+        if self.conf['runoff_type'] == 'sequential':
+            LOG.debug('Updating Initial State for Next Sequential Computation')
+            self.initial_state = (q_t, r_prev)
+
         t2 = datetime.datetime.now()
         LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-        self.initial_state = (q_t, r_prev)
         return outflow_array
 
     def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
@@ -530,8 +533,7 @@ class MuskingumCunge:
             self._set_time_params(dates)
             self._set_muskingum_coefficients(k=k, x=x)
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
-            q_t, r_t = self._read_initial_state()
-            outflow_array = self._router(dates, runoffs, q_t, r_t)[:, obs_idxs]
+            outflow_array = self._router(dates, runoffs)[:, obs_idxs]
             if iter_df.empty:
                 iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:

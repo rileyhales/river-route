@@ -10,6 +10,7 @@ var_river_id: 'river_id'
 var_outflow: 'Q'
 # Compute Options - Optional
 routing: 'linear'
+runoff_type: 'sequential'
 dt_routing: 0
 dt_outflows: 0
 # Solver Options - Optional

@@ -91,7 +91,7 @@ graph LR
     end
 
     subgraph "Compute-Options"
-        co1["Routing Timestep\nOutflow Timestep"]
+        co1["Routing Timestep\nOutflow Timestep\nRunoff Type\nRouting Method"]
     end
 
     subgraph "Initialization"
@@ -134,6 +134,7 @@ graph LR
 | dt_routing                | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                |                              
 | dt_outflows               | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.               |
 | routing                   | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                   |
+| runoff_type               | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"  |
 | initial_state_file        | False    | File Path | Initialization Data | Path to the initial state file.                                       |                                                     
 | final_state_file          | False    | File Path | Initialization Data | Path where the final state file should be saved.                      |                                    
 | log                       | False    | Boolean   | Logging Options     | Whether to enable logging.                                            |                                       
@@ -144,7 +145,7 @@ graph LR
 | var_runoff_volume         | False    | String    | File Management     | Name of the variable in files containing runoff volumes               |
 | var_river_id              | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.        |
 | var_outflow               | False    | String    | File Management     | Name of the variable in the outflows file that contains the outflows. |
-| solver_atol               | False    | Float     | Solver Options      | Absolute tolerance for the solver.                                   |
+| solver_atol               | False    | Float     | Solver Options      | Absolute tolerance for the solver.                                    |
 ## Input File Schemas
 
 ### Routing Parameters
