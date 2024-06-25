@@ -104,14 +104,12 @@ class MuskingumCunge:
         self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
         self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
-        # routing and solver options - time is validated at route time
+        # compute, routing, solver options (time is validated separately at compute step)
         assert 'routing_params_file' in self.conf, 'Requires routing params file'
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'sequential')
         assert self.conf['runoff_type'] in ['sequential', 'ensemble'], 'Runoff type not recognized'
-
-        # update solver options if given
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
         if 'solver_atol' in self.conf:
             del self.conf['solver_atol']
