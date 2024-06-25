@@ -109,7 +109,7 @@ class MuskingumCunge:
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'sequential')
-        assert self.conf['runoff_type'] in ['sequential', 'ensemble'], 'Simulation type not recognized'
+        assert self.conf['runoff_type'] in ['sequential', 'ensemble'], 'Runoff type not recognized'
 
         # update solver options if given
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
