@@ -4,11 +4,11 @@ You can override the default function used by `river-route` when writing routed 
 formats the discharge data into a Pandas DataFrame and then calls the `write_outflows` method. By default, this function
 writes the dataframe to a netCDF file.
 
-A single netCDF is not ideal for all use cases or. You can override this so that your output dataframe is stored how you
-prefer. Some examples of reasons you would want to do this include appending the outputs to an existing file, writing
-the DataFrame to a database, or to add metadata or attributes to the file.
+A single netCDF is not ideal for all use cases so you can override it to store your data how you prefer. Some examples
+of reasons you would want to do this include appending the outputs to an existing file, writing the DataFrame to a
+database, or to add metadata or attributes to the file.
 
-You can override the `write_outflows` method directly in your code or use the `set_write_outflows` method. Your custom 
+You can override the `write_outflows` method directly in your code or use the `set_write_outflows` method. Your custom
 function should accept exactly 3 keyword arguments:
 
 1. `df`: a Pandas DataFrame with a datetime index, river id numbers as column labels, and float discharge values.
