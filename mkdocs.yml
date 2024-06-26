@@ -1,0 +1,25 @@
+site_name: River Route
+site_url: https://rr.hales.app
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.code.select
+nav:
+  - Home: index.md
+  - Config Files:
+      - Config Options: config-files/config-options.md
+      - Input & Output Files: config-files/io-file-structure.md
+      - Time Variables: config-files/time-variables.md
+  - API Documentation: api.md
+  - Advanced Skills: advanced-skills.md
+plugins:
+  - search
+  - mkdocstrings
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.snippets

@@ -66,15 +66,16 @@ class MuskingumCunge:
         self.set_configs(config_file, **kwargs)
         return
 
-    def set_configs(self, config_file, **kwargs) -> None:
+    def set_configs(self, config_file: str, **kwargs) -> None:
         """
         Validate simulation configs given by json, yaml, or kwargs
 
-        Args:
-            config_file: path to a json or yaml file containing configs. See README for list of all recognized options
+        You can also override the values in the config file or entirely ignore the config file by specifying config
+        options using keyword arguments. See README or Docs for list of all recognized configuration options. If you do
+        not want to use a config file, pass None to the first positional argument and then give kwargs.
 
-        Keyword Args:
-            See README for list of all recognized configuration options
+        Args:
+            config_file (str): path to a json or yaml file of configs. See README for all recognized options.
 
         Returns:
             None
@@ -131,14 +132,11 @@ class MuskingumCunge:
 
         if log_destination == 'stdout':
             LOG.addHandler(logging.StreamHandler(sys.stdout))
-        elif log_destination == 'stderr':
-            LOG.addHandler(logging.StreamHandler(sys.stderr))
         elif isinstance(log_destination, str):
             LOG.addHandler(logging.FileHandler(log_destination))
         LOG.handlers[0].setFormatter(logging.Formatter(log_format))
         LOG.debug('Logger initialized')
-        if not self.conf.get('log', True):
-            LOG.disabled = True
+        LOG.disabled = not self.conf.get('log', True)
         return
 
     def _validate_configs(self) -> None:
@@ -303,8 +301,7 @@ class MuskingumCunge:
         """
         Performs time-iterative runoff routing through the river network
 
-        Args:
-            **kwargs: optional keyword arguments to override and update previously calculated or given configs
+        Keyword Args:
 
         Returns:
             river_route.MuskingumCunge
