@@ -24,7 +24,7 @@ In order to use river-route, you will need to
 
 1. Install river-route
 2. Prepare your input data
-3. Create a [Configuration File](config-files/config-options.md#example-yaml-file)
+3. Create a [Configuration File](configs/config-options.md#example-yaml-file)
 4. Run a simulation
 
 

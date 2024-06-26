@@ -7,19 +7,20 @@ theme:
     - content.code.select
 nav:
   - Home: index.md
+  - Runoff Volumes: runoff-volumes.md
   - Config Files:
-      - Config Options: config-files/config-options.md
-      - Input & Output Files: config-files/io-file-structure.md
-      - Time Variables: config-files/time-variables.md
+      - Config Options: configs/config-options.md
+      - Input & Output Files: configs/io-files.md
+      - Time Variables: configs/time-variables.md
   - API Documentation: api.md
   - Advanced Skills: advanced-skills.md
 plugins:
   - search
   - mkdocstrings
 markdown_extensions:
+  - pymdownx.snippets
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
-  - pymdownx.snippets

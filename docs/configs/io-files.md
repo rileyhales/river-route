@@ -3,7 +3,7 @@
 ### Routing Parameters
 
 ```yaml
-routing_params_file: '/path/to/params.parquet''
+routing_params_file: '/path/to/params.parquet'
 ```
 
 The routing parameters file is a parquet file. It has 3 columns and 1 row per river in the watershed. The index is
@@ -24,7 +24,7 @@ chose. You may provide as many columns as you wish as long as you also provide a
 ### Connectivity File
 
 ```yaml
-connectivity_file: '/path/to/connectivity.parquet''
+connectivity_file: '/path/to/connectivity.parquet'
 ```
 
 The connectivity files is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file
@@ -46,7 +46,7 @@ be deleted or magically inserted into the rivers.
 ### Catchment Volumes
 
 ```yaml
-runoff_volumes_file: '/path/to/volumes.yaml'
+runoff_volumes_file: '/path/to/volumes.nc'
 ```
 
 Runoff volumes are given in a netCDF file.

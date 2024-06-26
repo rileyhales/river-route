@@ -14,10 +14,10 @@ JSON. Config files specify the following parameters:
 
 Every river-route process needs at least the following 4 variables
 
-- `routing_params_file` - path to the [routing parameters file](io-file-structure.md#routing-parameters) (parquet)
-- `connectivity_file` - path to the river network [connectivity file](io-file-structure.md#connectivity-file) (parquet)
-- `runoff_volumes_file` - path to the prepared [runoff volumes file](io-file-structure.md#catchment-volumes) (netCDF)
-- `outflow_file` - path where the [routed flows](io-file-structure.md#routed-discharge) output file will be saved (netCDF)
+- `routing_params_file` - path to the [routing parameters file](io-files.md#routing-parameters) (parquet)
+- `connectivity_file` - path to the river network [connectivity file](io-files.md#connectivity-file) (parquet)
+- `runoff_volumes_file` - path to the prepared [runoff volumes file](io-files.md#catchment-volumes) (netCDF)
+- `outflow_file` - path where the [routed flows](io-files.md#routed-discharge) output file will be saved (netCDF)
 
 ## Config Options Table
 
