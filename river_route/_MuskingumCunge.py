@@ -62,6 +62,9 @@ class MuskingumCunge:
     # Calibration variables
     _calibration_iteration_number: int
 
+    # Methods
+    write_outflows: callable
+
     def __init__(self, config_file: str = None, **kwargs, ):
         self.set_configs(config_file, **kwargs)
         return
@@ -345,7 +348,7 @@ class MuskingumCunge:
 
             LOG.info('Writing Outflow Array to File')
             outflow_array = np.round(outflow_array, decimals=2)
-            self._write_outflows(outflow_file, dates, outflow_array)
+            self._write_outflows(dates, outflow_array, outflow_file, runoff_file)
 
         # write the final state to disc
         self._write_final_state()
@@ -546,28 +549,10 @@ class MuskingumCunge:
         del self.initial_state
         return mse
 
-    def _write_outflows(self, outflow_file: str, dates: np.array, outflow_array: np.array) -> None:
-        reference_date = datetime.datetime.fromtimestamp(dates[0].astype(int), tz=datetime.timezone.utc)
+    def _write_outflows(self, dates: np.array, outflow_array: np.array, outflow_file: str, runoff_file: str) -> None:
         dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
-        dates = dates - dates[0]
-
-        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
-            ds.createDimension('time', size=dates.shape[0])
-            ds.createDimension(self.conf['var_river_id'], size=outflow_array.shape[1])
-
-            time_var = ds.createVariable('time', 'f8', ('time',))
-            time_var.units = f'seconds since {reference_date.strftime("%Y-%m-%d %H:%M:%S")}'
-            time_var[:] = dates
-
-            id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
-            id_var[:] = self._read_river_ids()
-
-            flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
-            flow_var[:] = outflow_array
-            flow_var.long_name = 'Discharge at catchment outlet'
-            flow_var.standard_name = 'discharge'
-            flow_var.aggregation_method = 'mean'
-            flow_var.units = 'm3 s-1'
+        df = pd.DataFrame(outflow_array, index=dates, columns=self._read_river_ids())
+        self.write_outflows(df=df, outflow_file=outflow_file, runoff_file=runoff_file)
         return
 
     def hydrograph(self, river_id: int) -> pd.DataFrame:
@@ -639,15 +624,48 @@ class MuskingumCunge:
 
         return df
 
-    def save_configs(self, path: str) -> None:
+    def write_outflows(self, df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
         """
-        Save the current configs of the class to a json file
+        Writes the outflows from a routing simulation to a netcdf file. You should overwrite this method with a custom
+        handler that writes it in a format that fits your needs.
+
         Args:
-            path: the file path where the json will be written
+            df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values
+            outflow_file: the file path to write the outflows to
+            runoff_file: the file path to the runoff file used to generate the outflows
 
         Returns:
             None
         """
-        with open(path, 'w') as f:
-            json.dump(self.conf, f)
+        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
+            ds.createDimension('time', size=df.shape[0])
+            ds.createDimension(self.conf['var_river_id'], size=df.shape[1])
+
+            time_var = ds.createVariable('time', 'f8', ('time',))
+            time_var.units = f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
+            time_var[:] = df.index.values - df.index.values[0]
+
+            id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
+            id_var[:] = df.columns.values
+
+            flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
+            flow_var[:] = df.values
+            flow_var.long_name = 'Discharge at catchment outlet'
+            flow_var.standard_name = 'discharge'
+            flow_var.aggregation_method = 'mean'
+            flow_var.units = 'm3 s-1'
         return
+
+    def set_write_outflows(self, func: callable) -> 'MuskingumCunge':
+        """
+        Overwrites the default write_outflows method to a custom function and returns the class instance so that you
+        can chain the method with the constructor.
+
+        Args:
+            func (callable): a function that takes 3 keyword arguments: df, outflow_file, runoff_file and returns None
+
+        Returns:
+            river_route.MuskingumCunge
+        """
+        self.write_outflows = func
+        return self
