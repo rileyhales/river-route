@@ -25,7 +25,7 @@ import river_route as rr
 
 def custom_write_outflows(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
     df.to_parquet(output_file)
-    pass
+    return
 
 
 (

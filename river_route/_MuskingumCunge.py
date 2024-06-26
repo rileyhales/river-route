@@ -555,6 +555,52 @@ class MuskingumCunge:
         self.write_outflows(df=df, outflow_file=outflow_file, runoff_file=runoff_file)
         return
 
+    def write_outflows(self, df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
+        """
+        Writes the outflows from a routing simulation to a netcdf file. You should overwrite this method with a custom
+        handler that writes it in a format that fits your needs.
+
+        Args:
+            df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values
+            outflow_file: the file path to write the outflows to
+            runoff_file: the file path to the runoff file used to generate the outflows
+
+        Returns:
+            None
+        """
+        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
+            ds.createDimension('time', size=df.shape[0])
+            ds.createDimension(self.conf['var_river_id'], size=df.shape[1])
+
+            time_var = ds.createVariable('time', 'f8', ('time',))
+            time_var.units = f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
+            time_var[:] = df.index.values - df.index.values[0]
+
+            id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
+            id_var[:] = df.columns.values
+
+            flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
+            flow_var[:] = df.values
+            flow_var.long_name = 'Discharge at catchment outlet'
+            flow_var.standard_name = 'discharge'
+            flow_var.aggregation_method = 'mean'
+            flow_var.units = 'm3 s-1'
+        return
+
+    def set_write_outflows(self, func: callable) -> 'MuskingumCunge':
+        """
+        Overwrites the default write_outflows method to a custom function and returns the class instance so that you
+        can chain the method with the constructor.
+
+        Args:
+            func (callable): a function that takes 3 keyword arguments: df, outflow_file, runoff_file and returns None
+
+        Returns:
+            river_route.MuskingumCunge
+        """
+        self.write_outflows = func
+        return self
+
     def hydrograph(self, river_id: int) -> pd.DataFrame:
         """
         Get the hydrograph for a given river id as a pandas dataframe
@@ -623,49 +669,3 @@ class MuskingumCunge:
             LOG.warning(f'More discharge than runoff volume for river {river_id}')
 
         return df
-
-    def write_outflows(self, df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
-        """
-        Writes the outflows from a routing simulation to a netcdf file. You should overwrite this method with a custom
-        handler that writes it in a format that fits your needs.
-
-        Args:
-            df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values
-            outflow_file: the file path to write the outflows to
-            runoff_file: the file path to the runoff file used to generate the outflows
-
-        Returns:
-            None
-        """
-        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
-            ds.createDimension('time', size=df.shape[0])
-            ds.createDimension(self.conf['var_river_id'], size=df.shape[1])
-
-            time_var = ds.createVariable('time', 'f8', ('time',))
-            time_var.units = f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
-            time_var[:] = df.index.values - df.index.values[0]
-
-            id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
-            id_var[:] = df.columns.values
-
-            flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
-            flow_var[:] = df.values
-            flow_var.long_name = 'Discharge at catchment outlet'
-            flow_var.standard_name = 'discharge'
-            flow_var.aggregation_method = 'mean'
-            flow_var.units = 'm3 s-1'
-        return
-
-    def set_write_outflows(self, func: callable) -> 'MuskingumCunge':
-        """
-        Overwrites the default write_outflows method to a custom function and returns the class instance so that you
-        can chain the method with the constructor.
-
-        Args:
-            func (callable): a function that takes 3 keyword arguments: df, outflow_file, runoff_file and returns None
-
-        Returns:
-            river_route.MuskingumCunge
-        """
-        self.write_outflows = func
-        return self
