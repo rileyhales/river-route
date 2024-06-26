@@ -1,6 +1,6 @@
 ## Configuration File
 
-River Route computations are controlled by several variables. You can pass these variables as keyword arguments to the
+`river-route` computations are controlled by several variables. You can pass these variables as keyword arguments to the
 corresponding functions or provide a path to a configuration file. Supported file formats for config files are YAML or
 JSON. Config files specify the following parameters:
 
@@ -12,7 +12,7 @@ JSON. Config files specify the following parameters:
 
 ## Minimum Required Inputs
 
-Every river-route process needs at least the following 4 variables
+Every `river-route` process needs at least the following 4 variables
 
 - `routing_params_file` - path to the [routing parameters file](io-files.md#routing-parameters) (parquet)
 - `connectivity_file` - path to the river network [connectivity file](io-files.md#connectivity-file) (parquet)

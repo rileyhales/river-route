@@ -1,14 +1,14 @@
-# River Route
+# River-Route
 
-The River Route Python package is a tool for routing catchment runoff volumes on vector stream networks using the 
+The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the 
 Matrix Muskingum Cunge Method.
 
 ## Installation
 
-It is recommended to install river-route in its own environment so you can ensure the latest versions of all the 
+It is recommended to install `river-route` in its own environment so you can ensure the latest versions of all the 
 dependencies and to protect the environment that produces your model results from accidents.
 
-River-Route is currently only available from source.
+`river-route` is currently only available from source.
 
 ```commandline
 git clone https://github.com/rileyhales/river-route

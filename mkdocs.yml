@@ -12,7 +12,7 @@ nav:
       - Input & Output Files: configs/io-files.md
       - Time Variables: configs/time-variables.md
   - API Documentation: api.md
-  - Advanced Skills: advanced-skills.md
+  - Saving Outputs: saving-outputs.md
 plugins:
   - search
   - mkdocstrings
