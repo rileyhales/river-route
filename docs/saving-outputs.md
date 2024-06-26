@@ -69,9 +69,8 @@ import river_route as rr
 
 def append_to_existing_file(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
     ensemble_number = os.path.basename(runoff_file).split('_')[1]
-    # open the existing file in append mode
     with xr.open_dataset(output_file) as ds:
-        ds.sel(ensemble=ensemble_number).m3 = df.values
+        ds.sel(ensemble=ensemble_number).Q = df.values
         ds.to_netcdf(output_file)
     return
 
@@ -80,6 +79,27 @@ def append_to_existing_file(df: pd.DataFrame, output_file: str, runoff_file: str
     rr
     .MuskingumCunge('config.yaml')
     .set_write_outflows(append_to_existing_file)
+    .route()
+)
+```
+
+```python title="Save a Subset of the Routed Flows"
+import pandas as pd
+
+import river_route as rr
+
+
+def save_partial_results(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
+    river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    df = df[river_ids_to_save]
+    df.to_parquet(output_file)
+    return
+
+
+(
+    rr
+    .MuskingumCunge('config.yaml')
+    .set_write_outflows(save_partial_results)
     .route()
 )
 ```
