@@ -12,8 +12,6 @@ The times given will exactly match the times given in the runoff data unless a d
 The river_id dimension will exactly match the IDs given in the river_id column of the routing parameters file. Discharge
 values will be in a variable named "Q", in an array of shape (time, river_id), and dtype float.
 
-
-
 ## Tips for efficient computations
 
 Results will vary based on your system specifications, the size of the river network, and the length of the simulation.
