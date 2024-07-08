@@ -12,7 +12,7 @@ You can override the `write_outflows` method directly in your code or use the `s
 function should accept exactly 3 keyword arguments:
 
 1. `df`: a Pandas DataFrame with a datetime index, river id numbers as column labels, and float discharge values.
-2. `output_file`: a string with the path to the output file.
+2. `outflow_file`: a string with the path to the output file.
 3. `runoff_file`: a string with the path to the runoff file used to produce this output.
 
 As an example, you might want to write the output DataFrame to a Parquet file instead.
@@ -23,8 +23,8 @@ import pandas as pd
 import river_route as rr
 
 
-def custom_write_outflows(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
-    df.to_parquet(output_file)
+def custom_write_outflows(df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
+    df.to_parquet(outflow_file)
     return
 
 
@@ -43,8 +43,8 @@ import sqlite3
 import river_route as rr
 
 
-def write_outflows_to_sqlite(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
-    conn = sqlite3.connect(output_file)
+def write_outflows_to_sqlite(df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
+    conn = sqlite3.connect(outflow_file)
     df.to_sql('routed_flows', conn, if_exists='replace')
     conn.close()
     return
@@ -67,11 +67,11 @@ import xarray as xr
 import river_route as rr
 
 
-def append_to_existing_file(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
+def append_to_existing_file(df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
     ensemble_number = os.path.basename(runoff_file).split('_')[1]
-    with xr.open_dataset(output_file) as ds:
+    with xr.open_dataset(outflow_file) as ds:
         ds.sel(ensemble=ensemble_number).Q = df.values
-        ds.to_netcdf(output_file)
+        ds.to_netcdf(outflow_file)
     return
 
 
@@ -89,10 +89,10 @@ import pandas as pd
 import river_route as rr
 
 
-def save_partial_results(df: pd.DataFrame, output_file: str, runoff_file: str) -> None:
+def save_partial_results(df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
-    df.to_parquet(output_file)
+    df.to_parquet(outflow_file)
     return
 
 
