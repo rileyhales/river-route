@@ -4,15 +4,12 @@ connectivity_file,string,Path to the network connectivity file.
 catchment_volumes_file,string,Path to the file with catchment level runoff volumes to be routed.
 runoff_depths_file,string,Path to the file with runoff depths.
 weight_table_file,string,Path to the file with the weight table for converting runoff depths to volumes.
-depth_file_x_var,str,Name of the x variable in the runoff depth file
-depth_file_y_var,str,Name of the y variable in the runoff depth file
-depth_file_t_var,str,Name of the time variable in the runoff depth file
-depth_file_runoff_var,str,Name of the runoff variable in the runoff depth file
 outflow_file,string,Path where the outflows file should be saved.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.
 routing,string,Either 'linear' or 'nonlinear' routing- default 'linear'.
-runoff_type,string,Type of runoff data: either sequential or ensemble.
+input_type,string,Type of input data: either sequential or ensemble.
+runoff_type,string,Type of runoff data: either incremental or cumulative.
 solver_atol,number,Absolute tolerance for the solver.
 initial_state_file,string,Path to the file with initial state values.
 final_state_file,string,Path to the file with final state values.
@@ -21,6 +18,10 @@ log_stream,string,the destination for logged messages: stdout stderr or a file p
 log_level,string,Level of logging: either 'debug' 'info' 'warning' 'error' or 'critical'.
 job_name,string,A name for this job to be printed in debug statements.
 progress_bar,boolean,Indicates whether or not to show a progress bar in debug statements: true or false.
-var_runoff_volume,string,Name of the variable in the runoff volumes file that contains the runoff volumes.
+var_runoff_depth,string,Name of the variable in the runoff volumes file that contains the runoff volumes.
+var_catchment_volume,string,Name of the variable in the catchment volumes file that contains the catchment volumes.
+var_x,string,Name of the variable in the runoff depth files that contains the x coordinate.
+var_y,string,Name of the variable in the runoff depth files that contains the y coordinate.
+var_t,string,Name of the variable in the runoff depth files that contains the time.
 var_river_id,string,Name of the variable in all files that contains the river IDs.
 var_outflow,string,Name of the variable in the outflows file that contains the outflows.

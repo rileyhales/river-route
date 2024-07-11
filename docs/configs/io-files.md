@@ -1,4 +1,4 @@
-## Input Files
+## Watershed Description Files
 
 ### Routing Parameters
 
@@ -43,19 +43,68 @@ be deleted or magically inserted into the rivers.
 | downstream_river_id | integer   | Unique ID of the downstream river segment                                                           |
 | weight              | float     | Optional, the percentage of discharge from this river that should be routed to the downstream river |
 
-### Catchment Volumes
+## Catchment Volumes or Runoff Depths
+
+You need a time series of catchment volumes to be routed. The volumes should be in units of meters cubed and have a
+uniform time step for all rivers with no missing values. There are 2 likely ways that you can get this information.
+
+1. Generate it directly using a hydrological model.
+2. Generate runoff depth grids and use GIS & zonal statistics to covert to catchment volumes.
+
+!!! warning "Runoff Depths Warning"
+    There is a wide variety of projections for the grid cells, different names of variables, various file formats, and 
+    units of the runoff depths. For these reasons, you should be certain you can correctly calculate catchment volumes 
+    from runoff depth grids separately before using the calculations performed by `river-route`. The routing class may 
+    not correctly perform the conversions in all cases.
+
+### Catchment Volumes (recommended)
 
 ```yaml
 catchment_volumes_file: '/path/to/volumes.nc'
 ```
 
-Runoff volumes are given in a netCDF file.
+Catchment volumes are given in a netCDF file.
 
 The file should have 2 dimensions: time and river_id. The times can be given in any unit with a recognizable units
-string e.g. 'hours since 2000-01-01 00:00:00'. The river_id dimension should have exactly the same IDs *AND* be sorted
-in the same order given in the river_id column of the routing parameters file.
+string. The river_id dimension should have exactly the same IDs *AND* be sorted in the same order given in the river_id
+column of the routing parameters file.
 
-The file should have 1 runoff volumes variables named "m3" which is an array of shape (time, river_id) of dtype float.
+The file should have 1 runoff volumes variables named "volume" which is an array of shape (time, river_id) of dtype
+float.
+
+!!! note "Caclulating Catchment Volumes"
+    `river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform 
+    the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the 
+    example case for guidance on formatting these files.
+
+### Runoff Depths
+
+```yaml
+runoff_depths_files: [ '/path/to/depths1.nc', '/path/to/depths2.nc', ... ]
+weight_table_file: '/path/to/weight_table.csv'
+```
+
+Runoff depths are given in a netCDF file.
+
+The file should have 3 dimensions: time, y, and x. The times can be given in any unit with a recognizable units string.
+The name of the x and y dimensions can vary and should be specified in the configuration file. The x and y dimensions
+should be the same for all files.
+
+The file should have 1 runoff depths variable. The name may vary so you should specify it in the configuration file. It
+should contain array of shape (time, y, x) of dtype float.
+
+When providing runoff depths, you must also provide a weight table file. The weight table file is a csv with 4 columns:
+river_id, lon_idx, lat_idx, and area. There may be multiple rows with the same river_id but which reference difference
+runoff grid cells with different lon_idx and lat_idx values. The area column should be the area of the grid cell which
+overlaps with the catchment boundary and should be in units of meters squared.
+
+| Column   | Data Type | Description                                                                           |
+|----------|-----------|---------------------------------------------------------------------------------------|
+| river_id | integer   | Unique ID of a river segment                                                          |
+| lon_idx  | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
+| lat_idx  | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
+| area_sqm | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
+
 
 ## Output Files
 

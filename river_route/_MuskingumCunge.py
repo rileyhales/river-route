@@ -106,19 +106,28 @@ class MuskingumCunge:
         self.conf['log'] = bool(self.conf.get('log', True))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
-        self.conf['var_runoff_volume'] = self.conf.get('var_runoff_volume', 'volume')
-        self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
-        self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
+        # required file paths whose existence is validated later
         self.conf['routing_params_file'] = self.conf.get('routing_params_file', '')
         self.conf['connectivity_file'] = self.conf.get('connectivity_file', '')
         self.conf['weight_table_file'] = self.conf.get('weight_table_file', '')
 
+        # expected variable names in input/output files
+        self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
+        self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
+        self.conf['var_x'] = self.conf.get('var_x', 'x')
+        self.conf['var_y'] = self.conf.get('var_y', 'y')
+        self.conf['var_t'] = self.conf.get('var_t', 'time')
+        self.conf['var_catchment_volume'] = self.conf.get('var_catchment_volume', 'volume')
+        self.conf['var_runoff_depth'] = self.conf.get('var_runoff_depth', 'ro')
+
         # compute, routing, solver options (time is validated separately at compute step)
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
-        self.conf['runoff_type'] = self.conf.get('runoff_type', 'sequential')
-        assert self.conf['runoff_type'] in ['sequential', 'ensemble'], 'Runoff type not recognized'
+        self.conf['input_type'] = self.conf.get('runoff_type', 'sequential')
+        assert self.conf['input_type'] in ['sequential', 'ensemble'], 'Runoff type not recognized'
+        self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
+        assert self.conf['runoff_type'] in ['incremental', 'cumulative'], 'Runoff type not recognized'
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
         if 'solver_atol' in self.conf:
             del self.conf['solver_atol']
@@ -344,7 +353,7 @@ class MuskingumCunge:
                     LOG.debug('Reading time array')
                     dates = runoff_ds['time'].values.astype('datetime64[s]')
                     LOG.debug('Reading runoff array')
-                    volumes_array = runoff_ds[self.conf['var_runoff_volume']].values
+                    volumes_array = runoff_ds[self.conf['var_catchment_volume']].values
                     self._set_time_params(dates)
                     volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
                 yield dates, volumes_array, volume_file, outflow_file
@@ -357,10 +366,11 @@ class MuskingumCunge:
                     weight_table=self.conf['weight_table_file'],
                     params_file=self.conf['routing_params_file'],
                     river_id_var=self.conf['var_river_id'],
-                    runoff_var='ro',
-                    x_var='lon',
-                    y_var='lat',
-                    time_var='time',
+                    runoff_var=self.conf['var_runoff_depth'],
+                    x_var=self.conf['var_x'],
+                    y_var=self.conf['var_y'],
+                    time_var=self.conf['var_t'],
+                    cumulative=self.conf['runoff_type'] == 'cumulative',
                 )
                 self._set_time_params(volumes_df.index.values)
                 volumes_df = volumes_df.divide(self.dt_runoff)  # convert volume -> volume/time
@@ -588,7 +598,7 @@ class MuskingumCunge:
         for runoff_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                runoffs = runoff_ds[self.conf['var_runoff_volume']].values[:, riv_idxs]
+                runoffs = runoff_ds[self.conf['var_catchment_volume']].values[:, riv_idxs]
             self._set_time_params(dates)
             self._set_muskingum_coefficients(k=k, x=x)
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
@@ -701,11 +711,11 @@ class MuskingumCunge:
             vdf = (
                 ds
                 .sel(**{self.conf['var_river_id']: ancestors})
-                [self.conf['var_runoff_volume']]
+                [self.conf['var_catchment_volume']]
                 .to_dataframe()
-                [[self.conf['var_runoff_volume'], ]]
+                [[self.conf['var_catchment_volume'], ]]
                 .reset_index()
-                .pivot(index='time', columns=self.conf['var_river_id'], values=self.conf['var_runoff_volume'])
+                .pivot(index='time', columns=self.conf['var_river_id'], values=self.conf['var_catchment_volume'])
                 .sum(axis=1)
                 .cumsum()
                 .rename('runoff_volume')

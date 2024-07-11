@@ -19,39 +19,6 @@ Every `river-route` process needs at least the following 4 variables
 - `catchment_volumes_file` - path to the prepared [catchment volumes file](io-files.md#catchment-volumes) (netCDF)
 - `outflow_file` - path where the [routed flows](io-files.md#routed-discharge) output file will be saved (netCDF)
 
-## Config Options Table
-
-The following table is a complete list of all configuration options and their purpose.
-
-| Parameter Name         | Required | Type      | Group               | Description                                                           |                                                                                
-|------------------------|----------|-----------|---------------------|-----------------------------------------------------------------------|
-| routing_params_file    | True     | File Path | Required Input      | Path to the routing parameters parquet file.                          |                                                
-| connectivity_file      | True     | File Path | Required Input      | Path to the network connectivity parquet file.                        |                                              
-| catchment_volumes_file | True     | File Path | Required Input      | Path to the netCDF with catchment volume values to be routed.         |
-| volume_file_vol_var    | False    | String    | File Management     | Name of the variable in the volume files.                             |
-| runoff_depths_files    | True     | List      | Required Input      | List of paths to netCDF files with runoff depths to be routed.        |
-| weight_table_file      | False    | File Path | Required Input      | Path to the weight table file.                                        |
-| depth_file_x_var       | False    | String    | File Management     | Name of the x variable in the depth files.                            |
-| depth_file_y_var       | False    | String    | File Management     | Name of the y variable in the depth files.                            |
-| depth_file_t_var       | False    | String    | File Management     | Name of the time variable in the depth files.                         |
-| depth_file_runoff_var  | False    | String    | File Management     | Name of the runoff variable in the depth files.                       |
-| outflow_file           | True     | File Path | File Management     | Path where the outflows netCDF file should be saved.                  |                                       
-| dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                |                              
-| dt_outflows            | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.               |
-| routing                | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                   |
-| runoff_type            | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"  |
-| initial_state_file     | False    | File Path | Initialization Data | Path to the initial state file.                                       |                                                     
-| final_state_file       | False    | File Path | Initialization Data | Path where the final state file should be saved.                      |                                    
-| log                    | False    | Boolean   | Logging Options     | Whether to enable logging.                                            |                                       
-| progress_bar           | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                        |
-| log_level              | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING            |
-| log_stream             | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path. |
-| job_name               | False    | String    | Logging Options     | A name for this job printed in logs and debug statements.             |                           
-| var_runoff_volume      | False    | String    | File Management     | Name of the variable in files containing runoff volumes               |
-| var_river_id           | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.        |
-| var_outflow            | False    | String    | File Management     | Name of the variable in the outflows file that contains the outflows. |
-| solver_atol            | False    | Float     | Solver Options      | Absolute tolerance for the solver.                                    |
-
 ## Example YAML File
 
 An example yaml file is given below with the default values prepopulated where possible.
@@ -64,33 +31,66 @@ routing_params_file: ''
 connectivity_file: ''
 # Volume Inputs - (Option 1)
 catchment_volumes_file: ''
-var_runoff_volume: 'volume'
 # Depth Inputs - (Option 2)
 runoff_depths_files: ''
 weight_table_file: ''
-depth_file_x_var: 'lon'
-depth_file_y_var: 'lat'
-depth_file_t_var: 'time'
-depth_file_runoff_var: 'ro'
 # Output file
 outflow_file: ''
-# Input and Output file structure - Optional
-var_river_id: 'river_id'
-var_outflow: 'Q'
-# Compute Options - Optional
+# Compute Options
 routing: 'linear'  # linear or nonlinear
-runoff_type: 'sequential'  # sequential or ensemble
+input_type: 'sequential'  # sequential or ensemble
+runoff_type: 'incremental'  # incremental or cumulative
 dt_routing: 0  # defaults to time step of volume inputs
 dt_outflows: 0  # defaults to time step of volume inputs
-# Solver Options - Optional
 solver_atol: 0.00001
-# initial and final state files - Optional
+# initial and final state files
 initial_state_file: ''
 final_state_file: ''
-# simulation management and debugging - Optional
+# simulation management and debugging
 log: False
 progress_bar: False
 log_level: 'DEBUG'
 log_stream: ''
 job_name: ''
+# Variable names expected in the netCDF input/output files
+var_x: 'lon'
+var_y: 'lat'
+var_t: 'time'
+var_runoff_depth: 'ro'
+var_catchment_volume: 'volume'
+var_river_id: 'river_id'
+var_outflow: 'Q'
 ```
+
+## Config Options Table
+
+The following table is a complete list of all configuration options and their purpose.
+
+| Parameter Name         | Required | Type      | Group               | Description                                                            |                                                                                
+|------------------------|----------|-----------|---------------------|------------------------------------------------------------------------|
+| routing_params_file    | True     | File Path | Required Input      | Path to the routing parameters parquet file.                           |                                                
+| connectivity_file      | True     | File Path | Required Input      | Path to the network connectivity parquet file.                         |                                              
+| catchment_volumes_file | True     | File Path | Required Input      | Path to the netCDF with catchment volume values to be routed.          |
+| runoff_depths_files    | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
+| weight_table_file      | True     | File Path | Required Input      | Path to the weight table file.                                         |
+| outflow_file           | True     | File Path | Required Input      | Path where the outflows netCDF file should be saved.                   |
+| dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
+| dt_outflows            | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.                |
+| routing                | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                    |
+| input_type             | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
+| runoff_type            | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
+| solver_atol            | False    | Float     | Compute Options     | Absolute tolerance for the solver.                                     |
+| initial_state_file     | False    | File Path | Initialization Data | Path to the initial state file.                                        |                                                     
+| final_state_file       | False    | File Path | Initialization Data | Path where the final state file should be saved.                       |                                    
+| log                    | False    | Boolean   | Logging Options     | Whether to enable logging.                                             |                                       
+| progress_bar           | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                         |
+| log_level              | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING             |
+| log_stream             | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path.  |
+| job_name               | False    | String    | Logging Options     | A name for this job printed in logs and debug statements.              |                           
+| var_x                  | False    | String    | File Management     | Name of the variable in all files that contains the x coordinates.     |
+| var_y                  | False    | String    | File Management     | Name of the variable in all files that contains the y coordinates.     |
+| var_t                  | False    | String    | File Management     | Name of the variable in all files that contains the time values.       |
+| var_runoff_depths      | False    | String    | File Management     | Name of the variable in files containing runoff depths                 |
+| var_catchment_volumes  | False    | String    | File Management     | Name of the variable in the catchment volumes file containing volumes. |
+| var_river_id           | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.         |
+| var_outflow            | False    | String    | File Management     | Name of the variable in the outflows file that contains the outflows.  |
