@@ -11,6 +11,7 @@ nav:
       - Config Options: configs/config-options.md
       - Input & Output Files: configs/io-files.md
       - Time Variables: configs/time-variables.md
+      - Volume or Depth Inputs: configs/volume-depth-files.md
   - API Documentation: api.md
   - Saving Outputs: saving-outputs.md
 plugins:

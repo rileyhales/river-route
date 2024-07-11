@@ -46,7 +46,7 @@ be deleted or magically inserted into the rivers.
 ### Catchment Volumes
 
 ```yaml
-runoff_volumes_file: '/path/to/volumes.nc'
+catchment_volumes_file: '/path/to/volumes.nc'
 ```
 
 Runoff volumes are given in a netCDF file.
@@ -68,7 +68,7 @@ The file contains 2 dimensions: time and river_id.
 It will have 1 variable named "Q" which is an array of shape (time, river_id) of dtype float.
 
 You can change the structure of the output file by overriding the default function to write outputs to disc. See the
-[Saving Outputs](../saving-outputs) page for more information.
+[Saving Outputs](../saving-outputs.md) page for more information.
 
 ## Initial and Final State Files
 

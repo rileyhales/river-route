@@ -36,7 +36,7 @@ Title: River Route Process Diagram
 ---
 graph LR
     subgraph "Required-Inputs"
-        Inputs["Routing Parameters\nConnectivity File\nRunoff Volumes\nOutflow File"]
+        Inputs["Routing Parameters\nConnectivity File\nCatchment Volumes\nOutflow File"]
     end
 
     subgraph "Compute-Options"
@@ -54,7 +54,7 @@ graph LR
     subgraph "Computations"
         direction TB
         a[Calculate LHS] --> b
-        b[Read Runoff Volumes] --> c
+        b[Read Volumes Array] --> c
         c[Iterate On Routing Intervals] --> d
         d[Solving Matrix\nMuskingum Cunge] --> e
         e[Enforce Positive Flows] --> f & c
@@ -95,7 +95,7 @@ import river_route as rr
     .MuskingumCunge(**{
         'routing_params_file': '/path/to/routing_params.parquet',
         'connectivity_file': '/path/to/connectivity.parquet',
-        'runoff_volumes_file': '/path/to/runoff.nc',
+        'catchment_volumes_file': '/path/to/volumes.nc',
         'outflow_file': '/path/to/outflow.nc',
     })
     .route()
@@ -109,7 +109,7 @@ import river_route as rr
         **{
             'routing_params_file': '/path/to/routing_params.parquet',
             'connectivity_file': '/path/to/connectivity.parquet',
-            'runoff_volumes_file': '/path/to/runoff.nc',
+            'catchment_volumes_file': '/path/to/volumes.nc',
             'outflow_file': '/path/to/outflow.nc',
         }
     )

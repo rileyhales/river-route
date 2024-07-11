@@ -1,7 +1,13 @@
 Parameter Name,Type,Description
 routing_params_file,string,Path to the routing parameters file.
 connectivity_file,string,Path to the network connectivity file.
-runoff_volumes_file,string,Path to the file with catchment level runoff volumes to be routed.
+catchment_volumes_file,string,Path to the file with catchment level runoff volumes to be routed.
+runoff_depths_file,string,Path to the file with runoff depths.
+weight_table_file,string,Path to the file with the weight table for converting runoff depths to volumes.
+depth_file_x_var,str,Name of the x variable in the runoff depth file
+depth_file_y_var,str,Name of the y variable in the runoff depth file
+depth_file_t_var,str,Name of the time variable in the runoff depth file
+depth_file_runoff_var,str,Name of the runoff variable in the runoff depth file
 outflow_file,string,Path where the outflows file should be saved.
 dt_routing,number,Time interval in seconds between routing computations.
 dt_outflows,number,Time interval in seconds between writing flows to disc.

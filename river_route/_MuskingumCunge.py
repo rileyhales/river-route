@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from functools import partial
+from typing import Tuple
 
 import netCDF4 as nc
 import networkx as nx
@@ -16,6 +17,7 @@ import yaml
 from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__ as VERSION
+from .runoff import calc_catchment_volumes
 from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
 
@@ -108,8 +110,11 @@ class MuskingumCunge:
         self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
         self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
 
+        self.conf['routing_params_file'] = self.conf.get('routing_params_file', '')
+        self.conf['connectivity_file'] = self.conf.get('connectivity_file', '')
+        self.conf['weight_table_file'] = self.conf.get('weight_table_file', '')
+
         # compute, routing, solver options (time is validated separately at compute step)
-        assert 'routing_params_file' in self.conf, 'Requires routing params file'
         self.conf['routing'] = self.conf.get('routing', 'linear')
         assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'sequential')
@@ -119,8 +124,10 @@ class MuskingumCunge:
             del self.conf['solver_atol']
 
         # type and path checking on file paths
-        if isinstance(self.conf['runoff_volumes_file'], str):
-            self.conf['runoff_volumes_file'] = [self.conf['runoff_volumes_file'], ]
+        if isinstance(self.conf.get('catchment_volumes_file', []), str):
+            self.conf['catchment_volumes_file'] = [self.conf['catchment_volumes_file'], ]
+        if isinstance(self.conf.get('runoff_depths_file', []), str):
+            self.conf['runoff_depths_file'] = [self.conf['runoff_depths_file'], ]
         if isinstance(self.conf['outflow_file'], str):
             self.conf['outflow_file'] = [self.conf['outflow_file'], ]
         for arg in [k for k in self.conf.keys() if 'file' in k]:
@@ -144,10 +151,38 @@ class MuskingumCunge:
 
     def _validate_configs(self) -> None:
         LOG.info('Validating configs file')
-        required_file_paths = ['routing_params_file', 'connectivity_file', 'runoff_volumes_file', 'outflow_file', ]
-        for arg in required_file_paths:
-            if arg not in self.conf:
-                raise ValueError(f'{arg} not found in configs')
+        # these 2 files must always exist
+        assert os.path.exists(self.conf['routing_params_file']), FileNotFoundError('Routing params file not found')
+        assert os.path.exists(self.conf['connectivity_file']), FileNotFoundError('Connectivity file not found')
+
+        # if the weight table file is provided, it must exist
+        if self.conf.get('weight_table_file', ''):
+            assert os.path.exists(self.conf['weight_table_file']), FileNotFoundError('Weight table file not found')
+
+        # if the initial state file is provided, it must exist
+        if self.conf.get('initial_state_file', ''):
+            assert os.path.exists(self.conf['initial_state_file']), FileNotFoundError('Initial state file not found')
+
+        # if catchment volumes files are provided, they must exist
+        if self.conf.get('catchment_volumes_file', False):
+            for file in self.conf['catchment_volumes_file']:
+                assert os.path.exists(file), FileNotFoundError(f'Runoff volumes file not found at: {file}')
+
+        # if runoff depths files are provided, they must exist
+        if self.conf.get('runoff_depths_file', False):
+            for file in self.conf['runoff_depths_file']:
+                assert os.path.exists(file), FileNotFoundError(f'Runoff depths file not found at: {file}')
+            # there must also be either a weight table or a vpu_dir
+            assert self.conf.get('vpu_dir', '') or self.conf.get('weight_table_file', ''), \
+                'weight_table_file or vpu_dir containing weight table options should be provided'
+
+        # either the catchment volumes or runoff depths files must be provided
+        assert self.conf.get('catchment_volumes_file', False) or self.conf.get('runoff_depths_file', False), \
+            'Either catchment volumes or runoff depths files must be provided'
+
+        # the directory for each outflow file must exist
+        for outflow_file in self.conf['outflow_file']:
+            assert os.path.exists(os.path.dirname(outflow_file)), NotADirectoryError('Output directory not found')
         return
 
     def _log_configs(self) -> None:
@@ -300,6 +335,40 @@ class MuskingumCunge:
         self._set_lhs_matrix()
         return
 
+    def _volumes_output_generator(self) -> Tuple[pd.DataFrame, str]:
+        if self.conf.get('catchment_volumes_file', False):
+            for volume_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
+                LOG.info('-' * 80)
+                LOG.info(f'Reading catchment volumes file: {volume_file}')
+                with xr.open_dataset(volume_file) as runoff_ds:
+                    LOG.debug('Reading time array')
+                    dates = runoff_ds['time'].values.astype('datetime64[s]')
+                    LOG.debug('Reading runoff array')
+                    volumes_array = runoff_ds[self.conf['var_runoff_volume']].values
+                    self._set_time_params(dates)
+                    volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
+                yield dates, volumes_array, volume_file, outflow_file
+        elif self.conf.get('runoff_depths_file', False):
+            for runoff_file, outflow_file in zip(self.conf['runoff_depths_file'], self.conf['outflow_file']):
+                LOG.info('-' * 80)
+                LOG.info(f'Reading runoff depths file: {runoff_file}')
+                volumes_df = calc_catchment_volumes(
+                    runoff_file,
+                    weight_table=self.conf['weight_table_file'],
+                    params_file=self.conf['routing_params_file'],
+                    river_id_var=self.conf['var_river_id'],
+                    runoff_var='ro',
+                    x_var='lon',
+                    y_var='lat',
+                    time_var='time',
+                )
+                self._set_time_params(volumes_df.index.values)
+                volumes_df = volumes_df.divide(self.dt_runoff)  # convert volume -> volume/time
+                yield volumes_df.index.values, volumes_df.values, runoff_file, outflow_file
+        else:
+            raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
+        return
+
     def route(self, **kwargs) -> 'MuskingumCunge':
         """
         Performs time-iterative runoff routing through the river network
@@ -320,19 +389,9 @@ class MuskingumCunge:
         self._log_configs()
         self._set_adjacency_matrix()
 
-        for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
-            LOG.info('-' * 80)
-            LOG.info(f'Reading runoff volumes file: {runoff_file}')
-            with xr.open_dataset(runoff_file) as runoff_ds:
-                LOG.debug('Reading time array')
-                dates = runoff_ds['time'].values.astype('datetime64[s]')
-                LOG.debug('Reading runoff array')
-                runoffs = runoff_ds[self.conf['var_runoff_volume']].values
-
-            self._set_time_params(dates)
+        for dates, volumes_array, runoff_file, outflow_file in self._volumes_output_generator():
             self._set_muskingum_coefficients()
-            runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
-            outflow_array = self._router(dates, runoffs)
+            outflow_array = self._router(dates, volumes_array)
 
             if self.dt_outflow > self.dt_runoff:
                 LOG.info('Resampling dates and outflows to specified timestep')
@@ -451,14 +510,14 @@ class MuskingumCunge:
         self._set_linear_routing_params()
         return self
 
-    def _router(self, dates: np.array, runoffs: np.array) -> np.array:
+    def _router(self, dates: np.array, volumes: np.array) -> np.array:
         LOG.debug('Getting initial state arrays')
         self._read_initial_state()
         q_init, r_init = self.initial_state
 
         # set initial values
         self._set_lhs_matrix()
-        outflow_array = np.zeros((runoffs.shape[0], self.A.shape[0]))
+        outflow_array = np.zeros((volumes.shape[0], self.A.shape[0]))
         q_t = np.zeros_like(q_init)
         q_t[:] = q_init
         r_prev = np.zeros_like(r_init)
@@ -466,11 +525,11 @@ class MuskingumCunge:
 
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
-            dates = tqdm.tqdm(dates, desc='Runoff Routed')
+            dates = tqdm.tqdm(dates, desc='Runoff Volumes Routed')
         else:
             LOG.info('Performing routing computation iterations')
         for runoff_time_step, runoff_end_date in enumerate(dates):
-            r_t = runoffs[runoff_time_step, :]
+            r_t = volumes[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
                 if self.conf['routing'] == 'nonlinear':
@@ -526,7 +585,7 @@ class MuskingumCunge:
         else:
             raise NotImplementedError('Calibration iteration must be a scalar or a 2-element array')
 
-        for runoff_file, outflow_file in zip(self.conf['runoff_volumes_file'], self.conf['outflow_file']):
+        for runoff_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
                 runoffs = runoff_ds[self.conf['var_runoff_volume']].values[:, riv_idxs]
@@ -638,7 +697,7 @@ class MuskingumCunge:
         if ancestors is None:
             G = connectivity_to_digraph(self.conf['connectivity_file'])
             ancestors = set(list(nx.ancestors(G, river_id)) + [river_id, ])
-        with xr.open_mfdataset(self.conf['runoff_volumes_file']) as ds:
+        with xr.open_mfdataset(self.conf['catchment_volumes_file']) as ds:
             vdf = (
                 ds
                 .sel(**{self.conf['var_river_id']: ancestors})

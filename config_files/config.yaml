@@ -1,18 +1,26 @@
 # Required Watershed Files
 routing_params_file: ''
 connectivity_file: ''
-# Routing Input and Output
-runoff_volumes_file: ''
+# Volume Inputs - (Option 1)
+catchment_volumes_file: ''
+var_runoff_volume: 'volume'
+# Depth Inputs - (Option 2)
+runoff_depths_files: ''
+weight_table_file: ''
+depth_file_x_var: 'lon'
+depth_file_y_var: 'lat'
+depth_file_t_var: 'time'
+depth_file_runoff_var: 'ro'
+# Output file
 outflow_file: ''
 # Input and Output file structure - Optional
-var_runoff_volume: 'volume'
 var_river_id: 'river_id'
 var_outflow: 'Q'
 # Compute Options - Optional
-routing: 'linear'
-runoff_type: 'sequential'
-dt_routing: 0
-dt_outflows: 0
+routing: 'linear'  # linear or nonlinear
+runoff_type: 'sequential'  # sequential or ensemble
+dt_routing: 0  # defaults to time step of volume inputs
+dt_outflows: 0  # defaults to time step of volume inputs
 # Solver Options - Optional
 solver_atol: 0.00001
 # initial and final state files - Optional
