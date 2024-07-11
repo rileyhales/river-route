@@ -172,6 +172,10 @@ class MuskingumCunge:
         if self.conf.get('initial_state_file', ''):
             assert os.path.exists(self.conf['initial_state_file']), FileNotFoundError('Initial state file not found')
 
+        # either the catchment volumes or runoff depths files must be provided but not both
+        assert self.conf.get('catchment_volumes_file', False) or self.conf.get('runoff_depths_file', False), \
+            'Either catchment volumes or runoff depths files must be provided'
+
         # if catchment volumes files are provided, they must exist
         if self.conf.get('catchment_volumes_file', False):
             for file in self.conf['catchment_volumes_file']:
@@ -184,10 +188,6 @@ class MuskingumCunge:
             # there must also be either a weight table or a vpu_dir
             assert self.conf.get('vpu_dir', '') or self.conf.get('weight_table_file', ''), \
                 'weight_table_file or vpu_dir containing weight table options should be provided'
-
-        # either the catchment volumes or runoff depths files must be provided
-        assert self.conf.get('catchment_volumes_file', False) or self.conf.get('runoff_depths_file', False), \
-            'Either catchment volumes or runoff depths files must be provided'
 
         # the directory for each outflow file must exist
         for outflow_file in self.conf['outflow_file']:
@@ -352,15 +352,13 @@ class MuskingumCunge:
                 with xr.open_dataset(volume_file) as runoff_ds:
                     LOG.debug('Reading time array')
                     dates = runoff_ds['time'].values.astype('datetime64[s]')
-                    LOG.debug('Reading runoff array')
+                    LOG.debug('Reading volume array')
                     volumes_array = runoff_ds[self.conf['var_catchment_volume']].values
-                    self._set_time_params(dates)
-                    volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
                 yield dates, volumes_array, volume_file, outflow_file
         elif self.conf.get('runoff_depths_file', False):
             for runoff_file, outflow_file in zip(self.conf['runoff_depths_file'], self.conf['outflow_file']):
                 LOG.info('-' * 80)
-                LOG.info(f'Reading runoff depths file: {runoff_file}')
+                LOG.info(f'Calculating catchment volumes from runoff depths: {runoff_file}')
                 volumes_df = calc_catchment_volumes(
                     runoff_file,
                     weight_table=self.conf['weight_table_file'],
@@ -372,8 +370,6 @@ class MuskingumCunge:
                     time_var=self.conf['var_t'],
                     cumulative=self.conf['runoff_type'] == 'cumulative',
                 )
-                self._set_time_params(volumes_df.index.values)
-                volumes_df = volumes_df.divide(self.dt_runoff)  # convert volume -> volume/time
                 yield volumes_df.index.values, volumes_df.values, runoff_file, outflow_file
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
@@ -400,6 +396,8 @@ class MuskingumCunge:
         self._set_adjacency_matrix()
 
         for dates, volumes_array, runoff_file, outflow_file in self._volumes_output_generator():
+            self._set_time_params(dates)
+            volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
             self._set_muskingum_coefficients()
             outflow_array = self._router(dates, volumes_array)
 
@@ -554,7 +552,7 @@ class MuskingumCunge:
         outflow_array[outflow_array < 0] = 0
 
         # if simulation type is ensemble, then do not overwrite the initial state
-        if self.conf['runoff_type'] == 'sequential':
+        if self.conf['input_type'] == 'sequential':
             LOG.debug('Updating Initial State for Next Sequential Computation')
             self.initial_state = (q_t, r_prev)
 
