@@ -107,10 +107,11 @@ class MuskingumCunge:
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
 
-        # required file paths whose existence is validated later
-        self.conf['routing_params_file'] = self.conf.get('routing_params_file', '')
-        self.conf['connectivity_file'] = self.conf.get('connectivity_file', '')
-        self.conf['weight_table_file'] = self.conf.get('weight_table_file', '')
+        # compute, routing, solver options (time is validated separately at compute step)
+        self.conf['routing'] = self.conf.get('routing', 'linear')
+        self.conf['input_type'] = self.conf.get('runoff_type', 'sequential')
+        self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
+        self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
 
         # expected variable names in input/output files
         self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
@@ -121,41 +122,16 @@ class MuskingumCunge:
         self.conf['var_catchment_volume'] = self.conf.get('var_catchment_volume', 'volume')
         self.conf['var_runoff_depth'] = self.conf.get('var_runoff_depth', 'ro')
 
-        # compute, routing, solver options (time is validated separately at compute step)
-        self.conf['routing'] = self.conf.get('routing', 'linear')
-        assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
-        self.conf['input_type'] = self.conf.get('runoff_type', 'sequential')
-        assert self.conf['input_type'] in ['sequential', 'ensemble'], 'Runoff type not recognized'
-        self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
-        assert self.conf['runoff_type'] in ['incremental', 'cumulative'], 'Runoff type not recognized'
-        self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
-        if 'solver_atol' in self.conf:
-            del self.conf['solver_atol']
-
-        # type and path checking on file paths
-        if isinstance(self.conf.get('catchment_volumes_file', []), str):
-            self.conf['catchment_volumes_file'] = [self.conf['catchment_volumes_file'], ]
-        if isinstance(self.conf.get('runoff_depths_file', []), str):
-            self.conf['runoff_depths_file'] = [self.conf['runoff_depths_file'], ]
-        if isinstance(self.conf['outflow_file'], str):
-            self.conf['outflow_file'] = [self.conf['outflow_file'], ]
-        for arg in [k for k in self.conf.keys() if 'file' in k]:
-            if isinstance(self.conf[arg], list):
-                self.conf[arg] = [os.path.abspath(path) for path in self.conf[arg]]
-            elif isinstance(self.conf[arg], str):
-                self.conf[arg] = os.path.abspath(self.conf[arg])
-
+        LOG.disabled = not self.conf.get('log', True)
         LOG.setLevel(self.conf.get('log_level', 'INFO'))
         log_destination = self.conf.get('log_stream', 'stdout')
         log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
-
         if log_destination == 'stdout':
             LOG.addHandler(logging.StreamHandler(sys.stdout))
         elif isinstance(log_destination, str):
             LOG.addHandler(logging.FileHandler(log_destination))
         LOG.handlers[0].setFormatter(logging.Formatter(log_format))
         LOG.debug('Logger initialized')
-        LOG.disabled = not self.conf.get('log', True)
         return
 
     def _validate_configs(self) -> None:
@@ -163,6 +139,19 @@ class MuskingumCunge:
         # these 2 files must always exist
         assert os.path.exists(self.conf['routing_params_file']), FileNotFoundError('Routing params file not found')
         assert os.path.exists(self.conf['connectivity_file']), FileNotFoundError('Connectivity file not found')
+
+        # check for valid options
+        assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
+        assert self.conf['input_type'] in ['sequential', 'ensemble'], 'Input type not recognized'
+        assert self.conf['runoff_type'] in ['incremental', 'cumulative'], 'Runoff type not recognized'
+
+        # format conversion for the inputs
+        if isinstance(self.conf.get('catchment_volumes_file', []), str):
+            self.conf['catchment_volumes_file'] = [self.conf['catchment_volumes_file'], ]
+        if isinstance(self.conf.get('runoff_depths_file', []), str):
+            self.conf['runoff_depths_file'] = [self.conf['runoff_depths_file'], ]
+        if isinstance(self.conf['outflow_file'], str):
+            self.conf['outflow_file'] = [self.conf['outflow_file'], ]
 
         # if the weight table file is provided, it must exist
         if self.conf.get('weight_table_file', ''):
@@ -185,13 +174,18 @@ class MuskingumCunge:
         if self.conf.get('runoff_depths_file', False):
             for file in self.conf['runoff_depths_file']:
                 assert os.path.exists(file), FileNotFoundError(f'Runoff depths file not found at: {file}')
-            # there must also be either a weight table or a vpu_dir
-            assert self.conf.get('vpu_dir', '') or self.conf.get('weight_table_file', ''), \
-                'weight_table_file or vpu_dir containing weight table options should be provided'
+            assert self.conf.get('weight_table_file', ''), 'weight_table_file should be provided'
 
         # the directory for each outflow file must exist
         for outflow_file in self.conf['outflow_file']:
             assert os.path.exists(os.path.dirname(outflow_file)), NotADirectoryError('Output directory not found')
+
+        # convert all relative paths to absolute paths
+        for arg in [k for k in self.conf.keys() if 'file' in k]:
+            if isinstance(self.conf[arg], list):
+                self.conf[arg] = [os.path.abspath(path) for path in self.conf[arg]]
+            elif isinstance(self.conf[arg], str):
+                self.conf[arg] = os.path.abspath(self.conf[arg])
         return
 
     def _log_configs(self) -> None:
@@ -431,6 +425,7 @@ class MuskingumCunge:
 
         Args:
             observed: A pandas DataFrame with a datetime index, river id column names, and discharge values
+            overwrite_params_file: If True, the calibration will overwrite the routing_params_file with the new values
 
         Returns:
             river_route.MuskingumCunge
@@ -456,18 +451,19 @@ class MuskingumCunge:
         subgraph_rivers = subgraph_rivers[sorted_indices].reset_index(drop=True).values
 
         # make boolean selectors to subset the inputs and select rivers to compare with observed values
-        riv_idxs = river_ids.isin(subgraph_rivers).values
-        river_ids = river_ids[riv_idxs].reset_index(drop=True)
-        obs_idxs = river_ids[river_ids.isin(observed.columns)].index.values
+        riv_idxes = river_ids.isin(subgraph_rivers).values
+        river_ids = river_ids[riv_idxes].reset_index(drop=True)
+        obs_idxes = river_ids[river_ids.isin(observed.columns)].index.values
 
-        self.k = self.k[riv_idxs]
-        self.x = self.x[riv_idxs]
-        self.A = self.A[riv_idxs, :][:, riv_idxs]
+        self.k = self.k[riv_idxes]
+        self.x = self.x[riv_idxes]
+        self.A = self.A[riv_idxes, :][:, riv_idxes]
 
+        self._calibration_iteration_number = 0
         LOG.setLevel('CALIBRATE')
         if self.conf['routing'] == 'linear':
-            self._calibration_iteration_number = 0
-            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='k')
+            obj = partial(self._calibration_objective,
+                          observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='k')
             result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
             self.k = self.k * result_k.x
             LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
@@ -476,7 +472,8 @@ class MuskingumCunge:
             LOG.log(lvl_calibrate, '-' * 80)
 
             self._calibration_iteration_number = 0
-            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs, var='x')
+            obj = partial(self._calibration_objective,
+                          observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='x')
             result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
             self.x = self.x * result_x.x
             LOG.log(lvl_calibrate, f'Optimal x scalar: {result_x.x}')
@@ -495,8 +492,6 @@ class MuskingumCunge:
             LOG.log(lvl_calibrate, '-' * 80)
 
         elif self.conf['routing'] == 'nonlinear':
-            self._calibration_iteration_number = 0
-            obj = partial(self._calibration_objective, observed=observed, riv_idxs=riv_idxs, obs_idxs=obs_idxs)
             # todo implement nonlinear calibration
             raise NotImplementedError('Nonlinear calibration not yet implemented')
         else:
@@ -565,21 +560,21 @@ class MuskingumCunge:
 
     def _calibration_objective(self,
                                iteration: np.array, *, observed: pd.DataFrame,
-                               riv_idxs: np.array, obs_idxs: np.ndarray, var: str = None) -> np.float64:
+                               riv_idxes: np.array, obs_idxes: np.ndarray, var: str = None) -> np.float64:
         """
         Objective function for calibration
 
         Args:
             iteration: a scalar value to multiply the k values by
-            riv_idxs: array of the indices of rivers with observations in the river id list from params
-            obs_idxs: array of the indices of observed rivers in the river id list from params
+            riv_idxes: array of the indices of rivers with observations in the river id list from params
+            obs_idxes: array of the indices of observed rivers in the river id list from params
 
         Returns:
             np.float64
         """
         self._calibration_iteration_number += 1
         LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
-        iter_df = pd.DataFrame(columns=riv_idxs)
+        iter_df = pd.DataFrame(columns=riv_idxes)
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
         if self.conf['routing'] == 'linear' and var is not None:
@@ -596,11 +591,11 @@ class MuskingumCunge:
         for runoff_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
             with xr.open_dataset(runoff_file) as runoff_ds:
                 dates = runoff_ds['time'].values.astype('datetime64[s]')
-                runoffs = runoff_ds[self.conf['var_catchment_volume']].values[:, riv_idxs]
+                runoffs = runoff_ds[self.conf['var_catchment_volume']].values[:, riv_idxes]
             self._set_time_params(dates)
             self._set_muskingum_coefficients(k=k, x=x)
             runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
-            outflow_array = self._router(dates, runoffs)[:, obs_idxs]
+            outflow_array = self._router(dates, runoffs)[:, obs_idxes]
             if iter_df.empty:
                 iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:
