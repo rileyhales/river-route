@@ -16,50 +16,15 @@ Every `river-route` process needs at least the following 4 variables
 
 - `routing_params_file` - path to the [routing parameters file](io-files.md#routing-parameters) (parquet)
 - `connectivity_file` - path to the river network [connectivity file](io-files.md#connectivity-file) (parquet)
-- `catchment_volumes_file` - path to the prepared [catchment volumes file](io-files.md#catchment-volumes) (netCDF)
+- `catchment_volumes_file` - path to the prepared [catchment volumes file](io-files.md#catchment-volumes-or-runoff-depths) (netCDF)
 - `outflow_file` - path where the [routed flows](io-files.md#routed-discharge) output file will be saved (netCDF)
 
 ## Example YAML File
 
 An example yaml file is given below with the default values prepopulated where possible.
 
-# specify the title and the language of the code block is YAML
-
-```yaml title="Example Config YAML"
-# Required Watershed Files
-routing_params_file: ''
-connectivity_file: ''
-# Volume Inputs - (Option 1)
-catchment_volumes_file: ''
-# Depth Inputs - (Option 2)
-runoff_depths_files: ''
-weight_table_file: ''
-# Output file
-outflow_file: ''
-# Compute Options
-routing: 'linear'  # linear or nonlinear
-input_type: 'sequential'  # sequential or ensemble
-runoff_type: 'incremental'  # incremental or cumulative
-dt_routing: 0  # defaults to time step of volume inputs
-dt_outflows: 0  # defaults to time step of volume inputs
-solver_atol: 0.00001
-# initial and final state files
-initial_state_file: ''
-final_state_file: ''
-# simulation management and debugging
-log: False
-progress_bar: False
-log_level: 'DEBUG'
-log_stream: ''
-job_name: ''
-# Variable names expected in the netCDF input/output files
-var_x: 'lon'
-var_y: 'lat'
-var_t: 'time'
-var_runoff_depth: 'ro'
-var_catchment_volume: 'volume'
-var_river_id: 'river_id'
-var_outflow: 'Q'
+```yaml title="Config File Example river-route v0.15.0"
+{% include-markdown "../samples/configs-v0.15.0.yaml" %}
 ```
 
 ## Config Options Table
@@ -74,11 +39,11 @@ The following table is a complete list of all configuration options and their pu
 | runoff_depths_files    | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
 | weight_table_file      | True     | File Path | Required Input      | Path to the weight table file.                                         |
 | outflow_file           | True     | File Path | Required Input      | Path where the outflows netCDF file should be saved.                   |
-| dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
-| dt_outflows            | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.                |
 | routing                | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                    |
 | input_type             | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
 | runoff_type            | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
+| dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
+| dt_outflows            | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.                |
 | solver_atol            | False    | Float     | Compute Options     | Absolute tolerance for the solver.                                     |
 | initial_state_file     | False    | File Path | Initialization Data | Path to the initial state file.                                        |                                                     
 | final_state_file       | False    | File Path | Initialization Data | Path where the final state file should be saved.                       |                                    

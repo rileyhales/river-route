@@ -1,0 +1,34 @@
+# Required Watershed Files - (Required)
+routing_params_file: ''
+connectivity_file: ''
+# Volume Inputs - (Water Input - Option 1)
+catchment_volumes_file: ''
+# Depth Inputs - (Water Input - Option 2)
+runoff_depths_files: ''
+weight_table_file: ''
+# Output file - (Required)
+outflow_file: ''
+# Initial and Final State - (Optional but frequently necessary)
+initial_state_file: ''
+final_state_file: ''
+# Compute Options - (Optional but frequently edited)
+routing: 'linear'            # "linear" or "nonlinear"
+input_type: 'sequential'     # "sequential" or "ensemble"
+runoff_type: 'incremental'   # "incremental" or "cumulative"
+dt_routing: 0                # defaults to time step of volume inputs
+dt_outflows: 0               # defaults to time step of volume inputs
+solver_atol: 0.00001         # smaller means lower error, must be > 0
+# simulation management and debugging - (Optional)
+log: False
+progress_bar: False
+log_level: 'DEBUG'
+log_stream: ''
+job_name: ''
+# Variable names expected in the netCDF input/output files - (Optional)
+var_x: 'lon'
+var_y: 'lat'
+var_t: 'time'
+var_runoff_depth: 'ro'
+var_catchment_volume: 'volume'
+var_river_id: 'river_id'
+var_outflow: 'Q'

@@ -16,6 +16,8 @@ nav:
 plugins:
   - search
   - mkdocstrings
+  - include-markdown:
+      comments: false
 markdown_extensions:
   - admonition
   - pymdownx.snippets
