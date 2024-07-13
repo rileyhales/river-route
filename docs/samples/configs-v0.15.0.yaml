@@ -8,23 +8,22 @@ runoff_depths_files: ''
 weight_table_file: ''
 # Output file - (Required)
 outflow_file: ''
-# Initial and Final State - (Optional but frequently necessary)
+# Initial and Final State - (Optional)
 initial_state_file: ''
 final_state_file: ''
-# Compute Options - (Optional but frequently edited)
+# Compute Options - (Optional)
 routing: 'linear'            # "linear" or "nonlinear"
 input_type: 'sequential'     # "sequential" or "ensemble"
 runoff_type: 'incremental'   # "incremental" or "cumulative"
 dt_routing: 0                # defaults to time step of volume inputs
 dt_outflows: 0               # defaults to time step of volume inputs
 solver_atol: 0.00001         # smaller means lower error, must be > 0
-# simulation management and debugging - (Optional)
-log: False
-progress_bar: False
-log_level: 'DEBUG'
-log_stream: ''
-job_name: ''
-# Variable names expected in the netCDF input/output files - (Optional)
+# Logging - (Optional)
+log: True                    # True or False
+progress_bar: True           # True or False
+log_level: 'DEBUG'           # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+log_stream: 'stdout'         # "stdout", "stderr", or a file path
+# Variable names expected input/output files - (Optional)
 var_x: 'lon'
 var_y: 'lat'
 var_t: 'time'

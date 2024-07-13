@@ -24,7 +24,6 @@ from .tools import connectivity_to_digraph
 __all__ = ['MuskingumCunge', ]
 
 LOG = logging.getLogger('river_route')
-# make a CALIBRATE logging level
 lvl_calibrate = logging.INFO + 5
 logging.addLevelName(lvl_calibrate, 'CALIBRATE')
 
@@ -102,7 +101,6 @@ class MuskingumCunge:
 
         # set default values for configs when possible
         self.conf['river-route-version'] = VERSION
-        self.conf['job_name'] = self.conf.get('job_name', 'untitled_job')
         self.conf['log'] = bool(self.conf.get('log', True))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
@@ -378,7 +376,7 @@ class MuskingumCunge:
         Returns:
             river_route.MuskingumCunge
         """
-        LOG.info(f'Beginning routing: {self.conf["job_name"]}')
+        LOG.info(f'Beginning routing')
         t1 = datetime.datetime.now()
 
         if len(kwargs) > 0:
@@ -430,7 +428,7 @@ class MuskingumCunge:
         Returns:
             river_route.MuskingumCunge
         """
-        LOG.info(f'Beginning optimization: {self.conf["job_name"]}')
+        LOG.info(f'Beginning optimization')
         t1 = datetime.datetime.now()
 
         self._set_linear_routing_params()

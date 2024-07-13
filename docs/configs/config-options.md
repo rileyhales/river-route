@@ -51,7 +51,6 @@ The following table is a complete list of all configuration options and their pu
 | progress_bar           | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                         |
 | log_level              | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING             |
 | log_stream             | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path.  |
-| job_name               | False    | String    | Logging Options     | A name for this job printed in logs and debug statements.              |                           
 | var_x                  | False    | String    | File Management     | Name of the variable in all files that contains the x coordinates.     |
 | var_y                  | False    | String    | File Management     | Name of the variable in all files that contains the y coordinates.     |
 | var_t                  | False    | String    | File Management     | Name of the variable in all files that contains the time values.       |

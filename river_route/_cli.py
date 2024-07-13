@@ -4,11 +4,11 @@ import river_route as rr
 
 
 def main():
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description='CLI for the river_route Python package for performing river routing on large river networks',
         add_help=True,
     )
-    p.add_argument(
+    parser.add_argument(
         '-c', '--config',
         type=str,
         help='Path to routing configuration file',
@@ -16,10 +16,10 @@ def main():
         required=False,
     )
 
-    args = p.parse_args()
+    args = parser.parse_args()
 
     if not args.config:
-        return p.print_help()
+        return parser.print_help()
 
     rr.MuskingumCunge(args.config).route()
     return
