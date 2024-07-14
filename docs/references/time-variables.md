@@ -1,4 +1,4 @@
-## Parameter Descriptions
+## Time Variables
 
 Only 1 time option is a required input in the configuration file:
 
@@ -23,26 +23,18 @@ The following relationships must be true for all 4 time variables
 
 ```
 dt_total >= dt_outflow >= dt_runoff >= dt_routing
+dt_total % dt_outflow == 0
+dt_outflow % dt_runoff == 0
+dt_runoff % dt_routing == 0
+dt_total == dt_runoff * number_of_time_steps
 ```
 
 - The total time of the runoff data must be greater than or equal to the time interval between outflow values.
 - The time interval between outflow values must be greater than or equal to the time interval between runoff values.
 - The time interval between runoff values must be greater than or equal to the time interval between routing
   calculations.
-
-```
-dt_total % dt_outflow == 0
-dt_outflow % dt_runoff == 0
-dt_runoff % dt_routing == 0
-```
-
 - Each time interval must be evenly divisible by the next smallest time interval so that the loops of calculations can
   be automatically constructed.
-
-```
-dt_total === dt_runoff * number_of_time_steps
-```
-
 - The length of the routing computations must be equal to the length of the runoff data.
 
 ## Limitations

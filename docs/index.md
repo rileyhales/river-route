@@ -1,14 +1,17 @@
 # River-Route
 
-The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the 
-Matrix Muskingum Cunge Method.
+The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the
+Matrix Muskingum Cunge Method. It implements a matrix form of the Muskingum Cunge routing method first published by 
+[Cedric David in 2011](https://doi.org/10.1175/2011JHM1345.1) and corrected by Riley Hales in 2024.
 
 ## Installation
 
-It is recommended to install `river-route` in its own environment so you can ensure the latest versions of all the 
-dependencies and to protect the environment that produces your model results from accidents.
+!!! note
+    Refer to the [Basic Tutorial](tutorials/basic-tutorial.md) and [Advanced Tutorial](tutorials/advanced-tutorial.md) 
+    for more complete instructions.
 
-`river-route` is currently only available from source.
+`river-route` is currently only available from source. To get the highest performance, you may want to install in a 
+dedicated conda environment with the latest version of python and the dependencies.
 
 ```commandline
 git clone https://github.com/rileyhales/river-route
@@ -18,16 +21,6 @@ conda activate rr
 python setup.py install
 ```
 
-## Quick Start Guide
-
-In order to use river-route, you will need to
-
-1. Install river-route
-2. Prepare your input data
-3. Create a [Configuration File](configs/config-options.md#example-yaml-file)
-4. Run a simulation
-
-
 ## Computation Process
 
 ```mermaid
@@ -36,7 +29,7 @@ Title: River Route Process Diagram
 ---
 graph LR
     subgraph "Required-Inputs"
-        Inputs["Routing Parameters\nConnectivity File\nRunoff Volumes\nOutflow File"]
+        Inputs["Routing Parameters\nConnectivity File\nCatchment Volumes\nOutflow File"]
     end
 
     subgraph "Compute-Options"
@@ -54,7 +47,7 @@ graph LR
     subgraph "Computations"
         direction TB
         a[Calculate LHS] --> b
-        b[Read Runoff Volumes] --> c
+        b[Read Volumes Array] --> c
         c[Iterate On Routing Intervals] --> d
         d[Solving Matrix\nMuskingum Cunge] --> e
         e[Enforce Positive Flows] --> f & c
@@ -73,6 +66,7 @@ graph LR
     Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
     Computations ==> Main-Output & Cachable-Files
 ```
+
 ## Usage Example
 
 You can pass the configuration options to the `rr.MuskingumCunge` class init by specifying a path to a config file, use
@@ -95,13 +89,13 @@ import river_route as rr
     .MuskingumCunge(**{
         'routing_params_file': '/path/to/routing_params.parquet',
         'connectivity_file': '/path/to/connectivity.parquet',
-        'runoff_volumes_file': '/path/to/runoff.nc',
+        'catchment_volumes_file': '/path/to/volumes.nc',
         'outflow_file': '/path/to/outflow.nc',
     })
     .route()
 )
 
-# Option 3 - Use both a congiuration file and keyword arguments
+# Option 3 - Use both a configuration file and keyword arguments
 (
     rr
     .MuskingumCunge(
@@ -109,7 +103,7 @@ import river_route as rr
         **{
             'routing_params_file': '/path/to/routing_params.parquet',
             'connectivity_file': '/path/to/connectivity.parquet',
-            'runoff_volumes_file': '/path/to/runoff.nc',
+            'catchment_volumes_file': '/path/to/volumes.nc',
             'outflow_file': '/path/to/outflow.nc',
         }
     )

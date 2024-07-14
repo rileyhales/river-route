@@ -1,0 +1,33 @@
+# Required Watershed Files - (Required)
+routing_params_file: ''
+connectivity_file: ''
+# Volume Inputs - (Water Input - Option 1)
+catchment_volumes_file: ''
+# Depth Inputs - (Water Input - Option 2)
+runoff_depths_files: ''
+weight_table_file: ''
+# Output file - (Required)
+outflow_file: ''
+# Initial and Final State - (Optional)
+initial_state_file: ''
+final_state_file: ''
+# Compute Options - (Optional)
+routing: 'linear'            # "linear" or "nonlinear"
+input_type: 'sequential'     # "sequential" or "ensemble"
+runoff_type: 'incremental'   # "incremental" or "cumulative"
+dt_routing: 0                # defaults to time step of volume inputs
+dt_outflows: 0               # defaults to time step of volume inputs
+solver_atol: 0.00001         # smaller means lower error, must be > 0
+# Logging - (Optional)
+log: True                    # True or False
+progress_bar: True           # True or False
+log_level: 'DEBUG'           # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+log_stream: 'stdout'         # "stdout", "stderr", or a file path
+# Variable names expected input/output files - (Optional)
+var_x: 'lon'
+var_y: 'lat'
+var_t: 'time'
+var_runoff_depth: 'ro'
+var_catchment_volume: 'volume'
+var_river_id: 'river_id'
+var_outflow: 'Q'

@@ -1,10 +1,52 @@
-## Writing Routed Flows to Disc
+## Finding Inputs and Config Files at Runtime
+
+Instead of manually preparing config files in advance, you may want to generate them in your code which executes the 
+routing. This is useful when you have a large number of routing runs to perform or if you want to automate the process.
+Depending on your preference, you may want to generate many config files in advance or store them for repeatability and 
+future use.
+
+The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments 
+to the `MuskingumCunge` class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
+instead.
+
+```python
+import glob
+import os
+
+import river_route as rr
+
+root_dir = '/path/to/root/directory'
+vpu_name = 'sample-project'
+
+configs = os.path.join(root_dir, 'configs', vpu_name)
+params_file = os.path.join(configs, 'params.parquet')
+connectivity_file = os.path.join(configs, 'connectivity.parquet')
+
+volume_files = sorted(glob.glob(f'/path/to/runoffs/directory/*.nc'))
+
+outputs = os.path.join(root_dir, 'outputs', vpu_name)
+output_files = [os.path.join(outputs, f'Qout_{os.path.basename(f)}') for f in volume_files]
+os.makedirs(outputs, exist_ok=True)
+
+m = (
+    rr
+    .MuskingumCunge(**{
+        'routing_params_file': params_file,
+        'connectivity_file': connectivity_file,
+        'catchment_volumes_file': volume_files,
+        'outflow_file': output_files,
+    })
+    .route()
+)
+```
+
+## Customizing Output File Type and Structure
 
 You can override the default function used by `river-route` when writing routed flows to disc. The MuskingumCunge class
 formats the discharge data into a Pandas DataFrame and then calls the `write_outflows` method. By default, this function
 writes the dataframe to a netCDF file.
 
-A single netCDF is not ideal for all use cases so you can override it to store your data how you prefer. Some examples
+A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing the DataFrame to a
 database, or to add metadata or attributes to the file.
 
@@ -30,7 +72,7 @@ def custom_write_outflows(df: pd.DataFrame, outflow_file: str, runoff_file: str)
 
 (
     rr
-    .MuskingumCunge('config.yaml')
+    .MuskingumCunge('../../examples/config.yaml')
     .set_write_outflows(custom_write_outflows)
     .route()
 )

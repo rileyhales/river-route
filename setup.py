@@ -27,13 +27,16 @@ setup(
     install_requires=INSTALL_REQUIRES,
     include_package_data=False,
     classifiers=[
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: Science/Research',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.12',
-        'Natural Language :: English',
         'Topic :: Scientific/Engineering',
-        'Topic :: Scientific/Engineering :: Hydrology',
+        'Topic :: Scientific/Engineering :: Atmospheric Science',
         'Topic :: Scientific/Engineering :: GIS',
+        'Topic :: Scientific/Engineering :: Hydrology',
+        'Topic :: Scientific/Engineering :: Mathematics',
     ],
     entry_points={
         'console_scripts': ['rr=river_route._cli:main', ]

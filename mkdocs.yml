@@ -1,23 +1,37 @@
 site_name: River Route
 site_url: https://rr.hales.app
+copyright: Copyright &copy; 2023-2024 Dr Riley Hales. All rights reserved.
 theme:
   name: material
+  palette:
+    primary: light blue
   features:
     - content.code.copy
     - content.code.select
+    - navigation.expand
+    - navigation.path
+    - navigation.footer
+    - toc.follow
 nav:
   - Home: index.md
-  - Config Files:
-      - Config Options: configs/config-options.md
-      - Input & Output Files: configs/io-files.md
-      - Time Variables: configs/time-variables.md
   - API Documentation: api.md
-  - Saving Outputs: saving-outputs.md
+  - References:
+      - The Config File: references/config-files.md
+      - File Schemas: references/io-file-schema.md
+      - Time Variables: references/time-variables.md
+  - Tutorials:
+      - Basic Tutorial: tutorials/basic-tutorial.md
+      - Advanced Tutorial: tutorials/advanced-tutorial.md
+  - License: terms.md
 plugins:
   - search
   - mkdocstrings
+  - include-markdown:
+      comments: false
 markdown_extensions:
+  - admonition
   - pymdownx.snippets
+  - pymdownx.details
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
