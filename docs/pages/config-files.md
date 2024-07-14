@@ -14,17 +14,17 @@ JSON. Config files specify the following parameters:
 
 Every `river-route` process needs at least the following 4 variables
 
-- `routing_params_file` - path to the [routing parameters file](io-files.md#routing-parameters) (parquet)
-- `connectivity_file` - path to the river network [connectivity file](io-files.md#connectivity-file) (parquet)
-- `catchment_volumes_file` - path to the prepared [catchment volumes file](io-files.md#catchment-volumes-or-runoff-depths) (netCDF)
-- `outflow_file` - path where the [routed flows](io-files.md#routed-discharge) output file will be saved (netCDF)
+- `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
+- `connectivity_file` - path to the river network [connectivity file](io-file-schema.md#connectivity-file) (parquet)
+- `catchment_volumes_file` - path to the prepared [catchment volumes file](io-file-schema.md#catchment-volumes-or-runoff-depths) (netCDF)
+- `outflow_file` - path where the [routed flows](io-file-schema.md#routed-discharge) output file will be saved (netCDF)
 
 ## Example YAML File
 
 An example yaml file is given below with the default values prepopulated where possible.
 
 ```yaml title="Config File Example river-route v0.15.0"
-{% include-markdown "../samples/configs-v0.15.0.yaml" %}
+{% include-markdown "../sample-files/config.yaml" %}
 ```
 
 ## Config Options Table

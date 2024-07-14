@@ -7,12 +7,13 @@ theme:
     - content.code.select
 nav:
   - Home: index.md
-  - Config Files:
-      - Config Options: configs/config-options.md
-      - Input & Output Files: configs/io-files.md
-      - Time Variables: configs/time-variables.md
-  - API Documentation: api.md
-  - Saving Outputs: saving-outputs.md
+  - API Documentation: pages/api.md
+  - Configs:
+      - Config File: pages/config-files.md
+      - Input/Output File Schemas: pages/io-file-schema.md
+      - Time Variables: pages/time-variables.md
+  - Basic Tutorial: pages/tutorial.md
+  - Advanced Tutorial: pages/tutorial-advanced.md
 plugins:
   - search
   - mkdocstrings

@@ -1,11 +1,11 @@
 # River-Route
 
-The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the 
+The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the
 Matrix Muskingum Cunge Method.
 
 ## Installation
 
-It is recommended to install `river-route` in its own environment so you can ensure the latest versions of all the 
+It is recommended to install `river-route` in its own environment so you can ensure the latest versions of all the
 dependencies and to protect the environment that produces your model results from accidents.
 
 `river-route` is currently only available from source.
@@ -23,10 +23,10 @@ python setup.py install
 In order to use river-route, you will need to
 
 1. Install river-route
-2. Prepare your input data
-3. Create a [Configuration File](configs/config-options.md#example-yaml-file)
-4. Run a simulation
-
+2. [Create a directory structure](pages/project-structure) (optional) 
+3. Prepare Input Files
+4. Create a [Configuration File](pages/config-files.md#example-yaml-file)
+5. Run a simulation
 
 ## Computation Process
 
@@ -73,6 +73,7 @@ graph LR
     Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
     Computations ==> Main-Output & Cachable-Files
 ```
+
 ## Usage Example
 
 You can pass the configuration options to the `rr.MuskingumCunge` class init by specifying a path to a config file, use
