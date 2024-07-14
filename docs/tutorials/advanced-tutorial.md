@@ -73,7 +73,7 @@ def custom_write_outflows(df: pd.DataFrame, outflow_file: str, runoff_file: str)
 
 (
     rr
-    .MuskingumCunge('config.yaml')
+    .MuskingumCunge('../../examples/config.yaml')
     .set_write_outflows(custom_write_outflows)
     .route()
 )

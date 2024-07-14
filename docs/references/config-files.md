@@ -24,7 +24,7 @@ Every `river-route` process needs at least the following 4 variables
 An example yaml file is given below with the default values prepopulated where possible.
 
 ```yaml title="Config File Example river-route v0.15.0"
-{% include-markdown "../sample-files/config.yaml" %}
+{% include-markdown "../../examples/config.yaml" %}
 ```
 
 ## Config Options Table

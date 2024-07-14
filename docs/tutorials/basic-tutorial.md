@@ -27,10 +27,10 @@ writes
 channel properties and topology, the third is the input water being routed, and the fourth (the output) is the discharge
 time series calculated by the routing process. For more information on how to prepare these, see the following sections.
 
-1. [Routing Parameters](io-file-schema.md#routing-parameters) - parquet file
-2. [Connectivity File](io-file-schema.md#connectivity-file) - parquet file
-3. [Catchment Volumes](io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
-4. [Routed Discharge](io-file-schema.md#routed-discharge) - netCDF file
+1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file
+2. [Connectivity File](../references/io-file-schema.md#connectivity-file) - parquet file
+3. [Catchment Volumes](../references/io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
+4. [Routed Discharge](../references/io-file-schema.md#routed-discharge) - netCDF file
 
 ## Recommended Directory Structure for Organizing Inputs and Outputs
 

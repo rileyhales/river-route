@@ -1,14 +1,17 @@
 # River-Route
 
 The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the
-Matrix Muskingum Cunge Method.
+Matrix Muskingum Cunge Method. It implements a matrix form of the Muskingum Cunge routing method first published by 
+[Cedric David in 2011](https://doi.org/10.1175/2011JHM1345.1) and corrected by Riley Hales in 2024.
 
 ## Installation
 
-It is recommended to install `river-route` in its own environment so you can ensure the latest versions of all the
-dependencies and to protect the environment that produces your model results from accidents.
+!!! note
+    Refer to the [Basic Tutorial](tutorials/basic-tutorial.md) and [Advanced Tutorial](tutorials/advanced-tutorial.md) 
+    for more complete instructions.
 
-`river-route` is currently only available from source.
+`river-route` is currently only available from source. To get the highest performance, you may want to install in a 
+dedicated conda environment with the latest version of python and the dependencies.
 
 ```commandline
 git clone https://github.com/rileyhales/river-route
@@ -17,16 +20,6 @@ conda env create -f environment.yaml -n rr
 conda activate rr
 python setup.py install
 ```
-
-## Quick Start Guide
-
-In order to use river-route, you will need to
-
-1. Install river-route
-2. [Create a directory structure](pages/project-structure) (optional) 
-3. Prepare Input Files
-4. Create a [Configuration File](pages/config-files.md#example-yaml-file)
-5. Run a simulation
 
 ## Computation Process
 
@@ -102,7 +95,7 @@ import river_route as rr
     .route()
 )
 
-# Option 3 - Use both a congiuration file and keyword arguments
+# Option 3 - Use both a configuration file and keyword arguments
 (
     rr
     .MuskingumCunge(

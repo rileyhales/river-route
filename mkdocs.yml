@@ -1,19 +1,28 @@
 site_name: River Route
 site_url: https://rr.hales.app
+copyright: Copyright &copy; 2023-2024 Dr Riley Hales. All rights reserved.
 theme:
   name: material
+  palette:
+    primary: light blue
   features:
     - content.code.copy
     - content.code.select
+    - navigation.expand
+    - navigation.path
+    - navigation.footer
+    - toc.follow
 nav:
   - Home: index.md
-  - API Documentation: pages/api.md
-  - Configs:
-      - Config File: pages/config-files.md
-      - Input/Output File Schemas: pages/io-file-schema.md
-      - Time Variables: pages/time-variables.md
-  - Basic Tutorial: pages/tutorial.md
-  - Advanced Tutorial: pages/tutorial-advanced.md
+  - API Documentation: api.md
+  - References:
+      - The Config File: references/config-files.md
+      - File Schemas: references/io-file-schema.md
+      - Time Variables: references/time-variables.md
+  - Tutorials:
+      - Basic Tutorial: tutorials/basic-tutorial.md
+      - Advanced Tutorial: tutorials/advanced-tutorial.md
+  - License: license.md
 plugins:
   - search
   - mkdocstrings
