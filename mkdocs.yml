@@ -22,7 +22,7 @@ nav:
   - Tutorials:
       - Basic Tutorial: tutorials/basic-tutorial.md
       - Advanced Tutorial: tutorials/advanced-tutorial.md
-  - License: copyright-statement.md
+  - License: terms.md
 plugins:
   - search
   - mkdocstrings
