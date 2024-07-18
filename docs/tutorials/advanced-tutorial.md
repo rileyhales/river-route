@@ -1,12 +1,12 @@
 ## Finding Inputs and Config Files at Runtime
 
-Instead of manually preparing config files in advance, you may want to generate them in your code which executes the 
+Instead of manually preparing config files in advance, you may want to generate them in your code which executes the
 routing. This is useful when you have a large number of routing runs to perform or if you want to automate the process.
-Depending on your preference, you may want to generate many config files in advance or store them for repeatability and 
+Depending on your preference, you may want to generate many config files in advance or store them for repeatability and
 future use.
 
-The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments 
-to the `MuskingumCunge` class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
+The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments
+to the `MuskingumCunge` class. You could alternatively write the inputs to a YAML or JSON file and use that config file
 instead.
 
 ```python
@@ -58,6 +58,9 @@ function should accept exactly 3 keyword arguments:
 3. `runoff_file`: a string with the path to the runoff file used to produce this output.
 
 As an example, you might want to write the output DataFrame to a Parquet file instead.
+
+!!! Warning
+    Your function ***must*** accept all 3 arguments in the order given, even if you do not use them all in your code.
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
@@ -143,5 +146,24 @@ def save_partial_results(df: pd.DataFrame, outflow_file: str, runoff_file: str) 
     .MuskingumCunge('config.yaml')
     .set_write_outflows(save_partial_results)
     .route()
+)
+```
+
+## Routing an Ensemble
+
+You can route an ensemble of volume files if they all represent the same time period and use the same initial
+conditions. Provide the list of volume file inputs and a list of output file paths the same as usual. Specify the 
+`input_type` as "ensemble" in the config file or as a keyword argument to the `MuskingumCunge` class.
+
+!!! Warning
+    Writing a final state file is not supported when routing an ensemble. You should write your own code to process the 
+    routed outputs and determine the next initial state to use.
+
+```python
+import river_route as rr
+
+(
+    rr
+    .MuskingumCunge('config.yaml', input_type='ensemble')
 )
 ```

@@ -1,10 +1,10 @@
-!!! warning "Non Comprehensive Tutorial Content Disclaimer"
-This is not a comprehensive hydrological modeling course which should teach you the theory of hydrological channel
-routing, calibration, and validation. It will not teach the prerequisite informatics and GIS skills to create a
-watershed representation. Hydraulics and hydrology software can be used to obtain the information needed for routing
-or you can use a GIS software such as QGIS or ArcGIS. An approachable place to start learning these skills is a GIS
-tutorial demonstrating watershed delineation and stream network extraction as well as assigning and calculating
-attributes of the stream features (polylines).
+!!! warning "Non-comprehensive Tutorial Content Disclaimer"
+    This is not a comprehensive hydrological modeling course which should teach you the theory of hydrological channel
+    routing, calibration, and validation. It will not teach the prerequisite informatics and GIS skills to create a
+    watershed representation. Hydraulics and hydrology software can be used to obtain the information needed for routing
+    or you can use a GIS software such as QGIS or ArcGIS. An approachable place to start learning these skills is a GIS
+    tutorial demonstrating watershed delineation and stream network extraction as well as assigning and calculating
+    attributes of the stream features (polylines).
 
 ## Vocabulary
 
@@ -22,10 +22,10 @@ might want to have multiple computation units for at least 2 common reasons.
 ## Essentials
 
 `river-route` is a Python package that routes water volumes through a river network. It takes 3 input datasets and
-writes
-1 output dataset. Together, that makes a total of 4 files that need to be specified. The first 2 describe the river
-channel properties and topology, the third is the input water being routed, and the fourth (the output) is the discharge
-time series calculated by the routing process. For more information on how to prepare these, see the following sections.
+writes 1 output dataset. Together, that makes a total of 4 files that need to be specified. The first 2 describe the
+river channel properties and topology, the third is the input water being routed, and the fourth (the output) is the
+discharge time series calculated by the routing process. For more information on how to prepare these, see the following
+sections.
 
 1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file (Input)
 2. [Connectivity File](../references/io-file-schema.md#connectivity-file) - parquet file (Input)
@@ -69,24 +69,24 @@ project_root_directory
 You may prepare a stream hydrography (and catchments) for routing using many methods. Most typical GIS algorithms for
 watershed delineation will give you the attributes you need. For each river you need to have and ID number, the ID of
 the river immediately downstream of that river, and a k value and x value for the Muskingum-Cunge routing. These 4
-attributes together make up the important information for the 
-[Routing Parameters](../references/io-file-schema.md#routing-parameters) and the 
+attributes together make up the important information for the
+[Routing Parameters](../references/io-file-schema.md#routing-parameters) and the
 [Connectivity File](../references/io-file-schema.md#connectivity-file).
 
 The unit of k is seconds, the average travel time for water in the river reach. It should be a positive number.
 
-The x value is unitless. It is a number between 0 and 0.5 that describes the attenuation of a wave. A value of 0.5 
+The x value is unitless. It is a number between 0 and 0.5 that describes the attenuation of a wave. A value of 0.5
 indicates no attenuation and a value of 0 indicates maximum attenuation.
 
 ## Preparing Volumes
 
-You will need a time series of catchment volumes to be routed. Note, you should not convert the volumes to equivalent 
-discharge values over the same period. The routing process will do this for you. Commonly, you will start with runoff 
-depth grids from the land surface model or other hydrology model. You need to perform a spatial aggregation to determine 
+You will need a time series of catchment volumes to be routed. Note, you should not convert the volumes to equivalent
+discharge values over the same period. The routing process will do this for you. Commonly, you will start with runoff
+depth grids from the land surface model or other hydrology model. You need to perform a spatial aggregation to determine
 the equivalent volume of water in each catchment. The volume should be in units of cubic meters, m^3.
 
-You can precalculate the "weights" of each grid cell in a runoff grid that contribute to each catchment and use that to 
-efficiently calculate catchment volumes from runoff depths. River-route provides a function to do this and to calculate 
+You can precalculate the "weights" of each grid cell in a runoff grid that contribute to each catchment and use that to
+efficiently calculate catchment volumes from runoff depths. River-route provides a function to do this and to calculate
 volumes from runoff depths. You can use this function to prepare your volumes file.
 
 ## Preparing a Config File
@@ -130,8 +130,8 @@ has a `hydrograph` method to extract the hydrograph for a river number of intere
 From there, you can manipulate the data and plot is as normal.
 
 !!! note
-The `hydrograph` method will only work if you are using the default output file format. If you have overridden the
-output file format, you will need to write your own function to extract the hydrograph.
+    The `hydrograph` method will only work if you are using the default output file format. If you have overridden the
+    output file format, you will need to write your own function to extract the hydrograph.
 
 ```python
 river_of_interest = 123456789
