@@ -29,6 +29,17 @@ logging.addLevelName(lvl_calibrate, 'CALIBRATE')
 
 
 class MuskingumCunge:
+    """
+    A class for routing a river network using the Matrix Muskingum-Cunge method
+
+    Methods:
+        set_configs (callable): Parse, validates, and sets simulation configs given by json, yaml, or kwargs
+        set_write_outflows (callable): Override the default output file structure with a custom function.
+        route (callable): Routes using the options and inputs given by the config file.
+        calibrate (callable): Calibrates K and X to measured values using Mean Squared Error optimization
+        hydrograph (callable): Gets the hydrograph for a given river id. Should be called after `self.route`
+        mass_balance (callable): Calculates the mass balance for a given river id
+    """
     # Given configs
     conf: dict
 
@@ -78,7 +89,7 @@ class MuskingumCunge:
         options using keyword arguments. See README or Docs for list of all recognized configuration options. If you do
         not want to use a config file, pass None to the first positional argument and then give kwargs.
 
-        Args:
+        Parameters:
             config_file (str): path to a json or yaml file of configs. See README for all recognized options.
 
         Returns:
@@ -224,6 +235,9 @@ class MuskingumCunge:
         final_state_file = self.conf.get('final_state_file', '')
         if final_state_file == '':
             return
+        if self.conf['input_type'] == 'ensemble':
+            LOG.warning('Writing final state to file is not supported for ensemble simulations. File skipped.')
+            return
         LOG.debug('Writing Final State to Parquet')
         pd.DataFrame(self.initial_state, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
         return
@@ -368,8 +382,6 @@ class MuskingumCunge:
         """
         Performs time-iterative runoff routing through the river network
 
-        Keyword Args:
-
         Returns:
             river_route.MuskingumCunge
         """
@@ -418,7 +430,7 @@ class MuskingumCunge:
         """
         Calibrate K and X to given measured_values using optimization algorithms
 
-        Args:
+        Parameters:
             observed: A pandas DataFrame with a datetime index, river id column names, and discharge values
             overwrite_params_file: If True, the calibration will overwrite the routing_params_file with the new values
 
@@ -556,7 +568,7 @@ class MuskingumCunge:
         """
         Objective function for calibration
 
-        Args:
+        Parameters:
             iteration: a scalar value to multiply the k values by
             riv_idxes: array of the indices of rivers with observations in the river id list from params
             obs_idxes: array of the indices of observed rivers in the river id list from params
@@ -606,7 +618,7 @@ class MuskingumCunge:
         Writes the outflows from a routing simulation to a netcdf file. You should overwrite this method with a custom
         handler that writes it in a format that fits your needs.
 
-        Args:
+        Parameters:
             df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values
             outflow_file: the file path to write the outflows to
             runoff_file: the file path to the runoff file used to generate the outflows
@@ -638,7 +650,7 @@ class MuskingumCunge:
         Overwrites the default write_outflows method to a custom function and returns the class instance so that you
         can chain the method with the constructor.
 
-        Args:
+        Parameters:
             func (callable): a function that takes 3 keyword arguments: df, outflow_file, runoff_file and returns None
 
         Returns:
@@ -651,7 +663,7 @@ class MuskingumCunge:
         """
         Get the hydrograph for a given river id as a pandas dataframe
 
-        Args:
+        Parameters:
             river_id: the ID of a river reach in the output files
 
         Returns:
@@ -672,7 +684,7 @@ class MuskingumCunge:
         """
         Get the mass balance for a given river id as a pandas dataframe
 
-        Args:
+        Parameters:
             river_id: the ID of a river reach in the output files
             ancestors: a list of the given river_id and all rivers upstream of that river
 
