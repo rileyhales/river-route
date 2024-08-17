@@ -117,7 +117,7 @@ The file contains 2 dimensions: time and river_id.
 It will have 1 variable named "Q" which is an array of shape (time, river_id) of dtype float.
 
 You can change the structure of the output file by overriding the default function to write outputs to disc. See the
-[Saving Outputs](../tutorials/advanced-tutorial.md) page for more information.
+[Saving Outputs](../tutorial/advanced-tutorial.md) page for more information.
 
 ## Initial and Final State Files
 

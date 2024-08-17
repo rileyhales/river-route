@@ -19,9 +19,12 @@ nav:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-variables.md
-  - Tutorials:
-      - Basic Tutorial: tutorials/basic-tutorial.md
-      - Advanced Tutorial: tutorials/advanced-tutorial.md
+  - Basic Tutorial:
+      - Introduction: tutorial/introduction.md
+      - Watershed Definition: tutorial/watershed-definition.md
+      - Runoff and Volumes: tutorial/catchment-volumes.md
+      - Routing: tutorial/routing.md
+      - Advanced Concepts: tutorial/advanced-tutorial.md
   - License: terms.md
 plugins:
   - search
