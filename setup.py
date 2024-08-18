@@ -27,7 +27,7 @@ setup(
     install_requires=INSTALL_REQUIRES,
     include_package_data=False,
     classifiers=[
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Science/Research',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
