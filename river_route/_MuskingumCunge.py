@@ -133,7 +133,7 @@ class MuskingumCunge:
         return
 
     def _validate_configs(self) -> None:
-        LOG.info('Validating configs file')
+        LOG.debug('Validating configs file')
         # these 2 files must always exist
         assert os.path.exists(self.conf['routing_params_file']), FileNotFoundError('Routing params file not found')
         assert os.path.exists(self.conf['connectivity_file']), FileNotFoundError('Connectivity file not found')
@@ -301,9 +301,6 @@ class MuskingumCunge:
     def _set_nonlinear_routing_table(self) -> None:
         """
         Sets class properties for nonlinear routing - nonlinear_table, q_columns, k_columns, x_columns
-
-        Returns:
-            None
         """
         if hasattr(self, 'nonlinear_table'):
             return
@@ -447,7 +444,6 @@ class MuskingumCunge:
         subgraph_rivers = pd.Series(list(subgraph_rivers))
         sorted_indices = subgraph_rivers.map(pd.Series(river_ids.index, index=river_ids.values)).sort_values().index
         subgraph_rivers = subgraph_rivers[sorted_indices].reset_index(drop=True).values
-
         # make boolean selectors to subset the inputs and select rivers to compare with observed values
         riv_idxes = river_ids.isin(subgraph_rivers).values
         river_ids = river_ids[riv_idxes].reset_index(drop=True)
@@ -466,7 +462,6 @@ class MuskingumCunge:
             self.k = self.k * result_k.x
             LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
             LOG.log(lvl_calibrate, result_k)
-
             LOG.log(lvl_calibrate, '-' * 80)
 
             self._calibration_iteration_number = 0
@@ -490,7 +485,6 @@ class MuskingumCunge:
             LOG.log(lvl_calibrate, '-' * 80)
 
         elif self.conf['routing'] == 'nonlinear':
-            # todo implement nonlinear calibration
             raise NotImplementedError('Nonlinear calibration not yet implemented')
         else:
             raise ValueError('Routing method not recognized')
@@ -580,30 +574,22 @@ class MuskingumCunge:
             k = self.k if var != 'k' else self.k * iteration
             x = self.x if var != 'x' else self.x * iteration
         elif self.conf['routing'] == 'nonlinear':
-            # todo implement nonlinear calibration
-            k = self.k * iteration[0]
-            x = self.x * iteration[1]
+            raise NotImplementedError('Nonlinear calibration not yet implemented')
         else:
             raise NotImplementedError('Calibration iteration must be a scalar or a 2-element array')
 
-        for runoff_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
-            with xr.open_dataset(runoff_file) as runoff_ds:
-                dates = runoff_ds['time'].values.astype('datetime64[s]')
-                runoffs = runoff_ds[self.conf['var_catchment_volume']].values[:, riv_idxes]
+        for dates, volumes_array, runoff_file, outflow_file in self._volumes_output_generator():
             self._set_time_params(dates)
             self._set_muskingum_coefficients(k=k, x=x)
-            runoffs = runoffs / self.dt_runoff  # convert volume -> volume/time
-            outflow_array = self._router(dates, runoffs)[:, obs_idxes]
+            volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
+            outflow_array = self._router(dates, volumes_array)[:, obs_idxes]
             if iter_df.empty:
                 iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:
                 iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates, columns=observed.columns)])
-        assert iter_df.shape == observed.shape, \
-            'Observed flows dataframe does not match calculated flows shape'
-        assert (iter_df.index == observed.index).all(), \
-            'Observed flows dataframe has a different index than calculated flows'
-        assert (iter_df.columns == observed.columns).all(), \
-            'Observed flows dataframe has different columns than calculated flows'
+        assert iter_df.shape == observed.shape, 'Observed flow df does not match calculated flows shape'
+        assert (iter_df.index == observed.index).all(), 'Observed flow df has a different index than calculated flows'
+        assert (iter_df.columns == observed.columns).all(), 'Observed flow df columns do not match calculated df'
         mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
         LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
         del self.initial_state
