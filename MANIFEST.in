@@ -1,5 +1,6 @@
 include LICENSE.txt
 include requirements.txt
 recursive-exclude docs *
+recursive-exclude examples *
 exclude .gitignore
 exclude .readthedocs.yml
