@@ -107,7 +107,7 @@ class MuskingumCunge:
 
         # compute, routing, solver options (time is validated separately at compute step)
         self.conf['routing'] = self.conf.get('routing', 'linear')
-        self.conf['input_type'] = self.conf.get('runoff_type', 'sequential')
+        self.conf['input_type'] = self.conf.get('input_type', 'sequential')
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
 
