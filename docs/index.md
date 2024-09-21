@@ -1,8 +1,8 @@
 # River-Route
 
 The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the Matrix Muskingum Cunge Method.
-It implements a matrix form of the Muskingum Cunge routing method first published by [Cedric David in 2011](https://doi.org/10.1175/2011JHM1345.1)
-and corrected by Riley Hales in 2024.
+It implements Matrix Muskingum Cunge routing. Inspired by the first linear routing implementation published by 
+[Cedric David in 2011](https://doi.org/10.1175/2011JHM1345.1) which was corrected and improved by Riley Hales in 2023.
 
 ## Quick Start
 
