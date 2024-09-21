@@ -1,7 +1,7 @@
-!!! warning "Non Comprehensive Tutorial"
+!!! warning "Non-Comprehensive Tutorial"
     This is not a comprehensive hydrological modeling course which should teach you the theory of hydrological channel routing, calibration, and
     validation. It will not teach the prerequisite informatics and GIS skills to create a watershed representation. Hydraulics and hydrology software
-    can be used to obtain the information needed for routing or you can use a GIS software such as QGIS or ArcGIS. An approachable place to start
+    can be used to obtain the information needed for routing, or you can use a GIS software such as QGIS or ArcGIS. An approachable place to start
     learning these skills is a GIS tutorial demonstrating watershed delineation and stream network extraction as well as assigning and calculating
     attributes of the stream features.
 
@@ -109,7 +109,7 @@ have multiple realizations of those data for each member in an ensemble simulati
 
 You can use GIS methods to aggregate the distributed runoff depths to catchment level volumes. The steps are (1) intersect the grid cell boundaries
 with the catchment boundaries to create polygons of each grid cell and catchment combination, then (2) multiply the runoff depth value of each polygon
-times the area of that polygon (i.e. convert depth to volume). Repeat this for each time step. Repeat again for each ensemble member, if applicable.
+times the area of that polygon (i.e. convert depth to volume). Repeat this for each time step. Repeat for each ensemble member, if applicable.
 
 Intersections of grid cells and catchment boundaries are computationally expensive and do not change. One method to avoid repeating the expensive
 intersection step (and therefore increase speed) is to cache the intersection results in a "weight table" that describes which grid cells contribute

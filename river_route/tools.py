@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     'routing_files_from_RAPID',
     'connectivity_to_digraph',
-    'connectivity_to_adjacency_matrix',
+    'get_adjacency_matrix',
 ]
 
 
@@ -62,7 +62,7 @@ def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
         # check that the weights are all positive and sum to 1 for each unique ID
         id_col, downstream_col, weight_col = df.columns
         weight_check = df.groupby(id_col)[weight_col].sum()
-        if not weight_check.ge(0).all():
+        if not df[weight_col].ge(0).all():
             logger.error(f'Weights are not all positive')
             logger.debug('The following IDs have negative weights')
             logger.debug(weight_check[~weight_check.ge(0)].index.tolist())
@@ -80,12 +80,10 @@ def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
     return G
 
 
-def connectivity_to_adjacency_matrix(connectivity_file: str) -> scipy.sparse.csc_matrix:
+def get_adjacency_matrix(routing_params_file: str, connectivity_file: str) -> scipy.sparse.csc_matrix:
     """
     Generate adjacency matrix from connectivity file
     """
-    G = connectivity_to_digraph(connectivity_file)
-    sorted_order = list(nx.topological_sort(G))
-    if -1 in sorted_order:
-        sorted_order.remove(-1)
-    return scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(G, nodelist=sorted_order).T)
+    g = connectivity_to_digraph(connectivity_file)
+    sorted_order = pd.read_parquet(routing_params_file).iloc[:, 0].flatten().tolist()
+    return scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(g, nodelist=sorted_order).T)

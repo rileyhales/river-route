@@ -90,7 +90,7 @@ def make_overlay_table(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoData
 
 def make_voronoi_polygons(ds: str, save_dir: str, x_var: str = 'lon', y_var: str = 'lat', crs: int = 4326) -> None:
     """
-    Create a geodataframe of Voroni polygons around the center of each cell in a 2D grid given in a sample land surface
+    Create a GeoDataFrame of Voroni polygons around the center of each cell in a 2D grid given in a sample land surface
     output dataset
 
     Args:

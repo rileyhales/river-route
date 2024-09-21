@@ -27,11 +27,11 @@ chose. You may provide as many columns as you wish as long as you also provide a
 connectivity_file: '/path/to/connectivity.parquet'
 ```
 
-The connectivity files is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file
+The connectivity file is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file
 controls the topology of the rivers in the watershed. Each river segment must have at least 1 downstream segment. If the
-river is an outlet then it should have a downstream ID of -1.
+river is an outlet then the downstream ID should be -1.
 
-To specify the connectivity of braided rivers, a single river ID may have multiple rows with difference IDs given as the
+To specify the connectivity of braided rivers, a single river ID may have multiple rows with different IDs given as the
 downstream segment. In this case, use the 3rd column to specify the percentage (decimal in the range (0, 1)) of
 discharge from the river segment that flows to the downstream segment given on that row. All rivers that are not braided
 should have a weight of 1.0. The weights column of rivers that are braided should sum to exactly 1.0 or else water will
@@ -49,7 +49,7 @@ You need a time series of catchment volumes to be routed. The volumes should be 
 uniform time step for all rivers with no missing values. There are 2 likely ways that you can get this information.
 
 1. Generate it directly using a hydrological model.
-2. Generate runoff depth grids and use GIS & zonal statistics to covert to catchment volumes.
+2. Generate runoff depth grids and use zonal statistics to calculate catchment scale volumes.
 
 !!! warning "Runoff Depths Warning"
     There is a wide variety of projections for the grid cells, different names of variables, various file formats, and 
@@ -65,14 +65,13 @@ catchment_volumes_file: '/path/to/volumes.nc'
 
 Catchment volumes are given in a netCDF file.
 
-The file should have 2 dimensions: time and river_id. The times can be given in any unit with a recognizable units
-string. The river_id dimension should have exactly the same IDs *AND* be sorted in the same order given in the river_id
-column of the routing parameters file.
+The file should have 2 dimensions: time and river_id. The times can be given in any recognizable unit string. The river_id 
+dimension should have exactly the same IDs *AND* be sorted in the same order given in the river_id column of the routing parameters file.
 
 The file should have 1 runoff volumes variables named "volume" which is an array of shape (time, river_id) of dtype
 float.
 
-!!! note "Caclulating Catchment Volumes"
+!!! note "Calculating Catchment Volumes"
     `river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform 
     the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the 
     example case for guidance on formatting these files.

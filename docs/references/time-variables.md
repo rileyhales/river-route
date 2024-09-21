@@ -5,7 +5,7 @@ Only 1 time option is a required input in the configuration file:
 - `dt_routing` - the time interval, in seconds, between routing calculation steps. It must be constant across all rivers
   and for the full simulation.
 
-By default, river-route reports routed flows as the average flow that occured over the same time frequency that the
+By default, river-route reports routed flows as the average flow that occurred over the same time frequency that the
 runoff volumes are provided in. If you provide 3-hourly runoff volumes for each catchment. Your output will be the
 average flow in each river segment over the same 3-hour interval. You can change this by specifying:
 
