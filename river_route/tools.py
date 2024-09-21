@@ -85,5 +85,5 @@ def get_adjacency_matrix(routing_params_file: str, connectivity_file: str) -> sc
     Generate adjacency matrix from connectivity file
     """
     g = connectivity_to_digraph(connectivity_file)
-    sorted_order = pd.read_parquet(routing_params_file).iloc[:, 0].flatten().tolist()
+    sorted_order = pd.read_parquet(routing_params_file).iloc[:, 0].tolist()
     return scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(g, nodelist=sorted_order).T)
