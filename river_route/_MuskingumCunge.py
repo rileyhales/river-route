@@ -16,10 +16,10 @@ import xarray as xr
 import yaml
 from scipy.optimize import minimize_scalar
 
-from .__metadata__ import __version__ as VERSION
+from .__metadata__ import __version__
 from .runoff import calc_catchment_volumes
-from .tools import connectivity_to_adjacency_matrix
 from .tools import connectivity_to_digraph
+from .tools import get_adjacency_matrix
 
 __all__ = ['MuskingumCunge', ]
 
@@ -100,7 +100,7 @@ class MuskingumCunge:
         self.conf.update(kwargs)
 
         # set default values for configs when possible
-        self.conf['river-route-version'] = VERSION
+        self.conf['river-route-version'] = __version__
         self.conf['log'] = bool(self.conf.get('log', True))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
@@ -187,7 +187,7 @@ class MuskingumCunge:
         return
 
     def _log_configs(self) -> None:
-        LOG.debug(f'river-route version: {VERSION}')
+        LOG.debug(f'river-route version: {__version__}')
         LOG.debug(f'Number of Rivers: {self._read_river_ids().shape[0]}')
         LOG.debug('Configs:')
         for k, v in self.conf.items():
@@ -235,7 +235,7 @@ class MuskingumCunge:
         if hasattr(self, 'A'):
             return
         LOG.debug('Calculating Network Adjacency Matrix (A)')
-        self.A = connectivity_to_adjacency_matrix(self.conf['connectivity_file'])
+        self.A = get_adjacency_matrix(self.conf['routing_params_file'], self.conf['connectivity_file'])
         return
 
     def _set_lhs_matrix(self, c2: np.array = None) -> None:
@@ -434,11 +434,11 @@ class MuskingumCunge:
         self._set_adjacency_matrix()
 
         # find the indices of the rivers which have observed flows
-        G = self._get_digraph()
+        g = self._get_digraph()
         subgraph_rivers = set()
         for river_id in observed.columns:
             subgraph_rivers.update([river_id, ])
-            subgraph_rivers.update(nx.ancestors(G, river_id))
+            subgraph_rivers.update(nx.ancestors(g, river_id))
         # sort the river IDs to match the order they appear in the routing parameters file
         river_ids = pd.Series(self._read_river_ids())
         subgraph_rivers = pd.Series(list(subgraph_rivers))
@@ -682,8 +682,8 @@ class MuskingumCunge:
         if type(river_id) is not int:
             raise TypeError(f'river_id should be an integer ID of a river to mass balance')
         if ancestors is None:
-            G = connectivity_to_digraph(self.conf['connectivity_file'])
-            ancestors = set(list(nx.ancestors(G, river_id)) + [river_id, ])
+            g = connectivity_to_digraph(self.conf['connectivity_file'])
+            ancestors = set(list(nx.ancestors(g, river_id)) + [river_id, ])
         with xr.open_mfdataset(self.conf['catchment_volumes_file']) as ds:
             vdf = (
                 ds
