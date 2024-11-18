@@ -21,14 +21,14 @@ from .runoff import calc_catchment_volumes
 from .tools import connectivity_to_digraph
 from .tools import get_adjacency_matrix
 
-__all__ = ['MuskingumCunge', ]
+__all__ = ['Muskingum', ]
 
 LOG = logging.getLogger('river_route')
 lvl_calibrate = logging.INFO + 5
 logging.addLevelName(lvl_calibrate, 'CALIBRATE')
 
 
-class MuskingumCunge:
+class Muskingum:
     # Given configs
     conf: dict
 
@@ -279,9 +279,9 @@ class MuskingumCunge:
 
     def _set_muskingum_coefficients(self, k: np.ndarray = None, x: np.ndarray = None) -> None:
         """
-        Calculate the 3 MuskingumCunge routing coefficients for each segment using given k and x
+        Calculate the 3 Muskingum routing coefficients for each segment using given k and x
         """
-        LOG.debug('Calculating MuskingumCunge coefficients')
+        LOG.debug('Calculating Muskingum coefficients')
 
         self._set_linear_routing_params()
         k = k if k is not None else self.k
@@ -295,7 +295,7 @@ class MuskingumCunge:
         self.c3 = ((2 * (1 - x)) - dt_div_k) / denom
 
         # sum of coefficients should be 1 (or arbitrarily close) for all segments
-        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'MuskingumCunge coefficients do not sum to 1'
+        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
         return
 
     def _set_nonlinear_routing_table(self) -> None:
@@ -364,14 +364,14 @@ class MuskingumCunge:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
         return
 
-    def route(self, **kwargs) -> 'MuskingumCunge':
+    def route(self, **kwargs) -> 'Muskingum':
         """
         Performs time-iterative runoff routing through the river network
 
         Keyword Args:
 
         Returns:
-            river_route.MuskingumCunge
+            river_route.Muskingum
         """
         LOG.info(f'Beginning routing')
         t1 = datetime.datetime.now()
@@ -414,7 +414,7 @@ class MuskingumCunge:
         LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def calibrate(self, observed: pd.DataFrame, overwrite_params_file: bool = False) -> 'MuskingumCunge':
+    def calibrate(self, observed: pd.DataFrame, overwrite_params_file: bool = False) -> 'Muskingum':
         """
         Calibrate K and X to given measured_values using optimization algorithms
 
@@ -423,7 +423,7 @@ class MuskingumCunge:
             overwrite_params_file: If True, the calibration will overwrite the routing_params_file with the new values
 
         Returns:
-            river_route.MuskingumCunge
+            river_route.Muskingum
         """
         LOG.info(f'Beginning optimization')
         t1 = datetime.datetime.now()
@@ -485,6 +485,9 @@ class MuskingumCunge:
             LOG.log(lvl_calibrate, '-' * 80)
 
         elif self.conf['routing'] == 'nonlinear':
+            obj = partial(self._calibration_objective,
+                          observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes)
+
             raise NotImplementedError('Nonlinear calibration not yet implemented')
         else:
             raise ValueError('Routing method not recognized')
@@ -633,7 +636,7 @@ class MuskingumCunge:
             flow_var.units = 'm3 s-1'
         return
 
-    def set_write_outflows(self, func: callable) -> 'MuskingumCunge':
+    def set_write_outflows(self, func: callable) -> 'Muskingum':
         """
         Overwrites the default write_outflows method to a custom function and returns the class instance so that you
         can chain the method with the constructor.
@@ -642,7 +645,7 @@ class MuskingumCunge:
             func (callable): a function that takes 3 keyword arguments: df, outflow_file, runoff_file and returns None
 
         Returns:
-            river_route.MuskingumCunge
+            river_route.Muskingum
         """
         self.write_outflows = func
         return self

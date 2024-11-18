@@ -37,6 +37,14 @@ dt_total == dt_runoff * number_of_time_steps
   be automatically constructed.
 - The length of the routing computations must be equal to the length of the runoff data.
 
+## Right and Left Aligned Time Series
+
+!!! warning
+    Runoff data may be given by right- or left-aligned dates and intervals. For example, hourly runoff data may say 5pm and the runoff number may 
+    represent the runoff that occurred from 4pm to 5pm (right-aligned) or from 5pm to 6pm (left-aligned). The routing calculations are performed and 
+    interpretations are most naturally computed with right-aligned dates but can be valid with left-aligned dates. Beware which alignment of your 
+    data or you might inadvertently average or shift data off by 1 interval/step.
+
 ## Limitations
 
 1. You must route each interval of runoff data at least 1 time before the next interval of runoff data. You should
