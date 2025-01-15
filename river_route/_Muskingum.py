@@ -15,11 +15,13 @@ import tqdm
 import xarray as xr
 import yaml
 from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize
 
 from .__metadata__ import __version__
 from .runoff import calc_catchment_volumes
 from .tools import connectivity_to_digraph
 from .tools import get_adjacency_matrix
+from .metrics import kge2012
 
 __all__ = ['Muskingum', ]
 
@@ -295,6 +297,11 @@ class Muskingum:
         self.c3 = ((2 * (1 - x)) - dt_div_k) / denom
 
         # sum of coefficients should be 1 (or arbitrarily close) for all segments
+        if not np.allclose(self.c1 + self.c2 + self.c3, 1):
+            LOG.warning('Muskingum coefficients do not sum to 1')
+            LOG.debug(f'c1: {self.c1}')
+            LOG.debug(f'c2: {self.c2}')
+            LOG.debug(f'c3: {self.c3}')
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
         return
 
@@ -307,8 +314,8 @@ class Muskingum:
 
         self.nonlinear_table = pd.read_parquet(self.conf['routing_params_file'])
         self.q_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('q_')])
-        self.k_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('k_')])
-        self.x_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('x_')])
+        self.k_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('k')])
+        self.x_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('x')])
         if len(self.k_columns) == 0 or len(self.x_columns) == 0 or len(self.q_columns) == 0:
             LOG.error('No nonlinear q or k or x columns found in routing params file')
             LOG.debug(f'k columns: {self.k_columns}')
@@ -324,7 +331,7 @@ class Muskingum:
         k = self.nonlinear_table[self.k_columns[0]].values
         x = self.nonlinear_table[self.x_columns[0]].values
 
-        for q_col, k_col, x_col in zip(self.q_columns, self.k_columns, self.x_columns):  # small to large
+        for q_col, k_col, x_col in zip(self.q_columns, self.k_columns[1:], self.x_columns[1:]):  # small to large
             values_to_change = (q_t > self.nonlinear_table[q_col]).values
             k[values_to_change] = self.nonlinear_table[k_col][values_to_change]
             x[values_to_change] = self.nonlinear_table[x_col][values_to_change]
@@ -485,9 +492,25 @@ class Muskingum:
             LOG.log(lvl_calibrate, '-' * 80)
 
         elif self.conf['routing'] == 'nonlinear':
+            self._set_nonlinear_routing_table()
+            self._BACKUP_NONLINEAR_TABLE = self.nonlinear_table.copy()
             obj = partial(self._calibration_objective,
                           observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes)
-
+            # we need to calibrate several parameters at once
+            # k, x, q1-scalar, k1-scalar, x1-scalar, q2-scalar, k2-scalar, x2-scalar
+            objective_values = np.array([1, 0.5, 0.5, 1, 1, 1, 1, 1])
+            bounds = [
+                (0.75, 1.2),  # k
+                (0.0, 0.5),  # x
+                (0.5, 1.5),  # q1-scalar
+                (0.5, 1.5),  # k1-scalar
+                (0.5, 1.5),  # x1-scalar
+                (0.75, 1.75),  # q2-scalar
+                (0.75, 1.75),  # k2-scalar
+                (0.75, 1.75),  # x2-scalar
+            ]
+            result = minimize(obj, objective_values, bounds=bounds)
+            LOG.log(lvl_calibrate, result)
             raise NotImplementedError('Nonlinear calibration not yet implemented')
         else:
             raise ValueError('Routing method not recognized')
@@ -577,7 +600,20 @@ class Muskingum:
             k = self.k if var != 'k' else self.k * iteration
             x = self.x if var != 'x' else self.x * iteration
         elif self.conf['routing'] == 'nonlinear':
-            raise NotImplementedError('Nonlinear calibration not yet implemented')
+            # raise NotImplementedError('Nonlinear calibration not yet implemented')
+            self.nonlinear_table = self._BACKUP_NONLINEAR_TABLE.copy()
+            # self.nonlinear_table[self.k_columns[0]] = self.nonlinear_table[self.k_columns[0]] * iteration[0]
+            # self.nonlinear_table[self.x_columns[0]] = iteration[1]
+            k = self.k * iteration[0]
+            x = iteration[1]
+
+            self.nonlinear_table[self.q_columns[0]] = self.nonlinear_table[self.q_columns[0]] * iteration[2]
+            self.nonlinear_table[self.k_columns[1]] = self.nonlinear_table[self.k_columns[1]] * iteration[3]
+            self.nonlinear_table[self.x_columns[1]] = iteration[4]
+
+            self.nonlinear_table[self.q_columns[1]] = self.nonlinear_table[self.q_columns[1]] * iteration[5]
+            self.nonlinear_table[self.k_columns[2]] = self.nonlinear_table[self.k_columns[2]] * iteration[6]
+            self.nonlinear_table[self.x_columns[2]] = iteration[7]
         else:
             raise NotImplementedError('Calibration iteration must be a scalar or a 2-element array')
 
@@ -590,13 +626,17 @@ class Muskingum:
                 iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:
                 iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates, columns=observed.columns)])
-        assert iter_df.shape == observed.shape, 'Observed flow df does not match calculated flows shape'
-        assert (iter_df.index == observed.index).all(), 'Observed flow df has a different index than calculated flows'
-        assert (iter_df.columns == observed.columns).all(), 'Observed flow df columns do not match calculated df'
-        mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
-        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        # assert iter_df.shape == observed.shape, 'Observed flow df does not match calculated flows shape'
+        # assert (iter_df.index == observed.index).all(), 'Observed flow df has a different index than calculated flows'
+        # assert (iter_df.columns == observed.columns).all(), 'Observed flow df columns do not match calculated df'
+        # mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
+        # LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
+        y_true, y_pred = observed.merge(iter_df, left_index=True, right_index=True, suffixes=('_true', '_pred')).dropna().values.T
+        objective_function_value = np.absolute(kge2012(y_true, y_pred) - 1)
+        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - ABS(KGE - 1): {objective_function_value}')
         del self.initial_state
-        return mse
+        # return mse
+        return objective_function_value
 
     def _write_outflows(self, dates: np.array, outflow_array: np.array, outflow_file: str, runoff_file: str) -> None:
         dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
