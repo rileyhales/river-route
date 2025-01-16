@@ -227,7 +227,7 @@ class Muskingum:
         if final_state_file == '':
             return
         LOG.debug('Writing Final State to Parquet')
-        pd.DataFrame(self.initial_state, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
+        pd.DataFrame(np.array(self.initial_state).T, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
         return
 
     def _get_digraph(self) -> nx.DiGraph:
