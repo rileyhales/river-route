@@ -25,7 +25,7 @@ from .metrics import kge2012
 
 __all__ = ['Muskingum', ]
 
-LOG = logging.getLogger('river_route')
+LOG = logging.getLogger(f'river_route.{os.getpid()}')
 lvl_calibrate = logging.INFO + 5
 logging.addLevelName(lvl_calibrate, 'CALIBRATE')
 
