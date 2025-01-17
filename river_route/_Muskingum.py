@@ -160,6 +160,9 @@ class Muskingum:
         # if the initial state file is provided, it must exist
         if self.conf.get('initial_state_file', ''):
             assert os.path.exists(self.conf['initial_state_file']), FileNotFoundError('Initial state file not found')
+        # if the key exists and the path is '' then delete the key
+        if 'initial_state_file' in self.conf and not self.conf['initial_state_file']:
+            del self.conf['initial_state_file']
 
         # either the catchment volumes or runoff depths files must be provided but not both
         assert self.conf.get('catchment_volumes_file', False) or self.conf.get('runoff_depths_file', False), \
@@ -626,14 +629,11 @@ class Muskingum:
                 iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
             else:
                 iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates, columns=observed.columns)])
-        # assert iter_df.shape == observed.shape, 'Observed flow df does not match calculated flows shape'
-        # assert (iter_df.index == observed.index).all(), 'Observed flow df has a different index than calculated flows'
-        # assert (iter_df.columns == observed.columns).all(), 'Observed flow df columns do not match calculated df'
-        # mse = np.sum(np.mean((iter_df.values - observed.values) ** 2, axis=0))
-        # LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - MSE: {mse}')
-        y_true, y_pred = observed.merge(iter_df, left_index=True, right_index=True, suffixes=('_true', '_pred')).dropna().values.T
+        y_true, y_pred = observed.merge(iter_df, left_index=True, right_index=True,
+                                        suffixes=('_true', '_pred')).dropna().values.T
         objective_function_value = np.absolute(kge2012(y_true, y_pred) - 1)
-        LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - ABS(KGE - 1): {objective_function_value}')
+        LOG.log(lvl_calibrate,
+                f'Iteration {self._calibration_iteration_number} - ABS(KGE - 1): {objective_function_value}')
         del self.initial_state
         # return mse
         return objective_function_value
