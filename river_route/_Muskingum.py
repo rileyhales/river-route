@@ -15,7 +15,6 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
-from scipy.optimize import minimize
 from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__
