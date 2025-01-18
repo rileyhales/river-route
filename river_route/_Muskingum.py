@@ -44,12 +44,6 @@ class Muskingum:
     c3: np.array  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
     initial_state: (np.array, np.array)  # Q init, R init
 
-    # Nonlinear routing parameters - persisted because of frequent reuse during routing
-    nonlinear_table: pd.DataFrame
-    q_columns: list
-    k_columns: list
-    x_columns: list
-
     # Time options
     dt_total: float
     dt_runoff: float
@@ -109,7 +103,6 @@ class Muskingum:
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
 
         # compute, routing, solver options (time is validated separately at compute step)
-        self.conf['routing'] = self.conf.get('routing', 'linear')
         self.conf['input_type'] = self.conf.get('input_type', 'sequential')
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
@@ -142,7 +135,6 @@ class Muskingum:
         assert os.path.exists(self.conf['connectivity_file']), FileNotFoundError('Connectivity file not found')
 
         # check for valid options
-        assert self.conf['routing'] in ['linear', 'nonlinear'], 'Routing method not recognized'
         assert self.conf['input_type'] in ['sequential', 'ensemble'], 'Input type not recognized'
         assert self.conf['runoff_type'] in ['incremental', 'cumulative'], 'Runoff type not recognized'
 
@@ -309,41 +301,6 @@ class Muskingum:
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
         return
 
-    def _set_nonlinear_routing_table(self) -> None:
-        """
-        Sets class properties for nonlinear routing - nonlinear_table, q_columns, k_columns, x_columns
-        """
-        if hasattr(self, 'nonlinear_table'):
-            return
-
-        self.nonlinear_table = pd.read_parquet(self.conf['routing_params_file'])
-        self.q_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('q_')])
-        self.k_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('k')])
-        self.x_columns = sorted([c for c in self.nonlinear_table.columns if c.startswith('x')])
-        if len(self.k_columns) == 0 or len(self.x_columns) == 0 or len(self.q_columns) == 0:
-            self.LOG.error('No nonlinear q or k or x columns found in routing params file')
-            self.LOG.debug(f'k columns: {self.k_columns}')
-            self.LOG.debug(f'x columns: {self.x_columns}')
-            self.LOG.debug(f'q columns: {self.q_columns}')
-            raise ValueError('No nonlinear q or k or x columns found in routing params file')
-        self.nonlinear_table = self.nonlinear_table[self.k_columns + self.x_columns + self.q_columns]
-        return
-
-    def _set_nonlinear_muskingum_coefficients(self, q_t: np.array) -> None:
-        self._set_nonlinear_routing_table()
-
-        k = self.nonlinear_table[self.k_columns[0]].values
-        x = self.nonlinear_table[self.x_columns[0]].values
-
-        for q_col, k_col, x_col in zip(self.q_columns, self.k_columns[1:], self.x_columns[1:]):  # small to large
-            values_to_change = (q_t > self.nonlinear_table[q_col]).values
-            k[values_to_change] = self.nonlinear_table[k_col][values_to_change]
-            x[values_to_change] = self.nonlinear_table[x_col][values_to_change]
-
-        self._set_muskingum_coefficients(k=k, x=x)
-        self._set_lhs_matrix()
-        return
-
     def _volumes_output_generator(self) -> Tuple[pd.DataFrame, str]:
         if self.conf.get('catchment_volumes_file', False):
             for volume_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
@@ -466,60 +423,36 @@ class Muskingum:
 
         self._calibration_iteration_number = 0
         self.LOG.setLevel('CALIBRATE')
-        if self.conf['routing'] == 'linear':
-            obj = partial(self._calibration_objective,
-                          observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='k')
-            result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
-            self.k = self.k * result_k.x
-            self.LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
-            self.LOG.log(lvl_calibrate, result_k)
-            self.LOG.log(lvl_calibrate, '-' * 80)
 
-            self._calibration_iteration_number = 0
-            obj = partial(self._calibration_objective,
-                          observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='x')
-            result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
-            self.x = self.x * result_x.x
-            self.LOG.log(lvl_calibrate, f'Optimal x scalar: {result_x.x}')
-            self.LOG.log(lvl_calibrate, result_x)
+        obj = partial(self._calibration_objective,
+                      observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='k')
+        result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
+        self.k = self.k * result_k.x
+        self.LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
+        self.LOG.log(lvl_calibrate, result_k)
+        self.LOG.log(lvl_calibrate, '-' * 80)
 
-            if overwrite_params_file:
-                df = pd.read_parquet(self.conf['routing_params_file'])
-                df['k'] = df['k'] * result_k.x
-                df['x'] = df['x'] * result_x.x
-                df.to_parquet(self.conf['routing_params_file'])
+        self._calibration_iteration_number = 0
+        obj = partial(self._calibration_objective,
+                      observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='x')
+        result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
+        self.x = self.x * result_x.x
+        self.LOG.log(lvl_calibrate, f'Optimal x scalar: {result_x.x}')
+        self.LOG.log(lvl_calibrate, result_x)
 
-            self.LOG.log(lvl_calibrate, '-' * 80)
-            self.LOG.log(lvl_calibrate, f'Final k scalar: {result_k.x}')
-            self.LOG.log(lvl_calibrate, f'Final x scalar: {result_x.x}')
-            self.LOG.log(lvl_calibrate, f'Total iterations: {result_k.nit + result_x.nit}')
-            self.LOG.log(lvl_calibrate, '-' * 80)
+        if overwrite_params_file:
+            df = pd.read_parquet(self.conf['routing_params_file'])
+            df['k'] = df['k'] * result_k.x
+            df['x'] = df['x'] * result_x.x
+            df.to_parquet(self.conf['routing_params_file'])
 
-        elif self.conf['routing'] == 'nonlinear':
-            self._set_nonlinear_routing_table()
-            self._BACKUP_NONLINEAR_TABLE = self.nonlinear_table.copy()
-            obj = partial(self._calibration_objective,
-                          observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes)
-            # we need to calibrate several parameters at once
-            # k, x, q1-scalar, k1-scalar, x1-scalar, q2-scalar, k2-scalar, x2-scalar
-            objective_values = np.array([1, 0.5, 0.5, 1, 1, 1, 1, 1])
-            bounds = [
-                (0.75, 1.2),  # k
-                (0.0, 0.5),  # x
-                (0.5, 1.5),  # q1-scalar
-                (0.5, 1.5),  # k1-scalar
-                (0.5, 1.5),  # x1-scalar
-                (0.75, 1.75),  # q2-scalar
-                (0.75, 1.75),  # k2-scalar
-                (0.75, 1.75),  # x2-scalar
-            ]
-            result = minimize(obj, objective_values, bounds=bounds)
-            self.LOG.log(lvl_calibrate, result)
-            raise NotImplementedError('Nonlinear calibration not yet implemented')
-        else:
-            raise ValueError('Routing method not recognized')
+        self.LOG.log(lvl_calibrate, '-' * 80)
+        self.LOG.log(lvl_calibrate, f'Final k scalar: {result_k.x}')
+        self.LOG.log(lvl_calibrate, f'Final x scalar: {result_x.x}')
+        self.LOG.log(lvl_calibrate, f'Total iterations: {result_k.nit + result_x.nit}')
+        self.LOG.log(lvl_calibrate, '-' * 80)
+
         self.LOG.setLevel(self.conf.get('log_level', 'INFO'))
-
         t2 = datetime.datetime.now()
         self.LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
 
@@ -557,8 +490,6 @@ class Muskingum:
             r_t = volumes[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
-                if self.conf['routing'] == 'nonlinear':
-                    self._set_nonlinear_muskingum_coefficients(q_t)
                 rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
                 q_t[:] = self._solver(rhs, q_t)
                 interval_flows[routing_sub_iteration_num, :] = q_t
@@ -599,27 +530,9 @@ class Muskingum:
         iter_df = pd.DataFrame(columns=riv_idxes)
 
         # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        if self.conf['routing'] == 'linear' and var is not None:
-            assert var in ['k', 'x'], 'Calibration variable must be k or x for linear calibration'
-            k = self.k if var != 'k' else self.k * iteration
-            x = self.x if var != 'x' else self.x * iteration
-        elif self.conf['routing'] == 'nonlinear':
-            # raise NotImplementedError('Nonlinear calibration not yet implemented')
-            self.nonlinear_table = self._BACKUP_NONLINEAR_TABLE.copy()
-            # self.nonlinear_table[self.k_columns[0]] = self.nonlinear_table[self.k_columns[0]] * iteration[0]
-            # self.nonlinear_table[self.x_columns[0]] = iteration[1]
-            k = self.k * iteration[0]
-            x = iteration[1]
-
-            self.nonlinear_table[self.q_columns[0]] = self.nonlinear_table[self.q_columns[0]] * iteration[2]
-            self.nonlinear_table[self.k_columns[1]] = self.nonlinear_table[self.k_columns[1]] * iteration[3]
-            self.nonlinear_table[self.x_columns[1]] = iteration[4]
-
-            self.nonlinear_table[self.q_columns[1]] = self.nonlinear_table[self.q_columns[1]] * iteration[5]
-            self.nonlinear_table[self.k_columns[2]] = self.nonlinear_table[self.k_columns[2]] * iteration[6]
-            self.nonlinear_table[self.x_columns[2]] = iteration[7]
-        else:
-            raise NotImplementedError('Calibration iteration must be a scalar or a 2-element array')
+        assert var in ['k', 'x'], 'Calibration variable must be k or x for linear calibration'
+        k = self.k if var != 'k' else self.k * iteration
+        x = self.x if var != 'x' else self.x * iteration
 
         for dates, volumes_array, runoff_file, outflow_file in self._volumes_output_generator():
             self._set_time_params(dates)

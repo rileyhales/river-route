@@ -23,7 +23,7 @@ Every `river-route` process needs at least the following 4 variables
 
 An example yaml file is given below with the default values prepopulated where possible.
 
-```yaml title="Config File Example river-route v0.15.0"
+```yaml title="Config File Example river-route v1.0.3"
 {% include-markdown "../../examples/config.yaml" %}
 ```
 
@@ -39,7 +39,6 @@ The following table is a complete list of all configuration options and their pu
 | runoff_depths_files    | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
 | weight_table_file      | True     | File Path | Required Input      | Path to the weight table file.                                         |
 | outflow_file           | True     | File Path | Required Input      | Path where the outflows netCDF file should be saved.                   |
-| routing                | False    | String    | Compute Options     | The routing method to use: "linear" or "nonlinear".                    |
 | input_type             | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
 | runoff_type            | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
 | dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              

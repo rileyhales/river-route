@@ -11,6 +11,7 @@ REQUIRES_PYTHON = '>=3.12.0'
 with open(f'./{NAME}/__metadata__.py') as f:
     version_pattern = r'__version__ = [\'"](\d+\.\d+\.\d+)[\'"]'
     VERSION = re.search(version_pattern, f.read()).group(1)
+    print(f'Version: {VERSION}')
 
 with open('./requirements.txt') as f:
     INSTALL_REQUIRES = f.read().splitlines()
