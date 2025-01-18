@@ -14,12 +14,14 @@ __all__ = [
 ]
 
 
-def routing_files_from_RAPID(riv_bas_id: str,
-                             k: str,
-                             x: str,
-                             rapid_connect: str,
-                             out_params: str,
-                             out_connectivity: str, ) -> None:
+def routing_files_from_RAPID(
+        riv_bas_id: str,
+        k: str,
+        x: str,
+        rapid_connect: str,
+        out_params: str,
+        out_connectivity: str,
+) -> None:
     """
     Generate river-route configuration files from input files for RAPID
 
@@ -49,6 +51,36 @@ def routing_files_from_RAPID(riv_bas_id: str,
         .rename(columns={0: 'river_id', 1: 'ds_river_id'})
         .to_parquet(out_connectivity)
     )
+    return
+
+
+def subset_configs_to_river(
+        target_river: int,
+        params: str,
+        out_params: str,
+        connectivity: str,
+        out_connectivity: str,
+        weights: str = None,
+        out_weights: str = None,
+) -> None:
+    """
+    Subset routing parameters, connectivity, and weight tables to only river upstream of a given id
+    """
+    pdf = pd.read_parquet(params)
+    cdf = pd.read_parquet(connectivity)
+
+    G = connectivity_to_digraph(connectivity)
+    upstreams = list(nx.ancestors(G, target_river))
+    upstreams.append(target_river)
+
+    pdf[pdf['river_id'].isin(upstreams)].to_parquet(out_params)
+    cdf = cdf[cdf['river_id'].isin(upstreams)]
+    cdf.loc[cdf['river_id'] == target_river, 'ds_river_id'] = -1
+    cdf.to_parquet(out_connectivity)
+
+    if weights is not None and out_weights is not None:
+        wdf = pd.read_csv(weights)
+        wdf[wdf['river_id'].isin(upstreams)].to_csv(out_weights, index=False)
     return
 
 
@@ -86,4 +118,4 @@ def get_adjacency_matrix(routing_params_file: str, connectivity_file: str) -> sc
     """
     g = connectivity_to_digraph(connectivity_file)
     sorted_order = pd.read_parquet(routing_params_file).iloc[:, 0].tolist()
-    return scipy.sparse.csc_matrix(nx.to_scipy_sparse_array(g, nodelist=sorted_order).T)
+    return scipy.sparse.csc_matrix(nx.convert_matrix.to_scipy_sparse_array(g, nodelist=sorted_order).T)

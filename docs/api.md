@@ -1,6 +1,6 @@
 # API Documentation
 
-::: river_route.MuskingumCunge
+::: river_route.Muskingum
     handler: python
     options:
       members_order: source

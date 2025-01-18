@@ -18,5 +18,5 @@ def main():
     args = parser.parse_args()
 
     if args.config:
-        return rr.MuskingumCunge(args.config).route()
+        return rr.Muskingum(args.config).route()
     return parser.print_help()

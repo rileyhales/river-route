@@ -7,19 +7,13 @@ routing_params_file: '/path/to/params.parquet'
 ```
 
 The routing parameters file is a parquet file. It has 3 columns and 1 row per river in the watershed. The index is
-ignored. If you use nonlinear routing, you can provide more columns with k and x values to use at different thresholds
-of Q. Nonlinear routing columns should be named k_1, x_1, q_1, followed by k_2, x_2, q_2, for as many thresholds as you
-chose. You may provide as many columns as you wish as long as you also provide a thresholds file. The rows (rivers)
-***must be sorted in topological order*** from upstream to downstream.
+ignored. The rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-| Column   | Data Type | Description                                                                    |
-|----------|-----------|--------------------------------------------------------------------------------|
-| river_id | integer   | Unique ID of a river segment                                                   |
-| k        | float     | the k parameter of the MuskingumCunge Cunge routing equation length / velocity |
-| x        | float     | the x parameter of the MuskingumCunge Cunge routing equation. x : [0, 0.5]     |
-| k_1      | float     | Optional, the k parameter of the MuskingumCunge Cunge routing equation at Q_1  |
-| x_1      | float     | Optional, the x parameter of the MuskingumCunge Cunge routing equation at Q_1  |
-| q_1      | float     | Optional, the minimum value of Q at which to start using use k_1 and x_1       |
+| Column   | Data Type | Description                                                              |
+|----------|-----------|--------------------------------------------------------------------------|
+| river_id | integer   | Unique ID of a river segment                                             |
+| k        | float     | the k parameter of the Muskingum routing equation length / velocity      |
+| x        | float     | the x parameter of the Muskingum routing equation. x : [0, 0.5]          |
 
 ### Connectivity File
 
@@ -125,5 +119,5 @@ initial_state_file: '/path/to/initial.parquet'
 final_state_file: '/path/to/final.parquet'
 ```
 
-State information are stored in parquet files. Muskingum Cunge routing solves for river discharge at time t+1 as a
+State information are stored in parquet files. Muskingum routing solves for river discharge at time t+1 as a
 function of inflow volumes at time t and time t+1, and the discharge at time t. 

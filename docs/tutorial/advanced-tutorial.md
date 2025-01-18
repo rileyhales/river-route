@@ -6,7 +6,7 @@ Depending on your preference, you may want to generate many config files in adva
 future use.
 
 The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments 
-to the `MuskingumCunge` class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
+to the `Muskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
 instead.
 
 ```python
@@ -30,7 +30,7 @@ os.makedirs(outputs, exist_ok=True)
 
 m = (
     rr
-    .MuskingumCunge(**{
+    .Muskingum(**{
         'routing_params_file': params_file,
         'connectivity_file': connectivity_file,
         'catchment_volumes_file': volume_files,
@@ -42,7 +42,7 @@ m = (
 
 ## Customizing Output File Type and Structure
 
-You can override the default function used by `river-route` when writing routed flows to disc. The MuskingumCunge class
+You can override the default function used by `river-route` when writing routed flows to disc. The Muskingum class
 formats the discharge data into a Pandas DataFrame and then calls the `write_outflows` method. By default, this function
 writes the dataframe to a netCDF file.
 
@@ -72,7 +72,7 @@ def custom_write_outflows(df: pd.DataFrame, outflow_file: str, runoff_file: str)
 
 (
     rr
-    .MuskingumCunge('../../examples/config.yaml')
+    .Muskingum('../../examples/config.yaml')
     .set_write_outflows(custom_write_outflows)
     .route()
 )
@@ -94,7 +94,7 @@ def write_outflows_to_sqlite(df: pd.DataFrame, outflow_file: str, runoff_file: s
 
 (
     rr
-    .MuskingumCunge('config.yaml')
+    .Muskingum('config.yaml')
     .set_write_outflows(write_outflows_to_sqlite)
     .route()
 )
@@ -119,7 +119,7 @@ def append_to_existing_file(df: pd.DataFrame, outflow_file: str, runoff_file: st
 
 (
     rr
-    .MuskingumCunge('config.yaml')
+    .Muskingum('config.yaml')
     .set_write_outflows(append_to_existing_file)
     .route()
 )
@@ -140,7 +140,7 @@ def save_partial_results(df: pd.DataFrame, outflow_file: str, runoff_file: str) 
 
 (
     rr
-    .MuskingumCunge('config.yaml')
+    .Muskingum('config.yaml')
     .set_write_outflows(save_partial_results)
     .route()
 )

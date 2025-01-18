@@ -12,7 +12,6 @@ outflow_file: ''
 initial_state_file: ''
 final_state_file: ''
 # Compute Options - (Optional)
-routing: 'linear'            # "linear" or "nonlinear"
 input_type: 'sequential'     # "sequential" or "ensemble"
 runoff_type: 'incremental'   # "incremental" or "cumulative"
 dt_routing: 0                # defaults to time step of volume inputs

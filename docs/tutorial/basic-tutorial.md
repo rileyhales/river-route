@@ -146,7 +146,7 @@ config_file_path = '/path/to/config.yaml'
 
 m = (
     rr
-    .MuskingumCunge(config_file_path)
+    .Muskingum(config_file_path)
     .route()
 )
 ```
