@@ -508,7 +508,11 @@ class Muskingum:
         return outflow_array
 
     def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
+        solution, info = scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)
+        if info != 0:
+            self.LOG.error(f'Solver completed without converging. Try increasing iterations and tolerance')
+            raise RuntimeError('Solver did not converge. See log for more details')
+        return solution
 
     def _calibration_objective(self,
                                iteration: np.array, *, observed: pd.DataFrame,
