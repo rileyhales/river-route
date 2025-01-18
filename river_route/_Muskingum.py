@@ -318,7 +318,6 @@ class Muskingum:
                 volumes_df = calc_catchment_volumes(
                     runoff_file,
                     weight_table=self.conf['weight_table_file'],
-                    params_file=self.conf['routing_params_file'],
                     river_id_var=self.conf['var_river_id'],
                     runoff_var=self.conf['var_runoff_depth'],
                     x_var=self.conf['var_x'],
