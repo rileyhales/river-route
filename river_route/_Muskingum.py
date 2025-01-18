@@ -238,11 +238,11 @@ class Muskingum:
         self.A = get_adjacency_matrix(self.conf['routing_params_file'], self.conf['connectivity_file'])
         return
 
-    def _set_lhs_matrix(self, c2: np.array = None) -> None:
+    def _set_lhs_matrix(self) -> None:
         if not hasattr(self, 'lhs'):
-            c2 = c2 if c2 is not None else self.c2
-            self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(c2) @ self.A)
+            self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
             self.lhs = self.lhs.tocsc()
+            del self.lhs_factorized
         if not hasattr(self, 'lhs_factorized') and self.conf.get('_solver_type', 'direct') == 'direct':
             self.LOG.info('Calculating factorized LHS matrix')
             self.lhs_factorized = scipy.sparse.linalg.factorized(self.lhs)
