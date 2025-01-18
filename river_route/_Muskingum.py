@@ -37,6 +37,7 @@ class Muskingum:
     # Routing matrices and vectors
     A: scipy.sparse.csc_matrix  # n x n - adjacency matrix => f(n, connectivity)
     lhs: scipy.sparse.csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
+    lhs_factorized: callable  # n x n - factorized left hand side matrix for direct solutions
     k: np.array  # n x 1 - K values for each segment
     x: np.array  # n x 1 - X values for each segment
     c1: np.array  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
@@ -240,6 +241,9 @@ class Muskingum:
         c2 = c2 if c2 is not None else self.c2
         self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(c2) @ self.A)
         self.lhs = self.lhs.tocsc()
+        if self.conf.get('solver', 'direct') == 'direct':
+            self.LOG.info('Calculating factorized LHS matrix')
+            self.lhs_factorized = scipy.sparse.linalg.factorized(self.lhs)
         return
 
     def _set_time_params(self, dates: np.array) -> None:
@@ -509,7 +513,47 @@ class Muskingum:
         return outflow_array
 
     def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
+        return self._solver_cgs(rhs, q_t)
+
+    def _solver_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
+        self.conf['solver'] = 'cgs'
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
+
+    def _solver_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
+        self.conf['solver'] = 'bicgstab'
+        return scipy.sparse.linalg.bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
+
+    def _solver_direct(self, rhs: np.array, q_t: np.array) -> np.array:
+        return self.lhs_factorized(rhs)
+
+    def set_direct_solver(self,) -> 'Muskingum':
+        """
+        Set using a direct solver of the factorized LHS of the matrix muskingum equation. Returns self.
+
+        Returns:
+            river_route.Muskingum
+        """
+        self.conf['solver'] = 'direct'
+        self._solver = self._solver_direct
+        return self
+
+    def set_iterative_solver(self, solver_type: str = 'cgs') -> 'Muskingum':
+        """
+        Set using an iterative solver of the LHS of the matrix muskingum equation. Returns self.
+
+        Args:
+            solver_type: 'cgs' or 'bicgstab'
+
+        Returns:
+            river_route.Muskingum
+        """
+        if solver_type == 'cgs':
+            self._solver = self._solver_cgs
+        elif solver_type == 'bicgstab':
+            self._solver = self._solver_bicgstab
+        else:
+            raise ValueError('Solver type not recognized. Use cgs or bicgstab')
+        return self
 
     def _calibration_objective(self,
                                iteration: np.array, *, observed: pd.DataFrame,
