@@ -106,6 +106,7 @@ class Muskingum:
         # compute, routing, solver options (time is validated separately at compute step)
         self.conf['input_type'] = self.conf.get('input_type', 'sequential')
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
+        self.conf['solver'] = self.conf.get('solver', 'direct')
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
 
         # expected variable names in input/output files
@@ -513,7 +514,7 @@ class Muskingum:
         return outflow_array
 
     def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
-        return self._solver_cgs(rhs, q_t)
+        return self._solver_direct(rhs, q_t)
 
     def _solver_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
         self.conf['solver'] = 'cgs'
