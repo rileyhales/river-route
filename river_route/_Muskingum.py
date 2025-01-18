@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import os
+import random
 import sys
 from functools import partial
 from typing import Tuple
@@ -14,14 +15,14 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
-from scipy.optimize import minimize_scalar
 from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__
+from .metrics import kge2012
 from .runoff import calc_catchment_volumes
 from .tools import connectivity_to_digraph
 from .tools import get_adjacency_matrix
-from .metrics import kge2012
 
 __all__ = ['Muskingum', ]
 
@@ -68,7 +69,7 @@ class Muskingum:
     write_outflows: callable
 
     def __init__(self, config_file: str = None, **kwargs, ):
-        self.LOG = logging.getLogger(f'river_route.{os.getpid()}')  # unique logger for each process
+        self.LOG = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
         self.set_configs(config_file, **kwargs)
         return
 
