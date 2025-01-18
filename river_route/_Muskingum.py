@@ -106,7 +106,7 @@ class Muskingum:
         # compute, routing, solver options (time is validated separately at compute step)
         self.conf['input_type'] = self.conf.get('input_type', 'sequential')
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
-        self.conf['solver'] = self.conf.get('solver', 'direct')
+        self.conf['_solver_type'] = self.conf.get('_solver_type', 'direct')
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
 
         # expected variable names in input/output files
@@ -239,10 +239,11 @@ class Muskingum:
         return
 
     def _set_lhs_matrix(self, c2: np.array = None) -> None:
-        c2 = c2 if c2 is not None else self.c2
-        self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(c2) @ self.A)
-        self.lhs = self.lhs.tocsc()
-        if self.conf.get('solver', 'direct') == 'direct':
+        if not hasattr(self, 'lhs'):
+            c2 = c2 if c2 is not None else self.c2
+            self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(c2) @ self.A)
+            self.lhs = self.lhs.tocsc()
+        if not hasattr(self, 'lhs_factorized') and self.conf.get('_solver_type', 'direct') == 'direct':
             self.LOG.info('Calculating factorized LHS matrix')
             self.lhs_factorized = scipy.sparse.linalg.factorized(self.lhs)
         return
@@ -517,11 +518,11 @@ class Muskingum:
         return self._solver_direct(rhs, q_t)
 
     def _solver_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
-        self.conf['solver'] = 'cgs'
+        self.conf['_solver_type'] = 'cgs'
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
     def _solver_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
-        self.conf['solver'] = 'bicgstab'
+        self.conf['_solver_type'] = 'bicgstab'
         return scipy.sparse.linalg.bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
     def _solver_direct(self, rhs: np.array, q_t: np.array) -> np.array:
@@ -534,7 +535,7 @@ class Muskingum:
         Returns:
             river_route.Muskingum
         """
-        self.conf['solver'] = 'direct'
+        self.conf['_solver_type'] = 'direct'
         self._solver = self._solver_direct
         return self
 
