@@ -242,7 +242,8 @@ class Muskingum:
         if not hasattr(self, 'lhs'):
             self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
             self.lhs = self.lhs.tocsc()
-            del self.lhs_factorized
+            if hasattr(self, 'lhs_factorized'):
+                del self.lhs_factorized
         if not hasattr(self, 'lhs_factorized') and self.conf.get('_solver_type', 'direct') == 'direct':
             self.LOG.info('Calculating factorized LHS matrix')
             self.lhs_factorized = scipy.sparse.linalg.factorized(self.lhs)
