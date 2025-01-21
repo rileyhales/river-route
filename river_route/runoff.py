@@ -9,7 +9,6 @@ import pandas as pd
 import xarray as xr
 
 __all__ = [
-    'guess_parameters_for_runoff_data',
     'calc_catchment_volumes',
     'write_runoff_volumes',
 ]
@@ -25,71 +24,6 @@ def _cumulative_to_incremental(df) -> pd.DataFrame:
 
 def _incremental_to_cumulative(df) -> pd.DataFrame:
     return df.cumsum()
-
-
-def guess_parameters_for_runoff_data(runoff_data: str, vpu_dir: str) -> dict:
-    """
-    Find the weight table and params file that correspond to a given runoff dataset.
-
-    Args:
-        runoff_data: a string or list of strings of paths to LSM files
-        vpu_dir: a string path to the directory of VPU files which contains weight tables
-    """
-    recognized_runoff_vars = ['ro', 'RO', 'runoff', 'RUNOFF']
-    recognized_x_vars = ['x', 'lon', 'longitude', 'LONGITUDE', 'LON']
-    recognized_y_vars = ['y', 'lat', 'latitude', 'LATITUDE', 'LAT']
-    recognized_time_vars = ['time', 'TIME']
-
-    found_parameters = {
-        'runoff_var': None,
-        'x_var': None,
-        'y_var': None,
-        'time_var': None,
-        'weight_table': None,
-        'dx': None,
-        'dy': None,
-        'x0': None,
-        'y0': None
-    }
-
-    with xr.open_mfdataset(runoff_data) as ds:
-        # check for variable names
-        for var, valid_vars, var_name, key in (
-                (runoff_var, recognized_runoff_vars, 'Runoff'),
-                (x_var, recognized_x_vars, 'X'),
-                (y_var, recognized_y_vars, 'Y'),
-                (time_var, recognized_time_vars, 'Time'),
-        ):
-            key = f'{var_name.lower()}_var'
-            if var:
-                assert var in ds.variables, f"Given {var_name} variable not found in dataset: {runoff_var}"
-                continue
-            options = [x for x in recognized_runoff_vars if x in ds.variables]
-            if len(options) == 0:
-                raise ValueError(f'No {var_name} variable found in the dataset')
-            elif len(options) == 1:
-                found_parameters[key] = options[0]
-            else:
-                raise RuntimeError(f'Multiple {var_name} variables found in the dataset. Please specify {var_name}_var')
-
-        # get the array shape descriptors for finding a weight table
-        dx = ds[x_var].values[1] - ds[x_var].values[0]
-        x0 = ds[x_var].values[0]
-        dy = ds[y_var].values[1] - ds[y_var].values[0]
-        y0 = ds[y_var].values[0]
-
-        # weight table name includes x0=*_y0=*_dx=*_dy=*
-        tables = glob.glob(os.path.join(input_dir, f'weight_*'))
-        tables = [x for x in tables if re.match(fr'weight_.*x0={x0}.*y0={y0}.*dx={dx}.*dy={dy}.*', x)]
-        if not len(tables):
-            logging.error(f'No weight table found in {input_dir} which matches the dataset')
-            raise FileNotFoundError(f'Could not find a weight table in {input_dir} which matches the dataset')
-        if len(tables) > 1:
-            logging.error(f'Multiple weight tables found in {input_dir}. Please specify weight_table')
-            raise ValueError(f'Multiple weight tables found in {input_dir}. Please specify weight_table')
-        table = tables[0]
-
-    return found_parameters
 
 
 def calc_catchment_volumes(
