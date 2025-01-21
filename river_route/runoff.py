@@ -123,6 +123,75 @@ def calc_catchment_volumes(
     return vol_df
 
 
+def calc_catchment_volumes_with_sparse_matrix(
+        runoff_data: str,
+        weight_table: str,
+        runoff_var: str = 'ro',
+        x_var: str = 'lon',
+        y_var: str = 'lat',
+        river_id_var: str = 'river_id',
+        time_var: str = 'time',
+        cumulative: bool = False,
+        force_positive_runoff: bool = False,
+        force_uniform_timesteps: bool = True,
+):
+    """
+    Calculates the catchment runoff volumes from a given runoff dataset and a directory of VPU configs.
+
+    Args:
+        runoff_data (str): a string or list of strings of paths to LSM files
+        weight_table (str): a string path to the weight table
+        runoff_var (str): the name of the runoff variable in the LSM files
+        x_var (str): the name of the x variable in the LSM files
+        y_var (str): the name of the y variable in the LSM files
+        river_id_var (str): the name of the river ID variable in the parameters file
+        time_var (str): the name of the time variable in the LSM files
+        cumulative (bool): whether the runoff data is cumulative or incremental
+        force_positive_runoff (bool): whether to force all runoff values to be >= 0
+        force_uniform_timesteps (bool): whether to force all timesteps to be uniform
+
+    Returns:
+        pd.DataFrame: a DataFrame of the catchment runoff volumes with stream IDs as columns and a datetime index
+    """
+    with xr.open_dataset(weight_table) as ds:
+        weight_df = ds[['river_id', 'x_index', 'y_index', 'proportion']].to_dataframe()
+        sorted_id_area = ds[['sorted_river_id', 'area_sqm']].to_dataframe()
+
+    # get a list of unique x_index and y_index combinations
+    unique_idxs = weight_df[['x_index', 'y_index']].drop_duplicates()
+
+    with xr.open_mfdataset(runoff_data) as ds:
+        # get a dataframe with 1 column per each unique x_index and y_index combination and 1 row per time step
+        vol_df = ds[runoff_var].isel(**{x_var: unique_idxs['x_index'], y_var: unique_idxs['y_index']}).to_dataframe()
+
+    # add a column to the weight dataframe which the order of the row's unique indices in the unique_idxs dataframe
+    weight_df['idx'] = weight_df.apply(lambda x: unique_idxs[(unique_idxs['x_index'] == x['x_index']) & (unique_idxs['y_index'] == x['y_index'])].index[0], axis=1)
+    # make a matrix with 1 row for each unique river_id and 1 column for each unique x_index and y_index combination
+    # the values of that sparse array are the proportion of the area of the river_id that is in that x_index and y_index combination
+    # this can probably be done using a pivot table
+    mapper_df = weight_df[['river_id', 'idx', 'proportion']].pivot(index='river_id', columns='idx', values='proportion').fillna(0)
+    # sort the columns to match the order of the unique_idxs dataframe
+    mapper_df = mapper_df[unique_idxs.index]
+    # make it a sparse matrix
+    mapper = mapper_df.to_sparse(fill_value=0)
+    # multiply the sparse matrix by the dataframe of runoff values
+    # the shape of the dataframes is (time, x_index*y_index) and (river_id, x_index*y_index) respectively.
+    # we'll need to transpose the mapper to get the correct shape
+    # the shape of the resulting dataframe is (time, river_id)
+    vol_df = vol_df @ mapper.T
+    if cumulative:
+        vol_df = _cumulative_to_incremental(vol_df)
+    if force_positive_runoff:
+        vol_df = vol_df.clip(lower=0)
+    # sort the columns to match the order of the sorted_id_area dataframe
+    vol_df = vol_df[sorted_id_area['sorted_river_id']]
+    # multiply the dataframe by the area of the river_id to get the volume
+    # specifically, each column is multiplied by the area of the river_id
+    vol_df = vol_df * sorted_id_area['area_sqm'].values
+
+    return
+
+
 def write_catchment_volumes(vol_df: pd.DataFrame, output_dir: str, label: str = None) -> None:
     """
     Write the catchment runoff volumes to file in the river-route expected format.
