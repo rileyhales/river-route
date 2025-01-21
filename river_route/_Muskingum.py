@@ -15,7 +15,6 @@ import scipy
 import tqdm
 import xarray as xr
 import yaml
-from scipy.optimize import minimize
 from scipy.optimize import minimize_scalar
 
 from .__metadata__ import __version__
@@ -55,6 +54,7 @@ class Muskingum:
     num_runoff_steps_per_outflow: int
 
     # Solver options
+    _solver_method: str = 'direct'  # changed by set_iterative_solver or set_direct_solver methods
     _solver_atol: float = 1e-5
 
     # Calibration variables
@@ -106,7 +106,6 @@ class Muskingum:
         # compute, routing, solver options (time is validated separately at compute step)
         self.conf['input_type'] = self.conf.get('input_type', 'sequential')
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
-        self.conf['_solver_type'] = self.conf.get('_solver_type', 'direct')
         self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
 
         # expected variable names in input/output files
@@ -244,7 +243,7 @@ class Muskingum:
             self.lhs = self.lhs.tocsc()
             if hasattr(self, 'lhs_factorized'):
                 del self.lhs_factorized
-        if not hasattr(self, 'lhs_factorized') and self.conf.get('_solver_type', 'direct') == 'direct':
+        if not hasattr(self, 'lhs_factorized') and self._solver_method == 'direct':
             self.LOG.info('Calculating factorized LHS matrix')
             self.lhs_factorized = scipy.sparse.linalg.factorized(self.lhs)
         return
@@ -498,7 +497,7 @@ class Muskingum:
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
                 rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
-                q_t[:] = self._solver(rhs, q_t)
+                q_t[:] = self._solve(rhs, q_t)
                 interval_flows[routing_sub_iteration_num, :] = q_t
             outflow_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
             r_prev[:] = r_t
@@ -515,47 +514,45 @@ class Muskingum:
         self.LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return outflow_array
 
-    def _solver(self, rhs: np.array, q_t: np.array) -> np.array:
-        return self._solver_direct(rhs, q_t)
+    def _solve(self, rhs: np.array, q_t: np.array) -> np.array:
+        return self._solve_direct(rhs, q_t)
 
-    def _solver_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
-        self.conf['_solver_type'] = 'cgs'
+    def _solve_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
         return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
-    def _solver_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
-        self.conf['_solver_type'] = 'bicgstab'
+    def _solve_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
         return scipy.sparse.linalg.bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
-    def _solver_direct(self, rhs: np.array, q_t: np.array) -> np.array:
+    def _solve_direct(self, rhs: np.array, q_t: np.array) -> np.array:
         return self.lhs_factorized(rhs)
 
-    def set_direct_solver(self,) -> 'Muskingum':
+    def set_direct_solver(self, ) -> 'Muskingum':
         """
         Set using a direct solver of the factorized LHS of the matrix muskingum equation. Returns self.
 
         Returns:
             river_route.Muskingum
         """
-        self.conf['_solver_type'] = 'direct'
-        self._solver = self._solver_direct
+        self._solver_method = 'direct'
+        self._solve = self._solve_direct
         return self
 
-    def set_iterative_solver(self, solver_type: str = 'cgs') -> 'Muskingum':
+    def set_iterative_solver(self, solver_method: str = 'cgs') -> 'Muskingum':
         """
         Set using an iterative solver of the LHS of the matrix muskingum equation. Returns self.
 
         Args:
-            solver_type: 'cgs' or 'bicgstab'
+            solver_method: 'cgs' or 'bicgstab'
 
         Returns:
             river_route.Muskingum
         """
-        if solver_type == 'cgs':
-            self._solver = self._solver_cgs
-        elif solver_type == 'bicgstab':
-            self._solver = self._solver_bicgstab
-        else:
-            raise ValueError('Solver type not recognized. Use cgs or bicgstab')
+        assert solver_method in ['cgs', 'bicgstab'], 'Solver type not recognized. Use cgs or bicgstab'
+        self._solver_method = solver_method
+        if solver_method == 'cgs':
+            self._solve = self._solve_cgs
+        elif solver_method == 'bicgstab':
+            self._solve = self._solve_bicgstab
         return self
 
     def _calibration_objective(self,
