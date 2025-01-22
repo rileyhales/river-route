@@ -85,7 +85,6 @@ def calc_catchment_volumes(
         else:
             ds = ds[runoff_var]
 
-        # todo use Dataset.sel(**kwargs) using a dictionary of time, y_var, x_var key/values
         if ds.ndim == 3:
             vol_df = ds.values[:, weight_df['lat_index'].values, weight_df['lon_index'].values]
         elif ds.ndim == 4:
@@ -154,10 +153,9 @@ def calc_catchment_volumes_with_sparse_matrix(
     # read the weight table
     with xr.open_dataset(weight_table) as ds:
         weight_df = ds[['river_id', 'x_index', 'y_index', 'proportion', 'area_sqm_total']].to_dataframe()
-        weight_df = weight_df.rename(columns={'x': x_var, 'y': y_var})
 
     # get a list of unique x_index and y_index combinations so we only read from disc once
-    unique_idxs = weight_df[['x_index', 'y_index', ]].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
+    unique_idxs = weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
     unique_sorted_rivers = weight_df[['river_id', 'area_sqm_total']].drop_duplicates().sort_index()
 
     with xr.open_mfdataset(runoff_data) as ds:
@@ -240,17 +238,17 @@ def write_catchment_volumes(vol_df: pd.DataFrame, output_dir: str, label: str = 
         ds.createDimension('time', vol_df.shape[0])
         ds.createDimension('river_id', vol_df.shape[1])
 
-        ro_vol_var = ds.createVariable('volume', 'f4', ('time', 'river_id'), zlib=True, complevel=9)
+        ro_vol_var = ds.createVariable('volume', 'f4', ('time', 'river_id'), zlib=True, complevel=5)
         ro_vol_var[:] = vol_df.to_numpy()
         ro_vol_var.long_name = 'Incremental catchment runoff volume'
         ro_vol_var.units = 'm3'
 
-        id_var = ds.createVariable('river_id', 'i4', ('river_id',), zlib=True, complevel=9)
+        id_var = ds.createVariable('river_id', 'i4', ('river_id',), zlib=True, complevel=5)
         id_var[:] = vol_df.columns.astype(int)
         id_var.long_name = 'unique ID number for each river'
 
         timestep = (vol_df.index[1] - vol_df.index[0]).seconds
-        time_var = ds.createVariable('time', 'i4', ('time',), zlib=True, complevel=9)
+        time_var = ds.createVariable('time', 'i4', ('time',), zlib=True, complevel=5)
         time_var[:] = (vol_df.index - vol_df.index[0]).astype('timedelta64[s]').astype(int)
         time_var.long_name = 'time'
         time_var.standard_name = 'time'
