@@ -1,7 +1,4 @@
-import glob
-import logging
 import os
-import re
 
 import netCDF4 as nc
 import numpy as np
@@ -60,7 +57,7 @@ def calc_catchment_volumes(
     """
     assert os.path.exists(runoff_data), f"Runoff data not found: {runoff_data}"
 
-    weight_df = pd.read_csv(weight_table)
+    weight_df = pd.read_parquet(weight_table)
     weight_rivids = weight_df.iloc[:, 0].to_numpy()
     sorted_rivid_array = pd.read_parquet(params_file, columns=[river_id_var, ]).values.flatten()
 
@@ -153,43 +150,72 @@ def calc_catchment_volumes_with_sparse_matrix(
     Returns:
         pd.DataFrame: a DataFrame of the catchment runoff volumes with stream IDs as columns and a datetime index
     """
+    # read the weight table
     with xr.open_dataset(weight_table) as ds:
-        weight_df = ds[['river_id', 'x_index', 'y_index', 'proportion']].to_dataframe()
-        sorted_id_area = ds[['sorted_river_id', 'area_sqm']].to_dataframe()
+        weight_df = ds[['river_id', 'x_index', 'y_index', 'proportion', 'area_sqm_total']].to_dataframe()
+        weight_df = weight_df.rename(columns={'x': x_var, 'y': y_var})
 
-    # get a list of unique x_index and y_index combinations
-    unique_idxs = weight_df[['x_index', 'y_index']].drop_duplicates()
+    # get a list of unique x_index and y_index combinations so we only read from disc once
+    unique_idxs = weight_df[['x_index', 'y_index', ]].drop_duplicates().sort_index().reset_index(
+        drop=True).reset_index().astype(int)
+    unique_sorted_rivers = weight_df[['river_id', 'area_sqm_total']].drop_duplicates().sort_index()
 
     with xr.open_mfdataset(runoff_data) as ds:
-        # get a dataframe with 1 column per each unique x_index and y_index combination and 1 row per time step
-        vol_df = ds[runoff_var].isel(**{x_var: unique_idxs['x_index'], y_var: unique_idxs['y_index']}).to_dataframe()
+        conversion_factor = 1
+        units = ds.attrs.get('units', False)
+        units = units if units else ds[runoff_var].attrs.get('units', False)
+        if not units:
+            log.warning("No units attribute found. Assuming meters")
+            units = 'm'
+        units = units.lower()
+        if units in ('m', 'meters', 'kg m-2'):
+            conversion_factor = 1
+        elif units in ('mm', 'millimeters'):
+            conversion_factor = .001
+        else:
+            raise ValueError(f"Unknown units: {ds.attrs['units']}")
+        vol_df = (
+            ds
+            [runoff_var]
+            .isel(
+                latitude=xr.DataArray(unique_idxs['y_index'].values, dims="points"),
+                longitude=xr.DataArray(unique_idxs['x_index'].values, dims="points")
+            )
+            .transpose("valid_time", "points")
+            .values
+        )
+        vol_df = pd.DataFrame(vol_df, columns=unique_idxs['index'], index=ds["valid_time"].values)
 
-    # add a column to the weight dataframe which the order of the row's unique indices in the unique_idxs dataframe
-    weight_df['idx'] = weight_df.apply(lambda x: unique_idxs[(unique_idxs['x_index'] == x['x_index']) & (unique_idxs['y_index'] == x['y_index'])].index[0], axis=1)
-    # make a matrix with 1 row for each unique river_id and 1 column for each unique x_index and y_index combination
-    # the values of that sparse array are the proportion of the area of the river_id that is in that x_index and y_index combination
-    # this can probably be done using a pivot table
-    mapper_df = weight_df[['river_id', 'idx', 'proportion']].pivot(index='river_id', columns='idx', values='proportion').fillna(0)
-    # sort the columns to match the order of the unique_idxs dataframe
-    mapper_df = mapper_df[unique_idxs.index]
-    # make it a sparse matrix
-    mapper = mapper_df.to_sparse(fill_value=0)
-    # multiply the sparse matrix by the dataframe of runoff values
-    # the shape of the dataframes is (time, x_index*y_index) and (river_id, x_index*y_index) respectively.
-    # we'll need to transpose the mapper to get the correct shape
-    # the shape of the resulting dataframe is (time, river_id)
-    vol_df = vol_df @ mapper.T
+    weight_df = weight_df.merge(unique_idxs, on=['x_index', 'y_index'], how='outer', suffixes=('', '_idx'))
+    mapper = (
+        weight_df
+        [['river_id', 'index', 'proportion']]
+        .pivot(index='river_id', columns='index', values='proportion')
+        .fillna(0)
+        [unique_idxs.index]
+    )
+    vol_df = pd.DataFrame(vol_df.values @ mapper.values.T, index=vol_df.index, columns=mapper.index)
+    vol_df = vol_df[unique_sorted_rivers['river_id'].values]
+    vol_df = vol_df * unique_sorted_rivers['area_sqm_total'].values
+    vol_df = vol_df * conversion_factor
+
+    # conversions and restructuring
     if cumulative:
         vol_df = _cumulative_to_incremental(vol_df)
     if force_positive_runoff:
         vol_df = vol_df.clip(lower=0)
-    # sort the columns to match the order of the sorted_id_area dataframe
-    vol_df = vol_df[sorted_id_area['sorted_river_id']]
-    # multiply the dataframe by the area of the river_id to get the volume
-    # specifically, each column is multiplied by the area of the river_id
-    vol_df = vol_df * sorted_id_area['area_sqm'].values
-
-    return
+    time_diff = np.diff(vol_df.index)
+    if not np.all(time_diff == vol_df.index[1] - vol_df.index[0]) and force_uniform_timesteps:
+        timestep = (vol_df.index[1] - vol_df.index[0]).astype('timedelta64[s]').astype(int)
+        log.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
+        # forced to incremental before this step, get cumulative values then linear resample
+        vol_df = (
+            _incremental_to_cumulative(vol_df)
+            .resample(rule=f'{timestep}S')
+            .interpolate(method='linear')
+        )
+        vol_df = _cumulative_to_incremental(vol_df)
+    return vol_df
 
 
 def write_catchment_volumes(vol_df: pd.DataFrame, output_dir: str, label: str = None) -> None:
