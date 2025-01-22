@@ -3,6 +3,7 @@ import os
 import netCDF4 as nc
 import numpy as np
 import pandas as pd
+import scipy.sparse
 import xarray as xr
 
 __all__ = [
@@ -156,8 +157,7 @@ def calc_catchment_volumes_with_sparse_matrix(
         weight_df = weight_df.rename(columns={'x': x_var, 'y': y_var})
 
     # get a list of unique x_index and y_index combinations so we only read from disc once
-    unique_idxs = weight_df[['x_index', 'y_index', ]].drop_duplicates().sort_index().reset_index(
-        drop=True).reset_index().astype(int)
+    unique_idxs = weight_df[['x_index', 'y_index', ]].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
     unique_sorted_rivers = weight_df[['river_id', 'area_sqm_total']].drop_duplicates().sort_index()
 
     with xr.open_mfdataset(runoff_data) as ds:
@@ -194,7 +194,7 @@ def calc_catchment_volumes_with_sparse_matrix(
         .fillna(0)
         [unique_idxs.index]
     )
-    vol_df = pd.DataFrame(vol_df.values @ mapper.values.T, index=vol_df.index, columns=mapper.index)
+    vol_df = pd.DataFrame(vol_df.values @ scipy.sparse.csc_array(mapper.values.T), index=vol_df.index, columns=mapper.index)
     vol_df = vol_df[unique_sorted_rivers['river_id'].values]
     vol_df = vol_df * unique_sorted_rivers['area_sqm_total'].values
     vol_df = vol_df * conversion_factor
@@ -208,7 +208,6 @@ def calc_catchment_volumes_with_sparse_matrix(
     if not np.all(time_diff == vol_df.index[1] - vol_df.index[0]) and force_uniform_timesteps:
         timestep = (vol_df.index[1] - vol_df.index[0]).astype('timedelta64[s]').astype(int)
         log.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
-        # forced to incremental before this step, get cumulative values then linear resample
         vol_df = (
             _incremental_to_cumulative(vol_df)
             .resample(rule=f'{timestep}S')
