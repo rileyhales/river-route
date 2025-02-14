@@ -33,8 +33,8 @@ def cell_polygons_from_xy_spacing(x: np.ndarray, y: np.ndarray, crs: int = 4326)
     Create a GeoDataFrame of Voroni polygons around the center of each cell in a 2D grid
 
     Args:
-        y: a 1 dimensional np.ndarray of y coordinate centers
         x: a 1 dimensional np.ndarray of x coordinate centers
+        y: a 1 dimensional np.ndarray of y coordinate centers
         crs: the coordinate reference system number of the grid to pass to as GeoDataFrame(crs=crs)
 
     Returns:
@@ -78,24 +78,30 @@ def make_overlay_table(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoData
     logger.info('Calculating area of intersections')
     intersections['area_sqm'] = intersections.geometry.to_crs({'proj': 'cea'}).area
     # merge rows with the same catchment id, lon_index, lat_index, lon, and lat, summing the area_sqm
-    return (
+    df = (
         intersections
-        [[catchment_id_field, 'lon_index', 'lat_index', 'lon', 'lat', 'area_sqm']]
+        [[catchment_id_field, 'x_index', 'y_index', 'x', 'y', 'area_sqm']]
         .groupby([catchment_id_field, 'lon_index', 'lat_index', 'lon', 'lat'])
         .agg({'area_sqm': 'sum'})
         .reset_index()
         .sort_values([catchment_id_field, 'area_sqm'], ascending=[True, False])
     )
+    total_area = df[[catchment_id_field, 'area_sqm']].groupby(catchment_id_field).sum()
+    df = df.merge(total_area, left_on=catchment_id_field, right_index=True, suffixes=('', '_total'))
+    df['proportion'] = df['area_sqm'] / df['area_sqm_total']
+    del df['area_sqm']
+    # todo: sort topologically
+    return df
 
 
-def make_voronoi_polygons(ds: str, save_dir: str, x_var: str = 'lon', y_var: str = 'lat', crs: int = 4326) -> None:
+def make_voronoi_polygons(ds: str, save_path: str, x_var: str = 'lon', y_var: str = 'lat', crs: int = 4326) -> None:
     """
     Create a GeoDataFrame of Voroni polygons around the center of each cell in a 2D grid given in a sample land surface
     output dataset
 
     Args:
         ds: Path to the dataset
-        save_dir: Path to save the Voroni polygons
+        save_path: Path to save the Voroni polygons
         x_var: The x variable name in the dataset
         y_var: The y variable name in the dataset
         crs: The coordinate reference system number of the grid to pass to as GeoDataFrame(crs=crs)
@@ -107,14 +113,8 @@ def make_voronoi_polygons(ds: str, save_dir: str, x_var: str = 'lon', y_var: str
         x = ds[x_var].values
         y = ds[y_var].values
 
-    x_origin = x[0]
-    y_origin = y[0]
-    x_spacing = x[1] - x[0]
-    y_spacing = y[1] - y[0]
-    file_name = f'voronipolygons_x0={x_origin}_y0={y_origin}_dx={x_spacing}_dy={y_spacing}.geoparquet'
-
     voroni_gdf = cell_polygons_from_xy_spacing(x, y, crs)
-    voroni_gdf.to_parquet(os.path.join(save_dir, file_name))
+    voroni_gdf.to_parquet(save_path)
     return
 
 
