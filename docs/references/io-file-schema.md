@@ -9,11 +9,11 @@ routing_params_file: '/path/to/params.parquet'
 The routing parameters file is a parquet file. It has 3 columns and 1 row per river in the watershed. The index is
 ignored. The rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-| Column   | Data Type | Description                                                              |
-|----------|-----------|--------------------------------------------------------------------------|
-| river_id | integer   | Unique ID of a river segment                                             |
-| k        | float     | the k parameter of the Muskingum routing equation length / velocity      |
-| x        | float     | the x parameter of the Muskingum routing equation. x : [0, 0.5]          |
+| Column   | Data Type | Description                                                         |
+|----------|-----------|---------------------------------------------------------------------|
+| river_id | integer   | Unique ID of a river segment                                        |
+| k        | float     | the k parameter of the Muskingum routing equation length / velocity |
+| x        | float     | the x parameter of the Muskingum routing equation. x : [0, 0.5]     |
 
 ### Connectivity File
 
@@ -46,10 +46,10 @@ uniform time step for all rivers with no missing values. There are 2 likely ways
 2. Generate runoff depth grids and use zonal statistics to calculate catchment scale volumes.
 
 !!! warning "Runoff Depths Warning"
-    There is a wide variety of projections for the grid cells, different names of variables, various file formats, and 
-    units of the runoff depths. For these reasons, you should be certain you can correctly calculate catchment volumes 
-    from runoff depth grids separately before using the calculations performed by `river-route`. The routing class may 
-    not correctly perform the conversions in all cases.
+There is a wide variety of projections for the grid cells, different names of variables, various file formats, and
+units of the runoff depths. For these reasons, you should be certain you can correctly calculate catchment volumes
+from runoff depth grids separately before using the calculations performed by `river-route`. The routing class may
+not correctly perform the conversions in all cases.
 
 ### Catchment Volumes (recommended)
 
@@ -59,22 +59,22 @@ catchment_volumes_file: '/path/to/volumes.nc'
 
 Catchment volumes are given in a netCDF file.
 
-The file should have 2 dimensions: time and river_id. The times can be given in any recognizable unit string. The river_id 
+The file should have 2 dimensions: time and river_id. The times can be given in any recognizable unit string. The river_id
 dimension should have exactly the same IDs *AND* be sorted in the same order given in the river_id column of the routing parameters file.
 
 The file should have 1 runoff volumes variables named "volume" which is an array of shape (time, river_id) of dtype
 float.
 
 !!! note "Calculating Catchment Volumes"
-    `river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform 
-    the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the 
-    example case for guidance on formatting these files.
+`river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform
+the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the
+example case for guidance on formatting these files.
 
 ### Runoff Depths
 
 ```yaml
 runoff_depths_files: [ '/path/to/depths1.nc', '/path/to/depths2.nc', ... ]
-weight_table_file: '/path/to/weight_table.csv'
+weight_table_file: '/path/to/weight_table.nc'
 ```
 
 Runoff depths are given in a netCDF file.
@@ -86,18 +86,20 @@ should be the same for all files.
 The file should have 1 runoff depths variable. The name may vary so you should specify it in the configuration file. It
 should contain array of shape (time, y, x) of dtype float.
 
-When providing runoff depths, you must also provide a weight table file. The weight table file is a csv with 4 columns:
-river_id, lon_idx, lat_idx, and area. There may be multiple rows with the same river_id but which reference difference
-runoff grid cells with different lon_idx and lat_idx values. The area column should be the area of the grid cell which
+When providing runoff depths, you must also provide a weight table. The weight table is a netCDF with 1 dimension, index, and 7 variables:
+river_id, x_index, y_index, x, y, proportion, and area_sqm_total. There may be multiple rows with the same river_id but which reference difference
+runoff grid cells with different x_index and y_index values. The area column should be the area of the grid cell which
 overlaps with the catchment boundary and should be in units of meters squared.
 
-| Column   | Data Type | Description                                                                           |
-|----------|-----------|---------------------------------------------------------------------------------------|
-| river_id | integer   | Unique ID of a river segment                                                          |
-| lon_idx  | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
-| lat_idx  | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
-| area_sqm | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
-
+| Column         | Data Type | Description                                                                           |
+|----------------|-----------|---------------------------------------------------------------------------------------|
+| river_id       | integer   | Unique ID of a river segment                                                          |
+| x_index        | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
+| y_index        | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
+| x              | float     | The x coordinate of the runoff grid cell that overlaps with the catchment boundary    |
+| y              | float     | The y coordinate of the runoff grid cell that overlaps with the catchment boundary    |
+| area_sqm_total | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
+| proportion     | float     | The proportion of the runoff depth that should be routed to the river segment         |
 
 ## Output Files
 
