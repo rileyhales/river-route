@@ -77,8 +77,8 @@ def calc_catchment_volumes(
             ds
             [runoff_var]
             .isel({
-                x_var: xr.DataArray(unique_idxs['y_index'].values, dims="points"),
-                y_var: xr.DataArray(unique_idxs['x_index'].values, dims="points")
+                x_var: xr.DataArray(unique_idxs['x_index'].values, dims="points"),
+                y_var: xr.DataArray(unique_idxs['y_index'].values, dims="points")
             })
             .transpose("valid_time", "points")
             .values,
