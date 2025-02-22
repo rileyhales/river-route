@@ -38,11 +38,12 @@ def _get_conversion_factor(unit: str) -> int or float:
 def calc_catchment_volumes(
         runoff_data: str,
         weight_table: str,
+        *,
         runoff_var: str = 'ro',
         x_var: str = 'lon',
         y_var: str = 'lat',
-        river_id_var: str = 'river_id',
         time_var: str = 'time',
+        river_id_var: str = 'river_id',
         cumulative: bool = False,
         force_positive_runoff: bool = False,
         force_uniform_timesteps: bool = True,
@@ -75,10 +76,10 @@ def calc_catchment_volumes(
         df = pd.DataFrame(
             ds
             [runoff_var]
-            .isel(
-                latitude=xr.DataArray(unique_idxs['y_index'].values, dims="points"),
-                longitude=xr.DataArray(unique_idxs['x_index'].values, dims="points")
-            )
+            .isel({
+                x_var: xr.DataArray(unique_idxs['y_index'].values, dims="points"),
+                y_var: xr.DataArray(unique_idxs['x_index'].values, dims="points")
+            })
             .transpose("valid_time", "points")
             .values,
             columns=unique_idxs[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
@@ -88,7 +89,7 @@ def calc_catchment_volumes(
     df.columns = weight_df['river_id']
     df = df * weight_df['area_sqm_total'].values * conversion_factor
     df = df.T.groupby(by=df.columns).sum().T
-    df = df[unique_sorted_rivers]
+    df = df[unique_sorted_rivers['river_id'].values]
 
     # conversions and restructuring
     if cumulative:

@@ -16,14 +16,11 @@ import shapely.ops
 import xarray as xr
 from natsort import natsorted
 
-# Get the logger
+# Setup a logger
 logger = logging.getLogger(__name__)
-# Set up the logger formatter
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-# Create a console handler
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-# Add the handler to the logger
 logger.addHandler(console_handler)
 logger.setLevel(logging.DEBUG)
 
@@ -60,15 +57,13 @@ def cell_polygons_from_xy_spacing(x: np.ndarray, y: np.ndarray, crs: int = 4326)
     return voroni_gdf
 
 
-def make_overlay_table(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
-                       catchment_id_field: str) -> pd.DataFrame:
+def overlay_table(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame, ) -> pd.DataFrame:
     """
     Create a table of intersections between Voroni polygons and catchments
 
     Args:
         voroni_gdf: a GeoDataFrame of Voroni polygons around the center of each cell in a 2D grid
         catchments_gdf: a GeoDataFrame of catchments polygons
-        catchment_id_field: the field in catchments_gdf to use as the id field
 
     Returns:
         pd.DataFrame: a table of intersections between Voroni polygons and catchments
@@ -80,17 +75,16 @@ def make_overlay_table(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoData
     # merge rows with the same catchment id, lon_index, lat_index, lon, and lat, summing the area_sqm
     df = (
         intersections
-        [[catchment_id_field, 'x_index', 'y_index', 'x', 'y', 'area_sqm']]
-        .groupby([catchment_id_field, 'lon_index', 'lat_index', 'lon', 'lat'])
+        [['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm']]
+        .groupby(['river_id', 'lon_index', 'lat_index', 'lon', 'lat'])
         .agg({'area_sqm': 'sum'})
         .reset_index()
-        .sort_values([catchment_id_field, 'area_sqm'], ascending=[True, False])
+        .sort_values(['river_id', 'area_sqm'], ascending=[True, False])
     )
-    total_area = df[[catchment_id_field, 'area_sqm']].groupby(catchment_id_field).sum()
-    df = df.merge(total_area, left_on=catchment_id_field, right_index=True, suffixes=('', '_total'))
+    total_area = df[['river_id', 'area_sqm']].groupby('river_id').sum()
+    df = df.merge(total_area, left_on='river_id', right_index=True, suffixes=('', '_total'))
     df['proportion'] = df['area_sqm'] / df['area_sqm_total']
     del df['area_sqm']
-    # todo: sort topologically
     return df
 
 
@@ -126,7 +120,6 @@ if __name__ == '__main__':
 
     grids = natsorted(glob.glob('./voroni_polygons/*.geoparquet'))
     catchments = natsorted(glob.glob('./catchments/*.geoparquet'))
-    id_field = 'LINKNO'
 
     for catchment in catchments:
         catchment_label = ''
@@ -145,6 +138,6 @@ if __name__ == '__main__':
             v_gdf = v_gdf.cx[c_bbox[0]:c_bbox[2], c_bbox[1]:c_bbox[3]]
             # make and save the overlay table
             (
-                make_overlay_table(v_gdf, c_gdf, id_field)
+                overlay_table(v_gdf, c_gdf)
                 .to_parquet(os.path.join(catchment_save_dir, table_name), index=False)
             )
