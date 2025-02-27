@@ -91,6 +91,10 @@ river_id, x_index, y_index, x, y, proportion, and area_sqm_total. There may be m
 runoff grid cells with different x_index and y_index values. The area column should be the area of the grid cell which
 overlaps with the catchment boundary and should be in units of meters squared.
 
+!!! note "Ordering Grid Weights"
+The order of unique river_id values in the table made from the weight table should be the same as the order of the river_id column in the routing 
+parameters parquet *AND* should be topologically sorted from upstream to downstream.
+
 | Column         | Data Type | Description                                                                           |
 |----------------|-----------|---------------------------------------------------------------------------------------|
 | river_id       | integer   | Unique ID of a river segment                                                          |
