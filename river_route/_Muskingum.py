@@ -11,11 +11,16 @@ import netCDF4 as nc
 import networkx as nx
 import numpy as np
 import pandas as pd
-import scipy
 import tqdm
 import xarray as xr
 import yaml
 from scipy.optimize import minimize_scalar
+from scipy.sparse import csc_matrix
+from scipy.sparse import diags
+from scipy.sparse import eye
+from scipy.sparse.linalg import bicgstab
+from scipy.sparse.linalg import cgs
+from scipy.sparse.linalg import factorized
 
 from .__metadata__ import __version__
 from .metrics import kge2012
@@ -34,8 +39,8 @@ class Muskingum:
     conf: dict
 
     # Routing matrices and vectors
-    A: scipy.sparse.csc_matrix  # n x n - adjacency matrix => f(n, connectivity)
-    lhs: scipy.sparse.csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
+    A: csc_matrix  # n x n - adjacency matrix => f(n, connectivity)
+    lhs: csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
     lhs_factorized: callable  # n x n - factorized left hand side matrix for direct solutions
     k: np.array  # n x 1 - K values for each segment
     x: np.array  # n x 1 - X values for each segment
@@ -239,13 +244,13 @@ class Muskingum:
 
     def _set_lhs_matrix(self) -> None:
         if not hasattr(self, 'lhs'):
-            self.lhs = scipy.sparse.eye(self.A.shape[0]) - (scipy.sparse.diags(self.c2) @ self.A)
+            self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)
             self.lhs = self.lhs.tocsc()
             if hasattr(self, 'lhs_factorized'):
                 del self.lhs_factorized
         if not hasattr(self, 'lhs_factorized') and self._solver_method == 'direct':
             self.LOG.info('Calculating factorized LHS matrix')
-            self.lhs_factorized = scipy.sparse.linalg.factorized(self.lhs)
+            self.lhs_factorized = factorized(self.lhs)
         return
 
     def _set_time_params(self, dates: np.array) -> None:
@@ -518,10 +523,10 @@ class Muskingum:
         return self._solve_direct(rhs, q_t)
 
     def _solve_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
-        return scipy.sparse.linalg.cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
+        return cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
     def _solve_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
-        return scipy.sparse.linalg.bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
+        return bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
     def _solve_direct(self, rhs: np.array, q_t: np.array) -> np.array:
         return self.lhs_factorized(rhs)

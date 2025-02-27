@@ -30,6 +30,9 @@ The following vocabulary is used in this tutorial.
 - Catchment: a catchment is a subunit of a watershed. Water flows into it at the upstream side in exactly 1 location and leaves the catchment in
   exactly 1 location.
 - Subbasin: multiple hydraulically connected catchments forming a complete watershed which is part of a larger watershed.
+- Topological Order: A sort which orders rivers based on their connectivity to each other. Rivers appearing further upstream should come before all 
+  rivers which are downstream of them. Topological sorts are usually not unique or deterministic. There are many ways to sort rivers such that this 
+  condition is met.
 
 ## Directory Structure
 
@@ -42,11 +45,11 @@ project_root_directory
 │   ├── <VPU Name 1>
 │   │   ├── params.parquet
 │   │   ├── connectivity.parquet
-│   │   └── weight_table.csv
+│   │   └── grid_weights.nc
 │   └── <VPU Name 2>
 │       ├── params.parquet
 │       ├── connectivity.parquet
-│       └── weight_table.csv
+│       └── grid_weights.nc
 ├── volumes
 │   ├── <VPU Name 1>
 │   │   ├── volume_<vpu-name>_<first-time-step-or-ensemble-member>.nc
@@ -105,7 +108,7 @@ Routing requires a catchment level runoff volume time series. Runoff data is mos
 model. Runoff grid files may have a single file containing multiple time steps or multiple files which each contain a single time step. You might also
 have multiple realizations of those data for each member in an ensemble simulation.
 
-### Weight Table
+### Grid Weights
 
 You can use GIS methods to aggregate the distributed runoff depths to catchment level volumes. The steps are (1) intersect the grid cell boundaries
 with the catchment boundaries to create polygons of each grid cell and catchment combination, then (2) multiply the runoff depth value of each polygon
@@ -113,7 +116,7 @@ times the area of that polygon (i.e. convert depth to volume). Repeat this for e
 
 Intersections of grid cells and catchment boundaries are computationally expensive and do not change. One method to avoid repeating the expensive
 intersection step (and therefore increase speed) is to cache the intersection results in a "weight table" that describes which grid cells contribute
-to which catchments. The cached results are unique to the grid cell geometry (and catchment boundaries). You need to recreate the cached intersections
+to which catchments. The cached results are unique to the grid cell geometry (and catchment boundaries). You need to recreate the cached weights
 if you use runoff grids with different resolutions or extents or if you change your watershed definition (catchment boundaries).
 
 ## Routing
