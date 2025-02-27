@@ -15,21 +15,12 @@ import tqdm
 import xarray as xr
 import yaml
 from scipy.optimize import minimize_scalar
-
-try:
-    from cupyx.scipy.sparse.linalg import factorized
-    from cupyx.scipy.sparse.linalg import cgs
-    from cupyx.scipy.sparse.linalg import bicgstab
-    from cupyx.scipy.sparse import csc_matrix
-    from cupyx.scipy.sparse import eye
-    from cupyx.scipy.sparse import diags
-except ImportError:
-    from scipy.sparse.linalg import factorized
-    from scipy.sparse.linalg import cgs
-    from scipy.sparse.linalg import bicgstab
-    from scipy.sparse import csc_matrix
-    from scipy.sparse import eye
-    from scipy.sparse import diags
+from scipy.sparse import csc_matrix
+from scipy.sparse import diags
+from scipy.sparse import eye
+from scipy.sparse.linalg import bicgstab
+from scipy.sparse.linalg import cgs
+from scipy.sparse.linalg import factorized
 
 from .__metadata__ import __version__
 from .metrics import kge2012
