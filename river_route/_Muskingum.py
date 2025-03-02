@@ -18,7 +18,6 @@ from scipy.optimize import minimize_scalar
 from scipy.sparse import csc_matrix
 from scipy.sparse import diags
 from scipy.sparse import eye
-from scipy.sparse.linalg import bicgstab
 from scipy.sparse.linalg import cgs
 from scipy.sparse.linalg import factorized
 
@@ -330,7 +329,6 @@ class Muskingum:
                 volumes_df = calc_catchment_volumes(
                     runoff_file,
                     weight_table=self.conf['weight_table_file'],
-                    params_file=self.conf['routing_params_file'],
                     river_id_var=self.conf['var_river_id'],
                     runoff_var=self.conf['var_runoff_depth'],
                     x_var=self.conf['var_x'],
@@ -341,7 +339,6 @@ class Muskingum:
                 yield volumes_df.index.values, volumes_df.values, runoff_file, outflow_file
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
-        return
 
     def route(self, **kwargs) -> 'Muskingum':
         """
@@ -525,9 +522,6 @@ class Muskingum:
     def _solve_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
         return cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
 
-    def _solve_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
-        return bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
-
     def _solve_direct(self, rhs: np.array, q_t: np.array) -> np.array:
         return self.lhs_factorized(rhs)
 
@@ -542,22 +536,14 @@ class Muskingum:
         self._solve = self._solve_direct
         return self
 
-    def set_iterative_solver(self, solver_method: str = 'cgs') -> 'Muskingum':
+    def set_iterative_solver(self) -> 'Muskingum':
         """
         Set using an iterative solver of the LHS of the matrix muskingum equation. Returns self.
-
-        Args:
-            solver_method: 'cgs' or 'bicgstab'
 
         Returns:
             river_route.Muskingum
         """
-        assert solver_method in ['cgs', 'bicgstab'], 'Solver type not recognized. Use cgs or bicgstab'
-        self._solver_method = solver_method
-        if solver_method == 'cgs':
-            self._solve = self._solve_cgs
-        elif solver_method == 'bicgstab':
-            self._solve = self._solve_bicgstab
+        self._solve = self._solve_cgs
         return self
 
     def _calibration_objective(self,
