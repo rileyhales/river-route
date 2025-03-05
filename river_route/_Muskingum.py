@@ -308,7 +308,7 @@ class Muskingum:
             self.LOG.debug(f'c1: {self.c1}')
             self.LOG.debug(f'c2: {self.c2}')
             self.LOG.debug(f'c3: {self.c3}')
-        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
+            raise AssertionError('Muskingum coefficients do not sum to 1')
         return
 
     def _volumes_output_generator(self) -> Tuple[pd.DataFrame, str]:
@@ -543,6 +543,7 @@ class Muskingum:
         Returns:
             river_route.Muskingum
         """
+        self._solver_method = 'iterative'
         self._solve = self._solve_cgs
         return self
 
