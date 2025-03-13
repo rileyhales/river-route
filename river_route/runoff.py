@@ -80,7 +80,7 @@ def calc_catchment_volumes(
                 x_var: xr.DataArray(unique_idxs['x_index'].values, dims="points"),
                 y_var: xr.DataArray(unique_idxs['y_index'].values, dims="points")
             })
-            .transpose("valid_time", "points")
+            .transpose(time_var, "points")
             .values,
             columns=unique_idxs[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
             index=ds[time_var].to_numpy()
