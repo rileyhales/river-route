@@ -44,6 +44,7 @@ def calc_catchment_volumes(
         y_var: str = 'lat',
         time_var: str = 'time',
         river_id_var: str = 'river_id',
+        runoff_depth_unit: str = None,
         cumulative: bool = False,
         force_positive_runoff: bool = False,
         force_uniform_timesteps: bool = True,
@@ -57,8 +58,9 @@ def calc_catchment_volumes(
         runoff_var (str): the name of the runoff variable in the LSM files
         x_var (str): the name of the x variable in the LSM files
         y_var (str): the name of the y variable in the LSM files
-        river_id_var (str): the name of the river ID variable in the parameters file
         time_var (str): the name of the time variable in the LSM files
+        river_id_var (str): the name of the river ID variable in the parameters file
+        runoff_depth_unit (str): the unit of the depths in the runoff data
         cumulative (bool): whether the runoff data is cumulative or incremental
         force_positive_runoff (bool): whether to force all runoff values to be >= 0
         force_uniform_timesteps (bool): whether to force all timesteps to be uniform
@@ -72,7 +74,8 @@ def calc_catchment_volumes(
     unique_sorted_rivers = weight_df[['river_id', 'area_sqm_total']].drop_duplicates().sort_index()
 
     with xr.open_mfdataset(runoff_data) as ds:
-        conversion_factor = _get_conversion_factor(ds.attrs.get('units', None))
+        runoff_depth_unit = runoff_depth_unit if runoff_depth_unit else ds[runoff_var].attrs.get('units', 'm')
+        conversion_factor = _get_conversion_factor(runoff_depth_unit)
         df = pd.DataFrame(
             ds
             [runoff_var]
@@ -80,7 +83,7 @@ def calc_catchment_volumes(
                 x_var: xr.DataArray(unique_idxs['x_index'].values, dims="points"),
                 y_var: xr.DataArray(unique_idxs['y_index'].values, dims="points")
             })
-            .transpose("valid_time", "points")
+            .transpose(time_var, "points")
             .values,
             columns=unique_idxs[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
             index=ds[time_var].to_numpy()
