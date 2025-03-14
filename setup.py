@@ -43,4 +43,7 @@ setup(
     entry_points={
         'console_scripts': ['rr=river_route._cli:main', ]
     },
+    options={
+        'bdist_wheel': {'universal': True}
+    }
 )
