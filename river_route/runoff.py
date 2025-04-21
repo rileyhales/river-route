@@ -90,7 +90,7 @@ def calc_catchment_volumes(
         )
     df = df[weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)]
     df.columns = weight_df['river_id']
-    df = df * weight_df['area_sqm_total'].values * conversion_factor
+    df = df * df['proportion'] * weight_df['area_sqm_total'].values * conversion_factor
     df = df.T.groupby(by=df.columns).sum().T
     df = df[unique_sorted_rivers['river_id'].values]
 
