@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from .__metadata__ import __version__
+
 __all__ = [
     'calc_catchment_volumes',
     'write_catchment_volumes',
@@ -135,6 +137,12 @@ def write_catchment_volumes(df: pd.DataFrame, output_dir: str, label: str = None
     with nc.Dataset(inflow_file_path, "w", format="NETCDF4") as ds:
         ds.createDimension('time', df.shape[0])
         ds.createDimension('river_id', df.shape[1])
+        ds.setncatts({
+            'title': 'Catchment runoff volumes',
+            'description': 'Incremental catchment runoff volumes in m3 for each river',
+            'source': f'River Routing v{__version__}',
+            'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        })
 
         ro_vol_var = ds.createVariable('volume', 'f4', ('time', 'river_id'), zlib=True, complevel=5)
         ro_vol_var[:] = df.to_numpy()
