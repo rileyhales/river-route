@@ -71,9 +71,9 @@ def calc_catchment_volumes(
         pd.DataFrame: a DataFrame of the catchment runoff volumes with stream IDs as columns and a datetime index
     """
     with xr.open_dataset(weight_table) as ds:
-        weight_df = ds[['river_id', 'x_index', 'y_index', 'proportion', 'area_sqm_total']].to_dataframe()
+        weight_df = ds[['river_id', 'x_index', 'y_index', 'area_sqm']].to_dataframe()
     unique_idxs = weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
-    unique_sorted_rivers = weight_df[['river_id', 'area_sqm_total']].drop_duplicates().sort_index()
+    unique_sorted_rivers = weight_df[['river_id', ]].drop_duplicates().sort_index()  # index -> already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:
         runoff_depth_unit = runoff_depth_unit if runoff_depth_unit else ds[runoff_var].attrs.get('units', 'm')
@@ -92,7 +92,7 @@ def calc_catchment_volumes(
         )
     df = df[weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)]
     df.columns = weight_df['river_id']
-    df = df * df['proportion'] * weight_df['area_sqm_total'].values * conversion_factor
+    df = df.multiply(weight_df['area_sqm'].values * conversion_factor)
     df = df.T.groupby(by=df.columns).sum().T
     df = df[unique_sorted_rivers['river_id'].values]
 
