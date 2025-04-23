@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from .__metadata__ import __version__
+
 __all__ = [
     'calc_catchment_volumes',
     'write_catchment_volumes',
@@ -69,9 +71,9 @@ def calc_catchment_volumes(
         pd.DataFrame: a DataFrame of the catchment runoff volumes with stream IDs as columns and a datetime index
     """
     with xr.open_dataset(weight_table) as ds:
-        weight_df = ds[['river_id', 'x_index', 'y_index', 'proportion', 'area_sqm_total']].to_dataframe()
+        weight_df = ds[['river_id', 'x_index', 'y_index', 'area_sqm']].to_dataframe()
     unique_idxs = weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
-    unique_sorted_rivers = weight_df[['river_id', 'area_sqm_total']].drop_duplicates().sort_index()
+    unique_sorted_rivers = weight_df[['river_id', ]].drop_duplicates().sort_index()  # index -> already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:
         runoff_depth_unit = runoff_depth_unit if runoff_depth_unit else ds[runoff_var].attrs.get('units', 'm')
@@ -90,7 +92,7 @@ def calc_catchment_volumes(
         )
     df = df[weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)]
     df.columns = weight_df['river_id']
-    df = df * weight_df['area_sqm_total'].values * conversion_factor
+    df = df.multiply(weight_df['area_sqm'].values * conversion_factor)
     df = df.T.groupby(by=df.columns).sum().T
     df = df[unique_sorted_rivers['river_id'].values]
 
@@ -135,6 +137,12 @@ def write_catchment_volumes(df: pd.DataFrame, output_dir: str, label: str = None
     with nc.Dataset(inflow_file_path, "w", format="NETCDF4") as ds:
         ds.createDimension('time', df.shape[0])
         ds.createDimension('river_id', df.shape[1])
+        ds.setncatts({
+            'title': 'Catchment runoff volumes',
+            'description': 'Incremental catchment runoff volumes in m3 for each river',
+            'source': f'River Routing v{__version__}',
+            'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        })
 
         ro_vol_var = ds.createVariable('volume', 'f4', ('time', 'river_id'), zlib=True, complevel=5)
         ro_vol_var[:] = df.to_numpy()

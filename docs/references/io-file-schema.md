@@ -86,24 +86,24 @@ should be the same for all files.
 The file should have 1 runoff depths variable. The name may vary so you should specify it in the configuration file. It
 should contain array of shape (time, y, x) of dtype float.
 
-When providing runoff depths, you must also provide a weight table. The weight table is a netCDF with 1 dimension, index, and 7 variables:
-river_id, x_index, y_index, x, y, proportion, and area_sqm_total. There may be multiple rows with the same river_id but which reference difference
+When providing runoff depths, you must also provide a weight table. The weight table is a netCDF with 1 dimension, index, and 6 variables:
+river_id, x_index, y_index, x, y, and area_sqm. There may be multiple rows with the same river_id but which reference difference
 runoff grid cells with different x_index and y_index values. The area column should be the area of the grid cell which
 overlaps with the catchment boundary and should be in units of meters squared.
 
 !!! note "Ordering Grid Weights"
-The order of unique river_id values in the table made from the weight table should be the same as the order of the river_id column in the routing 
-parameters parquet *AND* should be topologically sorted from upstream to downstream.
+    The order of unique river_id values in the table made from the weight table should be the same as the order of the river_id column in the routing 
+    parameters parquet *AND* should be topologically sorted from upstream to downstream.
 
-| Column         | Data Type | Description                                                                           |
-|----------------|-----------|---------------------------------------------------------------------------------------|
-| river_id       | integer   | Unique ID of a river segment                                                          |
-| x_index        | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
-| y_index        | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
-| x              | float     | The x coordinate of the runoff grid cell that overlaps with the catchment boundary    |
-| y              | float     | The y coordinate of the runoff grid cell that overlaps with the catchment boundary    |
-| area_sqm_total | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
-| proportion     | float     | The proportion of the runoff depth that should be routed to the river segment         |
+| Column     | Data Type | Description                                                                           |
+|------------|-----------|---------------------------------------------------------------------------------------|
+| river_id   | integer   | Unique ID of a river segment                                                          |
+| x_index    | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
+| y_index    | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
+| x          | float     | The x coordinate of the runoff grid cell that overlaps with the catchment boundary    |
+| y          | float     | The y coordinate of the runoff grid cell that overlaps with the catchment boundary    |
+| area_sqm   | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
+
 
 ## Output Files
 

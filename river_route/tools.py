@@ -4,6 +4,7 @@ import os
 import networkx as nx
 import pandas as pd
 import scipy
+import xarray as xr
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,35 @@ def routing_files_from_RAPID(
         .iloc[:, :2]
         .rename(columns={0: 'river_id', 1: 'ds_river_id'})
         .to_parquet(out_connectivity)
+    )
+    return
+
+
+def inits_from_RAPID(
+        init_file: str,
+        out_init_file: str,
+):
+    """
+    Generate river-route initial conditions file from RAPID final state file
+
+    Args:
+        init_file: Path to RAPID init file
+        out_init_file: Path to output initial conditions file
+
+    Returns:
+        None
+    """
+    assert os.path.isfile(init_file), FileNotFoundError(init_file)
+    (
+        xr
+        .open_dataset(init_file)
+        .to_dataframe()
+        .reset_index()
+        [['rivid', 'Qout']]
+        .rename(columns={'Qout': 'Q', 'rivid': 'river_id'})
+        .set_index('river_id')
+        .assign(R=0)
+        .to_parquet(out_init_file)
     )
     return
 
