@@ -5,7 +5,7 @@ import os
 import random
 import sys
 from functools import partial
-from typing import Tuple
+from typing import Tuple, Generator
 
 import netCDF4 as nc
 import networkx as nx
@@ -312,7 +312,7 @@ class Muskingum:
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
         return
 
-    def _volumes_output_generator(self) -> Tuple[pd.DataFrame, str]:
+    def _volumes_output_generator(self) -> Generator[Tuple[np.array, np.array, str, str]]:
         if self.conf.get('catchment_volumes_file', False):
             for volume_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
                 self.LOG.info('-' * 80)
@@ -330,7 +330,6 @@ class Muskingum:
                 volumes_df = calc_catchment_volumes(
                     runoff_file,
                     weight_table=self.conf['weight_table_file'],
-                    params_file=self.conf['routing_params_file'],
                     river_id_var=self.conf['var_river_id'],
                     runoff_var=self.conf['var_runoff_depth'],
                     x_var=self.conf['var_x'],
@@ -341,7 +340,6 @@ class Muskingum:
                 yield volumes_df.index.values, volumes_df.values, runoff_file, outflow_file
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
-        return
 
     def route(self, **kwargs) -> 'Muskingum':
         """
@@ -598,7 +596,6 @@ class Muskingum:
         self.LOG.log(lvl_calibrate,
                      f'Iteration {self._calibration_iteration_number} - ABS(KGE - 1): {objective_function_value}')
         del self.initial_state
-        # return mse
         return objective_function_value
 
     def _write_outflows(self, dates: np.array, outflow_array: np.array, outflow_file: str, runoff_file: str) -> None:
