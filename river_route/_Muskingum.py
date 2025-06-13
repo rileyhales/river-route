@@ -48,6 +48,7 @@ class Muskingum:
     c2: np.array  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: np.array  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
     initial_state: (np.array, np.array)  # Q init, R init
+    _ensemble_member_states: list  # used for ensemble routing, stores member states for final state aggregation
 
     # Time options
     dt_total: float
@@ -59,6 +60,7 @@ class Muskingum:
     num_runoff_steps_per_outflow: int
 
     # Solver options
+    _solve : callable  # changed by set_iterative_solver or set_direct_solver methods
     _solver_method: str = 'direct'  # changed by set_iterative_solver or set_direct_solver methods
     _solver_atol: float = 1e-5
 
@@ -228,8 +230,14 @@ class Muskingum:
         final_state_file = self.conf.get('final_state_file', '')
         if final_state_file == '':
             return
+        if self.conf['input_type'] == 'sequential':
+            array = np.array(self.initial_state).T
+        elif self.conf['input_type'] == 'ensemble':
+            array = np.array(self._ensemble_member_states).mean(axis=0)
+        else:
+            raise ValueError('Unexpected input type when writing final states')
         self.LOG.debug('Writing Final State to Parquet')
-        pd.DataFrame(np.array(self.initial_state).T, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
+        pd.DataFrame(array, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
         return
 
     def _get_digraph(self) -> nx.DiGraph:
@@ -481,6 +489,7 @@ class Muskingum:
         self.LOG.debug('Getting initial state arrays')
         self._read_initial_state()
         q_init, r_init = self.initial_state
+        self._ensemble_member_states = []
 
         # set initial values
         self._set_lhs_matrix()
@@ -512,6 +521,9 @@ class Muskingum:
         if self.conf['input_type'] == 'sequential':
             self.LOG.debug('Updating Initial State for Next Sequential Computation')
             self.initial_state = (q_t, r_prev)
+        if self.conf['input_type'] == 'ensemble':
+            self.LOG.debug('Recording Member State for Final State Aggregation')
+            self._ensemble_member_states.append(np.array([q_t, r_prev]).T)
 
         t2 = datetime.datetime.now()
         self.LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
@@ -607,7 +619,7 @@ class Muskingum:
     def write_outflows(self, df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
         """
         Writes the outflows from a routing simulation to a netcdf file. You should overwrite this method with a custom
-        handler that writes it in a format that fits your needs.
+        handler that writes it in a format that fits your needs using the set_write_outflows method.
 
         Args:
             df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values

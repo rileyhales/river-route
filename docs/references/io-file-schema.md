@@ -46,10 +46,9 @@ uniform time step for all rivers with no missing values. There are 2 likely ways
 2. Generate runoff depth grids and use zonal statistics to calculate catchment scale volumes.
 
 !!! warning "Runoff Depths Warning"
-There is a wide variety of projections for the grid cells, different names of variables, various file formats, and
-units of the runoff depths. For these reasons, you should be certain you can correctly calculate catchment volumes
-from runoff depth grids separately before using the calculations performed by `river-route`. The routing class may
-not correctly perform the conversions in all cases.
+    There are many projections for grid cells, different names of variables, various file formats, and units of the runoff depths. You should be 
+    certain you can correctly calculate catchment volumes from runoff depth grids separately before using the calculations performed by `river-route`. 
+    The routing class may not correctly perform the conversions in all cases.
 
 ### Catchment Volumes (recommended)
 
@@ -66,9 +65,9 @@ The file should have 1 runoff volumes variables named "volume" which is an array
 float.
 
 !!! note "Calculating Catchment Volumes"
-`river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform
-the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the
-example case for guidance on formatting these files.
+    `river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform
+    the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the
+    example case for guidance on formatting these files.
 
 ### Runoff Depths
 
@@ -111,14 +110,12 @@ overlaps with the catchment boundary and should be in units of meters squared.
 
 Routed discharge outputs are given in a netCDF file.
 
-The file contains 2 dimensions: time and river_id.
-
-It will have 1 variable named "Q" which is an array of shape (time, river_id) of dtype float.
+The file contains 2 dimensions: time and river_id. It will have 1 variable named "Q" which is an array of shape (time, river_id) of dtype float.
 
 You can change the structure of the output file by overriding the default function to write outputs to disc. See the
 [Saving Outputs](../tutorial/advanced-tutorial.md) page for more information.
 
-## Initial and Final State Files
+## Initial and Final States
 
 ```yaml
 initial_state_file: '/path/to/initial.parquet'
