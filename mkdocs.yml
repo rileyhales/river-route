@@ -1,6 +1,6 @@
 site_name: River Route
-site_url: https://rr.hales.app
-copyright: Copyright &copy; 2023-2024 Dr Riley Hales. All rights reserved.
+site_url: https://river-route.code.hales.app
+copyright: Copyright &copy; 2023-2025 Dr Riley Hales. All rights reserved.
 theme:
   name: material
   palette:
@@ -21,6 +21,7 @@ nav:
       - Time Variables: references/time-variables.md
   - Tutorials:
       - Basic Walkthrough: tutorial/basic-tutorial.md
+      - Routing Ensembles: tutorial/routing-ensembles.md
       - Advanced Concepts: tutorial/advanced-tutorial.md
   - License: terms.md
 plugins:

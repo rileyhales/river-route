@@ -40,7 +40,7 @@ m = (
 )
 ```
 
-## Customizing Output File Type and Structure
+## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disc. The Muskingum class
 formats the discharge data into a Pandas DataFrame and then calls the `write_outflows` method. By default, this function
