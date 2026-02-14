@@ -341,7 +341,8 @@ class Muskingum:
         for dates, volumes_array, runoff_file, discharge_file in self._volumes_output_generator():
             self.logger.info('-' * 80)
             self._set_network_and_time_dependent_vectors(dates)
-            volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
+            volumes_array = volumes_array.astype(np.float64, copy=False)
+            np.divide(volumes_array, self.dt_runoff, out=volumes_array)  # convert volume -> volume/time
             discharge_array = self._router(dates, volumes_array)
 
             if self.dt_discharge > self.dt_runoff:
@@ -357,7 +358,8 @@ class Muskingum:
                 )
 
             self.logger.info('Writing Discharge Array to File')
-            discharge_array = np.round(discharge_array, decimals=2).astype(np.float64, copy=False)
+            np.round(discharge_array, decimals=2, out=discharge_array)
+            discharge_array = discharge_array.astype(np.float32, copy=False)
             self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
         # write the final state to disc
@@ -371,14 +373,19 @@ class Muskingum:
     def _router(self, dates: DatetimeArray, volumes: FloatArray) -> FloatArray:
         self.logger.debug('Getting initial state arrays')
         self._read_initial_state()
-        q_init, r_init = self.initial_state
+        q_init, r_init = self.initial_state  # n x 1 arrays of initial discharges and runoff in each segment
         self._ensemble_member_states = []
 
-        # set initial values
+        # declare arrays needed to do routing computations once to avoid repeated and duplicate allocations in the loop
         discharge_array = np.zeros((volumes.shape[0], self.A.shape[0]))
-        q_t = np.zeros_like(q_init)
+        q_t = np.empty_like(q_init, dtype=np.float64)
+        r_prev = np.empty_like(r_init, dtype=np.float64)
+        rhs = np.zeros(self.A.shape[0], dtype=np.float64)
+        buffer = np.zeros(self.A.shape[0], dtype=np.float64)
+        c2_r_t = np.zeros(self.A.shape[0], dtype=np.float64)
+        interval_sum = np.zeros(self.A.shape[0], dtype=np.float64)
+
         q_t[:] = q_init
-        r_prev = np.zeros_like(r_init)
         r_prev[:] = r_init
 
         t1 = datetime.datetime.now()
@@ -388,12 +395,21 @@ class Muskingum:
             self.logger.info('Performing routing computation iterations')
         for runoff_time_step, runoff_end_date in enumerate(dates):
             r_t = volumes[runoff_time_step, :]
-            interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
+            np.multiply(self.c2, r_t, out=c2_r_t)
+            interval_sum.fill(0.0) # add then divide to avoid accumulating large array and averaging
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
-                rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
+                # rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
+                buffer[:] = self.A @ q_t
+                np.add(buffer, r_prev, out=buffer)
+                np.multiply(self.c1, buffer, out=rhs)
+                np.multiply(self.c3, q_t, out=buffer)
+                np.add(rhs, buffer, out=rhs)
+                np.add(rhs, c2_r_t, out=rhs)
+                # solve Ax=b, LHS q_t = rhs
                 q_t[:] = self.lhs_factorized(rhs)
-                interval_flows[routing_sub_iteration_num, :] = q_t
-            discharge_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
+                # add to interval accumulator for averaging at the end of the runoff time step
+                interval_sum += q_t
+            discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
             r_prev[:] = r_t
 
         # Enforce positive flows in case of negative numerical results
