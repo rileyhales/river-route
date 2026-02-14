@@ -51,6 +51,7 @@ class Muskingum:
     lhs_factorized: FactorizedSolveFn  # n x n - factorized left hand side matrix for direct solutions
     _network_time_signature: tuple[Any, ...] | None  # used to track if sequential runoffs use the same routing matrices
 
+    # State variables
     initial_state: tuple[FloatArray, FloatArray]  # Q init, R init
     _ensemble_member_states: list[FloatArray]  # used for ensemble routing, stores member states for final state aggregation
 
@@ -64,13 +65,13 @@ class Muskingum:
     num_runoff_steps_per_discharge: int
 
     # Methods
-    write_discharges: WriteDischargesFn
+    _write_discharges: WriteDischargesFn
+
+    # Logger
+    logger: logging.Logger
 
     def __init__(self, config_file: str | None = None, **kwargs: Any) -> None:
-        self.LOG = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
-        self._routing_params_loaded = False
-        self._network_vectors_initialized = False
-        self._network_time_signature = None
+        self.logger = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
         self._set_configs(config_file, **kwargs)
         return
 
@@ -121,20 +122,21 @@ class Muskingum:
         self.conf['var_catchment_volume'] = self.conf.get('var_catchment_volume', 'volume')
         self.conf['var_runoff_depth'] = self.conf.get('var_runoff_depth', 'ro')
 
-        self.LOG.disabled = not self.conf.get('log', True)
-        self.LOG.setLevel(self.conf.get('log_level', 'INFO'))
+        # configure logging
+        self.logger.disabled = not self.conf.get('log', True)
+        self.logger.setLevel(self.conf.get('log_level', 'INFO'))
         log_destination = self.conf.get('log_stream', 'stdout')
         log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
         if log_destination == 'stdout':
-            self.LOG.addHandler(logging.StreamHandler(sys.stdout))
+            self.logger.addHandler(logging.StreamHandler(sys.stdout))
         elif isinstance(log_destination, str):
-            self.LOG.addHandler(logging.FileHandler(log_destination))
-        self.LOG.handlers[0].setFormatter(logging.Formatter(log_format))
-        self.LOG.debug('Logger initialized')
+            self.logger.addHandler(logging.FileHandler(log_destination))
+        self.logger.handlers[0].setFormatter(logging.Formatter(log_format))
+        self.logger.debug('Logger initialized')
         return
 
     def _validate_configs(self) -> None:
-        self.LOG.debug('Validating configs file')
+        self.logger.debug('Validating configs file')
         # these 2 files must always exist
         assert os.path.exists(self.conf['routing_params_file']), FileNotFoundError('Routing params file not found')
         assert os.path.exists(self.conf['connectivity_file']), FileNotFoundError('Connectivity file not found')
@@ -191,11 +193,11 @@ class Muskingum:
         return
 
     def _log_configs(self) -> None:
-        self.LOG.debug(f'river-route version: {__version__}')
-        self.LOG.debug(f'Number of Rivers: {self.river_ids.shape[0]}')
-        self.LOG.debug('Configs:')
+        self.logger.debug(f'river-route version: {__version__}')
+        self.logger.debug(f'Number of Rivers: {self.river_ids.shape[0]}')
+        self.logger.debug('Configs:')
         for k, v in self.conf.items():
-            self.LOG.debug(f'\t{k}: {v}')
+            self.logger.debug(f'\t{k}: {v}')
         return
 
     def _read_initial_state(self) -> None:
@@ -204,11 +206,11 @@ class Muskingum:
 
         state_file = self.conf.get('initial_state_file', '')
         if state_file == '':
-            self.LOG.debug('Setting initial state to zeros')
+            self.logger.debug('Setting initial state to zeros')
             self.initial_state = (np.zeros(self.A.shape[0]), np.zeros(self.A.shape[0]))
             return
         assert os.path.exists(state_file), FileNotFoundError(f'Initial state file not found at: {state_file}')
-        self.LOG.debug('Reading Initial State from Parquet')
+        self.logger.debug('Reading Initial State from Parquet')
         initial_state = pd.read_parquet(state_file).values
         initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
         self.initial_state = initial_state
@@ -224,12 +226,12 @@ class Muskingum:
             array = np.array(self._ensemble_member_states).mean(axis=0)
         else:
             raise ValueError('Unexpected input type when writing final states')
-        self.LOG.debug('Writing Final State to Parquet')
+        self.logger.debug('Writing Final State to Parquet')
         pd.DataFrame(array, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
         return
 
     def _set_network_dependent_vectors(self) -> None:
-        self.LOG.debug('Calculating network dependent vectors')
+        self.logger.debug('Calculating network dependent vectors')
         df = pd.read_parquet(self.conf['routing_params_file'])
         self.river_ids = df[self.conf['var_river_id']].to_numpy(dtype=np.int64, copy=False)
         self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
@@ -239,12 +241,12 @@ class Muskingum:
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
-        self.LOG.debug('Setting and validating time parameters')
+        self.logger.debug('Setting and validating time parameters')
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
         self.dt_discharge = self.conf.get('dt_discharge', self.dt_runoff)
         self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
         if not self.conf.get('dt_routing', 0):
-            self.LOG.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
+            self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
         self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
 
         try:
@@ -260,7 +262,7 @@ class Muskingum:
                 'dt_discharge must be an integer multiple of dt_runoff'
             assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
         except AssertionError as e:
-            self.LOG.error(e)
+            self.logger.error(e)
             raise AssertionError('Time options are not valid')
 
         # set derived datetime parameters for computation cycles later
@@ -268,18 +270,11 @@ class Muskingum:
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
 
-        signature = (
-            self.dt_total,
-            self.dt_runoff,
-            self.dt_discharge,
-            self.dt_routing,
-        )
-        if (
-                self._network_time_signature == signature
-        ):
+        signature = (self.dt_total, self.dt_runoff, self.dt_discharge, self.dt_routing,)
+        if self._network_time_signature == signature:
             return
 
-        self.LOG.debug('Calculating network and time dependent vectors')
+        self.logger.debug('Calculating network and time dependent vectors')
         dt_div_k = self.dt_routing / self.k
         denominator = dt_div_k + (2 * (1 - self.x))
         _2x = 2 * self.x
@@ -289,15 +284,15 @@ class Muskingum:
 
         # sum of coefficients should be 1 (or arbitrarily close) for all segments
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
-            self.LOG.warning('Muskingum coefficients do not sum to 1')
-            self.LOG.debug(f'c1: {self.c1}')
-            self.LOG.debug(f'c2: {self.c2}')
-            self.LOG.debug(f'c3: {self.c3}')
-        assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
+            self.logger.warning('Muskingum coefficients do not sum to 1')
+            self.logger.debug(f'c1: {self.c1}')
+            self.logger.debug(f'c2: {self.c2}')
+            self.logger.debug(f'c3: {self.c3}')
+            raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
         self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)
         self.lhs = self.lhs.tocsc()
-        self.LOG.info('Calculating factorized LHS matrix')
+        self.logger.info('Calculating factorized LHS matrix')
         self.lhs_factorized = factorized(self.lhs)
         self._network_time_signature = signature
         return
@@ -305,18 +300,16 @@ class Muskingum:
     def _volumes_output_generator(self) -> Generator[tuple[DatetimeArray, FloatArray, str, str], None, None]:
         if self.conf.get('catchment_volumes_files', False):
             for volume_file, discharge_file in zip(self.conf['catchment_volumes_files'], self.conf['discharge_files']):
-                self.LOG.info('-' * 80)
-                self.LOG.info(f'Reading catchment volumes file: {volume_file}')
+                self.logger.info(f'Reading catchment volumes file: {volume_file}')
                 with xr.open_dataset(volume_file) as runoff_ds:
-                    self.LOG.debug('Reading time array')
+                    self.logger.debug('Reading time array')
                     dates = runoff_ds['time'].values.astype('datetime64[s]')
-                    self.LOG.debug('Reading volume array')
+                    self.logger.debug('Reading volume array')
                     volumes_array = runoff_ds[self.conf['var_catchment_volume']].values
                 yield dates, volumes_array, volume_file, discharge_file
         elif self.conf.get('runoff_depths_files', False):
             for runoff_file, discharge_file in zip(self.conf['runoff_depths_files'], self.conf['discharge_files']):
-                self.LOG.info('-' * 80)
-                self.LOG.info(f'Calculating catchment volumes from runoff depths: {runoff_file}')
+                self.logger.info(f'Calculating catchment volumes from runoff depths: {runoff_file}')
                 volumes_df = calc_catchment_volumes(
                     runoff_file,
                     weight_table=self.conf['weight_table_file'],
@@ -338,7 +331,7 @@ class Muskingum:
         Returns:
             river_route.Muskingum
         """
-        self.LOG.info(f'Beginning routing')
+        self.logger.info(f'Beginning routing')
         t1 = datetime.datetime.now()
 
         self._validate_configs()
@@ -346,12 +339,13 @@ class Muskingum:
         self._log_configs()
 
         for dates, volumes_array, runoff_file, discharge_file in self._volumes_output_generator():
+            self.logger.info('-' * 80)
             self._set_network_and_time_dependent_vectors(dates)
             volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
             discharge_array = self._router(dates, volumes_array)
 
             if self.dt_discharge > self.dt_runoff:
-                self.LOG.info('Resampling dates and discharges to specified timestep')
+                self.logger.info('Resampling dates and discharges to specified timestep')
                 discharge_array = (
                     discharge_array
                     .reshape((
@@ -362,20 +356,20 @@ class Muskingum:
                     .mean(axis=1)
                 )
 
-            self.LOG.info('Writing Discharge Array to File')
+            self.logger.info('Writing Discharge Array to File')
             discharge_array = np.round(discharge_array, decimals=2).astype(np.float64, copy=False)
-            self.write_discharges(dates, discharge_array, discharge_file, runoff_file)
+            self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
         # write the final state to disc
         self._write_final_state()
 
         t2 = datetime.datetime.now()
-        self.LOG.info('All runoff files routed')
-        self.LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
+        self.logger.info('All runoff files routed')
+        self.logger.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
     def _router(self, dates: DatetimeArray, volumes: FloatArray) -> FloatArray:
-        self.LOG.debug('Getting initial state arrays')
+        self.logger.debug('Getting initial state arrays')
         self._read_initial_state()
         q_init, r_init = self.initial_state
         self._ensemble_member_states = []
@@ -391,7 +385,7 @@ class Muskingum:
         if self.conf['progress_bar']:
             dates = tqdm.tqdm(dates, desc='Runoff Volumes Routed')
         else:
-            self.LOG.info('Performing routing computation iterations')
+            self.logger.info('Performing routing computation iterations')
         for runoff_time_step, runoff_end_date in enumerate(dates):
             r_t = volumes[runoff_time_step, :]
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
@@ -407,14 +401,14 @@ class Muskingum:
 
         # if simulation type is ensemble, then do not overwrite the initial state
         if self.conf['input_type'] == 'sequential':
-            self.LOG.debug('Updating Initial State for Next Sequential Computation')
+            self.logger.debug('Updating Initial State for Next Sequential Computation')
             self.initial_state = (q_t, r_prev)
         if self.conf['input_type'] == 'ensemble':
-            self.LOG.debug('Recording Member State for Final State Aggregation')
+            self.logger.debug('Recording Member State for Final State Aggregation')
             self._ensemble_member_states.append(np.array([q_t, r_prev]).T)
 
         t2 = datetime.datetime.now()
-        self.LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return discharge_array
 
     def _write_discharges(self, dates: DatetimeArray, discharge_array: FloatArray, discharge_file: str, runoff_file: str, ) -> None:
@@ -465,7 +459,7 @@ class Muskingum:
         Returns:
             river_route.Muskingum
         """
-        self.write_discharges = func
+        self._write_discharges = func
         return self
 
     def hydrograph(self, river_id: int) -> pd.DataFrame:
@@ -533,6 +527,6 @@ class Muskingum:
         df = qdf.join(vdf)
         df['runoff-discharge'] = df['runoff_volume'] - df['discharge_volume']
         if not df['runoff-discharge'].gt(0).all():
-            self.LOG.warning(f'More discharge than runoff volume for river {river_id}')
+            self.logger.warning(f'More discharge than runoff volume for river {river_id}')
 
         return df
