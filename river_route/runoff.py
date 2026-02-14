@@ -1,3 +1,4 @@
+import logging
 import os
 
 import netCDF4 as nc
@@ -11,6 +12,8 @@ __all__ = [
     'calc_catchment_volumes',
     'write_catchment_volumes',
 ]
+
+LOG = logging.getLogger(__name__)
 
 
 def _cumulative_to_incremental(df) -> pd.DataFrame:
@@ -38,7 +41,7 @@ def _get_conversion_factor(unit: str) -> int or float:
 
 
 def calc_catchment_volumes(
-        runoff_data: str,
+        runoff_data: str | list[str],
         weight_table: str,
         *,
         runoff_var: str = 'ro',
@@ -55,7 +58,7 @@ def calc_catchment_volumes(
     Calculates the catchment runoff volumes from a given runoff dataset and a directory of VPU configs.
 
     Args:
-        runoff_data (str): a string or list of strings of paths to LSM files
+        runoff_data (str | list[str]): path(s) to runoff files
         weight_table (str): a string path to the weight table
         runoff_var (str): the name of the runoff variable in the LSM files
         x_var (str): the name of the x variable in the LSM files
@@ -71,9 +74,9 @@ def calc_catchment_volumes(
         pd.DataFrame: a DataFrame of the catchment runoff volumes with stream IDs as columns and a datetime index
     """
     with xr.open_dataset(weight_table) as ds:
-        weight_df = ds[['river_id', 'x_index', 'y_index', 'area_sqm']].to_dataframe()
-    unique_idxs = weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
-    unique_sorted_rivers = weight_df[['river_id', ]].drop_duplicates().sort_index()  # index -> already topo sorted
+        weight_df = ds[[river_id_var, 'x_index', 'y_index', 'area_sqm']].to_dataframe()
+    unique_indexes = weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
+    unique_sorted_rivers = weight_df[[river_id_var, ]].drop_duplicates().sort_index()  # index -> already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:
         runoff_depth_unit = runoff_depth_unit if runoff_depth_unit else ds[runoff_var].attrs.get('units', 'm')
@@ -82,19 +85,23 @@ def calc_catchment_volumes(
             ds
             [runoff_var]
             .isel({
-                x_var: xr.DataArray(unique_idxs['x_index'].values, dims="points"),
-                y_var: xr.DataArray(unique_idxs['y_index'].values, dims="points")
+                x_var: xr.DataArray(unique_indexes['x_index'].values, dims="points"),
+                y_var: xr.DataArray(unique_indexes['y_index'].values, dims="points")
             })
             .transpose(time_var, "points")
             .values,
-            columns=unique_idxs[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
+            columns=unique_indexes[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
             index=ds[time_var].to_numpy()
         )
-    df = df[weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)]
-    df.columns = weight_df['river_id']
-    df = df.multiply(weight_df['area_sqm'].values * conversion_factor)
-    df = df.T.groupby(by=df.columns).sum().T
-    df = df[unique_sorted_rivers['river_id'].values]
+    point_labels = weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)
+    df = (
+        df
+        .loc[:, point_labels]
+        .set_axis(weight_df[river_id_var], axis=1)
+        .mul(weight_df['area_sqm'].values * conversion_factor, axis=1)
+        .T.groupby(level=0).sum().T
+        .loc[:, unique_sorted_rivers[river_id_var].values]
+    )
 
     # conversions and restructuring
     if cumulative:
@@ -104,7 +111,7 @@ def calc_catchment_volumes(
     time_diff = np.diff(df.index)
     if not np.all(time_diff == df.index[1] - df.index[0]) and force_uniform_timesteps:
         timestep = (df.index[1] - df.index[0]).astype('timedelta64[s]').astype(int)
-        log.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
+        LOG.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
         df = (
             _incremental_to_cumulative(df)
             .resample(rule=f'{timestep}S')
@@ -128,6 +135,8 @@ def write_catchment_volumes(df: pd.DataFrame, output_dir: str, label: str = None
             An optional label to include in the file name for organization purposes
     """
     # Create output inflow netcdf data
+    if df.shape[0] == 0:
+        raise ValueError('write_catchment_volumes requires at least one row')
     os.makedirs(output_dir, exist_ok=True)
     start_date = df.index[0].strftime('%Y%m%d%H')
     end_date = df.index[-1].strftime('%Y%m%d%H')
@@ -153,7 +162,7 @@ def write_catchment_volumes(df: pd.DataFrame, output_dir: str, label: str = None
         id_var[:] = df.columns.astype(int)
         id_var.long_name = 'unique ID number for each river'
 
-        timestep = (df.index[1] - df.index[0]).seconds
+        timestep = int((df.index[1] - df.index[0]).total_seconds()) if df.shape[0] > 1 else 0
         time_var = ds.createVariable('time', 'i4', ('time',), zlib=True, complevel=5)
         time_var[:] = (df.index - df.index[0]).astype('timedelta64[s]').astype(int)
         time_var.long_name = 'time'
