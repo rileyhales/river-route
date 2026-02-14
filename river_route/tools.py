@@ -99,8 +99,8 @@ def subset_configs_to_river(
     pdf = pd.read_parquet(params)
     cdf = pd.read_parquet(connectivity)
 
-    G = connectivity_to_digraph(connectivity)
-    upstreams = list(nx.ancestors(G, target_river))
+    graph = connectivity_to_digraph(connectivity)
+    upstreams = list(nx.ancestors(graph, target_river))
     upstreams.append(target_river)
 
     pdf[pdf['river_id'].isin(upstreams)].to_parquet(out_params)
@@ -118,7 +118,7 @@ def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
     """
     Generate directed graph from connectivity file
     """
-    G = nx.DiGraph()
+    graph = nx.DiGraph()
     df = pd.read_parquet(connectivity_file)
     if len(df.columns) == 3:  # ID, DownstreamID, Weight
         # check that the weights are all positive and sum to 1 for each unique ID
@@ -134,18 +134,18 @@ def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
             logger.debug('The following IDs have weights that do not sum to 1.0')
             logger.debug(weight_check[~weight_check.eq(1)].index.tolist())
             raise ValueError(f'Weights must sum to 1 for each unique ID')
-        G.add_weighted_edges_from(df.values)
+        graph.add_weighted_edges_from(df.values)
     elif len(df.columns) == 2:  # ID, DownstreamID
-        G.add_edges_from(df.values)
+        graph.add_edges_from(df.values)
     else:
         raise ValueError(f'Connectivity file should have 2 or 3 columns, not {len(df.columns)}')
-    return G
+    return graph
 
 
 def get_adjacency_matrix(routing_params_file: str, connectivity_file: str) -> scipy.sparse.csc_matrix:
     """
     Generate adjacency matrix from connectivity file
     """
-    g = connectivity_to_digraph(connectivity_file)
+    graph = connectivity_to_digraph(connectivity_file)
     sorted_order = pd.read_parquet(routing_params_file).iloc[:, 0].tolist()
-    return scipy.sparse.csc_matrix(nx.convert_matrix.to_scipy_sparse_array(g, nodelist=sorted_order).T)
+    return scipy.sparse.csc_matrix(nx.convert_matrix.to_scipy_sparse_array(graph, nodelist=sorted_order).T)
