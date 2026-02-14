@@ -53,7 +53,7 @@ uniform time step for all rivers with no missing values. There are 2 likely ways
 ### Catchment Volumes (recommended)
 
 ```yaml
-catchment_volumes_file: '/path/to/volumes.nc'
+catchment_volumes_files: '/path/to/volumes.nc'
 ```
 
 Catchment volumes are given in a netCDF file.

@@ -9,8 +9,8 @@ By default, river-route reports routed flows as the average flow that occurred o
 runoff volumes are provided in. If you provide 3-hourly runoff volumes for each catchment. Your output will be the
 average flow in each river segment over the same 3-hour interval. You can change this by specifying:
 
-- `dt_outflow` - the time interval, in seconds, between outflow values which get written to disc. It must be constant
-  between all time steps of outflow.
+- `dt_discharge` - the time interval, in seconds, between discharge values which get written to disc. It must be constant
+  between all discharge time steps.
 
 By way of information, 2 other time parameters are calculated and verified internally by river-route.
 
@@ -22,15 +22,15 @@ By way of information, 2 other time parameters are calculated and verified inter
 The following relationships must be true for all 4 time variables
 
 ```
-dt_total >= dt_outflow >= dt_runoff >= dt_routing
-dt_total % dt_outflow == 0
-dt_outflow % dt_runoff == 0
+dt_total >= dt_discharge >= dt_runoff >= dt_routing
+dt_total % dt_discharge == 0
+dt_discharge % dt_runoff == 0
 dt_runoff % dt_routing == 0
 dt_total == dt_runoff * number_of_time_steps
 ```
 
-- The total time of the runoff data must be greater than or equal to the time interval between outflow values.
-- The time interval between outflow values must be greater than or equal to the time interval between runoff values.
+- The total time of the runoff data must be greater than or equal to the time interval between discharge values.
+- The time interval between discharge values must be greater than or equal to the time interval between runoff values.
 - The time interval between runoff values must be greater than or equal to the time interval between routing
   calculations.
 - Each time interval must be evenly divisible by the next smallest time interval so that the loops of calculations can

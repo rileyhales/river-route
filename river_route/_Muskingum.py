@@ -4,8 +4,7 @@ import logging
 import os
 import random
 import sys
-from functools import partial
-from typing import Tuple, Generator
+from typing import Any, Callable, Generator
 
 import netCDF4 as nc
 import networkx as nx
@@ -14,77 +13,71 @@ import pandas as pd
 import tqdm
 import xarray as xr
 import yaml
-from scipy.optimize import minimize_scalar
+from numpy.typing import NDArray
 from scipy.sparse import csc_matrix
 from scipy.sparse import diags
 from scipy.sparse import eye
-from scipy.sparse.linalg import bicgstab
-from scipy.sparse.linalg import cgs
 from scipy.sparse.linalg import factorized
 
 from .__metadata__ import __version__
-from .metrics import kge2012
 from .runoff import calc_catchment_volumes
 from .tools import connectivity_to_digraph
 from .tools import get_adjacency_matrix
 
 __all__ = ['Muskingum', ]
 
-lvl_calibrate = logging.INFO + 5
-logging.addLevelName(lvl_calibrate, 'CALIBRATE')
+# type hints for checkers
+FloatArray = NDArray[np.float64]
+IntArray = NDArray[np.int64]
+DatetimeArray = NDArray[np.datetime64]
+ConfigDict = dict[str, Any]
+WriteDischargesFn = Callable[[pd.DataFrame, str, str], None]
+FactorizedSolveFn = Callable[[FloatArray], FloatArray]
 
 
 class Muskingum:
     # Given configs
-    conf: dict
+    conf: ConfigDict
 
     # Routing matrices and vectors
     A: csc_matrix  # n x n - adjacency matrix => f(n, connectivity)
     lhs: csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
-    lhs_factorized: callable  # n x n - factorized left hand side matrix for direct solutions
-    k: np.array  # n x 1 - K values for each segment
-    x: np.array  # n x 1 - X values for each segment
-    c1: np.array  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
-    c2: np.array  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
-    c3: np.array  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
-    initial_state: (np.array, np.array)  # Q init, R init
-    _ensemble_member_states: list  # used for ensemble routing, stores member states for final state aggregation
+    lhs_factorized: FactorizedSolveFn  # n x n - factorized left hand side matrix for direct solutions
+    k: FloatArray  # n x 1 - K values for each segment
+    x: FloatArray  # n x 1 - X values for each segment
+    c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
+    c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
+    c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
+    initial_state: tuple[FloatArray, FloatArray]  # Q init, R init
+    _ensemble_member_states: list[FloatArray]  # used for ensemble routing, stores member states for final state aggregation
 
     # Time options
     dt_total: float
     dt_runoff: float
-    dt_outflow: float
+    dt_discharge: float
     dt_routing: float
     num_routing_steps: int
     num_routing_steps_per_runoff: int
-    num_runoff_steps_per_outflow: int
-
-    # Solver options
-    _solve : callable  # changed by set_iterative_solver or set_direct_solver methods
-    _solver_method: str = 'direct'  # changed by set_iterative_solver or set_direct_solver methods
-    _solver_atol: float = 1e-5
-
-    # Calibration variables
-    _calibration_iteration_number: int
+    num_runoff_steps_per_discharge: int
 
     # Methods
-    write_outflows: callable
+    write_discharges: WriteDischargesFn
 
-    def __init__(self, config_file: str = None, **kwargs, ):
+    def __init__(self, config_file: str | None = None, **kwargs: Any) -> None:
         self.LOG = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
         self.set_configs(config_file, **kwargs)
         return
 
-    def set_configs(self, config_file: str, **kwargs) -> None:
+    def set_configs(self, config_file: str | None, **kwargs: Any) -> None:
         """
-        Validate simulation configs given by json, yaml, or kwargs
+        Validate simulation configs given by JSON, YAML, or kwargs
 
         You can also override the values in the config file or entirely ignore the config file by specifying config
         options using keyword arguments. See README or Docs for list of all recognized configuration options. If you do
         not want to use a config file, pass None to the first positional argument and then give kwargs.
 
         Args:
-            config_file (str): path to a json or yaml file of configs. See README for all recognized options.
+            config_file (str): path to a JSON or YAML file of configs. See README for all recognized options.
 
         Returns:
             None
@@ -103,17 +96,15 @@ class Muskingum:
 
         # overwrite config file values with kwargs
         self.conf.update(kwargs)
-
         # set default values for configs when possible
         self.conf['river-route-version'] = __version__
         self.conf['log'] = bool(self.conf.get('log', True))
         self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
         self.conf['log_level'] = self.conf.get('log_level', 'INFO')
 
-        # compute, routing, solver options (time is validated separately at compute step)
+        # compute and routing options (time is validated separately at compute step)
         self.conf['input_type'] = self.conf.get('input_type', 'sequential')
         self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
-        self._solver_atol = self.conf.get('solver_atol', self._solver_atol)
 
         # expected variable names in input/output files
         self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
@@ -147,12 +138,12 @@ class Muskingum:
         assert self.conf['runoff_type'] in ['incremental', 'cumulative'], 'Runoff type not recognized'
 
         # format conversion for the inputs
-        if isinstance(self.conf.get('catchment_volumes_file', []), str):
-            self.conf['catchment_volumes_file'] = [self.conf['catchment_volumes_file'], ]
-        if isinstance(self.conf.get('runoff_depths_file', []), str):
-            self.conf['runoff_depths_file'] = [self.conf['runoff_depths_file'], ]
-        if isinstance(self.conf['outflow_file'], str):
-            self.conf['outflow_file'] = [self.conf['outflow_file'], ]
+        if isinstance(self.conf.get('catchment_volumes_files', []), str):
+            self.conf['catchment_volumes_files'] = [self.conf['catchment_volumes_files'], ]
+        if isinstance(self.conf.get('runoff_depths_files', []), str):
+            self.conf['runoff_depths_files'] = [self.conf['runoff_depths_files'], ]
+        if isinstance(self.conf.get('discharge_files', []), str):
+            self.conf['discharge_files'] = [self.conf['discharge_files'], ]
 
         # if the weight table file is provided, it must exist
         if self.conf.get('weight_table_file', ''):
@@ -166,23 +157,24 @@ class Muskingum:
             del self.conf['initial_state_file']
 
         # either the catchment volumes or runoff depths files must be provided but not both
-        assert self.conf.get('catchment_volumes_file', False) or self.conf.get('runoff_depths_file', False), \
+        assert self.conf.get('catchment_volumes_files', False) or self.conf.get('runoff_depths_files', False), \
             'Either catchment volumes or runoff depths files must be provided'
 
         # if catchment volumes files are provided, they must exist
-        if self.conf.get('catchment_volumes_file', False):
-            for file in self.conf['catchment_volumes_file']:
+        if self.conf.get('catchment_volumes_files', False):
+            for file in self.conf['catchment_volumes_files']:
                 assert os.path.exists(file), FileNotFoundError(f'Runoff volumes file not found at: {file}')
 
         # if runoff depths files are provided, they must exist
-        if self.conf.get('runoff_depths_file', False):
-            for file in self.conf['runoff_depths_file']:
+        if self.conf.get('runoff_depths_files', False):
+            for file in self.conf['runoff_depths_files']:
                 assert os.path.exists(file), FileNotFoundError(f'Runoff depths file not found at: {file}')
             assert self.conf.get('weight_table_file', ''), 'weight_table_file should be provided'
 
-        # the directory for each outflow file must exist
-        for outflow_file in self.conf['outflow_file']:
-            assert os.path.exists(os.path.dirname(outflow_file)), NotADirectoryError('Output directory not found')
+        # the directory for each discharge file must exist
+        assert self.conf.get('discharge_files', False), 'discharge_files must be provided'
+        for discharge_file in self.conf['discharge_files']:
+            assert os.path.exists(os.path.dirname(discharge_file)), NotADirectoryError('Output directory not found')
 
         # convert all relative paths to absolute paths
         for arg in [k for k in self.conf.keys() if 'file' in k]:
@@ -200,7 +192,7 @@ class Muskingum:
             self.LOG.debug(f'\t{k}: {v}')
         return
 
-    def _read_river_ids(self) -> np.array:
+    def _read_river_ids(self) -> IntArray:
         return pd.read_parquet(self.conf['routing_params_file'], columns=[self.conf['var_river_id'], ]).values.flatten()
 
     def _set_linear_routing_params(self) -> None:
@@ -240,9 +232,6 @@ class Muskingum:
         pd.DataFrame(array, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
         return
 
-    def _get_digraph(self) -> nx.DiGraph:
-        return connectivity_to_digraph(self.conf['connectivity_file'])
-
     def _set_adjacency_matrix(self) -> None:
         if hasattr(self, 'A'):
             return
@@ -256,18 +245,18 @@ class Muskingum:
             self.lhs = self.lhs.tocsc()
             if hasattr(self, 'lhs_factorized'):
                 del self.lhs_factorized
-        if not hasattr(self, 'lhs_factorized') and self._solver_method == 'direct':
+        if not hasattr(self, 'lhs_factorized'):
             self.LOG.info('Calculating factorized LHS matrix')
             self.lhs_factorized = factorized(self.lhs)
         return
 
-    def _set_time_params(self, dates: np.array) -> None:
+    def _set_time_params(self, dates: DatetimeArray) -> None:
         """
         Set time parameters for the simulation
         """
         self.LOG.debug('Setting and validating time parameters')
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
-        self.dt_outflow = self.conf.get('dt_outflow', self.dt_runoff)
+        self.dt_discharge = self.conf.get('dt_discharge', self.dt_runoff)
         self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
         if not self.conf.get('dt_routing', 0):
             self.LOG.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
@@ -276,25 +265,26 @@ class Muskingum:
         try:
             # check that time options have the correct sizes
             assert self.dt_total >= self.dt_runoff, 'dt_total !>= dt_runoff'
-            assert self.dt_total >= self.dt_outflow, 'dt_total !>= dt_outflow'
-            assert self.dt_outflow >= self.dt_runoff, 'dt_outflow !>= dt_runoff'
+            assert self.dt_total >= self.dt_discharge, 'dt_total !>= dt_discharge'
+            assert self.dt_discharge >= self.dt_runoff, 'dt_discharge !>= dt_runoff'
             assert self.dt_runoff >= self.dt_routing, 'dt_runoff !>= dt_routing'
             # check that time options are evenly divisible
             assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
-            assert self.dt_total % self.dt_outflow == 0, 'dt_total must be an integer multiple of dt_outflow'
-            assert self.dt_outflow % self.dt_runoff == 0, 'dt_outflow must be an integer multiple of dt_runoff'
+            assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
+            assert self.dt_discharge % self.dt_runoff == 0, \
+                'dt_discharge must be an integer multiple of dt_runoff'
             assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
         except AssertionError as e:
             self.LOG.error(e)
             raise AssertionError('Time options are not valid')
 
         # set derived datetime parameters for computation cycles later
-        self.num_runoff_steps_per_outflow = int(self.dt_outflow / self.dt_runoff)
+        self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
         return
 
-    def _set_muskingum_coefficients(self, k: np.ndarray = None, x: np.ndarray = None) -> None:
+    def _set_muskingum_coefficients(self, k: FloatArray | None = None, x: FloatArray | None = None) -> None:
         """
         Calculate the 3 Muskingum routing coefficients for each segment using given k and x
         """
@@ -320,9 +310,9 @@ class Muskingum:
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
         return
 
-    def _volumes_output_generator(self) -> Generator[Tuple[np.array, np.array, str, str]]:
-        if self.conf.get('catchment_volumes_file', False):
-            for volume_file, outflow_file in zip(self.conf['catchment_volumes_file'], self.conf['outflow_file']):
+    def _volumes_output_generator(self) -> Generator[tuple[DatetimeArray, FloatArray, str, str], None, None]:
+        if self.conf.get('catchment_volumes_files', False):
+            for volume_file, discharge_file in zip(self.conf['catchment_volumes_files'], self.conf['discharge_files']):
                 self.LOG.info('-' * 80)
                 self.LOG.info(f'Reading catchment volumes file: {volume_file}')
                 with xr.open_dataset(volume_file) as runoff_ds:
@@ -330,9 +320,9 @@ class Muskingum:
                     dates = runoff_ds['time'].values.astype('datetime64[s]')
                     self.LOG.debug('Reading volume array')
                     volumes_array = runoff_ds[self.conf['var_catchment_volume']].values
-                yield dates, volumes_array, volume_file, outflow_file
-        elif self.conf.get('runoff_depths_file', False):
-            for runoff_file, outflow_file in zip(self.conf['runoff_depths_file'], self.conf['outflow_file']):
+                yield dates, volumes_array, volume_file, discharge_file
+        elif self.conf.get('runoff_depths_files', False):
+            for runoff_file, discharge_file in zip(self.conf['runoff_depths_files'], self.conf['discharge_files']):
                 self.LOG.info('-' * 80)
                 self.LOG.info(f'Calculating catchment volumes from runoff depths: {runoff_file}')
                 volumes_df = calc_catchment_volumes(
@@ -345,11 +335,11 @@ class Muskingum:
                     time_var=self.conf['var_t'],
                     cumulative=self.conf['runoff_type'] == 'cumulative',
                 )
-                yield volumes_df.index.values, volumes_df.values, runoff_file, outflow_file
+                yield volumes_df.index.values, volumes_df.values, runoff_file, discharge_file
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
 
-    def route(self, **kwargs) -> 'Muskingum':
+    def route(self, **kwargs: Any) -> 'Muskingum':
         """
         Performs time-iterative runoff routing through the river network
 
@@ -369,27 +359,27 @@ class Muskingum:
         self._log_configs()
         self._set_adjacency_matrix()
 
-        for dates, volumes_array, runoff_file, outflow_file in self._volumes_output_generator():
+        for dates, volumes_array, runoff_file, discharge_file in self._volumes_output_generator():
             self._set_time_params(dates)
             volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
             self._set_muskingum_coefficients()
-            outflow_array = self._router(dates, volumes_array)
+            discharge_array = self._router(dates, volumes_array)
 
-            if self.dt_outflow > self.dt_runoff:
-                self.LOG.info('Resampling dates and outflows to specified timestep')
-                outflow_array = (
-                    outflow_array
+            if self.dt_discharge > self.dt_runoff:
+                self.LOG.info('Resampling dates and discharges to specified timestep')
+                discharge_array = (
+                    discharge_array
                     .reshape((
-                        int(self.dt_total / self.dt_outflow),
-                        int(self.dt_outflow / self.dt_runoff),
+                        int(self.dt_total / self.dt_discharge),
+                        int(self.dt_discharge / self.dt_runoff),
                         self.A.shape[0],
                     ))
                     .mean(axis=1)
                 )
 
-            self.LOG.info('Writing Outflow Array to File')
-            outflow_array = np.round(outflow_array, decimals=2)
-            self._write_outflows(dates, outflow_array, outflow_file, runoff_file)
+            self.LOG.info('Writing Discharge Array to File')
+            discharge_array = np.round(discharge_array, decimals=2)
+            self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
         # write the final state to disc
         self._write_final_state()
@@ -399,93 +389,7 @@ class Muskingum:
         self.LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
         return self
 
-    def calibrate(self, observed: pd.DataFrame, overwrite_params_file: bool = False) -> 'Muskingum':
-        """
-        Calibrate K and X to given measured_values using optimization algorithms
-
-        Args:
-            observed: A pandas DataFrame with a datetime index, river id column names, and discharge values
-            overwrite_params_file: If True, the calibration will overwrite the routing_params_file with the new values
-
-        Returns:
-            river_route.Muskingum
-        """
-        self.LOG.info(f'Beginning optimization')
-        t1 = datetime.datetime.now()
-
-        self._set_linear_routing_params()
-        self._validate_configs()
-        self._log_configs()
-        self._set_adjacency_matrix()
-
-        # find the indices of the rivers which have observed flows
-        g = self._get_digraph()
-        subgraph_rivers = set()
-        for river_id in observed.columns:
-            subgraph_rivers.update([river_id, ])
-            subgraph_rivers.update(nx.ancestors(g, river_id))
-        # sort the river IDs to match the order they appear in the routing parameters file
-        river_ids = pd.Series(self._read_river_ids())
-        subgraph_rivers = pd.Series(list(subgraph_rivers))
-        sorted_indices = subgraph_rivers.map(pd.Series(river_ids.index, index=river_ids.values)).sort_values().index
-        subgraph_rivers = subgraph_rivers[sorted_indices].reset_index(drop=True).values
-        # make boolean selectors to subset the inputs and select rivers to compare with observed values
-        riv_idxes = river_ids.isin(subgraph_rivers).values
-        river_ids = river_ids[riv_idxes].reset_index(drop=True)
-        obs_idxes = river_ids[river_ids.isin(observed.columns)].index.values
-
-        self.k = self.k[riv_idxes]
-        self.x = self.x[riv_idxes]
-        self.A = self.A[riv_idxes, :][:, riv_idxes]
-
-        self._calibration_iteration_number = 0
-        self.LOG.setLevel('CALIBRATE')
-
-        obj = partial(self._calibration_objective,
-                      observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='k')
-        result_k = minimize_scalar(obj, bounds=(0.75, 1.2), method='bounded', options={'xatol': 1e-2})
-        self.k = self.k * result_k.x
-        self.LOG.log(lvl_calibrate, f'Optimal k scalar: {result_k.x}')
-        self.LOG.log(lvl_calibrate, result_k)
-        self.LOG.log(lvl_calibrate, '-' * 80)
-
-        self._calibration_iteration_number = 0
-        obj = partial(self._calibration_objective,
-                      observed=observed, riv_idxes=riv_idxes, obs_idxes=obs_idxes, var='x')
-        result_x = minimize_scalar(obj, bounds=(0.9, 1.1), method='bounded', options={'xatol': 1e-2})
-        self.x = self.x * result_x.x
-        self.LOG.log(lvl_calibrate, f'Optimal x scalar: {result_x.x}')
-        self.LOG.log(lvl_calibrate, result_x)
-
-        if overwrite_params_file:
-            df = pd.read_parquet(self.conf['routing_params_file'])
-            df['k'] = df['k'] * result_k.x
-            df['x'] = df['x'] * result_x.x
-            df.to_parquet(self.conf['routing_params_file'])
-
-        self.LOG.log(lvl_calibrate, '-' * 80)
-        self.LOG.log(lvl_calibrate, f'Final k scalar: {result_k.x}')
-        self.LOG.log(lvl_calibrate, f'Final x scalar: {result_x.x}')
-        self.LOG.log(lvl_calibrate, f'Total iterations: {result_k.nit + result_x.nit}')
-        self.LOG.log(lvl_calibrate, '-' * 80)
-
-        self.LOG.setLevel(self.conf.get('log_level', 'INFO'))
-        t2 = datetime.datetime.now()
-        self.LOG.info(f'Total job time: {(t2 - t1).total_seconds()}')
-
-        # delete calibration arrays to force recalculation
-        self.LOG.debug('Deleting routing related arrays affected by calibration process')
-        del self.k
-        del self.x
-        del self.A
-        del self.lhs
-        del self.c1
-        del self.c2
-        del self.c3
-        self._set_linear_routing_params()
-        return self
-
-    def _router(self, dates: np.array, volumes: np.array) -> np.array:
+    def _router(self, dates: DatetimeArray, volumes: FloatArray) -> FloatArray:
         self.LOG.debug('Getting initial state arrays')
         self._read_initial_state()
         q_init, r_init = self.initial_state
@@ -493,7 +397,7 @@ class Muskingum:
 
         # set initial values
         self._set_lhs_matrix()
-        outflow_array = np.zeros((volumes.shape[0], self.A.shape[0]))
+        discharge_array = np.zeros((volumes.shape[0], self.A.shape[0]))
         q_t = np.zeros_like(q_init)
         q_t[:] = q_init
         r_prev = np.zeros_like(r_init)
@@ -509,13 +413,13 @@ class Muskingum:
             interval_flows = np.zeros((self.num_routing_steps_per_runoff, self.A.shape[0]))
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
                 rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
-                q_t[:] = self._solve(rhs, q_t)
+                q_t[:] = self.lhs_factorized(rhs)
                 interval_flows[routing_sub_iteration_num, :] = q_t
-            outflow_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
+            discharge_array[runoff_time_step, :] = np.mean(interval_flows, axis=0)
             r_prev[:] = r_t
 
-        # Enforce positive flows in case of negative solver results
-        outflow_array[outflow_array < 0] = 0
+        # Enforce positive flows in case of negative numerical results
+        discharge_array[discharge_array < 0] = 0
 
         # if simulation type is ensemble, then do not overwrite the initial state
         if self.conf['input_type'] == 'sequential':
@@ -527,111 +431,37 @@ class Muskingum:
 
         t2 = datetime.datetime.now()
         self.LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-        return outflow_array
+        return discharge_array
 
-    def _solve(self, rhs: np.array, q_t: np.array) -> np.array:
-        return self._solve_direct(rhs, q_t)
-
-    def _solve_cgs(self, rhs: np.array, q_t: np.array) -> np.array:
-        return cgs(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
-
-    def _solve_bicgstab(self, rhs: np.array, q_t: np.array) -> np.array:
-        return bicgstab(self.lhs, rhs, x0=q_t, atol=self._solver_atol)[0]
-
-    def _solve_direct(self, rhs: np.array, q_t: np.array) -> np.array:
-        return self.lhs_factorized(rhs)
-
-    def set_direct_solver(self, ) -> 'Muskingum':
-        """
-        Set using a direct solver of the factorized LHS of the matrix muskingum equation. Returns self.
-
-        Returns:
-            river_route.Muskingum
-        """
-        self._solver_method = 'direct'
-        self._solve = self._solve_direct
-        return self
-
-    def set_iterative_solver(self, solver_method: str = 'cgs') -> 'Muskingum':
-        """
-        Set using an iterative solver of the LHS of the matrix muskingum equation. Returns self.
-
-        Args:
-            solver_method: 'cgs' or 'bicgstab'
-
-        Returns:
-            river_route.Muskingum
-        """
-        assert solver_method in ['cgs', 'bicgstab'], 'Solver type not recognized. Use cgs or bicgstab'
-        self._solver_method = solver_method
-        if solver_method == 'cgs':
-            self._solve = self._solve_cgs
-        elif solver_method == 'bicgstab':
-            self._solve = self._solve_bicgstab
-        return self
-
-    def _calibration_objective(self,
-                               iteration: np.array, *, observed: pd.DataFrame,
-                               riv_idxes: np.array, obs_idxes: np.ndarray, var: str = None) -> np.float64:
-        """
-        Objective function for calibration
-
-        Args:
-            iteration: a scalar value to multiply the k values by
-            riv_idxes: array of the indices of rivers with observations in the river id list from params
-            obs_idxes: array of the indices of observed rivers in the river id list from params
-
-        Returns:
-            np.float64
-        """
-        self._calibration_iteration_number += 1
-        self.LOG.log(lvl_calibrate, f'Iteration {self._calibration_iteration_number} - Testing scalar: {iteration}')
-        iter_df = pd.DataFrame(columns=riv_idxes)
-
-        # set iteration k and x depending on the routing type in the configs and the size of the scalar
-        assert var in ['k', 'x'], 'Calibration variable must be k or x for linear calibration'
-        k = self.k if var != 'k' else self.k * iteration
-        x = self.x if var != 'x' else self.x * iteration
-
-        for dates, volumes_array, runoff_file, outflow_file in self._volumes_output_generator():
-            self._set_time_params(dates)
-            self._set_muskingum_coefficients(k=k, x=x)
-            volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
-            outflow_array = self._router(dates, volumes_array)[:, obs_idxes]
-            if iter_df.empty:
-                iter_df = pd.DataFrame(outflow_array, index=dates, columns=observed.columns)
-            else:
-                iter_df = pd.concat([iter_df, pd.DataFrame(outflow_array, index=dates, columns=observed.columns)])
-        y_true, y_pred = observed.merge(iter_df, left_index=True, right_index=True,
-                                        suffixes=('_true', '_pred')).dropna().values.T
-        objective_function_value = np.absolute(kge2012(y_true, y_pred) - 1)
-        self.LOG.log(lvl_calibrate,
-                     f'Iteration {self._calibration_iteration_number} - ABS(KGE - 1): {objective_function_value}')
-        del self.initial_state
-        return objective_function_value
-
-    def _write_outflows(self, dates: np.array, outflow_array: np.array, outflow_file: str, runoff_file: str) -> None:
-        dates = dates[::self.num_runoff_steps_per_outflow].astype('datetime64[s]')
-        df = pd.DataFrame(outflow_array, index=dates, columns=self._read_river_ids())
-        self.write_outflows(df=df, outflow_file=outflow_file, runoff_file=runoff_file)
+    def _write_discharges(
+            self,
+            dates: DatetimeArray,
+            discharge_array: FloatArray,
+            discharge_file: str,
+            runoff_file: str,
+    ) -> None:
+        dates = dates[::self.num_runoff_steps_per_discharge].astype('datetime64[s]')
+        df = pd.DataFrame(discharge_array, index=dates, columns=self._read_river_ids())
+        self.write_discharges(df, discharge_file, runoff_file)
         return
 
-    def write_outflows(self, df: pd.DataFrame, outflow_file: str, runoff_file: str) -> None:
+    def write_discharges(self, df: pd.DataFrame, discharge_file: str, runoff_file: str) -> None:
         """
-        Writes the outflows from a routing simulation to a netcdf file. You should overwrite this method with a custom
-        handler that writes it in a format that fits your needs using the set_write_outflows method.
+        Writes routed discharge from a routing simulation to a netcdf file.
+        You should overwrite this method with a custom handler using set_write_discharges.
 
         Args:
             df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values
-            outflow_file: the file path to write the outflows to
-            runoff_file: the file path to the runoff file used to generate the outflows
+            discharge_file: the file path to write the discharge data to
+            runoff_file: the file path to the runoff file used to generate the discharge values
 
         Returns:
             None
         """
-        with nc.Dataset(outflow_file, mode='w', format='NETCDF4') as ds:
+        with nc.Dataset(discharge_file, mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=df.shape[0])
             ds.createDimension(self.conf['var_river_id'], size=df.shape[1])
+            ds.runoff_file = runoff_file
 
             time_var = ds.createVariable('time', 'f8', ('time',))
             time_var.units = f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
@@ -648,18 +478,18 @@ class Muskingum:
             flow_var.units = 'm3 s-1'
         return
 
-    def set_write_outflows(self, func: callable) -> 'Muskingum':
+    def set_write_discharges(self, func: WriteDischargesFn) -> 'Muskingum':
         """
-        Overwrites the default write_outflows method to a custom function and returns the class instance so that you
+        Overwrites the default write_discharges method to a custom function and returns the class instance so that you
         can chain the method with the constructor.
 
         Args:
-            func (callable): a function that takes 3 keyword arguments: df, outflow_file, runoff_file and returns None
+            func (callable): a function that takes 3 keyword arguments: df, discharge_file, runoff_file and returns None
 
         Returns:
             river_route.Muskingum
         """
-        self.write_outflows = func
+        self.write_discharges = func
         return self
 
     def hydrograph(self, river_id: int) -> pd.DataFrame:
@@ -672,7 +502,7 @@ class Muskingum:
         Returns:
             pandas.DataFrame
         """
-        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
+        with xr.open_mfdataset(self.conf['discharge_files']) as ds:
             df = (
                 ds
                 [self.conf['var_discharge']]
@@ -683,7 +513,7 @@ class Muskingum:
             df.columns = [river_id, ]
         return df
 
-    def mass_balance(self, river_id: int, ancestors: list = None) -> pd.DataFrame:
+    def mass_balance(self, river_id: int, ancestors: list[int] | set[int] | None = None) -> pd.DataFrame:
         """
         Get the mass balance for a given river id as a pandas dataframe
 
@@ -699,7 +529,7 @@ class Muskingum:
         if ancestors is None:
             g = connectivity_to_digraph(self.conf['connectivity_file'])
             ancestors = set(list(nx.ancestors(g, river_id)) + [river_id, ])
-        with xr.open_mfdataset(self.conf['catchment_volumes_file']) as ds:
+        with xr.open_mfdataset(self.conf['catchment_volumes_files']) as ds:
             vdf = (
                 ds
                 .sel(**{self.conf['var_river_id']: ancestors})
@@ -712,7 +542,7 @@ class Muskingum:
                 .cumsum()
                 .rename('runoff_volume')
             )
-        with xr.open_mfdataset(self.conf['outflow_file']) as ds:
+        with xr.open_mfdataset(self.conf['discharge_files']) as ds:
             qdf = (
                 ds
                 .sel(**{self.conf['var_river_id']: river_id})

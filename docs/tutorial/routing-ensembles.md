@@ -35,16 +35,16 @@ connectivity_file = 'connectivity.parquet'
 routing_params_file = 'routing_parameters.parquet'
 volumes_files = ['volumes_member_1.nc',
                  'volumes_member_2.nc', ]
-output_files = ['outflows_member_1.nc',
-                'outflows_member_2.nc', ]
+output_files = ['discharges_member_1.nc',
+                'discharges_member_2.nc', ]
 
 
 def route(input_file: str, output_file: str) -> None:
     rr.Muskingum(
         connectivity_file=connectivity_file,
         routing_params_file=routing_params_file,
-        catchment_volumes_file=input_file,
-        outflow_file=output_file,
+        catchment_volumes_files=input_file,
+        discharge_files=output_file,
     )
 
 
@@ -63,7 +63,7 @@ final state file while the values are still in memory. This is the most efficien
 separate process. Your custom function will need to know the datetime of the next simulation or the number of timesteps after initialization which 
 corresponds to your next model run's start time. For more information about this, see the 
 [advanced concepts section on custom outputs](./advanced-tutorial.md#customizing-outputs) and the 
-[API documentation](../api.md#river_route.Muskingum.write_outflows).
+[API documentation](../api.md#river_route.Muskingum.write_discharges).
 
 After you have written these custom outputs to disc for each member, you can combine them into a single final state. You could calculate an average 
 or median of the member's final states, assimilate gauge data with a Kalman filter, or use some other algorithm or machine learning to aggregate the 
@@ -78,12 +78,12 @@ import pandas as pd
 import river_route as rr
 
 
-def custom_output_writer(df, outflow_file, runoff_file):
+def custom_output_writer(df, discharge_file, runoff_file):
     # df: a dataframe with datetime index and river_id numbers for columns with the routed discharge
-    # outflow_file: the path to the output file provided by your config file
+    # discharge_file: the path to the output file provided by your config file
     # runoff_file: the path to the runoff file used to produce this output, if you need it
 
-    # you probably want to include the member number in the output file name which could come from the outflow or runoff file
+    # you probably want to include the member number in the output file name which could come from the discharge or runoff file
     member_number = os.path.basename(runoff_file)
 
     # option 1
@@ -95,14 +95,14 @@ def custom_output_writer(df, outflow_file, runoff_file):
     init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
     
     # continue with writing the full outputs
-    df.to_netcdf(outflow_file)  # for recommendations of how to format this, refer to the API docs and/or source code
+    df.to_netcdf(discharge_file)  # for recommendations of how to format this, refer to the API docs and/or source code
     return
 
 
 m = (
     rr
     .Muskingum('your_config_file.yaml')
-    .set_write_outflows(custom_output_writer)  # set the custom output writer function
+    .set_write_discharges(custom_output_writer)  # set the custom output writer function
     .route()
 )
 

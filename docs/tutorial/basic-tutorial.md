@@ -1,5 +1,5 @@
 !!! warning "Non-Comprehensive Tutorial"
-    This is not a comprehensive hydrological modeling course which should teach you the theory of hydrological channel routing, calibration, and
+    This is not a comprehensive hydrological modeling course which should teach you the theory of hydrological channel routing and
     validation. It will not teach the prerequisite informatics and GIS skills to create a watershed representation. Hydraulics and hydrology software
     can be used to obtain the information needed for routing, or you can use a GIS software such as QGIS or ArcGIS. An approachable place to start
     learning these skills is a GIS tutorial demonstrating watershed delineation and stream network extraction as well as assigning and calculating
@@ -99,8 +99,8 @@ You need the following minimum attributes for each stream and catchment pair
 - Downstream ID: the ID of the downstream segment which the given stream flows in to.
 - Length: the geodesic length of the river in meters.
 - Area: the projected area of the catchment in square meters.
-- Muskingum K: the k value to use for this river segment for routing. It can be calibrated later.
-- Muskingum X: the x value to use for this river segment for routing. It can be calibrated later.
+- Muskingum K: the k value to use for this river segment for routing.
+- Muskingum X: the x value to use for this river segment for routing.
 
 ## Runoff Depths vs Catchment Volumes
 
@@ -132,8 +132,8 @@ enter them into a YAML file that looks like this example.
 ```yaml
 routing_params_file: '/path/to/params.parquet'
 connectivity_file: '/path/to/connectivity.parquet'
-catchment_volumes_file: '/path/to/volumes.nc'
-outflow_file: '/path/to/outflows.nc'
+catchment_volumes_files: '/path/to/volumes.nc'
+discharge_files: '/path/to/discharges.nc'
 ```
 
 ### First Routing Run
