@@ -22,7 +22,6 @@ from scipy.sparse.linalg import factorized
 from .__metadata__ import __version__
 from .runoff import calc_catchment_volumes
 from .tools import connectivity_to_digraph
-from .tools import get_adjacency_matrix
 
 __all__ = ['Muskingum', ]
 
@@ -31,7 +30,7 @@ FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int64]
 DatetimeArray = NDArray[np.datetime64]
 ConfigDict = dict[str, Any]
-WriteDischargesFn = Callable[[pd.DataFrame, str, str], None]
+WriteDischargesFn = Callable[[DatetimeArray, FloatArray, str, str], None]
 FactorizedSolveFn = Callable[[FloatArray], FloatArray]
 
 
@@ -39,15 +38,19 @@ class Muskingum:
     # Given configs
     conf: ConfigDict
 
-    # Routing matrices and vectors
-    A: csc_matrix  # n x n - adjacency matrix => f(n, connectivity)
-    lhs: csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
-    lhs_factorized: FactorizedSolveFn  # n x n - factorized left hand side matrix for direct solutions
-    k: FloatArray  # n x 1 - K values for each segment
-    x: FloatArray  # n x 1 - X values for each segment
+    # Network dependent matrices and vectors
+    A: csc_matrix  # n x n - adjacency matrix => from connectivity file
+    k: FloatArray  # n x 1 - K values for each segment => from routing params file
+    x: FloatArray  # n x 1 - X values for each segment => from routing params file
+    river_ids: IntArray  # n x 1 - river ID for each segment => from routing params file
+    # Network and routing timestep dependent matrices and vectors
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
+    lhs: csc_matrix  # n x n - left hand side of matrix form of routing equation => f(n, dt_routing)
+    lhs_factorized: FactorizedSolveFn  # n x n - factorized left hand side matrix for direct solutions
+    _network_time_signature: tuple[Any, ...] | None  # used to track if sequential runoffs use the same routing matrices
+
     initial_state: tuple[FloatArray, FloatArray]  # Q init, R init
     _ensemble_member_states: list[FloatArray]  # used for ensemble routing, stores member states for final state aggregation
 
@@ -65,10 +68,13 @@ class Muskingum:
 
     def __init__(self, config_file: str | None = None, **kwargs: Any) -> None:
         self.LOG = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
-        self.set_configs(config_file, **kwargs)
+        self._routing_params_loaded = False
+        self._network_vectors_initialized = False
+        self._network_time_signature = None
+        self._set_configs(config_file, **kwargs)
         return
 
-    def set_configs(self, config_file: str | None, **kwargs: Any) -> None:
+    def _set_configs(self, config_file: str | None, **kwargs: Any) -> None:
         """
         Validate simulation configs given by JSON, YAML, or kwargs
 
@@ -186,20 +192,10 @@ class Muskingum:
 
     def _log_configs(self) -> None:
         self.LOG.debug(f'river-route version: {__version__}')
-        self.LOG.debug(f'Number of Rivers: {self._read_river_ids().shape[0]}')
+        self.LOG.debug(f'Number of Rivers: {self.river_ids.shape[0]}')
         self.LOG.debug('Configs:')
         for k, v in self.conf.items():
             self.LOG.debug(f'\t{k}: {v}')
-        return
-
-    def _read_river_ids(self) -> IntArray:
-        return pd.read_parquet(self.conf['routing_params_file'], columns=[self.conf['var_river_id'], ]).values.flatten()
-
-    def _set_linear_routing_params(self) -> None:
-        if hasattr(self, 'k') and hasattr(self, 'x'):
-            return
-        self.k = pd.read_parquet(self.conf['routing_params_file'], columns=['k', ]).values.flatten()
-        self.x = pd.read_parquet(self.conf['routing_params_file'], columns=['x', ]).values.flatten()
         return
 
     def _read_initial_state(self) -> None:
@@ -232,28 +228,17 @@ class Muskingum:
         pd.DataFrame(array, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
         return
 
-    def _set_adjacency_matrix(self) -> None:
-        if hasattr(self, 'A'):
-            return
-        self.LOG.debug('Calculating Network Adjacency Matrix (A)')
-        self.A = get_adjacency_matrix(self.conf['routing_params_file'], self.conf['connectivity_file'])
+    def _set_network_dependent_vectors(self) -> None:
+        self.LOG.debug('Calculating network dependent vectors')
+        df = pd.read_parquet(self.conf['routing_params_file'])
+        self.river_ids = df[self.conf['var_river_id']].to_numpy(dtype=np.int64, copy=False)
+        self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
+        self.x = df['x'].to_numpy(dtype=np.float64, copy=False)
+        graph = connectivity_to_digraph(self.conf['connectivity_file'])
+        self.A = csc_matrix(nx.convert_matrix.to_scipy_sparse_array(graph, nodelist=self.river_ids.tolist()).T)
         return
 
-    def _set_lhs_matrix(self) -> None:
-        if not hasattr(self, 'lhs'):
-            self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)
-            self.lhs = self.lhs.tocsc()
-            if hasattr(self, 'lhs_factorized'):
-                del self.lhs_factorized
-        if not hasattr(self, 'lhs_factorized'):
-            self.LOG.info('Calculating factorized LHS matrix')
-            self.lhs_factorized = factorized(self.lhs)
-        return
-
-    def _set_time_params(self, dates: DatetimeArray) -> None:
-        """
-        Set time parameters for the simulation
-        """
+    def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
         self.LOG.debug('Setting and validating time parameters')
         self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
         self.dt_discharge = self.conf.get('dt_discharge', self.dt_runoff)
@@ -282,24 +267,25 @@ class Muskingum:
         self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
-        return
 
-    def _set_muskingum_coefficients(self, k: FloatArray | None = None, x: FloatArray | None = None) -> None:
-        """
-        Calculate the 3 Muskingum routing coefficients for each segment using given k and x
-        """
-        self.LOG.debug('Calculating Muskingum coefficients')
+        signature = (
+            self.dt_total,
+            self.dt_runoff,
+            self.dt_discharge,
+            self.dt_routing,
+        )
+        if (
+                self._network_time_signature == signature
+        ):
+            return
 
-        self._set_linear_routing_params()
-        k = k if k is not None else self.k
-        x = x if x is not None else self.x
-
-        dt_div_k = self.dt_routing / k
-        denom = dt_div_k + (2 * (1 - x))
-        _2x = 2 * x
-        self.c1 = (dt_div_k + _2x) / denom
-        self.c2 = (dt_div_k - _2x) / denom
-        self.c3 = ((2 * (1 - x)) - dt_div_k) / denom
+        self.LOG.debug('Calculating network and time dependent vectors')
+        dt_div_k = self.dt_routing / self.k
+        denominator = dt_div_k + (2 * (1 - self.x))
+        _2x = 2 * self.x
+        self.c1 = (dt_div_k + _2x) / denominator
+        self.c2 = (dt_div_k - _2x) / denominator
+        self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
 
         # sum of coefficients should be 1 (or arbitrarily close) for all segments
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
@@ -308,6 +294,12 @@ class Muskingum:
             self.LOG.debug(f'c2: {self.c2}')
             self.LOG.debug(f'c3: {self.c3}')
         assert np.allclose(self.c1 + self.c2 + self.c3, 1), 'Muskingum coefficients do not sum to 1'
+
+        self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)
+        self.lhs = self.lhs.tocsc()
+        self.LOG.info('Calculating factorized LHS matrix')
+        self.lhs_factorized = factorized(self.lhs)
+        self._network_time_signature = signature
         return
 
     def _volumes_output_generator(self) -> Generator[tuple[DatetimeArray, FloatArray, str, str], None, None]:
@@ -339,11 +331,9 @@ class Muskingum:
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
 
-    def route(self, **kwargs: Any) -> 'Muskingum':
+    def route(self) -> 'Muskingum':
         """
         Performs time-iterative runoff routing through the river network
-
-        Keyword Args:
 
         Returns:
             river_route.Muskingum
@@ -351,18 +341,13 @@ class Muskingum:
         self.LOG.info(f'Beginning routing')
         t1 = datetime.datetime.now()
 
-        if len(kwargs) > 0:
-            self.LOG.info('Updating configs with kwargs')
-            self.conf.update(kwargs)
-
         self._validate_configs()
+        self._set_network_dependent_vectors()
         self._log_configs()
-        self._set_adjacency_matrix()
 
         for dates, volumes_array, runoff_file, discharge_file in self._volumes_output_generator():
-            self._set_time_params(dates)
+            self._set_network_and_time_dependent_vectors(dates)
             volumes_array = volumes_array / self.dt_runoff  # convert volume -> volume/time
-            self._set_muskingum_coefficients()
             discharge_array = self._router(dates, volumes_array)
 
             if self.dt_discharge > self.dt_runoff:
@@ -378,8 +363,8 @@ class Muskingum:
                 )
 
             self.LOG.info('Writing Discharge Array to File')
-            discharge_array = np.round(discharge_array, decimals=2)
-            self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
+            discharge_array = np.round(discharge_array, decimals=2).astype(np.float64, copy=False)
+            self.write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
         # write the final state to disc
         self._write_final_state()
@@ -396,7 +381,6 @@ class Muskingum:
         self._ensemble_member_states = []
 
         # set initial values
-        self._set_lhs_matrix()
         discharge_array = np.zeros((volumes.shape[0], self.A.shape[0]))
         q_t = np.zeros_like(q_init)
         q_t[:] = q_init
@@ -433,45 +417,37 @@ class Muskingum:
         self.LOG.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return discharge_array
 
-    def _write_discharges(
-            self,
-            dates: DatetimeArray,
-            discharge_array: FloatArray,
-            discharge_file: str,
-            runoff_file: str,
-    ) -> None:
-        dates = dates[::self.num_runoff_steps_per_discharge].astype('datetime64[s]')
-        df = pd.DataFrame(discharge_array, index=dates, columns=self._read_river_ids())
-        self.write_discharges(df, discharge_file, runoff_file)
-        return
-
-    def write_discharges(self, df: pd.DataFrame, discharge_file: str, runoff_file: str) -> None:
+    def _write_discharges(self, dates: DatetimeArray, discharge_array: FloatArray, discharge_file: str, runoff_file: str, ) -> None:
         """
         Writes routed discharge from a routing simulation to a netcdf file.
         You should overwrite this method with a custom handler using set_write_discharges.
 
         Args:
-            df: a Pandas DataFrame with a datetime Index, river_id column names, and discharge values
+            dates: datetime array corresponding to the discharge rows
+            discharge_array: routed discharge values with shape (time, river)
             discharge_file: the file path to write the discharge data to
             runoff_file: the file path to the runoff file used to generate the discharge values
 
         Returns:
             None
         """
+        dates = dates[::self.num_runoff_steps_per_discharge].astype('datetime64[s]')
+
         with nc.Dataset(discharge_file, mode='w', format='NETCDF4') as ds:
-            ds.createDimension('time', size=df.shape[0])
-            ds.createDimension(self.conf['var_river_id'], size=df.shape[1])
+            ds.createDimension('time', size=discharge_array.shape[0])
+            ds.createDimension(self.conf['var_river_id'], size=discharge_array.shape[1])
             ds.runoff_file = runoff_file
 
             time_var = ds.createVariable('time', 'f8', ('time',))
-            time_var.units = f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
-            time_var[:] = df.index.values - df.index.values[0]
+            t0 = pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")
+            time_var.units = f'seconds since {t0}'
+            time_var[:] = dates - dates[0]
 
             id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
-            id_var[:] = df.columns.values
+            id_var[:] = self.river_ids
 
             flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
-            flow_var[:] = df.values
+            flow_var[:] = discharge_array
             flow_var.long_name = 'Discharge at catchment outlet'
             flow_var.standard_name = 'discharge'
             flow_var.aggregation_method = 'mean'
@@ -484,7 +460,7 @@ class Muskingum:
         can chain the method with the constructor.
 
         Args:
-            func (callable): a function that takes 3 keyword arguments: df, discharge_file, runoff_file and returns None
+            func (callable): function that takes dates, discharge_array, discharge_file, runoff_file and returns None
 
         Returns:
             river_route.Muskingum
