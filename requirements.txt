@@ -1,5 +1,6 @@
 dask
 fastparquet
+geopandas
 matplotlib
 natsort
 netcdf4
@@ -8,6 +9,7 @@ numpy
 pandas
 pyyaml
 scipy
+shapely
 tqdm
 xarray
 zarr

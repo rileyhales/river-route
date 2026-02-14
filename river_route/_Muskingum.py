@@ -17,7 +17,6 @@ from numpy.typing import NDArray
 from scipy.sparse import csc_matrix
 from scipy.sparse import diags
 from scipy.sparse import eye
-from scipy.sparse import triu
 from scipy.sparse.linalg import factorized
 
 from .__metadata__ import __version__
@@ -238,18 +237,7 @@ class Muskingum:
         self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
         self.x = df['x'].to_numpy(dtype=np.float64, copy=False)
         graph = connectivity_to_digraph(self.conf['connectivity_file'])
-
-        # Routing uses A = adjacency.T, where rows are receiving/downstream segments
-        # and columns are upstream contributors. With upstream->downstream ID order,
-        # A (and LHS) should be lower triangular.
-        adjacency = csc_matrix(nx.convert_matrix.to_scipy_sparse_array(graph, nodelist=self.river_ids.tolist()).T)
-        if triu(adjacency, k=1).nnz != 0:
-            raise ValueError(
-                'Routing parameters are not topologically sorted for this connectivity network. '
-                'Expected river IDs ordered upstream-to-downstream so the routed system matrix is lower triangular.'
-            )
-
-        self.A = adjacency
+        self.A = csc_matrix(nx.convert_matrix.to_scipy_sparse_array(graph, nodelist=self.river_ids.tolist()).T)
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:

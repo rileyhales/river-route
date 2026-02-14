@@ -21,7 +21,7 @@ Every `river-route` process needs at least the following 4 variables
 
 ## Example YAML File
 
-An example yaml file is given below with the default values prepopulated where possible.
+An example YAML file is given below with the default values prepopulated where possible.
 
 ```yaml title="Config File Example"
 {% include-markdown "../../examples/config.yaml" %}
@@ -31,28 +31,28 @@ An example yaml file is given below with the default values prepopulated where p
 
 The following table is a complete list of all configuration options and their purpose.
 
-| Parameter Name         | Required | Type      | Group               | Description                                                            |                                                                                
-|------------------------|----------|-----------|---------------------|------------------------------------------------------------------------|
-| routing_params_file    | True     | File Path | Required Input      | Path to the routing parameters parquet file.                           |                                                
-| connectivity_file      | True     | File Path | Required Input      | Path to the network connectivity parquet file.                         |                                              
+| Parameter Name          | Required | Type      | Group               | Description                                                            |                                                                                
+|-------------------------|----------|-----------|---------------------|------------------------------------------------------------------------|
+| routing_params_file     | True     | File Path | Required Input      | Path to the routing parameters parquet file.                           |                                                
+| connectivity_file       | True     | File Path | Required Input      | Path to the network connectivity parquet file.                         |                                              
 | catchment_volumes_files | True     | File Path | Required Input      | Path(s) to netCDF file(s) with catchment volume values to be routed.   |
-| runoff_depths_files    | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
-| weight_table_file      | True     | File Path | Required Input      | Path to the weight table file.                                         |
-| discharge_files        | True     | File Path | Required Input      | Path(s) where routed discharge netCDF file(s) should be saved.         |
-| input_type             | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
-| runoff_type            | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
-| dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
-| dt_discharge           | False    | Integer   | Compute Options     | Time interval in seconds between writing discharge to disc.            |
-| initial_state_file     | False    | File Path | Initialization Data | Path to the initial state file.                                        |                                                     
-| final_state_file       | False    | File Path | Initialization Data | Path where the final state file should be saved.                       |                                    
-| log                    | False    | Boolean   | Logging Options     | Whether to enable logging.                                             |                                       
-| progress_bar           | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                         |
-| log_level              | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING             |
-| log_stream             | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path.  |
-| var_x                  | False    | String    | File Management     | Name of the variable in all files that contains the x coordinates.     |
-| var_y                  | False    | String    | File Management     | Name of the variable in all files that contains the y coordinates.     |
-| var_t                  | False    | String    | File Management     | Name of the variable in all files that contains the time values.       |
-| var_runoff_depths      | False    | String    | File Management     | Name of the variable in files containing runoff depths                 |
-| var_catchment_volumes  | False    | String    | File Management     | Name of the variable in the catchment volumes file containing volumes. |
-| var_river_id           | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.         |
-| var_discharge          | False    | String    | File Management     | Name of the variable in discharge output files.                        |
+| runoff_depths_files     | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
+| weight_table_file       | True     | File Path | Required Input      | Path to the weight table file.                                         |
+| discharge_files         | True     | File Path | Required Input      | Path(s) where routed discharge netCDF file(s) should be saved.         |
+| input_type              | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
+| runoff_type             | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
+| dt_routing              | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
+| dt_discharge            | False    | Integer   | Compute Options     | Time interval in seconds between writing discharge to disc.            |
+| initial_state_file      | False    | File Path | Initialization Data | Path to the initial state file.                                        |                                                     
+| final_state_file        | False    | File Path | Initialization Data | Path where the final state file should be saved.                       |                                    
+| log                     | False    | Boolean   | Logging Options     | Whether to enable logging.                                             |                                       
+| progress_bar            | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                         |
+| log_level               | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING             |
+| log_stream              | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path.  |
+| var_x                   | False    | String    | File Management     | Name of the variable in all files that contains the x coordinates.     |
+| var_y                   | False    | String    | File Management     | Name of the variable in all files that contains the y coordinates.     |
+| var_t                   | False    | String    | File Management     | Name of the variable in all files that contains the time values.       |
+| var_runoff_depths       | False    | String    | File Management     | Name of the variable in files containing runoff depths                 |
+| var_catchment_volumes   | False    | String    | File Management     | Name of the variable in the catchment volumes file containing volumes. |
+| var_river_id            | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.         |
+| var_discharge           | False    | String    | File Management     | Name of the variable in discharge output files.                        |

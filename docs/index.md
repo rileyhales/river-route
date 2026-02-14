@@ -6,13 +6,6 @@ It implements Matrix Muskingum routing. Inspired by the first implementation pub
 
 ## Start Here
 
-If you are preparing simulation inputs, start with:
-
-1. [Routing Parameters and Connectivity](tutorial/preparing-routing-files.md)
-2. [Grid Weights for Runoff Depths](tutorial/preparing-grid-weights.md)
-
-For complete workflow guidance, continue with:
-
 1. [Basic Walkthrough](tutorial/basic-tutorial.md)
 2. [Advanced Concepts](tutorial/advanced-tutorial.md)
 

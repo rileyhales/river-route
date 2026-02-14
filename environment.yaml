@@ -3,17 +3,19 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python>=3.12
   - dask
   - fastparquet
+  - geopandas
   - matplotlib
   - natsort
   - netcdf4
   - networkx
   - numpy
   - pandas
+  - python>=3.12
   - pyyaml
   - scipy
+  - shapely
   - tqdm
   - xarray
   - zarr

@@ -20,13 +20,9 @@ nav:
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-variables.md
   - Tutorials:
-      - Input Preparation:
-          - Routing Parameters and Connectivity: tutorial/preparing-routing-files.md
-          - Grid Weights for Runoff Depths: tutorial/preparing-grid-weights.md
-      - Guided Tutorials:
-          - Basic Walkthrough: tutorial/basic-tutorial.md
-          - Routing Ensembles: tutorial/routing-ensembles.md
-          - Advanced Concepts: tutorial/advanced-tutorial.md
+      - Basic Walkthrough: tutorial/basic-tutorial.md
+      - Routing Ensembles: tutorial/routing-ensembles.md
+      - Advanced Concepts: tutorial/advanced-tutorial.md
   - License: terms.md
 plugins:
   - search
