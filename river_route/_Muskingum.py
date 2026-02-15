@@ -7,7 +7,6 @@ import sys
 from typing import Any, Callable, Generator
 
 import netCDF4 as nc
-import networkx as nx
 import numpy as np
 import pandas as pd
 import tqdm
@@ -21,7 +20,6 @@ from scipy.sparse.linalg import factorized
 
 from .__metadata__ import __version__
 from .runoff import calc_catchment_volumes
-from .tools import connectivity_to_digraph
 
 __all__ = ['Muskingum', ]
 
@@ -38,11 +36,12 @@ class Muskingum:
     # Given configs
     conf: ConfigDict
 
-    # Network dependent matrices and vectors
-    A: csc_matrix  # n x n - adjacency matrix => from connectivity file
-    k: FloatArray  # n x 1 - K values for each segment => from routing params file
-    x: FloatArray  # n x 1 - X values for each segment => from routing params file
-    river_ids: IntArray  # n x 1 - river ID for each segment => from routing params file
+    # Network dependent matrices and vectors from routing parameters file
+    A: csc_matrix  # n x n - adjacency matrix
+    river_ids: IntArray  # n x 1 - river ID for each segment
+    downstream_river_ids: IntArray  # n x 1 - downstream river ID for each segment
+    k: FloatArray  # n x 1 - K values for each segment
+    x: FloatArray  # n x 1 - X values for each segment
     # Network and routing timestep dependent matrices and vectors
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
@@ -74,6 +73,10 @@ class Muskingum:
         self.logger = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
         self._set_configs(config_file, **kwargs)
         return
+
+    def __repr__(self):
+        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in self.conf.items()]
+        return '\n'.join(messages)
 
     def _set_configs(self, config_file: str | None, **kwargs: Any) -> None:
         """
@@ -137,15 +140,16 @@ class Muskingum:
 
     def _validate_configs(self) -> None:
         self.logger.debug('Validating configs file')
-        # these 2 files must always exist
-        assert os.path.exists(self.conf['routing_params_file']), FileNotFoundError('Routing params file not found')
-        assert os.path.exists(self.conf['connectivity_file']), FileNotFoundError('Connectivity file not found')
+        if not os.path.exists(self.conf['routing_params_file']):
+            raise FileNotFoundError('Routing params file not found')
 
         # check for valid options
-        assert self.conf['input_type'] in ['sequential', 'ensemble'], 'Input type not recognized'
-        assert self.conf['runoff_type'] in ['incremental', 'cumulative'], 'Runoff type not recognized'
+        if self.conf['input_type'] not in ['sequential', 'ensemble']:
+            raise ValueError('Input type not recognized')
+        if self.conf['runoff_type'] not in ['incremental', 'cumulative']:
+            raise ValueError('Runoff type not recognized')
 
-        # format conversion for the inputs
+        # if only 1 file was given as str, wrap it in a list so future code that anticipates iterables behave properly
         if isinstance(self.conf.get('catchment_volumes_files', []), str):
             self.conf['catchment_volumes_files'] = [self.conf['catchment_volumes_files'], ]
         if isinstance(self.conf.get('runoff_depths_files', []), str):
@@ -153,36 +157,33 @@ class Muskingum:
         if isinstance(self.conf.get('discharge_files', []), str):
             self.conf['discharge_files'] = [self.conf['discharge_files'], ]
 
-        # if the weight table file is provided, it must exist
-        if self.conf.get('weight_table_file', ''):
-            assert os.path.exists(self.conf['weight_table_file']), FileNotFoundError('Weight table file not found')
+        # provided volumes or runoffs must exist and output directory must exist
+        if self.conf['catchment_volumes_files'] and self.conf['runoff_depths_files']:
+            raise ValueError('Provide either catchment volumes files or runoff depths files, not both')
+        if not len(self.conf['discharge_files']) == len(self.conf.get('catchment_volumes_files', [])) + len(self.conf.get('runoff_depths_files', [])):
+            raise ValueError('Number of discharge files must match the number of input files (catchment volumes or runoff depths)')
+        for file in self.conf['catchment_volumes_files']:
+            if not os.path.exists(file):
+                raise FileNotFoundError(f'Catchment volumes file not found at: {file}')
+        for file in self.conf['runoff_depths_files']:
+            if not os.path.exists(file):
+                raise FileNotFoundError(f'Runoff depths file not found at: {file}')
+        for directory in set(os.path.dirname(file) for file in self.conf['discharge_files']):
+            if not os.path.exists(directory):
+                raise NotADirectoryError(f'Output file directory not found at: {directory}')
 
-        # if the initial state file is provided, it must exist
-        if self.conf.get('initial_state_file', ''):
-            assert os.path.exists(self.conf['initial_state_file']), FileNotFoundError('Initial state file not found')
-        # if the key exists and the path is '' then delete the key
+        # if we're using runoff depths, a weight table must be provided.
+        if self.conf['runoff_depths_files']:
+            if not os.path.exists(self.conf['weight_table_file']):
+                raise FileNotFoundError('Weight table file not found')
+
+        # if the initial state was provided but is falsey then remove it
         if 'initial_state_file' in self.conf and not self.conf['initial_state_file']:
             del self.conf['initial_state_file']
-
-        # either the catchment volumes or runoff depths files must be provided but not both
-        assert self.conf.get('catchment_volumes_files', False) or self.conf.get('runoff_depths_files', False), \
-            'Either catchment volumes or runoff depths files must be provided'
-
-        # if catchment volumes files are provided, they must exist
-        if self.conf.get('catchment_volumes_files', False):
-            for file in self.conf['catchment_volumes_files']:
-                assert os.path.exists(file), FileNotFoundError(f'Runoff volumes file not found at: {file}')
-
-        # if runoff depths files are provided, they must exist
-        if self.conf.get('runoff_depths_files', False):
-            for file in self.conf['runoff_depths_files']:
-                assert os.path.exists(file), FileNotFoundError(f'Runoff depths file not found at: {file}')
-            assert self.conf.get('weight_table_file', ''), 'weight_table_file should be provided'
-
-        # the directory for each discharge file must exist
-        assert self.conf.get('discharge_files', False), 'discharge_files must be provided'
-        for discharge_file in self.conf['discharge_files']:
-            assert os.path.exists(os.path.dirname(discharge_file)), NotADirectoryError('Output directory not found')
+        # if the initial state file is provided, it must exist
+        if self.conf.get('initial_state_file', ''):
+            if not os.path.exists(self.conf['initial_state_file']):
+                raise FileNotFoundError('Initial state file not found')
 
         # convert all relative paths to absolute paths
         for arg in [k for k in self.conf.keys() if 'file' in k]:
@@ -190,14 +191,6 @@ class Muskingum:
                 self.conf[arg] = [os.path.abspath(path) for path in self.conf[arg]]
             elif isinstance(self.conf[arg], str):
                 self.conf[arg] = os.path.abspath(self.conf[arg])
-        return
-
-    def _log_configs(self) -> None:
-        self.logger.debug(f'river-route version: {__version__}')
-        self.logger.debug(f'Number of Rivers: {self.river_ids.shape[0]}')
-        self.logger.debug('Configs:')
-        for k, v in self.conf.items():
-            self.logger.debug(f'\t{k}: {v}')
         return
 
     def _read_initial_state(self) -> None:
@@ -209,7 +202,6 @@ class Muskingum:
             self.logger.debug('Setting initial state to zeros')
             self.initial_state = (np.zeros(self.A.shape[0]), np.zeros(self.A.shape[0]))
             return
-        assert os.path.exists(state_file), FileNotFoundError(f'Initial state file not found at: {state_file}')
         self.logger.debug('Reading Initial State from Parquet')
         initial_state = pd.read_parquet(state_file).values
         initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
@@ -233,11 +225,44 @@ class Muskingum:
     def _set_network_dependent_vectors(self) -> None:
         self.logger.debug('Calculating network dependent vectors')
         df = pd.read_parquet(self.conf['routing_params_file'])
+        if not {'river_id', 'k', 'x', 'downstream_river_id'}.issubset(df.columns):
+            raise ValueError('routing_params_file must have 4 columns with names river_id, k, x, and downstream_river_id')
+
+        if df[self.conf['var_river_id']].duplicated().any():
+            raise ValueError('routing_params_file contains duplicate river IDs. ')
+
         self.river_ids = df[self.conf['var_river_id']].to_numpy(dtype=np.int64, copy=False)
+        self.downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
         self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
         self.x = df['x'].to_numpy(dtype=np.float64, copy=False)
-        graph = connectivity_to_digraph(self.conf['connectivity_file'])
-        self.A = csc_matrix(nx.convert_matrix.to_scipy_sparse_array(graph, nodelist=self.river_ids.tolist()).T)
+
+        # evaluate the river ids to find holes, missing rivers, and force topological sorting (upstream to downstream)
+        river_id_set = set(self.river_ids.tolist())
+        downstream_ids = set(self.downstream_river_ids.tolist()) - {-1}
+        unknown_downstream_ids = sorted(downstream_ids - river_id_set)
+        if unknown_downstream_ids:
+            raise ValueError(f'routing_params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
+
+        self._river_index = {int(river_id): idx for idx, river_id in enumerate(self.river_ids.tolist())}
+        self._upstream_index_lists = [[] for _ in range(self.river_ids.shape[0])]
+        row_indices: list[int] = []
+        col_indices: list[int] = []
+        for upstream_idx, downstream_river_id in enumerate(self.downstream_river_ids.tolist()):
+            if downstream_river_id == -1:
+                continue
+            downstream_idx = self._river_index[int(downstream_river_id)]
+            if downstream_idx <= upstream_idx:
+                raise ValueError(
+                    'routing_params_file must be topologically sorted upstream to downstream. '
+                    f'river_id={int(self.river_ids[upstream_idx])} comes after its downstream river_id={int(downstream_river_id)}. '
+                    f'Try sorting by the Shreve stream order or using a topological sort function on a directed graph.'
+                )
+            row_indices.append(downstream_idx)
+            col_indices.append(upstream_idx)
+            self._upstream_index_lists[downstream_idx].append(upstream_idx)
+
+        data = np.ones(len(row_indices), dtype=np.float64)
+        self.A = csc_matrix((data, (row_indices, col_indices)), shape=(self.river_ids.shape[0], self.river_ids.shape[0]))
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
@@ -249,17 +274,20 @@ class Muskingum:
             self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
         self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
 
+        signature = (self.dt_total, self.dt_runoff, self.dt_discharge, self.dt_routing,)
+        if self._network_time_signature == signature:
+            return
+
         try:
             # check that time options have the correct sizes
-            assert self.dt_total >= self.dt_runoff, 'dt_total !>= dt_runoff'
-            assert self.dt_total >= self.dt_discharge, 'dt_total !>= dt_discharge'
-            assert self.dt_discharge >= self.dt_runoff, 'dt_discharge !>= dt_runoff'
-            assert self.dt_runoff >= self.dt_routing, 'dt_runoff !>= dt_routing'
+            assert self.dt_total >= self.dt_runoff, 'dt_total must be >= dt_runoff'
+            assert self.dt_total >= self.dt_discharge, 'dt_total must be >= dt_discharge'
+            assert self.dt_discharge >= self.dt_runoff, 'dt_discharge must be >= dt_runoff'
+            assert self.dt_runoff >= self.dt_routing, 'dt_runoff must be >= dt_routing'
             # check that time options are evenly divisible
             assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
             assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
-            assert self.dt_discharge % self.dt_runoff == 0, \
-                'dt_discharge must be an integer multiple of dt_runoff'
+            assert self.dt_discharge % self.dt_runoff == 0, 'dt_discharge must be an integer multiple of dt_runoff'
             assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
         except AssertionError as e:
             self.logger.error(e)
@@ -269,10 +297,6 @@ class Muskingum:
         self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
-
-        signature = (self.dt_total, self.dt_runoff, self.dt_discharge, self.dt_routing,)
-        if self._network_time_signature == signature:
-            return
 
         self.logger.debug('Calculating network and time dependent vectors')
         dt_div_k = self.dt_routing / self.k
@@ -336,7 +360,7 @@ class Muskingum:
 
         self._validate_configs()
         self._set_network_dependent_vectors()
-        self._log_configs()
+        self.logger.debug(self)
 
         for dates, volumes_array, runoff_file, discharge_file in self._volumes_output_generator():
             self.logger.info('-' * 80)
@@ -396,7 +420,7 @@ class Muskingum:
         for runoff_time_step, runoff_end_date in enumerate(dates):
             r_t = volumes[runoff_time_step, :]
             np.multiply(self.c2, r_t, out=c2_r_t)
-            interval_sum.fill(0.0) # add then divide to avoid accumulating large array and averaging
+            interval_sum.fill(0.0)  # add then divide to avoid accumulating large array and averaging
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
                 # rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
                 buffer[:] = self.A @ q_t
@@ -477,72 +501,3 @@ class Muskingum:
         """
         self._write_discharges = func
         return self
-
-    def hydrograph(self, river_id: int) -> pd.DataFrame:
-        """
-        Get the hydrograph for a given river id as a pandas dataframe
-
-        Args:
-            river_id: the ID of a river reach in the output files
-
-        Returns:
-            pandas.DataFrame
-        """
-        with xr.open_mfdataset(self.conf['discharge_files']) as ds:
-            df = (
-                ds
-                [self.conf['var_discharge']]
-                .sel(**{self.conf['var_river_id']: river_id})
-                .to_dataframe()
-                [[self.conf['var_discharge'], ]]
-            )
-            df.columns = [river_id, ]
-        return df
-
-    def mass_balance(self, river_id: int, ancestors: list[int] | set[int] | None = None) -> pd.DataFrame:
-        """
-        Get the mass balance for a given river id as a pandas dataframe
-
-        Args:
-            river_id: the ID of a river reach in the output files
-            ancestors: a list of the given river_id and all rivers upstream of that river
-
-        Returns:
-            pandas.DataFrame
-        """
-        if type(river_id) is not int:
-            raise TypeError(f'river_id should be an integer ID of a river to mass balance')
-        if ancestors is None:
-            g = connectivity_to_digraph(self.conf['connectivity_file'])
-            ancestors = set(list(nx.ancestors(g, river_id)) + [river_id, ])
-        with xr.open_mfdataset(self.conf['catchment_volumes_files']) as ds:
-            vdf = (
-                ds
-                .sel(**{self.conf['var_river_id']: ancestors})
-                [self.conf['var_catchment_volume']]
-                .to_dataframe()
-                [[self.conf['var_catchment_volume'], ]]
-                .reset_index()
-                .pivot(index='time', columns=self.conf['var_river_id'], values=self.conf['var_catchment_volume'])
-                .sum(axis=1)
-                .cumsum()
-                .rename('runoff_volume')
-            )
-        with xr.open_mfdataset(self.conf['discharge_files']) as ds:
-            qdf = (
-                ds
-                .sel(**{self.conf['var_river_id']: river_id})
-                .to_dataframe()
-                [[self.conf['var_discharge'], ]]
-                .cumsum()
-            )
-            # convert to discharged volume - multiply by the time delta in seconds
-            qdf = qdf * (qdf.index[1] - qdf.index[0]).total_seconds()
-            qdf.columns = ['discharge_volume', ]
-
-        df = qdf.join(vdf)
-        df['runoff-discharge'] = df['runoff_volume'] - df['discharge_volume']
-        if not df['runoff-discharge'].gt(0).all():
-            self.logger.warning(f'More discharge than runoff volume for river {river_id}')
-
-        return df

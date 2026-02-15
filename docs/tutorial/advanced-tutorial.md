@@ -20,7 +20,6 @@ vpu_name = 'sample-project'
 
 configs = os.path.join(root_dir, 'configs', vpu_name)
 params_file = os.path.join(configs, 'params.parquet')
-connectivity_file = os.path.join(configs, 'connectivity.parquet')
 
 volume_files = sorted(glob.glob(f'/path/to/runoffs/directory/*.nc'))
 
@@ -32,7 +31,6 @@ m = (
     rr
     .Muskingum(**{
         'routing_params_file': params_file,
-        'connectivity_file': connectivity_file,
         'catchment_volumes_files': volume_files,
         'discharge_files': output_files,
     })

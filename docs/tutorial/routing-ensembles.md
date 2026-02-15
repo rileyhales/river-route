@@ -2,8 +2,9 @@
 
 Ensemble simulations are usually 1) multiple simulations, 2) from the same starting state, 3) covering the same time period, and 4) using the same
 model parameters. The runoff projections that are the members of the ensemble are described as iterations, realizations, formulations, or
-perturbations. Routing an ensemble of runoffs has 1 major difference, compared to routing an individual runoff or a series of runoffs, when
-determining the final state of the ensemble to use as the state to begin from for the next time step. There are 2 methods for routing an ensemble of 
+perturbations. Routing an ensemble of runoffs has one significant difference compared to routing an individual runoff or a series of runoffs. The 
+difference is how the initial and final states are handled. For an individual runoff, the initial state is the same as the final state of the previous 
+routing step. In an ensemble simulation, you have many methods to combine the ensemble into a new next state. There are 2 methods for routing an ensemble of 
 runoffs in river-route.
 
 1. In a loop or in concurrent/parallel jobs, route each member using same initial conditions and routing parameters for each job. Use the member number 
@@ -17,7 +18,7 @@ runoffs in river-route.
 
 ## Routing ensemble members simultaneously
 
-Ensembl members are independent of each other and start from the same conditions so they can be computed simultaneously to possibly save time and 
+Ensemble members are independent of each other and start from the same conditions so they can be computed simultaneously to possibly save time and 
 more fully utilize computer capacity. There are many methods for concurrency or parallel processing in Python. This is only one example of how to 
 implement it using `multiprocessing`. You will need to write some custom logic to:
 
@@ -31,7 +32,6 @@ from multiprocessing import Pool
 
 import river_route as rr
 
-connectivity_file = 'connectivity.parquet'
 routing_params_file = 'routing_parameters.parquet'
 volumes_files = ['volumes_member_1.nc',
                  'volumes_member_2.nc', ]
@@ -41,7 +41,6 @@ output_files = ['discharges_member_1.nc',
 
 def route(input_file: str, output_file: str) -> None:
     rr.Muskingum(
-        connectivity_file=connectivity_file,
         routing_params_file=routing_params_file,
         catchment_volumes_files=input_file,
         discharge_files=output_file,

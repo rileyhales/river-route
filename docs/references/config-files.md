@@ -12,10 +12,9 @@ JSON. Config files specify the following parameters:
 
 ## Minimum Required Inputs
 
-Every `river-route` process needs at least the following 4 variables
+Every `river-route` process needs at least the following 3 variables
 
 - `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
-- `connectivity_file` - path to the river network [connectivity file](io-file-schema.md#connectivity-file) (parquet)
 - `catchment_volumes_files` - path(s) to prepared [catchment volumes files](io-file-schema.md#catchment-volumes-or-runoff-depths) (netCDF)
 - `discharge_files` - path(s) where [routed discharge](io-file-schema.md#routed-discharge) output files will be saved (netCDF)
 
@@ -34,7 +33,6 @@ The following table is a complete list of all configuration options and their pu
 | Parameter Name          | Required | Type      | Group               | Description                                                            |                                                                                
 |-------------------------|----------|-----------|---------------------|------------------------------------------------------------------------|
 | routing_params_file     | True     | File Path | Required Input      | Path to the routing parameters parquet file.                           |                                                
-| connectivity_file       | True     | File Path | Required Input      | Path to the network connectivity parquet file.                         |                                              
 | catchment_volumes_files | True     | File Path | Required Input      | Path(s) to netCDF file(s) with catchment volume values to be routed.   |
 | runoff_depths_files     | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
 | weight_table_file       | True     | File Path | Required Input      | Path to the weight table file.                                         |

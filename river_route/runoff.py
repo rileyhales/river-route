@@ -28,7 +28,7 @@ def _incremental_to_cumulative(df) -> pd.DataFrame:
     return df.cumsum()
 
 
-def _get_conversion_factor(unit: str) -> int or float:
+def _get_conversion_factor(unit: str) -> int | float:
     if unit is None:
         print("No units attribute found. Assuming meters")
         return 1

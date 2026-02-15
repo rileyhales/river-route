@@ -14,7 +14,7 @@ __all__ = [
     'get_cell_xy_from_regular_grid',
     'get_cell_xy_from_reduced_grid',
     'voroni_diagram_from_cell_xy',
-    'overlay_table',
+    'grid_weights_table',
 ]
 
 
@@ -139,5 +139,4 @@ def grid_weights_table(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoData
         })
         ds.attrs.update(save_attributes)
         ds.to_netcdf(save_path)
-
     return df

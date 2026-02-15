@@ -31,7 +31,7 @@ Title: River Route Process Diagram
 ---
 graph LR
     subgraph "Required-Inputs"
-        Inputs["Routing Parameters\nConnectivity File\nCatchment Volumes\nDischarge Files"]
+        Inputs["Routing Parameters\nCatchment Volumes\nDischarge Files"]
     end
 
     subgraph "Compute-Options"
@@ -71,9 +71,9 @@ graph LR
 
 ## Usage Example
 
-You can pass the configuration options to the `rr.Muskingum` class init by specifying a path to a config file, use
-keyword arguments, or use both a config file path and keyword arguments to supplement or override values from the config
-file.
+You pass the configuration options to the `rr.Muskingum` class init by specifying the config file path or using keyword arguments. 
+If for any reason it is easier to determine the available options at runtime, you can combine the method. Note that keyword arguments 
+will override any value given in the config file.
 
 ```python
 import river_route as rr
@@ -90,7 +90,6 @@ import river_route as rr
     rr
     .Muskingum(**{
         'routing_params_file': '/path/to/routing_params.parquet',
-        'connectivity_file': '/path/to/connectivity.parquet',
         'catchment_volumes_files': '/path/to/volumes.nc',
         'discharge_files': '/path/to/discharge.nc',
     })
@@ -104,7 +103,6 @@ import river_route as rr
         '/path/to/config.yaml',
         **{
             'routing_params_file': '/path/to/routing_params.parquet',
-            'connectivity_file': '/path/to/connectivity.parquet',
             'catchment_volumes_files': '/path/to/volumes.nc',
             'discharge_files': '/path/to/discharge.nc',
         }

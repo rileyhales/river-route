@@ -7,15 +7,14 @@
 
 ## Overview
 
-`river-route` is a Python package that routes catchment scale runoff volume time series on a vector watershed definition. It takes 3 input datasets
-and writes 1 output dataset. Together, that makes a total of 4 files that need to be specified. The first 2 describe the river channel properties and
-topology, the third is the input water being routed, and the fourth (the output) is the discharge time series calculated by the routing process. This
+`river-route` is a Python package that routes catchment scale runoff volume time series on a vector watershed definition. It takes 2 input datasets
+and writes 1 output dataset. Together, that makes a total of 3 files that need to be specified. The first describes river channel properties and
+topology, the second is the input water being routed, and the third (the output) is the discharge time series calculated by the routing process. This
 tutorial explain the process of preparing these files.
 
 1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file
-2. [Connectivity File](../references/io-file-schema.md#connectivity-file) - parquet file
-3. [Catchment Volumes](../references/io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
-4. [Routed Discharge](../references/io-file-schema.md#routed-discharge) - netCDF file
+2. [Catchment Volumes](../references/io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
+3. [Routed Discharge](../references/io-file-schema.md#routed-discharge) - netCDF file
 
 ## Vocabulary
 
@@ -44,11 +43,9 @@ project_root_directory
 ├── configs
 │   ├── <VPU Name 1>
 │   │   ├── params.parquet
-│   │   ├── connectivity.parquet
 │   │   └── grid_weights.nc
 │   └── <VPU Name 2>
 │       ├── params.parquet
-│       ├── connectivity.parquet
 │       └── grid_weights.nc
 ├── volumes
 │   ├── <VPU Name 1>
@@ -85,7 +82,7 @@ Some watershed definitions **_may optionally include_**:
 
 ### Requirements
 
-These datsets should adhere to the following rules.
+These datasets should adhere to the following rules.
 
 - Each catchment should follow 1 stream branch since routing occurs on a stream-to-stream connection, not catchment-to-catchment.
 - No divergences or confluences (nexuses) occur **_within_** a catchment. It should occur exactly at the outlet of the catchment.
@@ -131,14 +128,13 @@ enter them into a YAML file that looks like this example.
 
 ```yaml
 routing_params_file: '/path/to/params.parquet'
-connectivity_file: '/path/to/connectivity.parquet'
 catchment_volumes_files: '/path/to/volumes.nc'
 discharge_files: '/path/to/discharges.nc'
 ```
 
 ### First Routing Run
 
-You should now have the 4 essential files prepared: 2 watershed descriptors, 1 input catchment volumes time series,
+You should now have the 3 essential files prepared: 1 watershed descriptor, 1 input catchment volumes time series,
 and 1 output file path. With these files in place, you can now perform a routing computation. Use the following code
 as a starting place.
 

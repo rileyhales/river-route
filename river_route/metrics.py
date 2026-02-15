@@ -18,7 +18,7 @@ def pearson_r(y_true, y_pred):
 
 
 def kling_gupta_efficiency_2012(y_true, y_pred):
-    pearson_r = np.corrcoef(y_true, y_pred)[0, 1]
+    pr = pearson_r(y_true, y_pred)
     mean_true = np.mean(y_true)
     mean_pred = np.mean(y_pred)
     std_true = np.std(y_true)
@@ -27,7 +27,7 @@ def kling_gupta_efficiency_2012(y_true, y_pred):
     beta = mean_pred / mean_true
     gamma = (mean_pred / std_pred) / (mean_true / std_true)
 
-    term1 = np.power(pearson_r - 1, 2)
+    term1 = np.power(pr - 1, 2)
     term2 = np.power(beta - 1, 2)
     term3 = np.power(gamma - 1, 2)
     return 1 - np.sqrt(term1 + term2 + term3)
@@ -43,10 +43,6 @@ def mae(y_true, y_pred):
 
 def mse(y_true, y_pred):
     return mean_square_error(y_true, y_pred)
-
-
-def r(y_true, y_pred):
-    return pearson_r(y_true, y_pred)
 
 
 def kge2012(y_true, y_pred):

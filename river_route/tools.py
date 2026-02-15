@@ -2,6 +2,7 @@ import logging
 import os
 
 import networkx as nx
+import numpy as np
 import pandas as pd
 import scipy
 import xarray as xr
@@ -21,7 +22,6 @@ def routing_files_from_RAPID(
         x: str,
         rapid_connect: str,
         out_params: str,
-        out_connectivity: str,
 ) -> None:
     """
     Generate river-route configuration files from input files for RAPID
@@ -32,7 +32,6 @@ def routing_files_from_RAPID(
         x: Path to x CSV file
         rapid_connect: Path to rapid_connect CSV file
         out_params: Path to output routing parameters parquet file
-        out_connectivity: Path to output connectivity parquet file
 
     Returns:
         None
@@ -40,18 +39,22 @@ def routing_files_from_RAPID(
     for f in [riv_bas_id, k, x, rapid_connect]:
         assert os.path.isfile(f), FileNotFoundError(f)
 
-    pd.concat([
+    params = pd.concat([
         pd.read_csv(riv_bas_id, header=None, names=['river_id']),
         pd.read_csv(x, header=None, names=['x']),
         pd.read_csv(k, header=None, names=['k']),
-    ], axis=1).to_parquet(out_params)
-    (
+    ], axis=1)
+    connectivity = (
         pd
         .read_csv(rapid_connect, header=None)
         .iloc[:, :2]
-        .rename(columns={0: 'river_id', 1: 'ds_river_id'})
-        .to_parquet(out_connectivity)
+        .rename(columns={0: 'river_id', 1: 'downstream_river_id'})
     )
+    params = params.merge(connectivity, on='river_id', how='left')
+    if params['downstream_river_id'].isna().any():
+        raise ValueError('Some river_id values in params were not found in rapid_connect')
+    params['downstream_river_id'] = params['downstream_river_id'].astype(int)
+    params.to_parquet(out_params)
     return
 
 
@@ -99,13 +102,13 @@ def subset_configs_to_river(
     pdf = pd.read_parquet(params)
     cdf = pd.read_parquet(connectivity)
 
-    graph = connectivity_to_digraph(connectivity)
+    graph = connectivity_to_digraph(pdf['river_id'], pdf['downstream_river_id'])
     upstreams = list(nx.ancestors(graph, target_river))
     upstreams.append(target_river)
 
     pdf[pdf['river_id'].isin(upstreams)].to_parquet(out_params)
     cdf = cdf[cdf['river_id'].isin(upstreams)]
-    cdf.loc[cdf['river_id'] == target_river, 'ds_river_id'] = -1
+    cdf.loc[cdf['river_id'] == target_river, 'downstream_river_id'] = -1
     cdf.to_parquet(out_connectivity)
 
     if weights is not None and out_weights is not None:
@@ -114,38 +117,39 @@ def subset_configs_to_river(
     return
 
 
-def connectivity_to_digraph(connectivity_file: str) -> nx.DiGraph:
+def connectivity_to_digraph(river_ids: np.ndarray, downstream_ids: np.ndarray) -> nx.DiGraph:
     """
-    Generate directed graph from connectivity file
+    Generate directed graph from the routing parameters file
     """
     graph = nx.DiGraph()
-    df = pd.read_parquet(connectivity_file)
-    if len(df.columns) == 3:  # ID, DownstreamID, Weight
-        # check that the weights are all positive and sum to 1 for each unique ID
-        id_col, downstream_col, weight_col = df.columns
-        weight_check = df.groupby(id_col)[weight_col].sum()
-        if not df[weight_col].ge(0).all():
-            logger.error(f'Weights are not all positive')
-            logger.debug('The following IDs have negative weights')
-            logger.debug(weight_check[~weight_check.ge(0)].index.tolist())
-            raise ValueError(f'Weights must be positive')
-        if not weight_check.eq(1).all():
-            logger.error(f'Weights do not sum to 1.0 for each unique ID')
-            logger.debug('The following IDs have weights that do not sum to 1.0')
-            logger.debug(weight_check[~weight_check.eq(1)].index.tolist())
-            raise ValueError(f'Weights must sum to 1 for each unique ID')
-        graph.add_weighted_edges_from(df.values)
-    elif len(df.columns) == 2:  # ID, DownstreamID
-        graph.add_edges_from(df.values)
-    else:
-        raise ValueError(f'Connectivity file should have 2 or 3 columns, not {len(df.columns)}')
+    graph.add_edges_from(zip(river_ids, downstream_ids))
     return graph
 
 
-def get_adjacency_matrix(routing_params_file: str, connectivity_file: str) -> scipy.sparse.csc_matrix:
+def get_adjacency_matrix(routing_params_file: str) -> scipy.sparse.csc_matrix:
     """
-    Generate adjacency matrix from connectivity file
+    Generate adjacency matrix from routing params file
     """
-    graph = connectivity_to_digraph(connectivity_file)
-    sorted_order = pd.read_parquet(routing_params_file).iloc[:, 0].tolist()
-    return scipy.sparse.csc_matrix(nx.convert_matrix.to_scipy_sparse_array(graph, nodelist=sorted_order).T)
+    params = pd.read_parquet(routing_params_file)
+    river_id_col = params.columns[0]
+    if 'downstream_river_id' not in params.columns:
+        raise ValueError('routing_params_file must include a downstream river ID column')
+    river_ids = params[river_id_col].to_numpy(dtype=np.int64, copy=False)
+    downstream_ids = params['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
+    river_index = {int(river_id): idx for idx, river_id in enumerate(river_ids.tolist())}
+
+    row_indices: list[int] = []
+    col_indices: list[int] = []
+    for upstream_idx, downstream_river_id in enumerate(downstream_ids.tolist()):
+        if downstream_river_id == -1:
+            continue
+        if downstream_river_id not in river_index:
+            raise ValueError(f'Unknown downstream_river_id: {downstream_river_id}')
+        downstream_idx = river_index[int(downstream_river_id)]
+        if downstream_idx <= upstream_idx:
+            raise ValueError('routing_params_file must be topologically sorted upstream to downstream')
+        row_indices.append(downstream_idx)
+        col_indices.append(upstream_idx)
+
+    data = np.ones(len(row_indices), dtype=np.float64)
+    return scipy.sparse.csc_matrix((data, (row_indices, col_indices)), shape=(river_ids.shape[0], river_ids.shape[0]))

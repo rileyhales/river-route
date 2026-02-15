@@ -6,36 +6,15 @@
 routing_params_file: '/path/to/params.parquet'
 ```
 
-The routing parameters file is a parquet file. It has 3 columns and 1 row per river in the watershed. The index is
+The routing parameters file is a parquet file. It has 4 columns and 1 row per river in the watershed. The index is
 ignored. The rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-| Column   | Data Type | Description                                                         |
-|----------|-----------|---------------------------------------------------------------------|
-| river_id | integer   | Unique ID of a river segment                                        |
-| k        | float     | the k parameter of the Muskingum routing equation length / velocity |
-| x        | float     | the x parameter of the Muskingum routing equation. x : [0, 0.5]     |
-
-### Connectivity File
-
-```yaml
-connectivity_file: '/path/to/connectivity.parquet'
-```
-
-The connectivity file is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file
-controls the topology of the rivers in the watershed. Each river segment must have at least 1 downstream segment. If the
-river is an outlet then the downstream ID should be -1.
-
-To specify the connectivity of braided rivers, a single river ID may have multiple rows with different IDs given as the
-downstream segment. In this case, use the 3rd column to specify the percentage (decimal in the range (0, 1)) of
-discharge from the river segment that flows to the downstream segment given on that row. All rivers that are not braided
-should have a weight of 1.0. The weights column of rivers that are braided should sum to exactly 1.0 or else water will
-be deleted or magically inserted into the rivers.
-
-| Column              | Data Type | Description                                                                                         |
-|---------------------|-----------|-----------------------------------------------------------------------------------------------------|
-| river_id            | integer   | Unique ID of a river segment                                                                        |
-| downstream_river_id | integer   | Unique ID of the downstream river segment                                                           |
-| weight              | float     | Optional, the percentage of discharge from this river that should be routed to the downstream river |
+| Column              | Data Type | Description                                                         |
+|---------------------|-----------|---------------------------------------------------------------------|
+| river_id            | integer   | Unique ID of a river segment                                        |
+| downstream_river_id | integer   | Unique ID of the downstream river segment, or -1 for outlet reaches |
+| k                   | float     | the k parameter of the Muskingum routing equation length / velocity |
+| x                   | float     | the x parameter of the Muskingum routing equation. x : [0, 0.5]     |
 
 ## Catchment Volumes or Runoff Depths
 
@@ -91,8 +70,8 @@ runoff grid cells with different x_index and y_index values. The area column sho
 overlaps with the catchment boundary and should be in units of meters squared.
 
 !!! note "Ordering Grid Weights"
-    The order of unique river_id values in the table made from the weight table should be the same as the order of the river_id column in the routing 
-    parameters parquet *AND* should be topologically sorted from upstream to downstream.
+    The order of unique river_id values in the weight table should be the same as in the routing parameters *AND* 
+    should be topologically sorted from upstream to downstream.
 
 | Column     | Data Type | Description                                                                           |
 |------------|-----------|---------------------------------------------------------------------------------------|
