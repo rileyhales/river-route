@@ -1,19 +1,173 @@
 import logging
-import os
 
-import netCDF4 as nc
+import geopandas as gpd
 import numpy as np
 import pandas as pd
+import shapely.geometry
+import shapely.ops
 import xarray as xr
 
 from .__metadata__ import __version__
 
 __all__ = [
-    'calc_catchment_volumes',
-    'write_catchment_volumes',
+    # for making grid_weights
+    'get_cell_xy_from_regular_grid',
+    'get_cell_xy_from_reduced_grid',
+    'voroni_diagram_from_cell_xy',
+    'compute_voroni_catchment_intersects',
+    'grid_weights',
+    # for making catchment volumes from grid weights and depth grids
+    'depth_to_volume',
 ]
 
-LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
+
+def get_cell_xy_from_regular_grid(dataset_path: str, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Get flattened x and y coordinates of cell centers from a regular grid.
+    """
+    with xr.open_dataset(dataset_path) as ds:
+        if x_var not in ds.variables:
+            raise KeyError(f'{x_var} must be a variable in {dataset_path}')
+        if y_var not in ds.variables:
+            raise KeyError(f'{y_var} must be a variable in {dataset_path}')
+        x = ds[x_var].values
+        y = ds[y_var].values
+
+    if x.ndim != 1 or y.ndim != 1:
+        raise ValueError('Regular grid requires 1D x/y coordinate arrays')
+
+    x_grid, y_grid = np.meshgrid(x, y)
+    return x_grid.flatten(), y_grid.flatten()
+
+
+def get_cell_xy_from_reduced_grid(dataset_path: str, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Get flattened x and y coordinates of cell centers from a reduced/unstructured grid.
+    """
+    with xr.open_dataset(dataset_path) as ds:
+        if x_var not in ds.variables or y_var not in ds.variables:
+            raise KeyError(f'{x_var} and {y_var} must be variables in {dataset_path}')
+        x = ds[x_var].values
+        y = ds[y_var].values
+
+    if x.ndim == 1 and y.ndim == 1:
+        if x.shape != y.shape:
+            raise ValueError('Reduced grid requires x and y arrays with the same shape')
+        return x.flatten(), y.flatten()
+
+    if x.ndim == 2 and y.ndim == 2:
+        if x.shape != y.shape:
+            raise ValueError('Reduced grid requires x and y arrays with the same shape')
+        return x.flatten(), y.flatten()
+
+    raise ValueError('Reduced grid expects either both 1D arrays of equal length or both 2D arrays of equal shape')
+
+
+def voroni_diagram_from_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
+    """
+    Create a GeoDataFrame of Voroni polygons around the center of each cell in a grid.
+    """
+    if x.ndim != 1 or y.ndim != 1:
+        raise ValueError('x and y must be 1D arrays')
+    if x.shape[0] != y.shape[0]:
+        raise ValueError('x and y must have the same number of points')
+    if x.shape[0] == 0:
+        raise ValueError('x and y cannot be empty')
+
+    logger.info('Creating Voroni polygons')
+    regions = shapely.ops.voronoi_diagram(
+        shapely.geometry.MultiPoint([shapely.geometry.Point(xi, yi) for xi, yi in zip(x, y)])
+    )
+
+    logger.info('Adding attributes to voroni polygons')
+    voroni_gdf = gpd.GeoDataFrame(geometry=[region for region in regions.geoms], crs=crs)
+    voroni_gdf['x'] = voroni_gdf.geometry.apply(lambda geom: geom.centroid.x).astype(float)
+    voroni_gdf['y'] = voroni_gdf.geometry.apply(lambda geom: geom.centroid.y).astype(float)
+    voroni_gdf['x_index'] = voroni_gdf['x'].apply(lambda value: np.argmin(np.abs(x - value))).astype(int)
+    voroni_gdf['y_index'] = voroni_gdf['y'].apply(lambda value: np.argmin(np.abs(y - value))).astype(int)
+    return voroni_gdf
+
+
+def compute_voroni_catchment_intersects(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
+                                        save_path: str | None = None, save_attributes: dict | None = None,
+                                        river_id_variable: str = 'river_id') -> pd.DataFrame:
+    """
+    Create a table of intersections between Voroni polygons and catchments.
+    """
+    if river_id_variable not in catchments_gdf.columns:
+        raise KeyError('catchments_gdf must contain a river_id column')
+    if not {'x_index', 'y_index', 'x', 'y'}.issubset(voroni_gdf.columns):
+        raise KeyError('voroni_gdf must include x_index, y_index, x, and y columns')
+
+    logger.info('Performing overlay operation')
+    intersections = gpd.overlay(voroni_gdf, catchments_gdf, how='intersection')
+    logger.info('Calculating area of intersections')
+    intersections['area_sqm'] = intersections.geometry.to_crs({'proj': 'cea'}).area
+
+    df = (
+        intersections[['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm']]
+        .groupby(['river_id', 'x_index', 'y_index', 'x', 'y'], as_index=False)
+        .agg({'area_sqm': 'sum'})
+        .sort_values(['river_id', 'area_sqm'], ascending=[True, False])
+        .reset_index(drop=True)
+    )
+    total_area = df[['river_id', 'area_sqm']].groupby('river_id').sum().rename(columns={'area_sqm': 'area_sqm_total'})
+    df = df.merge(total_area, left_on='river_id', right_index=True, how='left')
+    df['proportion'] = df['area_sqm'] / df['area_sqm_total']
+
+    if save_path:
+        save_attributes = {
+            'description': 'proportions of runoff cells that intersect river catchments to be used with river-route',
+            'voroni_gdf_crs': voroni_gdf.crs.to_string(),
+            'catchments_gdf_crs': catchments_gdf.crs.to_string(),
+            'river_route_version': __version__,
+            **(save_attributes or {}),
+        }
+        ds = xr.Dataset({
+            'river_id': ('index', df['river_id'].to_numpy(dtype=np.int64, copy=False)),
+            'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
+            'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
+            'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
+            'y': ('index', df['y'].to_numpy(dtype=np.float64, copy=False)),
+            'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64, copy=False)),
+            'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64, copy=False)),
+        })
+        ds.attrs.update(save_attributes)
+        ds.to_netcdf(save_path)
+    return df
+
+
+def grid_weights(grid_path: str, catchments_path: str, *,
+                 grid_type: str = 'regular', save_voroni_path: str | None = None, save_weights_path: str | None = None) -> pd.DataFrame:
+    """
+    Compute the grid weights for a given grid and catchments.
+
+    Args:
+        grid_path: path to a NetCDF file containing the grid information (must include 'lon' and 'lat' variables)
+        catchments_path: path to a GeoParquet file containing the catchment geometries (must include 'river_id' column)
+        grid_type: type of the grid, either 'regular' or 'reduced'
+        save_voroni_path: optional path to save the Voroni polygons as a GeoParquet file
+        save_weights_path: optional path to save the grid weights as a NetCDF file
+
+    Returns:
+        pd.DataFrame: a DataFrame containing the grid weights with columns ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
+    """
+    if grid_type == 'regular':
+        x, y = get_cell_xy_from_regular_grid(grid_path, x_var='lon', y_var='lat')
+    elif grid_type == 'reduced':
+        x, y = get_cell_xy_from_reduced_grid(grid_path, x_var='lon', y_var='lat')
+    else:
+        raise ValueError(f'Invalid grid_type: {grid_type}. Must be either "regular" or "reduced".')
+    voroni_gdf = voroni_diagram_from_cell_xy(x, y, crs=4326)
+    if save_voroni_path:
+        voroni_gdf.to_parquet(save_voroni_path)
+    catchments_gdf = gpd.read_parquet(catchments_path)
+    return compute_voroni_catchment_intersects(
+        voroni_gdf, catchments_gdf, save_path=save_weights_path,
+        save_attributes={'grid_type': grid_type, 'grid_path': grid_path, 'catchments_path': catchments_path}
+    )
 
 
 def _cumulative_to_incremental(df) -> pd.DataFrame:
@@ -40,7 +194,7 @@ def _get_conversion_factor(unit: str) -> int | float:
         raise ValueError(f"Unknown units: {unit}")
 
 
-def calc_catchment_volumes(
+def depth_to_volume(
         runoff_data: str | list[str],
         weight_table: str,
         *,
@@ -53,7 +207,7 @@ def calc_catchment_volumes(
         cumulative: bool = False,
         force_positive_runoff: bool = False,
         force_uniform_timesteps: bool = True,
-) -> pd.DataFrame:
+) -> xr.Dataset:
     """
     Calculates the catchment runoff volumes from a given runoff dataset and a directory of VPU configs.
 
@@ -71,7 +225,7 @@ def calc_catchment_volumes(
         force_uniform_timesteps (bool): whether to force all timesteps to be uniform
 
     Returns:
-        pd.DataFrame: a DataFrame of the catchment runoff volumes with stream IDs as columns and a datetime index
+        xr.Dataset: a Dataset of catchment runoff volumes with dimensions ``time`` and ``river_id``
     """
     with xr.open_dataset(weight_table) as ds:
         weight_df = ds[[river_id_var, 'x_index', 'y_index', 'area_sqm']].to_dataframe()
@@ -111,7 +265,7 @@ def calc_catchment_volumes(
     time_diff = np.diff(df.index)
     if not np.all(time_diff == df.index[1] - df.index[0]) and force_uniform_timesteps:
         timestep = (df.index[1] - df.index[0]).astype('timedelta64[s]').astype(int)
-        LOG.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
+        logger.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
         df = (
             _incremental_to_cumulative(df)
             .resample(rule=f'{timestep}S')
@@ -119,55 +273,48 @@ def calc_catchment_volumes(
         )
         df = _cumulative_to_incremental(df)
     df = df.fillna(0)
-    return df
 
-
-def write_catchment_volumes(df: pd.DataFrame, output_dir: str, label: str = None) -> None:
-    """
-    Write the catchment runoff volumes to file in the river-route expected format.
-
-    Args:
-        df: pd.DataFrame
-            The catchment volumes timeseries dataframe with stream IDs as columns and a datetime index
-        output_dir: str
-            The directory to write the file to
-        label: str
-            An optional label to include in the file name for organization purposes
-    """
-    # Create output inflow netcdf data
-    if df.shape[0] == 0:
-        raise ValueError('write_catchment_volumes requires at least one row')
-    os.makedirs(output_dir, exist_ok=True)
+    # create an xr.Dataset to return
     start_date = df.index[0].strftime('%Y%m%d%H')
     end_date = df.index[-1].strftime('%Y%m%d%H')
-    file_name = f'volumes{f"_{label}" if label else ""}_{start_date}_{end_date}.nc'
-    inflow_file_path = os.path.join(output_dir, file_name)
-
-    with nc.Dataset(inflow_file_path, "w", format="NETCDF4") as ds:
-        ds.createDimension('time', df.shape[0])
-        ds.createDimension('river_id', df.shape[1])
-        ds.setncatts({
+    suggested_file_name = f'volumes_{start_date}_{end_date}.nc'
+    timestep = int((df.index[1] - df.index[0]).total_seconds()) if df.shape[0] > 1 else 0
+    return xr.Dataset(
+        {
+            'volume': xr.DataArray(
+                df.to_numpy(dtype=np.float32, copy=False),
+                dims=('time', 'river_id'),
+                attrs={
+                    'long_name': 'Incremental catchment runoff volume',
+                    'units': 'm3',
+                },
+            ),
+        },
+        coords={
+            'river_id': xr.DataArray(
+                df.columns.to_numpy(dtype=np.int64, copy=False),
+                dims=('river_id',),
+                attrs={
+                    'long_name': 'unique ID number for each river',
+                },
+            ),
+            'time': xr.DataArray(
+                (df.index - df.index[0]).astype('timedelta64[s]').astype(np.int64),
+                dims=('time',),
+                attrs={
+                    'long_name': 'time',
+                    'standard_name': 'time',
+                    'units': f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}',
+                    'axis': 'T',
+                    'time_step': f'{timestep}',
+                },
+            ),
+        },
+        attrs={
             'title': 'Catchment runoff volumes',
             'description': 'Incremental catchment runoff volumes in m3 for each river',
-            'source': f'River Routing v{__version__}',
+            'source': f'river-route v{__version__}',
             'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
-        })
-
-        ro_vol_var = ds.createVariable('volume', 'f4', ('time', 'river_id'), zlib=True, complevel=5)
-        ro_vol_var[:] = df.to_numpy()
-        ro_vol_var.long_name = 'Incremental catchment runoff volume'
-        ro_vol_var.units = 'm3'
-
-        id_var = ds.createVariable('river_id', 'i4', ('river_id',), zlib=True, complevel=5)
-        id_var[:] = df.columns.astype(int)
-        id_var.long_name = 'unique ID number for each river'
-
-        timestep = int((df.index[1] - df.index[0]).total_seconds()) if df.shape[0] > 1 else 0
-        time_var = ds.createVariable('time', 'i4', ('time',), zlib=True, complevel=5)
-        time_var[:] = (df.index - df.index[0]).astype('timedelta64[s]').astype(int)
-        time_var.long_name = 'time'
-        time_var.standard_name = 'time'
-        time_var.units = f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}'
-        time_var.axis = 'T'
-        time_var.time_step = f'{timestep}'
-    return
+            'suggested_file_name': suggested_file_name,
+        },
+    )

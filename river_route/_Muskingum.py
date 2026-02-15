@@ -19,7 +19,8 @@ from scipy.sparse import eye
 from scipy.sparse.linalg import factorized
 
 from .__metadata__ import __version__
-from .runoff import calc_catchment_volumes
+from .runoff import depth_to_volume
+from .tools import adjacency_matrix
 
 __all__ = ['Muskingum', ]
 
@@ -242,27 +243,7 @@ class Muskingum:
         unknown_downstream_ids = sorted(downstream_ids - river_id_set)
         if unknown_downstream_ids:
             raise ValueError(f'routing_params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
-
-        self._river_index = {int(river_id): idx for idx, river_id in enumerate(self.river_ids.tolist())}
-        self._upstream_index_lists = [[] for _ in range(self.river_ids.shape[0])]
-        row_indices: list[int] = []
-        col_indices: list[int] = []
-        for upstream_idx, downstream_river_id in enumerate(self.downstream_river_ids.tolist()):
-            if downstream_river_id == -1:
-                continue
-            downstream_idx = self._river_index[int(downstream_river_id)]
-            if downstream_idx <= upstream_idx:
-                raise ValueError(
-                    'routing_params_file must be topologically sorted upstream to downstream. '
-                    f'river_id={int(self.river_ids[upstream_idx])} comes after its downstream river_id={int(downstream_river_id)}. '
-                    f'Try sorting by the Shreve stream order or using a topological sort function on a directed graph.'
-                )
-            row_indices.append(downstream_idx)
-            col_indices.append(upstream_idx)
-            self._upstream_index_lists[downstream_idx].append(upstream_idx)
-
-        data = np.ones(len(row_indices), dtype=np.float64)
-        self.A = csc_matrix((data, (row_indices, col_indices)), shape=(self.river_ids.shape[0], self.river_ids.shape[0]))
+        self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
@@ -334,17 +315,17 @@ class Muskingum:
         elif self.conf.get('runoff_depths_files', False):
             for runoff_file, discharge_file in zip(self.conf['runoff_depths_files'], self.conf['discharge_files']):
                 self.logger.info(f'Calculating catchment volumes from runoff depths: {runoff_file}')
-                volumes_df = calc_catchment_volumes(
+                volumes_ds = depth_to_volume(
                     runoff_file,
                     weight_table=self.conf['weight_table_file'],
-                    river_id_var=self.conf['var_river_id'],
                     runoff_var=self.conf['var_runoff_depth'],
                     x_var=self.conf['var_x'],
                     y_var=self.conf['var_y'],
                     time_var=self.conf['var_t'],
-                    cumulative=self.conf['runoff_type'] == 'cumulative',
+                    river_id_var=self.conf['var_river_id'],
+                    cumulative=self.conf['runoff_type'] == 'cumulative'
                 )
-                yield volumes_df.index.values, volumes_df.values, runoff_file, discharge_file
+                yield volumes_ds['time'].values, volumes_ds[self.conf['var_catchment_volume']].values, runoff_file, discharge_file
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
 
@@ -454,7 +435,7 @@ class Muskingum:
     def _write_discharges(self, dates: DatetimeArray, discharge_array: FloatArray, discharge_file: str, runoff_file: str, ) -> None:
         """
         Writes routed discharge from a routing simulation to a netcdf file.
-        You should overwrite this method with a custom handler using set_write_discharges.
+        You can overwrite this method with a custom handler using set_write_discharges.
 
         Args:
             dates: datetime array corresponding to the discharge rows
