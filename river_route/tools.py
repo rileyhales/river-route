@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import networkx as nx
 import numpy as np
@@ -6,6 +7,7 @@ import pandas as pd
 import scipy
 
 logger = logging.getLogger(__name__)
+PathInput = str | Path
 
 __all__ = [
     'subset_configs_to_river',
@@ -16,10 +18,10 @@ __all__ = [
 
 def subset_configs_to_river(
         target_river: int,
-        params: str,
-        out_params: str,
-        weights: str = None,
-        out_weights: str = None,
+        params: PathInput,
+        out_params: PathInput,
+        weights: PathInput | None = None,
+        out_weights: PathInput | None = None,
 ) -> None:
     """
     Subset routing parameters and weight tables to only rivers including and upstream of a given id

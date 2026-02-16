@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -11,9 +12,8 @@ from .__metadata__ import __version__
 
 __all__ = [
     # for making grid_weights
-    'get_cell_xy_from_regular_grid',
-    'get_cell_xy_from_reduced_grid',
-    'voroni_diagram_from_cell_xy',
+    'cell_xy_from_regular_grid',
+    'voroni_diagram_from_regular_grid_cell_xy',
     'compute_voroni_catchment_intersects',
     'grid_weights',
     # for making catchment volumes from grid weights and depth grids
@@ -21,17 +21,19 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+PathInput = str | Path
 
 
-def get_cell_xy_from_regular_grid(dataset_path: str, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[np.ndarray, np.ndarray]:
+def cell_xy_from_regular_grid(dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[
+    np.ndarray, np.ndarray]:
     """
-    Get flattened x and y coordinates of cell centers from a regular grid.
+    Get cell center x and y coordinates from a regular grid in expected, common dataset structure.
     """
-    with xr.open_dataset(dataset_path) as ds:
+    with xr.open_dataset(dataset) as ds:
         if x_var not in ds.variables:
-            raise KeyError(f'{x_var} must be a variable in {dataset_path}')
+            raise KeyError(f'{x_var} must be a variable in {dataset}')
         if y_var not in ds.variables:
-            raise KeyError(f'{y_var} must be a variable in {dataset_path}')
+            raise KeyError(f'{y_var} must be a variable in {dataset}')
         x = ds[x_var].values
         y = ds[y_var].values
 
@@ -42,30 +44,7 @@ def get_cell_xy_from_regular_grid(dataset_path: str, x_var: str = 'lon', y_var: 
     return x_grid.flatten(), y_grid.flatten()
 
 
-def get_cell_xy_from_reduced_grid(dataset_path: str, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Get flattened x and y coordinates of cell centers from a reduced/unstructured grid.
-    """
-    with xr.open_dataset(dataset_path) as ds:
-        if x_var not in ds.variables or y_var not in ds.variables:
-            raise KeyError(f'{x_var} and {y_var} must be variables in {dataset_path}')
-        x = ds[x_var].values
-        y = ds[y_var].values
-
-    if x.ndim == 1 and y.ndim == 1:
-        if x.shape != y.shape:
-            raise ValueError('Reduced grid requires x and y arrays with the same shape')
-        return x.flatten(), y.flatten()
-
-    if x.ndim == 2 and y.ndim == 2:
-        if x.shape != y.shape:
-            raise ValueError('Reduced grid requires x and y arrays with the same shape')
-        return x.flatten(), y.flatten()
-
-    raise ValueError('Reduced grid expects either both 1D arrays of equal length or both 2D arrays of equal shape')
-
-
-def voroni_diagram_from_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
+def voroni_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
     """
     Create a GeoDataFrame of Voroni polygons around the center of each cell in a grid.
     """
@@ -91,7 +70,7 @@ def voroni_diagram_from_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -
 
 
 def compute_voroni_catchment_intersects(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
-                                        save_path: str | None = None, save_attributes: dict | None = None,
+                                        save_path: PathInput | None = None, save_attributes: dict | None = None,
                                         river_id_variable: str = 'river_id') -> pd.DataFrame:
     """
     Create a table of intersections between Voroni polygons and catchments.
@@ -139,34 +118,32 @@ def compute_voroni_catchment_intersects(voroni_gdf: gpd.GeoDataFrame, catchments
     return df
 
 
-def grid_weights(grid_path: str, catchments_path: str, *,
-                 grid_type: str = 'regular', save_voroni_path: str | None = None, save_weights_path: str | None = None) -> pd.DataFrame:
+def grid_weights(grid_path: PathInput, catchments_path: PathInput, *, x_var: str = 'lon', y_var: str = 'lat',
+                 save_voroni_path: PathInput | None = None, save_weights_path: PathInput | None = None) -> pd.DataFrame:
     """
     Compute the grid weights for a given grid and catchments.
 
     Args:
         grid_path: path to a NetCDF file containing the grid information (must include 'lon' and 'lat' variables)
         catchments_path: path to a GeoParquet file containing the catchment geometries (must include 'river_id' column)
+        x_var: x-coordinate variable name in the grid file
+        y_var: y-coordinate variable name in the grid file
         grid_type: type of the grid, either 'regular' or 'reduced'
         save_voroni_path: optional path to save the Voroni polygons as a GeoParquet file
         save_weights_path: optional path to save the grid weights as a NetCDF file
 
     Returns:
-        pd.DataFrame: a DataFrame containing the grid weights with columns ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
+        pd.DataFrame: a DataFrame containing the grid weights with columns
+            ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     """
-    if grid_type == 'regular':
-        x, y = get_cell_xy_from_regular_grid(grid_path, x_var='lon', y_var='lat')
-    elif grid_type == 'reduced':
-        x, y = get_cell_xy_from_reduced_grid(grid_path, x_var='lon', y_var='lat')
-    else:
-        raise ValueError(f'Invalid grid_type: {grid_type}. Must be either "regular" or "reduced".')
-    voroni_gdf = voroni_diagram_from_cell_xy(x, y, crs=4326)
+    x, y = cell_xy_from_regular_grid(grid_path, x_var=x_var, y_var=y_var)
+    voroni_gdf = voroni_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
     if save_voroni_path:
         voroni_gdf.to_parquet(save_voroni_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
     return compute_voroni_catchment_intersects(
         voroni_gdf, catchments_gdf, save_path=save_weights_path,
-        save_attributes={'grid_type': grid_type, 'grid_path': grid_path, 'catchments_path': catchments_path}
+        save_attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)}
     )
 
 
@@ -195,8 +172,8 @@ def _get_conversion_factor(unit: str) -> int | float:
 
 
 def depth_to_volume(
-        runoff_data: str | list[str],
-        weight_table: str,
+        runoff_data: PathInput | list[PathInput],
+        weight_table: PathInput,
         *,
         runoff_var: str = 'ro',
         x_var: str = 'lon',
@@ -229,7 +206,14 @@ def depth_to_volume(
     """
     with xr.open_dataset(weight_table) as ds:
         weight_df = ds[[river_id_var, 'x_index', 'y_index', 'area_sqm']].to_dataframe()
-    unique_indexes = weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
+    unique_indexes = (
+        weight_df
+        [['x_index', 'y_index']]
+        .drop_duplicates()
+        .reset_index(drop=True)
+        .reset_index()
+        .astype(int)
+    )
     unique_sorted_rivers = weight_df[[river_id_var, ]].drop_duplicates().sort_index()  # index -> already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:

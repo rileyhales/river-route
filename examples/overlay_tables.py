@@ -1,6 +1,8 @@
 import geopandas as gpd
 
-from river_route.runoff import get_cell_xy_from_regular_grid, voroni_diagram_from_cell_xy, compute_voroni_catchment_intersects
+from river_route.runoff import cell_xy_from_regular_grid
+from river_route.runoff import compute_voroni_catchment_intersects
+from river_route.runoff import voroni_diagram_from_regular_grid_cell_xy
 
 if __name__ == '__main__':
     sample_grid = './sample_grid.nc'
@@ -8,8 +10,8 @@ if __name__ == '__main__':
     voroni_polygons_save_path = './voroni_polygons_sample_grid.parquet'
     grid_weights_save_path = './grid_weights_sample_grid.parquet'
 
-    x, y = get_cell_xy_from_regular_grid(sample_grid, x_var='lon', y_var='lat')
-    voroni_gdf = voroni_diagram_from_cell_xy(x, y, crs=4326)
+    x, y = cell_xy_from_regular_grid(sample_grid, x_var='lon', y_var='lat')
+    voroni_gdf = voroni_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
     voroni_gdf.to_parquet(voroni_polygons_save_path)
 
     catchments_gdf = gpd.read_parquet(catchments)
