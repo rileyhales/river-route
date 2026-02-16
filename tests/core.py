@@ -75,22 +75,29 @@ def core_muskingum_feature_set() -> None:
     catchments_file = data_root / 'sample_watershed' / 'prepared_catchments.parquet'
     runoff_depths_file = data_root / 'sample_watershed' / 'prepared_runoff_depths.nc'
     # files created
-    voroni_diagram_file = data_root / 'generated' / 'voroni.parquet'
+    voroni_diagram_file = data_root / 'generated' / 'voronoi.parquet'
     grid_weights_file = data_root / 'generated' / 'grid_weights.nc'
-    catchment_volumes_file = data_root / 'generated' / 'catchment_volumes.nc'
-    discharge_from_volumes_file = data_root / 'generated' / 'discharge_from_volumes.nc'
+    catchment_volumes_file = data_root / 'generated' / 'volumes.nc'
+    discharge_from_volumes_file = data_root / 'generated' / 'discharge.nc'
     discharge_from_depths_file = data_root / 'generated' / 'discharge.nc'
     # solution
     expected_grid_weights_file = data_root / 'solutions' / 'grid_weights.nc'
     expected_volumes_file = data_root / 'solutions' / 'volumes.nc'
-    expected_voroni_diagram_file = data_root / 'solutions' / 'voroni.parquet'
+    expected_voroni_diagram_file = data_root / 'solutions' / 'voronoi.parquet'
     expected_discharge_file = data_root / 'solutions' / 'discharge.nc'
+
+    runoff_grid_variable_name_params = {
+        'x_var': 'longitude',
+        'y_var': 'latitude',
+        'time_var': 'valid_time'
+    }
 
     ############# 1 create a voroni diagram and weight table using rr.grid_weights
     log.info('Computing voroni diagram and grid weights using rr.runoff.grid_weights')
     rr.runoff.grid_weights(
         runoff_depths_file, catchments_file,
-        x_var='longitude', y_var='latitude',
+        x_var=runoff_grid_variable_name_params['x_var'],
+        y_var=runoff_grid_variable_name_params['y_var'],
         save_voroni_path=voroni_diagram_file,
         save_weights_path=grid_weights_file,
     )
@@ -99,8 +106,18 @@ def core_muskingum_feature_set() -> None:
 
     ############# 2 compute catchment volumes from gridded depths and grid weights
     log.info('Computing catchment volumes from gridded depths and grid weights')
-    rr.runoff.depth_to_volume(runoff_depths_file, grid_weights_file,
-                              x_var='longitude', y_var='latitude', time_var='valid_time')
+    (
+        rr
+        .runoff
+        .depth_to_volume(
+            runoff_depths_file,
+            grid_weights_file,
+            x_var=runoff_grid_variable_name_params['x_var'],
+            y_var=runoff_grid_variable_name_params['y_var'],
+            time_var=runoff_grid_variable_name_params['time_var'],
+        )
+        .to_netcdf(catchment_volumes_file)
+    )
     compare_with_logs(compare_netcdfs, catchment_volumes_file, expected_volumes_file)
 
     ############# 3 route catchment volumes to discharge using rr.Muskingum
@@ -120,8 +137,11 @@ def core_muskingum_feature_set() -> None:
         rr
         .Muskingum(**{
             'routing_params_file': routing_params_file,
-            'grid_weights_file': grid_weights_file,
+            'weight_table_file': grid_weights_file,
             'runoff_depths_files': runoff_depths_file,
+            'var_x': runoff_grid_variable_name_params['x_var'],
+            'var_y': runoff_grid_variable_name_params['y_var'],
+            'var_t': runoff_grid_variable_name_params['time_var'],
             'discharge_files': discharge_from_depths_file,
             'log': True,
         })

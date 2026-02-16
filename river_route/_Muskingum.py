@@ -95,6 +95,7 @@ class Muskingum:
         Returns:
             None
         """
+        # todo should the name be grid_weights or weight_table or something else?
         # read the config file
         if config_file is None or config_file == '':
             self.conf = {}
@@ -152,6 +153,11 @@ class Muskingum:
         if self.conf['runoff_type'] not in ['incremental', 'cumulative']:
             raise ValueError('Runoff type not recognized')
 
+        # fill the files with empty lists so checks are consistent, we'll delete later
+        self.conf['catchment_volumes_files'] = self.conf.get('catchment_volumes_files', [])
+        self.conf['runoff_depths_files'] = self.conf.get('runoff_depths_files', [])
+        self.conf['discharge_files'] = self.conf.get('discharge_files', [])
+
         # if only 1 file given as str, wrap in a list so future code that anticipates iterables behave properly
         if isinstance(self.conf.get('catchment_volumes_files', []), (str, Path)):
             self.conf['catchment_volumes_files'] = [self.conf['catchment_volumes_files'], ]
@@ -159,7 +165,6 @@ class Muskingum:
             self.conf['runoff_depths_files'] = [self.conf['runoff_depths_files'], ]
         if isinstance(self.conf.get('discharge_files', []), (str, Path)):
             self.conf['discharge_files'] = [self.conf['discharge_files'], ]
-
         # provided volumes or runoffs must exist and output directory must exist
         n_files = len(self.conf['catchment_volumes_files']) + len(self.conf['runoff_depths_files'])
         if self.conf['catchment_volumes_files'] and self.conf['runoff_depths_files']:
@@ -180,6 +185,13 @@ class Muskingum:
         if self.conf['runoff_depths_files']:
             if not os.path.exists(self.conf['weight_table_file']):
                 raise FileNotFoundError('Weight table file not found')
+
+        # todo should i have to fill these in and delete after? are there bugs here?
+        # now delete empty arrays
+        if not self.conf['catchment_volumes_files']:
+            del self.conf['catchment_volumes_files']
+        if not self.conf['runoff_depths_files']:
+            del self.conf['runoff_depths_files']
 
         # if the initial state was provided but is falsey then remove it behaves with future checks
         if 'initial_state_file' in self.conf and not self.conf['initial_state_file']:

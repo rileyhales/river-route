@@ -13,7 +13,7 @@ from .__metadata__ import __version__
 __all__ = [
     # for making grid_weights
     'cell_xy_from_regular_grid',
-    'voroni_diagram_from_regular_grid_cell_xy',
+    'voronoi_diagram_from_regular_grid_cell_xy',
     'compute_voroni_catchment_intersects',
     'grid_weights',
     # for making catchment volumes from grid weights and depth grids
@@ -44,9 +44,10 @@ def cell_xy_from_regular_grid(dataset: PathInput, x_var: str = 'lon', y_var: str
     return x_grid.flatten(), y_grid.flatten()
 
 
-def voroni_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
+def voronoi_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
     """
     Create a GeoDataFrame of Voroni polygons around the center of each cell in a grid.
+    The voronoi
     """
     if x.ndim != 1 or y.ndim != 1:
         raise ValueError('x and y must be 1D arrays')
@@ -66,7 +67,7 @@ def voroni_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: 
     voroni_gdf['y'] = voroni_gdf.geometry.apply(lambda geom: geom.centroid.y).astype(float)
     voroni_gdf['x_index'] = voroni_gdf['x'].apply(lambda value: np.argmin(np.abs(x - value))).astype(int)
     voroni_gdf['y_index'] = voroni_gdf['y'].apply(lambda value: np.argmin(np.abs(y - value))).astype(int)
-    return voroni_gdf
+    return voroni_gdf.sort_values(by=['x', 'y']).reset_index(drop=True)
 
 
 def compute_voroni_catchment_intersects(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
@@ -136,7 +137,7 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *, x_var: str
             ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     """
     x, y = cell_xy_from_regular_grid(grid_path, x_var=x_var, y_var=y_var)
-    voroni_gdf = voroni_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
+    voroni_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
     if save_voroni_path:
         voroni_gdf.to_parquet(save_voroni_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
