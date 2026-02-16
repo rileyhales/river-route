@@ -128,7 +128,6 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *, x_var: str
         catchments_path: path to a GeoParquet file containing the catchment geometries (must include 'river_id' column)
         x_var: x-coordinate variable name in the grid file
         y_var: y-coordinate variable name in the grid file
-        grid_type: type of the grid, either 'regular' or 'reduced'
         save_voroni_path: optional path to save the Voroni polygons as a GeoParquet file
         save_weights_path: optional path to save the grid weights as a NetCDF file
 
@@ -258,7 +257,7 @@ def depth_to_volume(
         df = _cumulative_to_incremental(df)
     df = df.fillna(0)
 
-    # create an xr.Dataset to return
+    # create xr.Dataset to return
     start_date = df.index[0].strftime('%Y%m%d%H')
     end_date = df.index[-1].strftime('%Y%m%d%H')
     suggested_file_name = f'volumes_{start_date}_{end_date}.nc'
