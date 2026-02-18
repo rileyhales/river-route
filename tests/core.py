@@ -76,7 +76,6 @@ def core_muskingum_feature_set() -> None:
     # todo write final state files and compare final states
     # todo use an initial state file and test that the initial values are used correctly
     os.makedirs(data_root / 'generated', exist_ok=True)
-    os.makedirs(data_root / 'solutions', exist_ok=True)
 
     # inputs
     routing_params_file = data_root / 'watershed' / 'prepared_routing_params.parquet'
@@ -124,7 +123,7 @@ def core_muskingum_feature_set() -> None:
     compare_with_logs(compare_netcdfs, catchment_volumes_file, expected_volumes_file)
 
     ############# 3 route catchment volumes to discharge using rr.LumpedMuskingum
-    log.info('Routing catchment volumes to discharge using rr.LumpedMuskingum')
+    log.info('Routing catchment volumes to discharge using rr.TeleportMuskingum')
     (
         rr
         .TeleportMuskingum(**{

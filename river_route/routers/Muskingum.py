@@ -21,7 +21,7 @@ class Muskingum(RoutingConfigs):
     """
     Muskingum channel routing of discharge without lateral inflow.
 
-    Required config keys:
+    Required:
         routing_params_file: parquet file with river_id, downstream_river_id, k, x columns
         initial_state_file: parquet file with Q and R columns for initial conditions
         dt_routing: routing computation timestep in seconds
@@ -139,6 +139,14 @@ class Muskingum(RoutingConfigs):
         return
 
     def route(self) -> 'Muskingum':
+        """
+        Execute the simulation described by the provided configs and routing parameters. All configs, file paths,
+        parameters, and options must be set when the object is initialized so that validation is performed before the
+        simulation.
+
+        Returns:
+            'Muskingum': the class instance with updated initial_state and output files written to disk
+        """
         self.logger.info('Beginning routing')
         t1 = datetime.datetime.now()
 
@@ -272,7 +280,7 @@ class Muskingum(RoutingConfigs):
             func (callable): function that takes dates, discharge_array, discharge_file, runoff_file and returns None
 
         Returns:
-            river_route.LumpedMuskingum
+            Muskingum: the class instance with the _write_discharges method overwritten by func
         """
         self._write_discharges = func
         return self

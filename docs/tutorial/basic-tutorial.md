@@ -12,7 +12,18 @@ and writes 1 output dataset. Together, that makes a total of 3 files that need t
 topology, the second is the input water being routed, and the third (the output) is the discharge time series calculated by the routing process. This
 tutorial explain the process of preparing these files.
 
-This tutorial uses `rr.Muskingum`, but the same workflow applies to `rr.ClarkMuskingum` with additional routing
+### Which Router to Use
+
+Three routers are available:
+
+- **`TeleportMuskingum`** (recommended for most use cases): routes runoff volumes or depths directly into river channel inlets at each timestep.
+  This is what the `rr` CLI command uses.
+- **`ClarkMuskingum`**: same as `TeleportMuskingum` but applies a Clark Unit Hydrograph transformation to lateral inflows before channel routing.
+  Requires additional routing parameters (`tc`, `R`) and optionally a time-area file.
+- **`Muskingum`** (advanced): pure channel routing with no lateral inflows. Routes an existing discharge state forward in time. Requires
+  an explicit initial state, `dt_routing`, and `dt_total`. Use this when your lateral inflows are already handled elsewhere.
+
+This tutorial uses `TeleportMuskingum`. The same workflow applies to `ClarkMuskingum` with the additional routing
 parameter columns (`tc`, `R`) and optional Clark config keys (`time_area_file`, `precomputed_lateral_inflows`).
 
 1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file
@@ -29,7 +40,7 @@ At runtime, routing is a coordinated pipeline, not a single equation call:
 4. Apply routing equations over sub-steps (`dt_routing`) and aggregate to output interval (`dt_discharge`)
 5. Write routed discharge and optional final state for restart
 
-For `Muskingum`, lateral inflow enters the channel equation directly.
+For `TeleportMuskingum`, lateral inflow enters the channel equation directly.
 For `ClarkMuskingum`, lateral inflow is first transformed through the Clark UH (`tc`, `R`, optional time-area curves),
 then added to channel routing.
 
@@ -52,8 +63,8 @@ The following vocabulary is used in this tutorial.
 - Catchment: a catchment is a subunit of a watershed. Water flows into it at the upstream side in exactly 1 location and leaves the catchment in
   exactly 1 location.
 - Subbasin: multiple hydraulically connected catchments forming a complete watershed which is part of a larger watershed.
-- Topological Order: A sort which orders rivers based on their connectivity to each other. Rivers appearing further upstream should come before all 
-  rivers which are downstream of them. Topological sorts are usually not unique or deterministic. There are many ways to sort rivers such that this 
+- Topological Order: A sort which orders rivers based on their connectivity to each other. Rivers appearing further upstream should come before all
+  rivers which are downstream of them. Topological sorts are usually not unique or deterministic. There are many ways to sort rivers such that this
   condition is met.
 
 ## Directory Structure
@@ -201,7 +212,7 @@ config_file_path = '/path/to/config.yaml'
 
 m = (
     rr
-    .Muskingum(config_file_path)
+    .TeleportMuskingum(config_file_path)
     .route()
 )
 ```

@@ -2,24 +2,26 @@
 
 Ensemble simulations are usually 1) multiple simulations, 2) from the same starting state, 3) covering the same time period, and 4) using the same
 model parameters. The runoff projections that are the members of the ensemble are described as iterations, realizations, formulations, or
-perturbations. Routing an ensemble of runoffs has one significant difference compared to routing an individual runoff or a series of runoffs. The 
-difference is how the initial and final states are handled. For an individual runoff, the initial state is the same as the final state of the previous 
-routing step. In an ensemble simulation, you have many methods to combine the ensemble into a new next state. There are 2 methods for routing an ensemble of 
+perturbations. Routing an ensemble of runoffs has one significant difference compared to routing an individual runoff or a series of runoffs. The
+difference is how the initial and final states are handled. For an individual runoff, the initial state is the same as the final state of the previous
+routing step. In an ensemble simulation, you have many methods to combine the ensemble into a new next state. There are 2 methods for routing an ensemble of
 runoffs in river-route.
 
-1. In a loop or in concurrent/parallel jobs, route each member using same initial conditions and routing parameters for each job. Use the member number 
-   to make output file names unique and more readily searchable and sortable. Provide all configurations as normal without special considerations. In 
-   this situation, you create a new `rr.Muskingum` instance for each member which each read configs and parameter files. However, you can process each 
+Ensemble routing is supported by `TeleportMuskingum` and `ClarkMuskingum` (not the base `Muskingum`).
+
+1. In a loop or in concurrent/parallel jobs, route each member using same initial conditions and routing parameters for each job. Use the member number
+   to make output file names unique and more readily searchable and sortable. Provide all configurations as normal without special considerations. In
+   this situation, you create a new `rr.TeleportMuskingum` instance for each member which each read configs and parameter files. However, you can process each
    member simultaneously which may be faster.
 2. Provide a list of input and output files and specify `input_type=ensemble` in your configs. This will route each member in the order given by the
-   input list, one at a time. Each member will be initialized from the same final state and use the same routing parameters. The final state is still 
-   from the last routing step but is the average of the final step across all members, not just the first. In this situation, you create a single 
-   instance of `rr.Muskingum`, read configs and parameter files only one time, but the members are processed sequentially which could be slow.
+   input list, one at a time. Each member will be initialized from the same final state and use the same routing parameters. The final state is still
+   from the last routing step but is the average of the final step across all members, not just the first. In this situation, you create a single
+   instance of `rr.TeleportMuskingum`, read configs and parameter files only one time, but the members are processed sequentially which could be slow.
 
 ## Routing ensemble members simultaneously
 
-Ensemble members are independent of each other and start from the same conditions so they can be computed simultaneously to possibly save time and 
-more fully utilize computer capacity. There are many methods for concurrency or parallel processing in Python. This is only one example of how to 
+Ensemble members are independent of each other and start from the same conditions so they can be computed simultaneously to possibly save time and
+more fully utilize computer capacity. There are many methods for concurrency or parallel processing in Python. This is only one example of how to
 implement it using `multiprocessing`. You will need to write some custom logic to:
 
 1. Set the config variables and routing parameter files
@@ -40,11 +42,11 @@ output_files = ['discharges_member_1.nc',
 
 
 def route(input_file: str, output_file: str) -> None:
-    rr.Muskingum(
+    rr.TeleportMuskingum(
         routing_params_file=routing_params_file,
         catchment_volumes_files=input_file,
         discharge_files=output_file,
-    )
+    ).route()
 
 
 if __name__ == '__main__':
@@ -109,7 +111,7 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
 
 m = (
     rr
-    .Muskingum('your_config_file.yaml')
+    .TeleportMuskingum('your_config_file.yaml')
     .set_write_discharges(custom_output_writer)  # set the custom output writer function
     .route()
 )

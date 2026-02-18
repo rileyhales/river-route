@@ -9,23 +9,21 @@ routing_params_file: '/path/to/params.parquet'
 The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
 Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-Required for `Muskingum`:
+Required for all routers (`Muskingum`, `TeleportMuskingum`, `ClarkMuskingum`):
 
-| Column | Data Type | Description |
-|---|---|---|
-| `river_id` | integer | Unique ID of a river segment |
-| `downstream_river_id` | integer | ID of downstream river segment, or `-1` for outlet reaches |
-| `k` | float | Muskingum `k` parameter (length / velocity) |
-| `x` | float | Muskingum `x` parameter, expected in `[0, 0.5]` |
+| Column                | Data Type | Description                                                |
+|-----------------------|-----------|------------------------------------------------------------|
+| `river_id`            | integer   | Unique ID of a river segment                               |
+| `downstream_river_id` | integer   | ID of downstream river segment, or `-1` for outlet reaches |
+| `k`                   | float     | Muskingum `k` parameter (length / velocity)                |
+| `x`                   | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
 
 Additional required columns for `ClarkMuskingum`:
 
-| Column | Data Type | Description |
-|---|---|---|
-| `tc` | float | Time of concentration (seconds), must be non-negative |
-| `R` | float | Clark reservoir storage coefficient (seconds), must be positive |
-
-### Parameter Source Guidance
+| Column | Data Type | Description                                                     |
+|--------|-----------|-----------------------------------------------------------------|
+| `tc`   | float     | Time of concentration (seconds), must be non-negative           |
+| `R`    | float     | Clark reservoir storage coefficient (seconds), must be positive |
 
 These routing parameters typically come from preprocessing and calibration workflows:
 
@@ -33,7 +31,7 @@ These routing parameters typically come from preprocessing and calibration workf
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
 3. Clark response (`tc`, `R`) from travel-time/storage assumptions and/or calibration
 
-In practice, use physically derived first guesses, then calibrate against observed discharge where available.
+Generally, use physically derived first guesses then calibrate against observed discharge where available.
 
 ## Catchment Volumes or Runoff Depths
 
@@ -44,9 +42,9 @@ uniform time step for all rivers with no missing values. There are 2 likely ways
 2. Generate runoff depth grids and use zonal statistics to calculate catchment scale volumes.
 
 !!! warning "Runoff Depths Warning"
-    There are many projections for grid cells, different names of variables, various file formats, and units of the runoff depths. You should be 
-    certain you can correctly calculate catchment volumes from runoff depth grids separately before using the calculations performed by `river-route`. 
-    The routing class may not correctly perform the conversions in all cases.
+There are many projections for grid cells, different names of variables, various file formats, and units of the runoff depths. You should be
+certain you can correctly calculate catchment volumes from runoff depth grids separately before using the calculations performed by `river-route`.
+The routing class may not correctly perform the conversions in all cases.
 
 ### Catchment Volumes (recommended)
 
@@ -63,9 +61,9 @@ The file should have 1 runoff volumes variables named "volume" which is an array
 float.
 
 !!! note "Calculating Catchment Volumes"
-    `river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform
-    the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the
-    example case for guidance on formatting these files.
+`river-route` is not a land surface modeling tool. It does have an example function illustrating how to perform
+the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the
+example case for guidance on formatting these files.
 
 ### Runoff Depths
 
@@ -89,18 +87,17 @@ runoff grid cells with different x_index and y_index values. The area column sho
 overlaps with the catchment boundary and should be in units of meters squared.
 
 !!! note "Ordering Grid Weights"
-    The order of unique river_id values in the weight table should be the same as in the routing parameters *AND* 
-    should be topologically sorted from upstream to downstream.
+The order of unique river_id values in the weight table should be the same as in the routing parameters *AND*
+should be topologically sorted from upstream to downstream.
 
-| Column     | Data Type | Description                                                                           |
-|------------|-----------|---------------------------------------------------------------------------------------|
-| river_id   | integer   | Unique ID of a river segment                                                          |
-| x_index    | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
-| y_index    | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
-| x          | float     | The x coordinate of the runoff grid cell that overlaps with the catchment boundary    |
-| y          | float     | The y coordinate of the runoff grid cell that overlaps with the catchment boundary    |
-| area_sqm   | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
-
+| Column   | Data Type | Description                                                                           |
+|----------|-----------|---------------------------------------------------------------------------------------|
+| river_id | integer   | Unique ID of a river segment                                                          |
+| x_index  | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary         |
+| y_index  | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary         |
+| x        | float     | The x coordinate of the runoff grid cell that overlaps with the catchment boundary    |
+| y        | float     | The y coordinate of the runoff grid cell that overlaps with the catchment boundary    |
+| area_sqm | float     | The area of the grid cell which overlaps with the catchment boundary in square meters |
 
 ## Output Files
 
@@ -125,10 +122,10 @@ function of inflow volumes at time t and time t+1, and the discharge at time t.
 
 The parquet state file must contain 2 columns in river order:
 
-| Column | Description |
-|---|---|
-| `Q` | River discharge state |
-| `R` | Previous lateral inflow/runoff state |
+| Column | Description                          |
+|--------|--------------------------------------|
+| `Q`    | River discharge state                |
+| `R`    | Previous lateral inflow/runoff state |
 
 For `ClarkMuskingum`, an additional NumPy file is written/read automatically alongside the state parquet:
 `<state_file_without_extension>_clark.npy`. This stores the rolling Clark UH buffer.

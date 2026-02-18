@@ -1,12 +1,23 @@
 # River-Route
 
-The `river-route` Python package is a tool for routing discharge in river channels and runoff transformation. These methods are intended for 
-large networks of rivers and catchments using solver methods that are efficient and vectorized as much as possible.
+The `river-route` Python package routes runoff volumes and discharge through river networks using vectorized,
+sparse-matrix solvers. It is designed for large networks of rivers and catchments.
+
+## Routers
+
+Three routers are available:
+
+| Router              | Description                                                                                                  |
+|---------------------|--------------------------------------------------------------------------------------------------------------|
+| `Muskingum`         | Channel routing with no lateral inflows.                                                                     |
+| `TeleportMuskingum` | Overland runoff are placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing |
+| `ClarkMuskingum`    | Runoff transformed by Clark Unit Hydrographs at catchment scale. Muskingum channel routing.                  |                           
 
 ## Start Here
 
 1. [Basic Walkthrough](tutorial/basic-tutorial.md)
 2. [Advanced Concepts](tutorial/advanced-tutorial.md)
+3. [Routing Ensembles](tutorial/routing-ensembles.md)
 
 ```commandline
 pip install river-route
@@ -15,9 +26,10 @@ pip install river-route
 ```python
 import river_route as rr
 
+# Most common: route runoff volumes through the network
 (
     rr
-    .Muskingum('/path/to/config.yaml')
+    .TeleportMuskingum('/path/to/config.yaml')
     .route()
 )
 ```
@@ -30,11 +42,11 @@ Title: River Route Process Diagram
 ---
 graph LR
     subgraph "Required-Inputs"
-        Inputs["Routing Parameters\nCatchment Volumes\nDischarge Files"]
+        Inputs["Routing Parameters\nCatchment Volumes (or Runoff Depths)\nDischarge Files"]
     end
 
     subgraph "Compute-Options"
-        co1["Routing Timestep\nDischarge Timestep\nRunoff Type\nRouting Method"]
+        co1["Routing Timestep\nDischarge Timestep\nRunoff Type\nInput Type"]
     end
 
     subgraph "Initialization"
@@ -42,52 +54,53 @@ graph LR
     end
 
     subgraph "Logging-Options"
-        management["Log File Path\nProgress Bar\nLog Level\nJob Name"]
+        management["Log File Path\nProgress Bar\nLog Level"]
     end
 
-    subgraph "Computations"
-        direction TB
-        a[Calculate LHS] --> b
-        b[Read Volumes Array] --> c
-        c[Iterate On Routing Intervals] --> d
-        d[Solving Matrix\nMuskingum] --> e
-        e[Enforce Positive Flows] --> f & c
-        f[Write Discharge to Disk] --> g
-        g[Cache Final State]
-    end
+subgraph "Computations"
+direction TB
+a[Build Adjacency Matrix] --> b
+b[Factorize LHS Matrix] --> c
+c[Read Volume/Depth Array] --> d
+d[Apply Clark UH Transform\n(ClarkMuskingum only)] --> e
+e[Iterate Routing Timesteps] --> f
+f[Solve Muskingum System] --> g
+g[Enforce Non-negative Flows] --> h & e
+h[Write Discharge to Disk] --> i
+i[Cache Final State]
+end
 
-    subgraph "Main-Output"
-        Result[Routed Discharge]
-    end
+subgraph "Main-Output"
+Result[Routed Discharge]
+end
 
-    subgraph "Cachable-Files"
-        CachedFiles["Final State File"]
-    end
+subgraph "Cachable-Files"
+CachedFiles["Final State File"]
+end
 
-    Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
-    Computations ==> Main-Output & Cachable-Files
+Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
+Computations ==> Main-Output & Cachable-Files
 ```
 
-## Usage Example
+## Usage Examples
 
-You pass configuration options to either `rr.Muskingum` or `rr.ClarkMuskingum` by specifying the config file path or using keyword arguments.
-If for any reason it is easier to determine the available options at runtime, you can combine the method. Note that keyword arguments
-will override any value given in the config file.
+Configuration options are passed as a config file path, keyword arguments, or both. Keyword arguments
+override any value in the config file.
 
 ```python
 import river_route as rr
 
-# Option 1 - Give all arguments via a configuration file
+# Option 1 - Config file only
 (
     rr
-    .Muskingum('/path/to/config.yaml')
+    .TeleportMuskingum('/path/to/config.yaml')
     .route()
 )
 
-# Option 2 - Give all arguments via keyword arguments
+# Option 2 - Keyword arguments only
 (
     rr
-    .Muskingum(**{
+    .TeleportMuskingum(**{
         'routing_params_file': '/path/to/routing_params.parquet',
         'catchment_volumes_files': '/path/to/volumes.nc',
         'discharge_files': '/path/to/discharge.nc',
@@ -95,17 +108,23 @@ import river_route as rr
     .route()
 )
 
-# Option 3 - Use both a configuration file and keyword arguments
+# Option 3 - Config file with keyword argument overrides
 (
     rr
-    .Muskingum(
+    .TeleportMuskingum(
         '/path/to/config.yaml',
         **{
-            'routing_params_file': '/path/to/routing_params.parquet',
             'catchment_volumes_files': '/path/to/volumes.nc',
             'discharge_files': '/path/to/discharge.nc',
         }
     )
+    .route()
+)
+
+# Clark-Muskingum
+(
+    rr
+    .ClarkMuskingum('/path/to/config_clark.yaml')
     .route()
 )
 ```

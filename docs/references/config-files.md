@@ -1,7 +1,9 @@
 ## Configuration File
 
 `river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
-Both routers (`Muskingum`, `ClarkMuskingum`) share the same base config keys, and Clark adds a few optional keys.
+All three routers (`Muskingum`, `TeleportMuskingum`, `ClarkMuskingum`) share the same base config keys.
+`TeleportMuskingum` adds support for multiple files and ensemble mode. `ClarkMuskingum` adds a few optional
+Clark-specific keys.
 
 1. Paths to input and output files
 2. Routing and timestep options
@@ -10,7 +12,7 @@ Both routers (`Muskingum`, `ClarkMuskingum`) share the same base config keys, an
 
 ## Minimum Required Inputs
 
-Every run needs:
+Every `TeleportMuskingum` or `ClarkMuskingum` run needs:
 
 - `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - one water input source:
@@ -18,23 +20,22 @@ Every run needs:
     - `runoff_depths_files` plus `weight_table_file`
 - `discharge_files` - path(s) where [routed discharge](io-file-schema.md#routed-discharge) output files will be saved (netCDF)
 
-## Example YAML File
+`Muskingum` (base channel routing, no lateral inflows) additionally requires:
 
-Muskingum example:
+- `initial_state_file` - parquet state file to initialize discharge
+- `dt_routing` - routing computation timestep in seconds
+- `dt_total` - total simulation duration in seconds
+- `discharge_file` (singular) - output netCDF file path
+
+## Example Configuratin YAML
 
 ```yaml title="Config File Example"
-{ % include-markdown "../../examples/config.yaml" % }
-```
-
-Clark-Muskingum example:
-
-```yaml title="Clark Config File Example"
-{ % include-markdown "../../examples/config_clark.yaml" % }
+{% include-markdown "../../examples/config.yaml" %}
 ```
 
 ## Config Options Table
 
-The following table is the full set of recognized keys.
+The following table is the full set of recognized keys for `TeleportMuskingum` and `ClarkMuskingum`.
 
 | Parameter Name                | Required        | Type                         | Description                                                               |
 |-------------------------------|-----------------|------------------------------|---------------------------------------------------------------------------|
@@ -65,33 +66,38 @@ The following table is the full set of recognized keys.
 | `var_river_id`                | No              | string                       | River ID dimension/variable name. Default: `river_id`.                    |
 | `var_discharge`               | No              | string                       | Discharge variable name in outputs. Default: `Q`.                         |
 
-| Config key                  | Muskingum | LumpedMuskingum | ClarkMuskingum |
-|-----------------------------|-----------|-----------------|----------------|
-| routing_params_file         | Required  | Required        | Required       |
-| discharge_files             | Required  | Required        | Required       |
-| catchment_volumes_files     |           | Required        |                |
-| runoff_depths_files         |           | optional        | Required       |
-| weight_table_file           |           | optional        | optional       |
-| time_area_file              |           |                 | optional       |
-| precomputed_lateral_inflows |           |                 | optional       |
-| dt_routing                  | Required  | optional        | optional       |
-| dt_discharge                | optional  | optional        | optional       |
-| dt_runoff                   |           | optional        | optional       |
-| initial_state_file          | Required  | optional        | optional       |
-| final_state_file            | optional  | optional        | optional       |
-| input_type                  |           | optional        | optional       |
-| runoff_type                 |           | optional        | optional       |
-| log                         | optional  | optional        | optional       |
-| progress_bar                | optional  | optional        | optional       |
-| log_level                   | optional  | optional        | optional       |
-| log_stream                  | optional  | optional        | optional       |
-| log_format                  | optional  | optional        | optional       |
-| var_river_id                | optional  | optional        | optional       |
-| var_discharge               | optional  | optional        | optional       |
-| var_x                       | optional  | optional        | optional       |
-| var_y                       | optional  | optional        | optional       |
-| var_t                       | optional  | optional        | optional       |
-| var_catchment_volume        | optional  | optional        | optional       |
-| var_runoff_depth            | optional  | optional        | optional       |
+## Config Key Compatibility by Router
 
-Required = required, optional = optional, blank = not used.
+This table shows which keys apply to each router. Required = must be provided, optional = may be provided,
+blank = not used by that router.
+
+| Config key                    | Muskingum | TeleportMuskingum | ClarkMuskingum |
+|-------------------------------|-----------|-------------------|----------------|
+| `routing_params_file`         | Required  | Required          | Required       |
+| `discharge_files`             | Required  | Required          | Required       |
+| `catchment_volumes_files`     |           | Required*         | Required*      |
+| `runoff_depths_files`         |           | Required*         | Required*      |
+| `weight_table_file`           |           | optional          | optional       |
+| `time_area_file`              |           |                   | optional       |
+| `precomputed_lateral_inflows` |           |                   | optional       |
+| `dt_routing`                  | Required  | optional          | optional       |
+| `dt_discharge`                | optional  | optional          | optional       |
+| `dt_total`                    | Required  | optional          | optional       |
+| `input_type`                  |           | optional          | optional       |
+| `runoff_type`                 |           | optional          | optional       |
+| `initial_state_file`          | Required  | optional          | optional       |
+| `final_state_file`            | optional  | optional          | optional       |
+| `log`                         | optional  | optional          | optional       |
+| `progress_bar`                | optional  | optional          | optional       |
+| `log_level`                   | optional  | optional          | optional       |
+| `log_stream`                  | optional  | optional          | optional       |
+| `log_format`                  | optional  | optional          | optional       |
+| `var_river_id`                | optional  | optional          | optional       |
+| `var_discharge`               | optional  | optional          | optional       |
+| `var_x`                       |           | optional          | optional       |
+| `var_y`                       |           | optional          | optional       |
+| `var_t`                       |           | optional          | optional       |
+| `var_catchment_volume`        |           | optional          | optional       |
+| `var_runoff_depth`            |           | optional          | optional       |
+
+*Exactly one of `catchment_volumes_files` or `runoff_depths_files` must be provided.

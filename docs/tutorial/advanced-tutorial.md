@@ -1,12 +1,12 @@
 ## Finding Inputs and Config Files at Runtime
 
-Instead of manually preparing config files in advance, you may want to generate them in your code which executes the 
+Instead of manually preparing config files in advance, you may want to generate them in your code which executes the
 routing. This is useful when you have a large number of routing runs to perform or if you want to automate the process.
-Depending on your preference, you may want to generate many config files in advance or store them for repeatability and 
+Depending on your preference, you may want to generate many config files in advance or store them for repeatability and
 future use.
 
-The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments 
-to the `Muskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
+The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments
+to the `TeleportMuskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file
 instead.
 
 ```python
@@ -29,7 +29,7 @@ os.makedirs(outputs, exist_ok=True)
 
 m = (
     rr
-    .Muskingum(**{
+    .TeleportMuskingum(**{
         'routing_params_file': params_file,
         'catchment_volumes_files': volume_files,
         'discharge_files': output_files,
@@ -48,7 +48,7 @@ of reasons you would want to do this include appending the outputs to an existin
 database, or to add metadata or attributes to the file.
 
 You can override the `write_discharges` method directly in your code or use the `set_write_discharges` method. Your custom
-function should accept exactly 4 arguments:
+function must accept exactly 4 arguments:
 
 1. `dates`: datetime array for rows in the discharge array.
 2. `discharge_array`: routed discharge array with shape `(time, river_id)`.
@@ -74,7 +74,7 @@ def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .Muskingum('../../examples/config.yaml')
+    .TeleportMuskingum('../../examples/config.yaml')
     .set_write_discharges(custom_write_discharges)
     .route()
 )
@@ -100,7 +100,7 @@ def write_discharges_to_sqlite(dates, discharge_array, discharge_file: str, runo
 
 (
     rr
-    .Muskingum('config.yaml')
+    .TeleportMuskingum('config.yaml')
     .set_write_discharges(write_discharges_to_sqlite)
     .route()
 )
@@ -124,7 +124,7 @@ def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .Muskingum('config.yaml')
+    .TeleportMuskingum('config.yaml')
     .set_write_discharges(append_to_existing_file)
     .route()
 )
@@ -149,8 +149,86 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
 
 (
     rr
-    .Muskingum('config.yaml')
+    .TeleportMuskingum('config.yaml')
     .set_write_discharges(save_partial_results)
     .route()
 )
+```
+
+## Clark-Muskingum Advanced Features
+
+### Setting Time-Area Curves Programmatically
+
+Instead of providing a `time_area_file`, you can set per-catchment time-area curves directly as a NumPy array.
+The array must have shape `(n_points, n_catchments)` with cumulative area fractions at evenly spaced normalized
+times over `[0, 1]`.
+
+```python
+import numpy as np
+import river_route as rr
+
+# Build or load your curves
+# shape: (n_curve_points, n_catchments)
+curves = np.load('my_time_area_curves.npy')
+
+(
+    rr
+    .ClarkMuskingum('config_clark.yaml')
+    .set_time_area_curves(curves)
+    .route()
+)
+```
+
+If neither `time_area_file` nor `set_time_area_curves()` is used, `ClarkMuskingum` falls back to the SCS
+dimensionless time-area curve applied uniformly to all catchments.
+
+### Pre-computing Lateral Inflows
+
+For repeated routing runs over the same input volumes (e.g., sensitivity analysis, calibration), you can
+pre-compute the Clark UH-transformed lateral inflows once and reuse them. This avoids re-applying the
+convolution on every run.
+
+```python
+import river_route as rr
+
+router = rr.ClarkMuskingum('config_clark.yaml')
+
+# Step 1: pre-compute and write UH-transformed inflows to disk
+precomputed_files = ['lateral_1.nc', 'lateral_2.nc']
+router.compute_lateral_inflows(precomputed_files)
+
+# Step 2: route using the precomputed inflows directly
+(
+    rr
+    .ClarkMuskingum(
+        routing_params_file='params.parquet',
+        catchment_volumes_files=precomputed_files,
+        discharge_files=['discharge_1.nc', 'discharge_2.nc'],
+        precomputed_lateral_inflows=True,
+    )
+    .route()
+)
+```
+
+The `compute_lateral_inflows()` method writes netCDF files in the same format as catchment volume files.
+Setting `precomputed_lateral_inflows=True` tells the router to use the volumes directly as lateral inflow
+rates rather than applying the UH transform again.
+
+### Precomputing Unit Hydrographs
+
+Unit hydrographs are computed automatically the first time `route()` is called. If you want to inspect them
+or trigger precomputation early (e.g., before a batch of runs), call `precompute_unit_hydrographs()` directly.
+Note that the router must have already read the routing parameters and time metadata.
+
+```python
+import river_route as rr
+
+router = (
+    rr
+    .ClarkMuskingum('config_clark.yaml')
+)
+# precompute_unit_hydrographs is called automatically during route(),
+# but can also be called explicitly after initialization
+router.route()
+print('UH matrix shape:', router._uh_matrix.shape)
 ```

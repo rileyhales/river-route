@@ -155,10 +155,9 @@ class TeleportMuskingum(Muskingum):
 
     def route(self) -> 'TeleportMuskingum':
         """
-        Performs time-iterative runoff routing through the river network
 
         Returns:
-            river_route.LumpedMuskingum
+
         """
         self.logger.info(f'Beginning routing')
         t1 = datetime.datetime.now()
