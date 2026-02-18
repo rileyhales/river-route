@@ -9,9 +9,9 @@ from scipy.sparse import diags
 from scipy.sparse import eye
 from scipy.sparse.linalg import factorized
 
-from ..runoff import depth_to_volume
-from .typing import FloatArray, DatetimeArray, PathInput, WriteDischargesFn
 from .Muskingum import Muskingum
+from .typing import FloatArray, DatetimeArray, PathInput
+from ..runoff import depth_to_volume
 
 __all__ = ['TeleportMuskingum', ]
 
@@ -24,7 +24,7 @@ class TeleportMuskingum(Muskingum):
 
     In this model, runoff depths/volumes are assumed to uniformly discharge to the river segment during the time step
     of the runoff data. That is, for runoff data in hourly increments, the full volume is "teleported" to the inlet at
-    a rate of (depth * area) / 3600 seconds over that same hour.  It is added to the inflow from the upstream
+    a rate of (depth * area) / 3600 seconds over that same hour. It is added to the inflow from the upstream
     catchment(s). Overland flow is entirely ignored. The discharge is routed between catchments using the Muskingum
     method.
 
@@ -54,9 +54,6 @@ class TeleportMuskingum(Muskingum):
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
-
-    # Methods
-    _write_discharges: WriteDischargesFn
 
     def _write_final_state(self) -> None:
         final_state_file = self.conf.get('final_state_file', '')

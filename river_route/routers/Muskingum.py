@@ -45,7 +45,7 @@ class Muskingum(RoutingConfigs):
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
     lhs: csc_matrix  # n x n - left hand side of matrix form of routing equation
-    lhs_factorized: FactorizedSolveFn  # factorized left hand side matrix for direct solutions
+    lhs_factorized: FactorizedSolveFn  # callable factorized left hand side matrix for direct
 
     # State variables
     initial_state: tuple[FloatArray, FloatArray]  # Q init, R init
@@ -117,7 +117,12 @@ class Muskingum(RoutingConfigs):
 
         state_file = self.conf.get('initial_state_file', '')
         if state_file == '':
-            raise RuntimeError('initial_state_file not provided. Cannot route without water in the channels')
+            # todo raise error on muskingum but warning on others? but avoid duplicating code?
+            # raise RuntimeError('initial_state_file not provided. Cannot route without water in the channels')
+            self.logger.warning('initial_state_file not provided. Defaulting to zero initial conditions')
+            initial_state = (np.zeros(self.A.shape[0], dtype=np.float64), np.zeros(self.A.shape[0], dtype=np.float64))
+            self.initial_state = initial_state
+            return
         self.logger.debug('Reading Initial State from Parquet')
         initial_state = pd.read_parquet(state_file).values
         initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
@@ -219,13 +224,11 @@ class Muskingum(RoutingConfigs):
         self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return discharge_array
 
-    def _write_discharges(
-            self,
-            dates: DatetimeArray,
-            discharge_array: FloatArray,
-            discharge_file: PathInput,
-            runoff_file: PathInput,
-    ) -> None:
+    def _write_discharges(self,
+                          dates: DatetimeArray,
+                          discharge_array: FloatArray,
+                          discharge_file: PathInput,
+                          runoff_file: PathInput, ) -> None:
         """
         Writes routed discharge from a routing simulation to a netcdf file.
         You can overwrite this method with a custom handler using set_write_discharges.
@@ -260,7 +263,7 @@ class Muskingum(RoutingConfigs):
             flow_var.units = 'm3 s-1'
         return
 
-    def set_write_discharges(self, func: WriteDischargesFn) -> 'LumpedMuskingum':
+    def set_write_discharges(self, func: WriteDischargesFn) -> 'Muskingum':
         """
         Overwrites the default write_discharges method to a custom function and returns the class instance so that you
         can chain the method with the constructor.

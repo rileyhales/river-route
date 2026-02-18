@@ -14,7 +14,7 @@ __all__ = [
     # for making grid_weights
     'cell_xy_from_regular_grid',
     'voronoi_diagram_from_regular_grid_cell_xy',
-    'compute_voroni_catchment_intersects',
+    'compute_voronoi_catchment_intersects',
     'grid_weights',
     # for making catchment volumes from grid weights and depth grids
     'depth_to_volume',
@@ -39,74 +39,83 @@ def cell_xy_from_regular_grid(dataset: PathInput, x_var: str = 'lon', y_var: str
 
     if x.ndim != 1 or y.ndim != 1:
         raise ValueError('Regular grid requires 1D x/y coordinate arrays')
-
-    x_grid, y_grid = np.meshgrid(x, y)
-    return x_grid.flatten(), y_grid.flatten()
+    return x, y
 
 
 def voronoi_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
     """
-    Create a GeoDataFrame of Voroni polygons around the center of each cell in a grid.
+    Create a GeoDataFrame of Voronoi polygons around the center of each cell in a grid.
     The voronoi
     """
     if x.ndim != 1 or y.ndim != 1:
         raise ValueError('x and y must be 1D arrays')
-    if x.shape[0] != y.shape[0]:
-        raise ValueError('x and y must have the same number of points')
-    if x.shape[0] == 0:
+    if x.shape[0] == 0 or y.shape[0] == 0:
         raise ValueError('x and y cannot be empty')
 
-    logger.info('Creating Voroni polygons')
+    x_grid, y_grid = np.meshgrid(x, y)
+    x_grid = x_grid.flatten()
+    y_grid = y_grid.flatten()
+
+    if x_grid.shape[0] != y_grid.shape[0]:
+        raise ValueError('x and y must have the same number of points')
+
+    logger.info('Creating Voronoi polygons')
     regions = shapely.ops.voronoi_diagram(
-        shapely.geometry.MultiPoint([shapely.geometry.Point(xi, yi) for xi, yi in zip(x, y)])
+        shapely.geometry.MultiPoint([shapely.geometry.Point(xi, yi) for xi, yi in zip(x_grid, y_grid)])
     )
 
-    logger.info('Adding attributes to voroni polygons')
-    voroni_gdf = gpd.GeoDataFrame(geometry=[region for region in regions.geoms], crs=crs)
-    voroni_gdf['x'] = voroni_gdf.geometry.apply(lambda geom: geom.centroid.x).astype(float)
-    voroni_gdf['y'] = voroni_gdf.geometry.apply(lambda geom: geom.centroid.y).astype(float)
-    voroni_gdf['x_index'] = voroni_gdf['x'].apply(lambda value: np.argmin(np.abs(x - value))).astype(int)
-    voroni_gdf['y_index'] = voroni_gdf['y'].apply(lambda value: np.argmin(np.abs(y - value))).astype(int)
-    return voroni_gdf.sort_values(by=['x', 'y']).reset_index(drop=True)
+    logger.info('Adding attributes to voronoi polygons')
+    voronoi_gdf = gpd.GeoDataFrame(geometry=[region for region in regions.geoms], crs=crs)
+    voronoi_gdf['x'] = voronoi_gdf.geometry.apply(lambda geom: geom.centroid.x).astype(float)
+    voronoi_gdf['y'] = voronoi_gdf.geometry.apply(lambda geom: geom.centroid.y).astype(float)
+    voronoi_gdf['x_index'] = voronoi_gdf['x'].apply(lambda value: np.argmin(np.abs(x - value))).astype(int)
+    voronoi_gdf['y_index'] = voronoi_gdf['y'].apply(lambda value: np.argmin(np.abs(y - value))).astype(int)
+    return voronoi_gdf.sort_values(by=['x', 'y']).reset_index(drop=True)
 
 
-def compute_voroni_catchment_intersects(voroni_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
-                                        save_path: PathInput | None = None, save_attributes: dict | None = None,
-                                        river_id_variable: str = 'river_id') -> pd.DataFrame:
+def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
+                                         save_path: PathInput | None = None, save_attributes: dict | None = None,
+                                         river_id_variable: str = 'river_id') -> pd.DataFrame:
     """
-    Create a table of intersections between Voroni polygons and catchments.
+    Create a table of intersections between Voronoi polygons and catchments.
     """
     if river_id_variable not in catchments_gdf.columns:
         raise KeyError('catchments_gdf must contain a river_id column')
-    if not {'x_index', 'y_index', 'x', 'y'}.issubset(voroni_gdf.columns):
-        raise KeyError('voroni_gdf must include x_index, y_index, x, and y columns')
+    if not {'x_index', 'y_index', 'x', 'y'}.issubset(voronoi_gdf.columns):
+        raise KeyError('voronoi_gdf must include x_index, y_index, x, and y columns')
 
     logger.info('Performing overlay operation')
-    intersections = gpd.overlay(voroni_gdf, catchments_gdf, how='intersection')
+    intersections = gpd.overlay(voronoi_gdf, catchments_gdf, how='intersection')
     logger.info('Calculating area of intersections')
     intersections['area_sqm'] = intersections.geometry.to_crs({'proj': 'cea'}).area
 
     df = (
-        intersections[['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm']]
-        .groupby(['river_id', 'x_index', 'y_index', 'x', 'y'], as_index=False)
+        intersections[[river_id_variable, 'x_index', 'y_index', 'x', 'y', 'area_sqm']]
+        .groupby([river_id_variable, 'x_index', 'y_index', 'x', 'y'], as_index=False)
         .agg({'area_sqm': 'sum'})
-        .sort_values(['river_id', 'area_sqm'], ascending=[True, False])
+        .sort_values([river_id_variable, 'area_sqm'], ascending=[True, False])
         .reset_index(drop=True)
     )
-    total_area = df[['river_id', 'area_sqm']].groupby('river_id').sum().rename(columns={'area_sqm': 'area_sqm_total'})
-    df = df.merge(total_area, left_on='river_id', right_index=True, how='left')
+    total_area = (
+        df
+        [[river_id_variable, 'area_sqm']]
+        .groupby(river_id_variable)
+        .sum()
+        .rename(columns={'area_sqm': 'area_sqm_total'})
+    )
+    df = df.merge(total_area, left_on=river_id_variable, right_index=True, how='left')
     df['proportion'] = df['area_sqm'] / df['area_sqm_total']
 
     if save_path:
         save_attributes = {
             'description': 'proportions of runoff cells that intersect river catchments to be used with river-route',
-            'voroni_gdf_crs': voroni_gdf.crs.to_string(),
+            'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
             'catchments_gdf_crs': catchments_gdf.crs.to_string(),
             'river_route_version': __version__,
             **(save_attributes or {}),
         }
         ds = xr.Dataset({
-            'river_id': ('index', df['river_id'].to_numpy(dtype=np.int64, copy=False)),
+            'river_id': ('index', df[river_id_variable].to_numpy(dtype=np.int64, copy=False)),
             'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
             'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
             'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
@@ -119,8 +128,10 @@ def compute_voroni_catchment_intersects(voroni_gdf: gpd.GeoDataFrame, catchments
     return df
 
 
-def grid_weights(grid_path: PathInput, catchments_path: PathInput, *, x_var: str = 'lon', y_var: str = 'lat',
-                 save_voroni_path: PathInput | None = None, save_weights_path: PathInput | None = None) -> pd.DataFrame:
+def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
+                 x_var: str = 'lon', y_var: str = 'lat', river_id_var: str = 'river_id',
+                 save_voronoi_path: PathInput | None = None,
+                 save_weights_path: PathInput | None = None) -> pd.DataFrame:
     """
     Compute the grid weights for a given grid and catchments.
 
@@ -129,21 +140,26 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *, x_var: str
         catchments_path: path to a GeoParquet file containing the catchment geometries (must include 'river_id' column)
         x_var: x-coordinate variable name in the grid file
         y_var: y-coordinate variable name in the grid file
-        save_voroni_path: optional path to save the Voroni polygons as a GeoParquet file
+        river_id_var: variable name for river ID in the catchments file
+        save_voronoi_path: optional path to save the Voronoi polygons as a GeoParquet file
         save_weights_path: optional path to save the grid weights as a NetCDF file
 
     Returns:
         pd.DataFrame: a DataFrame containing the grid weights with columns
             ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     """
+    # todo need a way to carry the sorted order into the intersections step. How do i make sure the weight table is
+    #  topo sorted? or do i not care and instead sort the weight table after? probably no because the code to
+    #  generate needs them. add the toposort order to the catchments or else add another file as dependency.
     x, y = cell_xy_from_regular_grid(grid_path, x_var=x_var, y_var=y_var)
-    voroni_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
-    if save_voroni_path:
-        voroni_gdf.to_parquet(save_voroni_path)
+    voronoi_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
+    if save_voronoi_path:
+        voronoi_gdf.to_parquet(save_voronoi_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
-    return compute_voroni_catchment_intersects(
-        voroni_gdf, catchments_gdf, save_path=save_weights_path,
-        save_attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)}
+    return compute_voronoi_catchment_intersects(
+        voronoi_gdf, catchments_gdf, save_path=save_weights_path,
+        save_attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)},
+        river_id_variable=river_id_var
     )
 
 

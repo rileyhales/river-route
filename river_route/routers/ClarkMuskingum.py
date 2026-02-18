@@ -24,14 +24,11 @@ class ClarkMuskingum(TeleportMuskingum):
     R: FloatArray  # n x 1 - Clark linear reservoir storage coefficient (seconds) per catchment
 
     # Clark-specific state
-    _time_area_curves: FloatArray | None  # (n_points, n_catchments) cumulative area fractions
-    _uh_matrix: FloatArray  # (max_uh_len, n_catchments) zero-padded UH ordinates
-    _clark_buffer: FloatArray | None  # (max_uh_len, n_catchments) rolling convolution buffer
+    _time_area_curves: FloatArray | None = None # (n_points, n_catchments) cumulative area fractions
+    _uh_matrix: FloatArray | None = None  # (max_uh_len, n_catchments) zero-padded UH ordinates
+    _clark_buffer: FloatArray | None = None  # (max_uh_len, n_catchments) rolling convolution buffer
 
     def __init__(self, config_file: PathInput | None = None, **kwargs: Any) -> None:
-        self._time_area_curves = None
-        self._uh_matrix = None
-        self._clark_buffer = None
         super().__init__(config_file, **kwargs)
 
     def set_time_area_curves(self, curves: FloatArray) -> 'ClarkMuskingum':
