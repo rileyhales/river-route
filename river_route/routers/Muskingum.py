@@ -10,8 +10,8 @@ from scipy.sparse import diags
 from scipy.sparse import eye
 from scipy.sparse.linalg import factorized
 
-from river_route.tools import adjacency_matrix
-from river_route.typing import FloatArray, IntArray, DatetimeArray, FactorizedSolveFn, PathInput, WriteDischargesFn
+from ..tools import adjacency_matrix
+from .typing import FloatArray, IntArray, DatetimeArray, FactorizedSolveFn, PathInput, WriteDischargesFn
 from .RoutingConfigs import RoutingConfigs
 
 __all__ = ['Muskingum', ]

@@ -1,6 +1,6 @@
 import argparse
 
-import river_route as rr
+from .routers import TeleportMuskingum
 
 
 def main():
@@ -18,5 +18,5 @@ def main():
     args = parser.parse_args()
 
     if args.config:
-        return rr.TeleportMuskingum(args.config).route()
+        return TeleportMuskingum(args.config).route()
     return parser.print_help()

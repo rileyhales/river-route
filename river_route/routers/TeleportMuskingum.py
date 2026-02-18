@@ -9,11 +9,13 @@ from scipy.sparse import diags
 from scipy.sparse import eye
 from scipy.sparse.linalg import factorized
 
+from ..runoff import depth_to_volume
+from .typing import FloatArray, DatetimeArray, PathInput, WriteDischargesFn
 from .Muskingum import Muskingum
-from river_route.runoff import depth_to_volume
-from river_route.typing import FloatArray, DatetimeArray, PathInput, WriteDischargesFn
 
 __all__ = ['TeleportMuskingum', ]
+
+GeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
 
 
 class TeleportMuskingum(Muskingum):
@@ -126,7 +128,7 @@ class TeleportMuskingum(Muskingum):
         self._network_time_signature = signature
         return
 
-    def _volumes_generator(self) -> Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]:
+    def _volumes_generator(self) -> GeneratorSignature:
         if self.conf.get('catchment_volumes_files', False):
             for volume_file, discharge_file in zip(self.conf['catchment_volumes_files'], self.conf['discharge_files']):
                 self.logger.info(f'Reading catchment volumes file: {volume_file}')

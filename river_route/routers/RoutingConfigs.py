@@ -8,8 +8,8 @@ from typing import Any
 
 import yaml
 
+from .typing import ConfigDict, PathInput
 from ..__metadata__ import __version__
-from ..typing import ConfigDict, PathInput
 
 __all__ = ['RoutingConfigs', ]
 

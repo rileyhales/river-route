@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from typing import Any
 
 from .TeleportMuskingum import TeleportMuskingum
-from river_route.tools import adjacency_matrix
+from ..tools import adjacency_matrix
 
 __all__ = ['ClarkMuskingum', ]
 
