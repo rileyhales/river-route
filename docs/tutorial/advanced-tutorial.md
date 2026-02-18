@@ -40,30 +40,34 @@ m = (
 
 ## Customizing Outputs
 
-You can override the default function used by `river-route` when writing routed flows to disc. The Muskingum class
-formats the discharge data into a Pandas DataFrame and then calls the `write_discharges` method. By default, this function
-writes the dataframe to a netCDF file.
+You can override the default function used by `river-route` when writing routed flows to disk.
+By default, routed discharges are written to netCDF.
 
 A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
-of reasons you would want to do this include appending the outputs to an existing file, writing the DataFrame to a
+of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
 You can override the `write_discharges` method directly in your code or use the `set_write_discharges` method. Your custom
-function should accept exactly 3 keyword arguments:
+function should accept exactly 4 arguments:
 
-1. `df`: a Pandas DataFrame with a datetime index, river id numbers as column labels, and float discharge values.
-2. `discharge_file`: a string with the path to the output file.
-3. `runoff_file`: a string with the path to the runoff file used to produce this output.
+1. `dates`: datetime array for rows in the discharge array.
+2. `discharge_array`: routed discharge array with shape `(time, river_id)`.
+3. `discharge_file`: path to the output file.
+4. `runoff_file`: path to the runoff input used to produce this output.
 
-As an example, you might want to write the output DataFrame to a Parquet file instead.
+As an example, you might want to write output as Parquet instead.
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
+import xarray as xr
 
 import river_route as rr
 
 
-def custom_write_discharges(df: pd.DataFrame, discharge_file: str, runoff_file: str) -> None:
+def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    with xr.open_dataset(runoff_file) as runoff_ds:
+        river_ids = runoff_ds['river_id'].values
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
     df.to_parquet(discharge_file)
     return
 
@@ -79,11 +83,15 @@ def custom_write_discharges(df: pd.DataFrame, discharge_file: str, runoff_file: 
 ```python title="Write Routed Flows to SQLite"
 import pandas as pd
 import sqlite3
+import xarray as xr
 
 import river_route as rr
 
 
-def write_discharges_to_sqlite(df: pd.DataFrame, discharge_file: str, runoff_file: str) -> None:
+def write_discharges_to_sqlite(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    with xr.open_dataset(runoff_file) as runoff_ds:
+        river_ids = runoff_ds['river_id'].values
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
     conn = sqlite3.connect(discharge_file)
     df.to_sql('routed_flows', conn, if_exists='replace')
     conn.close()
@@ -101,17 +109,16 @@ def write_discharges_to_sqlite(df: pd.DataFrame, discharge_file: str, runoff_fil
 ```python title="Append Routed Flows to Existing netCDF"
 import os
 
-import pandas as pd
 import xarray as xr
 
 import river_route as rr
 
 
-def append_to_existing_file(df: pd.DataFrame, discharge_file: str, runoff_file: str) -> None:
+def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
     ensemble_number = os.path.basename(runoff_file).split('_')[1]
-    with xr.open_dataset(discharge_file) as ds:
-        ds.sel(ensemble=ensemble_number).Q = df.values
-        ds.to_netcdf(discharge_file)
+    ds = xr.load_dataset(discharge_file)
+    ds['Q'].loc[dict(ensemble=ensemble_number)] = discharge_array
+    ds.to_netcdf(discharge_file)
     return
 
 
@@ -125,11 +132,15 @@ def append_to_existing_file(df: pd.DataFrame, discharge_file: str, runoff_file: 
 
 ```python title="Save a Subset of the Routed Flows"
 import pandas as pd
+import xarray as xr
 
 import river_route as rr
 
 
-def save_partial_results(df: pd.DataFrame, discharge_file: str, runoff_file: str) -> None:
+def save_partial_results(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    with xr.open_dataset(runoff_file) as runoff_ds:
+        river_ids = runoff_ds['river_id'].values
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
     df.to_parquet(discharge_file)

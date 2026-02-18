@@ -1,28 +1,39 @@
-# Required Watershed File - (Required)
+# Required watershed file
 routing_params_file: ''
-# Volume Inputs - (Water Input - Option 1)
-catchment_volumes_files: ''
-# Depth Inputs - (Water Input - Option 2)
-runoff_depths_files: ''
-weight_table_file: ''
-# Output file - (Required)
-discharge_files: ''
-# Initial and Final State - (Optional)
+
+# Water input (choose exactly one)
+catchment_volumes_files: ''   # netCDF file or list of files
+runoff_depths_files: ''       # netCDF file or list of files
+weight_table_file: ''         # required when using runoff_depths_files
+
+# Output file(s)
+discharge_files: ''           # netCDF file or list of files
+
+# Initial and final state (optional)
 initial_state_file: ''
 final_state_file: ''
-# Compute Options - (Optional)
-input_type: 'sequential'     # "sequential" or "ensemble"
-runoff_type: 'incremental'   # "incremental" or "cumulative"
-dt_routing: 0                # defaults to time step of volume inputs
-dt_discharge: 0              # defaults to time step of volume inputs
-# Logging - (Optional)
-log: True                    # True or False
-progress_bar: True           # True or False
-log_level: 'DEBUG'           # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-log_stream: 'stdout'         # "stdout", "stderr", or a file path
-# Variable names expected input/output files - (Optional)
-var_x: 'lon'
-var_y: 'lat'
+
+# Compute options (optional)
+input_type: 'sequential'      # "sequential" or "ensemble"
+runoff_type: 'incremental'    # "incremental" or "cumulative"
+dt_total: 0                   # defaults to input duration
+dt_routing: 0                 # defaults to runoff timestep
+dt_discharge: 0               # defaults to runoff timestep
+
+# Clark-Muskingum options (optional, only used by ClarkMuskingum)
+time_area_file: ''            # parquet time-area histogram file
+precomputed_lateral_inflows: false
+
+# Logging (optional)
+log: true
+progress_bar: true
+log_level: 'INFO'             # DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_stream: 'stdout'          # "stdout" or file path
+log_format: '%(asctime)s - %(levelname)s - %(message)s'
+
+# Variable names in input/output files (optional)
+var_x: 'x'
+var_y: 'y'
 var_t: 'time'
 var_runoff_depth: 'ro'
 var_catchment_volume: 'volume'

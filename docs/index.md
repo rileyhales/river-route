@@ -1,13 +1,14 @@
 # River-Route
 
-The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks using the Matrix Muskingum Method.
-It implements Matrix Muskingum routing. Inspired by the first implementation published by
+The `river-route` Python package is a tool for routing catchment runoff volumes on vector stream networks.
+It implements Matrix Muskingum routing and Clark-Muskingum routing. Inspired by the first implementation published by
 [Cedric David in 2011](https://doi.org/10.1175/2011JHM1345.1) which was corrected and improved by Riley Hales in 2023.
 
 ## Start Here
 
 1. [Basic Walkthrough](tutorial/basic-tutorial.md)
-2. [Advanced Concepts](tutorial/advanced-tutorial.md)
+2. [Clark-Muskingum Tutorial](tutorial/clark-muskingum.md)
+3. [Advanced Concepts](tutorial/advanced-tutorial.md)
 
 ```commandline
 pip install river-route
@@ -19,6 +20,12 @@ import river_route as rr
 (
     rr
     .Muskingum('/path/to/config.yaml')
+    .route()
+)
+
+(
+    rr
+    .ClarkMuskingum('/path/to/config_clark.yaml')
     .route()
 )
 ```
@@ -71,7 +78,7 @@ graph LR
 
 ## Usage Example
 
-You pass the configuration options to the `rr.Muskingum` class init by specifying the config file path or using keyword arguments. 
+You pass configuration options to either `rr.Muskingum` or `rr.ClarkMuskingum` by specifying the config file path or using keyword arguments.
 If for any reason it is easier to determine the available options at runtime, you can combine the method. Note that keyword arguments 
 will override any value given in the config file.
 

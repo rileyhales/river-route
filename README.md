@@ -5,8 +5,9 @@
 [![GitHub repo size](https://img.shields.io/github/repo-size/rileyhales/river-route)](https://github.com/rileyhales/river-route)
 ![License](https://img.shields.io/github/license/rileyhales/river-route)
 
-`river-route` is a Python package for routing catchment volumes through a river network. Routing calculations are vectorized and use numpy and scipy
-which keeps the array computation times on par with faster compiled languages.
+`river-route` is a Python package for routing catchment volumes through a river network. It includes both
+`Muskingum` and `ClarkMuskingum` routers. Routing calculations are vectorized and use numpy and scipy which keeps
+the array computation times on par with faster compiled languages.
 
 Please visit https://river-route.hales.app for documentation
 
@@ -24,4 +25,20 @@ conda env create -f environment.yml
 conda activate rr
 # Install package in editable mode
 python -m pip install -e .
+```
+
+```python
+import river_route as rr
+
+(
+    rr
+    .Muskingum('examples/config.yaml')
+    .route()
+)
+
+(
+    rr
+    .ClarkMuskingum('examples/config_clark.yaml')
+    .route()
+)
 ```

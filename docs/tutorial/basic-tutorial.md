@@ -12,9 +12,32 @@ and writes 1 output dataset. Together, that makes a total of 3 files that need t
 topology, the second is the input water being routed, and the third (the output) is the discharge time series calculated by the routing process. This
 tutorial explain the process of preparing these files.
 
+This tutorial uses `rr.Muskingum`, but the same workflow applies to `rr.ClarkMuskingum` with additional routing
+parameter columns (`tc`, `R`) and optional Clark config keys (`time_area_file`, `precomputed_lateral_inflows`).
+
 1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file
 2. [Catchment Volumes](../references/io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
 3. [Routed Discharge](../references/io-file-schema.md#routed-discharge) - netCDF file
+
+## Conceptual Orchestration
+
+At runtime, routing is a coordinated pipeline, not a single equation call:
+
+1. Build network structure from routing parameters (`river_id`, `downstream_river_id`)
+2. Read and align water inputs by timestep and river ordering
+3. Convert volumes to rates (`m3/s`) using timestep metadata
+4. Apply routing equations over sub-steps (`dt_routing`) and aggregate to output interval (`dt_discharge`)
+5. Write routed discharge and optional final state for restart
+
+For `Muskingum`, lateral inflow enters the channel equation directly.
+For `ClarkMuskingum`, lateral inflow is first transformed through the Clark UH (`tc`, `R`, optional time-area curves),
+then added to channel routing.
+
+Understanding this sequence helps isolate issues:
+
+1. bad timing can come from time metadata or parameter mismatch
+2. bad magnitudes can come from runoff conversion or area/weight errors
+3. oscillations/instability can come from incompatible parameters and timesteps
 
 ## Vocabulary
 
@@ -99,7 +122,40 @@ You need the following minimum attributes for each stream and catchment pair
 - Muskingum K: the k value to use for this river segment for routing.
 - Muskingum X: the x value to use for this river segment for routing.
 
+If using `ClarkMuskingum`, you also need:
+
+- Clark Tc: time of concentration (seconds), non-negative.
+- Clark R: linear reservoir storage coefficient (seconds), positive.
+
+### How Parameters Are Identified
+
+Parameter identification usually combines physical estimation and calibration:
+
+1. Start from physically derived first guesses from GIS/hydraulic attributes.
+2. Use observed discharge where available to calibrate timing and attenuation.
+3. Validate on independent periods/events.
+
+A practical split by parameter role:
+
+1. `k`, `x` primarily represent channel translation/attenuation behavior.
+2. `tc`, `R` (Clark) represent catchment translation/storage response before channel entry.
+
+If observations are sparse:
+
+1. regionalize parameters from similar basins
+2. enforce bounds/regularization to keep values physically plausible
+3. prioritize robust timing reproduction before event-specific peak matching
+
 ## Runoff Depths vs Catchment Volumes
+
+### Data Provenance Checklist
+
+Before calibration or production runs, verify provenance across inputs:
+
+1. `river_id` values and ordering match between routing params, input volumes, and outputs
+2. runoff units and area units produce volumes in `m3`
+3. timestep semantics are consistent (interval-aligned and gap-free)
+4. watershed version used for weights matches watershed version used for routing parameters
 
 Routing requires a catchment level runoff volume time series. Runoff data is most commonly generated on regular grids from a land surface process
 model. Runoff grid files may have a single file containing multiple time steps or multiple files which each contain a single time step. You might also
@@ -120,7 +176,7 @@ if you use runoff grids with different resolutions or extents or if you change y
 
 ### Preparing a Config File
 
-Your configuration file must contain at least the 4 essential file paths. There are many other options you can specify
+Your configuration file must contain the essential file paths. There are many other options you can specify
 that may be convenient for your use case or required for your specific datasets and file structures.
 
 You may save the output file to any file path you select. Enter the correct file path to the other 3 existing files and
@@ -150,24 +206,34 @@ m = (
 )
 ```
 
+For Clark-Muskingum:
+
+```python
+import river_route as rr
+
+(
+    rr
+    .ClarkMuskingum('/path/to/config_clark.yaml')
+    .route()
+)
+```
+
 ## Save and Plot Hydrographs
 
 The default output format for the routed discharge is a netCDF file. You are free to write your own code or use any
-compatible software to query data from that file. For quick access to a hydrograph for a single river, the routing class
-has a `hydrograph` method to extract the hydrograph for a river number of interest and return it as a Pandas DataFrame.
-From there, you can manipulate the data and plot is as normal.
-
-!!! note
-    The `hydrograph` method will only work if you are using the default output file format. If you have overridden the
-    output file format, you will need to write your own function to extract the hydrograph.
+compatible software to query data from that file. For quick access to a hydrograph for a single river, you can read
+the netCDF output and select one river ID.
 
 ```python
+import xarray as xr
+
 river_of_interest = 123456789
-df = m.hydrograph(river_id=river_of_interest)
+ds = xr.open_dataset('/path/to/discharges.nc')
+series = ds['Q'].sel(river_id=river_of_interest).to_pandas()
 
 # Save the hydrograph to disc
-df.to_csv('hydrograph.csv')
+series.to_csv('hydrograph.csv')
 
 # Plot the hydrograph
-df.plot()
+series.plot()
 ```

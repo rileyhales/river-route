@@ -1,56 +1,97 @@
 ## Configuration File
 
-`river-route` computations are controlled by several variables. You can pass these variables as keyword arguments to the
-corresponding functions or provide a path to a configuration file. Supported file formats for config files are YAML or
-JSON. Config files specify the following parameters:
+`river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
+Both routers (`Muskingum`, `ClarkMuskingum`) share the same base config keys, and Clark adds a few optional keys.
 
 1. Paths to input and output files
-2. Options to control how the routing is performed
-3. Time and compute options
-4. Information about the structure of the input and output files if non-standard
-5. Logging parameters
+2. Routing and timestep options
+3. Input/output variable names
+4. Logging options
 
 ## Minimum Required Inputs
 
-Every `river-route` process needs at least the following 3 variables
+Every run needs:
 
 - `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
-- `catchment_volumes_files` - path(s) to prepared [catchment volumes files](io-file-schema.md#catchment-volumes-or-runoff-depths) (netCDF)
+- one water input source:
+    - `catchment_volumes_files`, or
+    - `runoff_depths_files` plus `weight_table_file`
 - `discharge_files` - path(s) where [routed discharge](io-file-schema.md#routed-discharge) output files will be saved (netCDF)
 
 ## Example YAML File
 
-An example YAML file is given below with the default values prepopulated where possible.
+Muskingum example:
 
 ```yaml title="Config File Example"
-{% include-markdown "../../examples/config.yaml" %}
+{ % include-markdown "../../examples/config.yaml" % }
+```
+
+Clark-Muskingum example:
+
+```yaml title="Clark Config File Example"
+{ % include-markdown "../../examples/config_clark.yaml" % }
 ```
 
 ## Config Options Table
 
-The following table is a complete list of all configuration options and their purpose.
+The following table is the full set of recognized keys.
 
-| Parameter Name          | Required | Type      | Group               | Description                                                            |                                                                                
-|-------------------------|----------|-----------|---------------------|------------------------------------------------------------------------|
-| routing_params_file     | True     | File Path | Required Input      | Path to the routing parameters parquet file.                           |                                                
-| catchment_volumes_files | True     | File Path | Required Input      | Path(s) to netCDF file(s) with catchment volume values to be routed.   |
-| runoff_depths_files     | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
-| weight_table_file       | True     | File Path | Required Input      | Path to the weight table file.                                         |
-| discharge_files         | True     | File Path | Required Input      | Path(s) where routed discharge netCDF file(s) should be saved.         |
-| input_type              | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
-| runoff_type             | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
-| dt_routing              | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
-| dt_discharge            | False    | Integer   | Compute Options     | Time interval in seconds between writing discharge to disc.            |
-| initial_state_file      | False    | File Path | Initialization Data | Path to the initial state file.                                        |                                                     
-| final_state_file        | False    | File Path | Initialization Data | Path where the final state file should be saved.                       |                                    
-| log                     | False    | Boolean   | Logging Options     | Whether to enable logging.                                             |                                       
-| progress_bar            | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                         |
-| log_level               | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING             |
-| log_stream              | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path.  |
-| var_x                   | False    | String    | File Management     | Name of the variable in all files that contains the x coordinates.     |
-| var_y                   | False    | String    | File Management     | Name of the variable in all files that contains the y coordinates.     |
-| var_t                   | False    | String    | File Management     | Name of the variable in all files that contains the time values.       |
-| var_runoff_depths       | False    | String    | File Management     | Name of the variable in files containing runoff depths                 |
-| var_catchment_volumes   | False    | String    | File Management     | Name of the variable in the catchment volumes file containing volumes. |
-| var_river_id            | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.         |
-| var_discharge           | False    | String    | File Management     | Name of the variable in discharge output files.                        |
+| Parameter Name                | Required        | Type                         | Description                                                               |
+|-------------------------------|-----------------|------------------------------|---------------------------------------------------------------------------|
+| `routing_params_file`         | Yes             | file path                    | Routing parameters parquet file.                                          |
+| `discharge_files`             | Yes             | file path or list[file path] | Output netCDF discharge file(s). Count must match input file count.       |
+| `catchment_volumes_files`     | Conditionally   | file path or list[file path] | Input netCDF volume file(s). Use this or `runoff_depths_files`.           |
+| `runoff_depths_files`         | Conditionally   | file path or list[file path] | Input netCDF runoff depth file(s). Use this or `catchment_volumes_files`. |
+| `weight_table_file`           | Conditionally   | file path                    | Required if `runoff_depths_files` is provided.                            |
+| `input_type`                  | No              | string                       | `sequential` or `ensemble`. Default: `sequential`.                        |
+| `runoff_type`                 | No              | string                       | `incremental` or `cumulative`. Default: `incremental`.                    |
+| `dt_total`                    | No              | integer                      | Total simulation duration in seconds. Defaults to input duration.         |
+| `dt_routing`                  | No              | integer                      | Routing sub-step in seconds. Defaults to `dt_runoff`.                     |
+| `dt_discharge`                | No              | integer                      | Output discharge timestep in seconds. Defaults to `dt_runoff`.            |
+| `initial_state_file`          | No              | file path                    | Parquet state file used to initialize routing state.                      |
+| `final_state_file`            | No              | file path                    | Path where final state parquet is written.                                |
+| `time_area_file`              | No (Clark only) | file path                    | Parquet time-area histograms for `ClarkMuskingum`.                        |
+| `precomputed_lateral_inflows` | No (Clark only) | boolean                      | If `true`, treat inputs as UH-transformed lateral inflows.                |
+| `log`                         | No              | boolean                      | Enable or disable logging. Default: `true`.                               |
+| `progress_bar`                | No              | boolean                      | Show tqdm progress bar. Default: same as `log`.                           |
+| `log_level`                   | No              | string                       | Logger level. Default: `INFO`.                                            |
+| `log_stream`                  | No              | string                       | `stdout` or a file path. Default: `stdout`.                               |
+| `log_format`                  | No              | string                       | Python logging format string.                                             |
+| `var_x`                       | No              | string                       | X-dimension name in runoff depth grids. Default: `x`.                     |
+| `var_y`                       | No              | string                       | Y-dimension name in runoff depth grids. Default: `y`.                     |
+| `var_t`                       | No              | string                       | Time dimension name in runoff depth grids. Default: `time`.               |
+| `var_runoff_depth`            | No              | string                       | Runoff depth variable name. Default: `ro`.                                |
+| `var_catchment_volume`        | No              | string                       | Catchment volume variable name. Default: `volume`.                        |
+| `var_river_id`                | No              | string                       | River ID dimension/variable name. Default: `river_id`.                    |
+| `var_discharge`               | No              | string                       | Discharge variable name in outputs. Default: `Q`.                         |
+
+| Config key                  | Muskingum | LumpedMuskingum | ClarkMuskingum |
+|-----------------------------|-----------|-----------------|----------------|
+| routing_params_file         | Required  | Required        | Required       |
+| discharge_files             | Required  | Required        | Required       |
+| catchment_volumes_files     |           | Required        |                |
+| runoff_depths_files         |           | optional        | Required       |
+| weight_table_file           |           | optional        | optional       |
+| time_area_file              |           |                 | optional       |
+| precomputed_lateral_inflows |           |                 | optional       |
+| dt_routing                  | Required  | optional        | optional       |
+| dt_discharge                | optional  | optional        | optional       |
+| dt_runoff                   |           | optional        | optional       |
+| initial_state_file          | Required  | optional        | optional       |
+| final_state_file            | optional  | optional        | optional       |
+| input_type                  |           | optional        | optional       |
+| runoff_type                 |           | optional        | optional       |
+| log                         | optional  | optional        | optional       |
+| progress_bar                | optional  | optional        | optional       |
+| log_level                   | optional  | optional        | optional       |
+| log_stream                  | optional  | optional        | optional       |
+| log_format                  | optional  | optional        | optional       |
+| var_river_id                | optional  | optional        | optional       |
+| var_discharge               | optional  | optional        | optional       |
+| var_x                       | optional  | optional        | optional       |
+| var_y                       | optional  | optional        | optional       |
+| var_t                       | optional  | optional        | optional       |
+| var_catchment_volume        | optional  | optional        | optional       |
+| var_runoff_depth            | optional  | optional        | optional       |
+
+Required = required, optional = optional, blank = not used.

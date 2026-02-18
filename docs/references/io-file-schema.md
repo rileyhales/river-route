@@ -6,15 +6,34 @@
 routing_params_file: '/path/to/params.parquet'
 ```
 
-The routing parameters file is a parquet file. It has 4 columns and 1 row per river in the watershed. The index is
-ignored. The rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
+The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
+Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-| Column              | Data Type | Description                                                         |
-|---------------------|-----------|---------------------------------------------------------------------|
-| river_id            | integer   | Unique ID of a river segment                                        |
-| downstream_river_id | integer   | Unique ID of the downstream river segment, or -1 for outlet reaches |
-| k                   | float     | the k parameter of the Muskingum routing equation length / velocity |
-| x                   | float     | the x parameter of the Muskingum routing equation. x : [0, 0.5]     |
+Required for `Muskingum`:
+
+| Column | Data Type | Description |
+|---|---|---|
+| `river_id` | integer | Unique ID of a river segment |
+| `downstream_river_id` | integer | ID of downstream river segment, or `-1` for outlet reaches |
+| `k` | float | Muskingum `k` parameter (length / velocity) |
+| `x` | float | Muskingum `x` parameter, expected in `[0, 0.5]` |
+
+Additional required columns for `ClarkMuskingum`:
+
+| Column | Data Type | Description |
+|---|---|---|
+| `tc` | float | Time of concentration (seconds), must be non-negative |
+| `R` | float | Clark reservoir storage coefficient (seconds), must be positive |
+
+### Parameter Source Guidance
+
+These routing parameters typically come from preprocessing and calibration workflows:
+
+1. topology (`river_id`, `downstream_river_id`) from vector network processing
+2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
+3. Clark response (`tc`, `R`) from travel-time/storage assumptions and/or calibration
+
+In practice, use physically derived first guesses, then calibrate against observed discharge where available.
 
 ## Catchment Volumes or Runoff Depths
 
@@ -102,4 +121,26 @@ final_state_file: '/path/to/final.parquet'
 ```
 
 State information are stored in parquet files. Muskingum routing solves for river discharge at time t+1 as a
-function of inflow volumes at time t and time t+1, and the discharge at time t. 
+function of inflow volumes at time t and time t+1, and the discharge at time t.
+
+The parquet state file must contain 2 columns in river order:
+
+| Column | Description |
+|---|---|
+| `Q` | River discharge state |
+| `R` | Previous lateral inflow/runoff state |
+
+For `ClarkMuskingum`, an additional NumPy file is written/read automatically alongside the state parquet:
+`<state_file_without_extension>_clark.npy`. This stores the rolling Clark UH buffer.
+
+## Clark Time-Area File (Optional)
+
+```yaml
+time_area_file: '/path/to/time_area_histograms.parquet'
+```
+
+`ClarkMuskingum` can optionally read time-area histograms from parquet:
+
+- Columns are river IDs.
+- Rows are evenly spaced bins over normalized time `[0, 1]`.
+- Values are incremental area fractions (non-negative). Columns are normalized internally.

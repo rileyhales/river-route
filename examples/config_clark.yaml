@@ -1,0 +1,21 @@
+routing_params_file: '/path/to/params_with_tc_R.parquet'
+catchment_volumes_files:
+  - '/path/to/volumes_1.nc'
+discharge_files:
+  - '/path/to/discharge_1.nc'
+
+input_type: 'sequential'
+runoff_type: 'incremental'
+dt_routing: 0
+dt_discharge: 0
+
+# Optional Clark-specific settings
+time_area_file: '/path/to/time_area_histograms.parquet'
+precomputed_lateral_inflows: false
+
+initial_state_file: ''
+final_state_file: ''
+
+var_catchment_volume: 'volume'
+var_river_id: 'river_id'
+var_discharge: 'Q'

@@ -72,14 +72,20 @@ import glob
 import os
 
 import pandas as pd
+import xarray as xr
 
 import river_route as rr
 
 
-def custom_output_writer(df, discharge_file, runoff_file):
-    # df: a dataframe with datetime index and river_id numbers for columns with the routed discharge
+def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
+    # dates: datetime array for routed discharge rows
+    # discharge_array: routed flows with shape (time, river_id)
     # discharge_file: the path to the output file provided by your config file
     # runoff_file: the path to the runoff file used to produce this output, if you need it
+
+    with xr.open_dataset(runoff_file) as runoff_ds:
+        river_ids = runoff_ds['river_id'].values
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
 
     # you probably want to include the member number in the output file name which could come from the discharge or runoff file
     member_number = os.path.basename(runoff_file)
@@ -93,7 +99,11 @@ def custom_output_writer(df, discharge_file, runoff_file):
     init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
     
     # continue with writing the full outputs
-    df.to_netcdf(discharge_file)  # for recommendations of how to format this, refer to the API docs and/or source code
+    ds_out = xr.Dataset(
+        data_vars={'Q': (('time', 'river_id'), discharge_array)},
+        coords={'time': pd.to_datetime(dates), 'river_id': river_ids}
+    )
+    ds_out.to_netcdf(discharge_file)
     return
 
 
@@ -107,7 +117,7 @@ m = (
 # Now find all the member init files and average or otherwise combine them to get the next state
 member_init_files = sorted(glob.glob('member_init_from_*.parquet'))
 combo_init = pd.concat([pd.read_parquet(f) for f in member_init_files], axis=1).mean(axis=1)
-combo_init.columns = ['Q', ]  # rename the column to 'Q'
-combo_init['R'] = 0  # add a column for runoff values at this step. You could get actual values from the runoff file sources.
+combo_init = combo_init.to_frame(name='Q')
+combo_init['R'] = 0  # add runoff state; you can replace with actual runoff-derived values
 combo_init.to_parquet('ensemble_init_state.parquet')  # write the combined state to a file
 ```
