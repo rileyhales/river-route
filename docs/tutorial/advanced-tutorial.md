@@ -155,80 +155,33 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
 )
 ```
 
-## Clark-Muskingum Advanced Features
+## UnitMuskingum: Injecting a Custom Transformer
 
-### Setting Time-Area Curves Programmatically
-
-Instead of providing a `time_area_file`, you can set per-catchment time-area curves directly as a NumPy array.
-The array must have shape `(n_points, n_catchments)` with cumulative area fractions at evenly spaced normalized
-times over `[0, 1]`.
+`UnitMuskingum` accepts any `AbstractBaseTransformer` subclass via `set_transformer()`. This lets you
+supply your own unit hydrograph logic without touching the routing code. Your class only needs to inherit
+from `AbstractBaseTransformer` and implement `_build_kernel()`, which returns a 2D array of shape
+`(n_time_steps, n_basins)`. The base class handles all state management and the `transform()` call.
 
 ```python
 import numpy as np
 import river_route as rr
+from river_route.transformers import AbstractBaseTransformer
 
-# Build or load your curves
-# shape: (n_curve_points, n_catchments)
-curves = np.load('my_time_area_curves.npy')
+class MyTransformer(AbstractBaseTransformer):
+    def __init__(self, my_param: float, dt: float) -> None:
+        self.my_param = my_param
+        super().__init__(dt=dt)   # calls precompute() → _build_kernel() → reset_state()
+
+    def _build_kernel(self) -> np.ndarray:
+        # return a (n_time_steps, n_basins) array representing per-basin unit hydrographs.
+        # each column sums to 1 * dt (unit volume conservation).
+        ...
+
+transformer = MyTransformer(my_param=0.5, dt=3600)
 
 (
     rr
-    .ClarkMuskingum('config_clark.yaml')
-    .set_time_area_curves(curves)
+    .UnitMuskingum('config.yaml')
+    .set_transformer(transformer)
     .route()
 )
-```
-
-If neither `time_area_file` nor `set_time_area_curves()` is used, `ClarkMuskingum` falls back to the SCS
-dimensionless time-area curve applied uniformly to all catchments.
-
-### Pre-computing Lateral Inflows
-
-For repeated routing runs over the same input volumes (e.g., sensitivity analysis, calibration), you can
-pre-compute the Clark UH-transformed lateral inflows once and reuse them. This avoids re-applying the
-convolution on every run.
-
-```python
-import river_route as rr
-
-router = rr.ClarkMuskingum('config_clark.yaml')
-
-# Step 1: pre-compute and write UH-transformed inflows to disk
-precomputed_files = ['lateral_1.nc', 'lateral_2.nc']
-router.compute_lateral_inflows(precomputed_files)
-
-# Step 2: route using the precomputed inflows directly
-(
-    rr
-    .ClarkMuskingum(
-        routing_params_file='params.parquet',
-        catchment_volumes_files=precomputed_files,
-        discharge_files=['discharge_1.nc', 'discharge_2.nc'],
-        precomputed_lateral_inflows=True,
-    )
-    .route()
-)
-```
-
-The `compute_lateral_inflows()` method writes netCDF files in the same format as catchment volume files.
-Setting `precomputed_lateral_inflows=True` tells the router to use the volumes directly as lateral inflow
-rates rather than applying the UH transform again.
-
-### Precomputing Unit Hydrographs
-
-Unit hydrographs are computed automatically the first time `route()` is called. If you want to inspect them
-or trigger precomputation early (e.g., before a batch of runs), call `precompute_unit_hydrographs()` directly.
-Note that the router must have already read the routing parameters and time metadata.
-
-```python
-import river_route as rr
-
-router = (
-    rr
-    .ClarkMuskingum('config_clark.yaml')
-)
-# precompute_unit_hydrographs is called automatically during route(),
-# but can also be called explicitly after initialization
-router.route()
-print('UH matrix shape:', router._uh_matrix.shape)
-```

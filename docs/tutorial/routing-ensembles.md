@@ -7,7 +7,7 @@ difference is how the initial and final states are handled. For an individual ru
 routing step. In an ensemble simulation, you have many methods to combine the ensemble into a new next state. There are 2 methods for routing an ensemble of
 runoffs in river-route.
 
-Ensemble routing is supported by `TeleportMuskingum` and `ClarkMuskingum` (not the base `Muskingum`).
+Ensemble routing is supported by `TeleportMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
 
 1. In a loop or in concurrent/parallel jobs, route each member using same initial conditions and routing parameters for each job. Use the member number
    to make output file names unique and more readily searchable and sortable. Provide all configurations as normal without special considerations. In

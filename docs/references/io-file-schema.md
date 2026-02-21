@@ -9,7 +9,7 @@ routing_params_file: '/path/to/params.parquet'
 The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
 Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-Required for all routers (`Muskingum`, `TeleportMuskingum`, `ClarkMuskingum`):
+Required for all routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`):
 
 | Column                | Data Type | Description                                                |
 |-----------------------|-----------|------------------------------------------------------------|
@@ -18,18 +18,18 @@ Required for all routers (`Muskingum`, `TeleportMuskingum`, `ClarkMuskingum`):
 | `k`                   | float     | Muskingum `k` parameter (length / velocity)                |
 | `x`                   | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
 
-Additional required columns for `ClarkMuskingum`:
+Additional required columns for `UnitMuskingum`:
 
-| Column | Data Type | Description                                                     |
-|--------|-----------|-----------------------------------------------------------------|
-| `tc`   | float     | Time of concentration (seconds), must be non-negative           |
-| `R`    | float     | Clark reservoir storage coefficient (seconds), must be positive |
+| Column      | Data Type | Description                                                   |
+|-------------|-----------|---------------------------------------------------------------|
+| `tc`        | float     | Time of concentration (seconds), must be non-negative         |
+| `area_sqm`  | float     | Catchment area in square meters, must be positive             |
 
 These routing parameters typically come from preprocessing and calibration workflows:
 
 1. topology (`river_id`, `downstream_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
-3. Clark response (`tc`, `R`) from travel-time/storage assumptions and/or calibration
+3. catchment response (`tc`, `area_sqm`) from GIS attributes and/or calibration
 
 Generally, use physically derived first guesses then calibrate against observed discharge where available.
 
@@ -127,17 +127,21 @@ The parquet state file must contain 2 columns in river order:
 | `Q`    | River discharge state                |
 | `R`    | Previous lateral inflow/runoff state |
 
-For `ClarkMuskingum`, an additional NumPy file is written/read automatically alongside the state parquet:
-`<state_file_without_extension>_clark.npy`. This stores the rolling Clark UH buffer.
-
-## Clark Time-Area File (Optional)
+## UnitMuskingum Transformer State Files (Optional)
 
 ```yaml
-time_area_file: '/path/to/time_area_histograms.parquet'
+uh_kernel: '/path/to/kernel.parquet'
+uh_state:  '/path/to/state.parquet'
 ```
 
-`ClarkMuskingum` can optionally read time-area histograms from parquet:
+`UnitMuskingum` can optionally load a pre-computed transformer kernel and/or warm-start the transformer state
+from parquet files. Both are stored in **tall format**: shape `(n_basins, n_time_steps)`, one row per basin.
+The router transposes these to the internal `(n_time_steps, n_basins)` layout on load.
 
-- Columns are river IDs.
-- Rows are evenly spaced bins over normalized time `[0, 1]`.
-- Values are incremental area fractions (non-negative). Columns are normalized internally.
+- `uh_kernel`: skip the kernel computation step and use a previously saved kernel instead.
+  Useful when `tc`/`area_sqm` are fixed and you want to avoid recomputing on every run.
+- `uh_state`: warm-start the transformer's rolling state buffer from a prior run.
+  Only meaningful when `uh_kernel` is also provided.
+
+Use `transformer.save_kernel(path)` to write a kernel produced by `SCSUnitHydrograph` or any other
+`AbstractBaseTransformer` subclass.

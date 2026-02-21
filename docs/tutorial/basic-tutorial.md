@@ -18,13 +18,14 @@ Three routers are available:
 
 - **`TeleportMuskingum`** (recommended for most use cases): routes runoff volumes or depths directly into river channel inlets at each timestep.
   This is what the `rr` CLI command uses.
-- **`ClarkMuskingum`**: same as `TeleportMuskingum` but applies a Clark Unit Hydrograph transformation to lateral inflows before channel routing.
-  Requires additional routing parameters (`tc`, `R`) and optionally a time-area file.
+- **`UnitMuskingum`**: same as `TeleportMuskingum` but passes each timestep of runoff through a unit hydrograph transformer before adding
+  it to channel routing. Requires additional routing parameters (`tc`, `area_sqm`). See the
+  [Unit Hydrograph Routing tutorial](unit-hydrograph-routing.md) for details.
 - **`Muskingum`** (advanced): pure channel routing with no lateral inflows. Routes an existing discharge state forward in time. Requires
   an explicit initial state, `dt_routing`, and `dt_total`. Use this when your lateral inflows are already handled elsewhere.
 
-This tutorial uses `TeleportMuskingum`. The same workflow applies to `ClarkMuskingum` with the additional routing
-parameter columns (`tc`, `R`) and optional Clark config keys (`time_area_file`, `precomputed_lateral_inflows`).
+This tutorial uses `TeleportMuskingum`. The same workflow applies to `UnitMuskingum` with the additional routing
+parameter columns (`tc`, `area_sqm`) and `uh_type` config key.
 
 1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file
 2. [Catchment Volumes](../references/io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
@@ -41,7 +42,7 @@ At runtime, routing is a coordinated pipeline, not a single equation call:
 5. Write routed discharge and optional final state for restart
 
 For `TeleportMuskingum`, lateral inflow enters the channel equation directly.
-For `ClarkMuskingum`, lateral inflow is first transformed through the Clark UH (`tc`, `R`, optional time-area curves),
+For `UnitMuskingum`, lateral inflow is first transformed through a unit hydrograph (`tc`, `area_sqm`),
 then added to channel routing.
 
 Understanding this sequence helps isolate issues:
@@ -133,10 +134,10 @@ You need the following minimum attributes for each stream and catchment pair
 - Muskingum K: the k value to use for this river segment for routing.
 - Muskingum X: the x value to use for this river segment for routing.
 
-If using `ClarkMuskingum`, you also need:
+If using `UnitMuskingum`, you also need:
 
-- Clark Tc: time of concentration (seconds), non-negative.
-- Clark R: linear reservoir storage coefficient (seconds), positive.
+- Time of concentration (`tc`): catchment travel time in seconds, must be non-negative.
+- Catchment area (`area_sqm`): projected catchment area in square meters, must be positive.
 
 ### How Parameters Are Identified
 
@@ -149,7 +150,7 @@ Parameter identification usually combines physical estimation and calibration:
 A practical split by parameter role:
 
 1. `k`, `x` primarily represent channel translation/attenuation behavior.
-2. `tc`, `R` (Clark) represent catchment translation/storage response before channel entry.
+2. `tc`, `area_sqm` (UnitMuskingum) represent catchment-scale response before channel entry.
 
 If observations are sparse:
 
@@ -217,14 +218,14 @@ m = (
 )
 ```
 
-For Clark-Muskingum:
+For Unit-Muskingum with SCS triangular unit hydrograph transformation:
 
 ```python
 import river_route as rr
 
 (
     rr
-    .ClarkMuskingum('/path/to/config_clark.yaml')
+    .UnitMuskingum('/path/to/config.yaml')
     .route()
 )
 ```

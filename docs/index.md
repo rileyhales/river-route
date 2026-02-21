@@ -7,17 +7,18 @@ sparse-matrix solvers. It is designed for large networks of rivers and catchment
 
 Three routers are available:
 
-| Router              | Description                                                                                                  |
-|---------------------|--------------------------------------------------------------------------------------------------------------|
-| `Muskingum`         | Channel routing with no lateral inflows.                                                                     |
-| `TeleportMuskingum` | Overland runoff are placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing |
-| `ClarkMuskingum`    | Runoff transformed by Clark Unit Hydrographs at catchment scale. Muskingum channel routing.                  |                           
+| Router              | Description                                                                                                   |
+|---------------------|---------------------------------------------------------------------------------------------------------------|
+| `Muskingum`         | Channel routing with no lateral inflows.                                                                      |
+| `TeleportMuskingum` | Overland runoff placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing.     |
+| `UnitMuskingum`     | Overland runoff transformed by a pluggable unit hydrograph before channel routing. Muskingum channel routing. |
 
 ## Start Here
 
 1. [Basic Walkthrough](tutorial/basic-tutorial.md)
 2. [Advanced Concepts](tutorial/advanced-tutorial.md)
 3. [Routing Ensembles](tutorial/routing-ensembles.md)
+4. [Unit Hydrograph Routing](tutorial/unit-hydrograph-routing.md)
 
 ```commandline
 pip install river-route
@@ -36,11 +37,9 @@ import river_route as rr
 
 ## Computation Process
 
-[//]: # (todo: redraw more graphs)
-
 ```mermaid
 ---
-Title: River Route Process Diagram
+title: River Route Process Diagram
 ---
 graph LR
     subgraph "Required-Inputs"
@@ -59,29 +58,78 @@ graph LR
         management["Log File Path\nProgress Bar\nLog Level"]
     end
 
-subgraph "Computations"
-direction TB
-a[Build Adjacency Matrix] --> b
-b[Factorize LHS Matrix] --> c
-c[Read Volume/Depth Array] --> d
-d[Apply Clark UH Transform\n(ClarkMuskingum only)] --> e
-e[Iterate Routing Timesteps] --> f
-f[Solve Muskingum System] --> g
-g[Enforce Non-negative Flows] --> h & e
-h[Write Discharge to Disk] --> i
-i[Cache Final State]
-end
+    subgraph "Computations"
+    direction TB
+    a[Build Adjacency Matrix] --> b
+    b[Factorize LHS Matrix] --> c
+    c[Read Volume/Depth Array\nTeleportMuskingum & UnitMuskingum] --> d
+    d[Apply UH Transform\nUnitMuskingum only] --> e
+    e[Iterate Routing Timesteps] --> f
+    f[Solve Muskingum System] --> g
+    g[Enforce Non-negative Flows] --> h & e
+    h[Write Discharge to Disk] --> i
+    i[Cache Final State]
+    end
 
-subgraph "Main-Output"
-Result[Routed Discharge]
-end
+    subgraph "Main-Output"
+    Result[Routed Discharge]
+    end
 
-subgraph "Cachable-Files"
-CachedFiles["Final State File"]
-end
+    subgraph "Cachable-Files"
+    CachedFiles["Final State\nUH Kernel & State\n(UnitMuskingum)"]
+    end
 
-Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
-Computations ==> Main-Output & Cachable-Files
+    Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
+    Computations ==> Main-Output & Cachable-Files
+```
+
+## UnitMuskingum Transformer
+
+`UnitMuskingum` delegates runoff transformation to a pluggable `AbstractBaseTransformer` subclass.
+Two initialization paths are available:
+
+```mermaid
+---
+title: UnitMuskingum Transformer Initialization
+---
+graph TD
+    A{uh_kernel\nprovided?} -->|Yes| B[Transformer.from_kernel]
+    A -->|No| C{uh_type}
+    C -->|'scs'| D[SCSUnitHydrograph.__init__]
+    C -->|custom| E[set_transformer injection]
+    B --> F{uh_state\nprovided?}
+    D --> F
+    E --> F
+    F -->|Yes| G[set_state from parquet]
+    F -->|No| H[zero initial state]
+    G & H --> I[AbstractBaseTransformer ready]
+```
+
+```mermaid
+---
+title: Transformer Class Hierarchy
+---
+classDiagram
+    class AbstractBaseTransformer {
+        <<abstract>>
+        +float dt
+        +FloatArray kernel
+        +FloatArray state
+        +from_kernel(dt, kernel_path)$
+        +set_state(state_path)
+        +transform(runoff_vector) FloatArray
+        +_build_kernel()* FloatArray
+    }
+    class Transformer {
+        +_build_kernel() NotImplementedError
+    }
+    class SCSUnitHydrograph {
+        +FloatArray tc
+        +FloatArray area
+        +_build_kernel() FloatArray
+    }
+    AbstractBaseTransformer <|-- Transformer : load from parquet
+    AbstractBaseTransformer <|-- SCSUnitHydrograph : compute from params
 ```
 
 ## Usage Examples
@@ -123,10 +171,10 @@ import river_route as rr
     .route()
 )
 
-# Clark-Muskingum
+# Unit-Muskingum (with SCS triangular unit hydrograph)
 (
     rr
-    .ClarkMuskingum('/path/to/config_clark.yaml')
+    .UnitMuskingum('/path/to/config.yaml')
     .route()
 )
 ```
