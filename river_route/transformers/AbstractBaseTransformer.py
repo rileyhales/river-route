@@ -1,4 +1,5 @@
 import warnings
+from abc import ABC, abstractmethod
 from typing import Self
 
 import numpy as np
@@ -6,12 +7,12 @@ import pandas as pd
 
 from ..typing import FloatArray, PathInput
 
-__all__ = ['BaseTransformer', ]
+__all__ = ['AbstractBaseTransformer', ]
 
 
-class BaseTransformer:
+class AbstractBaseTransformer(ABC):
     """
-    Base class for stateful runoff transformers used by UnitMuskingum.
+    Abstract base class for stateful runoff transformers used by UnitMuskingum.
 
     Implements the shared lifecycle for any transformer to integrate with UnitMuskingum, including:
     - Initialization with time step (dt)
@@ -20,8 +21,6 @@ class BaseTransformer:
     - a transform method that applies the kernel to a runoff vector and advances the state by one time step.
 
     Subclasses only need to implement kernel generation in `_build_kernel`. that method should do the following:
-    todo: how to instantiate? pass args to constructor? configs? user should only needs to instantiate UnitMuskingum
-    - accept as argument the time step (dt) and any subclass specific parameters
     - create a 2D array of shape (n_time_steps, n_basins)
     - each column should constitute the unit hydrograph for the basin in that column (R=1)
     - the row value should be the average flow of the unit hydrograph discretized over the specified time step (dt)
@@ -39,7 +38,6 @@ class BaseTransformer:
        The kernel will have the shape of n_time_steps of the longest basin which is close to Tc / dt
     2. Times should all always be given in seconds.
     """
-    # todo implement an ABC for transformers to strengthen static checking
 
     dt: float
     kernel: FloatArray
@@ -60,8 +58,9 @@ class BaseTransformer:
     def reset_state(self) -> None:
         self.state = np.zeros_like(self.kernel, dtype=np.float64)
 
+    @abstractmethod
     def _build_kernel(self) -> FloatArray:
-        raise NotImplementedError('subclasses must implement _build_kernel')
+        ...
 
     def validate_runoff_vector(self, runoff_vector: FloatArray) -> FloatArray:
         runoff_vector = np.asarray(runoff_vector, dtype=np.float64)
@@ -76,13 +75,14 @@ class BaseTransformer:
             raise ValueError('runoff_vector contains non-finite values')
         return runoff_vector
 
-    def save_kernel(self, filename: PathInput | None = None) -> None:
+    def save_kernel(self, filename: PathInput | None = None) -> Self:
         """
         Save the kernel in tall orientation so that it reads and writes as parquet better (n_basins, n_time_steps)
         The file name is {class_name}_kernel.parquet in the current working directory.
         """
         warnings.warn('it is strongly recommended that you label the time step of the kernel matrix')
         pd.DataFrame(self.kernel.T).to_parquet(filename)
+        return self
 
     @classmethod
     def from_kernel(cls, dt: float, kernel: PathInput) -> Self:
@@ -95,7 +95,7 @@ class BaseTransformer:
         kernel : path to a parquet file of shape (n_basins, n_time_steps) — tall format.
 
         The kernel is transposed from tall (n_basins, n_time_steps) to the internal
-        (n_time_steps, n_basins) layout.  Call set_state() afterwards to warm-start the state.
+        (n_time_steps, n_basins) layout.  Call set_state() after to warm-start the state.
         """
         instance = cls.__new__(cls)
         if float(dt) <= 0:
@@ -107,7 +107,7 @@ class BaseTransformer:
         instance.reset_state()
         return instance
 
-    def set_state(self, state: PathInput) -> None:
+    def set_state(self, state: PathInput) -> Self:
         """
         Ingest a state from a parquet file, replacing the current state.
 
@@ -124,6 +124,7 @@ class BaseTransformer:
                 f'state shape {_state.shape} does not match kernel shape {self.kernel.shape}'
             )
         self.state = _state
+        return self
 
     def transform(self, runoff_vector: FloatArray) -> FloatArray:
         runoff_vector = self.validate_runoff_vector(runoff_vector)

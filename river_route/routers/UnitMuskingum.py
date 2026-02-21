@@ -5,12 +5,13 @@ import numpy as np
 import pandas as pd
 import tqdm
 
-from ..tools import adjacency_matrix
-from ..transformers import BaseTransformer, SCSUnitHydrograph
 from .TeleportMuskingum import TeleportMuskingum
 from .typing import DatetimeArray, FloatArray, PathInput
+from ..tools import adjacency_matrix
+from ..transformers import AbstractBaseTransformer, Transformer, SCSUnitHydrograph
 
 __all__ = ['UnitMuskingum']
+
 
 class UnitMuskingum(TeleportMuskingum):
     """
@@ -30,7 +31,7 @@ class UnitMuskingum(TeleportMuskingum):
 
     tc: FloatArray
     area: FloatArray
-    _runoff_transformer: BaseTransformer | None = None
+    _runoff_transformer: AbstractBaseTransformer | None = None
 
     def __init__(self, config_file: PathInput | None = None, **kwargs: Any) -> None:
         super().__init__(config_file, **kwargs)
@@ -39,16 +40,16 @@ class UnitMuskingum(TeleportMuskingum):
     # Dependency injection
     # ------------------------------------------------------------------
 
-    def set_transformer(self, transformer: BaseTransformer) -> None:
+    def set_transformer(self, transformer: AbstractBaseTransformer) -> None:
         """
-        Inject a user instantiated transformer object including custom subclasses of BaseTransformer allowing
+        Inject a user instantiated transformer object including custom subclasses of AbstractBaseTransformer allowing
         users to implement their own transformation logic in a custom transformer. The transformer must be a
-        BaseTransformer subclass with a kernel and state set.
+        AbstractBaseTransformer subclass with a kernel and state set.
 
         Call this before route() to use custom transformation logic.
         """
-        if not isinstance(transformer, BaseTransformer):
-            raise TypeError(f'transformer must be a BaseTransformer, got {type(transformer).__name__}')
+        if not isinstance(transformer, AbstractBaseTransformer):
+            raise TypeError(f'transformer must be a AbstractBaseTransformer, got {type(transformer).__name__}')
         self._runoff_transformer = transformer
 
     # ------------------------------------------------------------------
@@ -104,12 +105,12 @@ class UnitMuskingum(TeleportMuskingum):
         uh_kernel = self.conf.get('uh_kernel')
         if uh_kernel:
             # Kernel already computed: load directly — no uh_type needed
-            self._runoff_transformer = BaseTransformer.from_kernel(dt=self.dt_runoff, kernel=uh_kernel)
+            self._runoff_transformer = Transformer.from_kernel(dt=self.dt_runoff, kernel=uh_kernel)
         else:
             # Build kernel from network params using the transformer named by uh_type
             uh_type = str(self.conf.get('uh_type', '')).lower()
             if uh_type == 'scs':
-                self._runoff_transformer = SCSUnitHydrograph(tc=self.tc, area=self.area, dt=self.dt_runoff)
+                self._runoff_transformer = SCSUnitHydrograph(dt=self.dt_runoff, tc=self.tc, area=self.area)
             else:
                 raise ValueError(f'Unknown uh_type: {uh_type!r}. Valid options: "scs"')
 
@@ -125,9 +126,9 @@ class UnitMuskingum(TeleportMuskingum):
         # A transformer is valid if it was injected via set_transformer(), or the config
         # supplies uh_type (to build from params) or uh_kernel (to load from cache).
         if (
-            self._runoff_transformer is None
-            and not self.conf.get('uh_type')
-            and not self.conf.get('uh_kernel')
+                self._runoff_transformer is None
+                and not self.conf.get('uh_type')
+                and not self.conf.get('uh_kernel')
         ):
             raise RuntimeError(
                 'No transformer configured. '

@@ -130,7 +130,8 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
 def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
                  x_var: str = 'lon', y_var: str = 'lat', river_id_var: str = 'river_id',
                  save_voronoi_path: PathInput | None = None,
-                 save_weights_path: PathInput | None = None) -> pd.DataFrame:
+                 save_weights_path: PathInput | None = None,
+                 routing_params_path: PathInput | None = None) -> pd.DataFrame:
     """
     Compute the grid weights for a given grid and catchments.
 
@@ -142,24 +143,57 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
         river_id_var: variable name for river ID in the catchments file
         save_voronoi_path: optional path to save the Voronoi polygons as a GeoParquet file
         save_weights_path: optional path to save the grid weights as a NetCDF file
+        routing_params_path: optional path to a routing params parquet file whose river_id column order is used to
+            topologically sort the weight table rows. When omitted the row order is spatial (not topological).
 
     Returns:
         pd.DataFrame: a DataFrame containing the grid weights with columns
             ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     """
-    # todo need a way to carry the sorted order into the intersections step. How do i make sure the weight table is
-    #  topo sorted? or do i not care and instead sort the weight table after? probably no because the code to
-    #  generate needs them. add the toposort order to the catchments or else add another file as dependency.
     x, y = cell_xy_from_regular_grid(grid_path, x_var=x_var, y_var=y_var)
     voronoi_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
-    return compute_voronoi_catchment_intersects(
-        voronoi_gdf, catchments_gdf, save_path=save_weights_path,
+    df = compute_voronoi_catchment_intersects(
+        voronoi_gdf, catchments_gdf, save_path=None,
         save_attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)},
         river_id_variable=river_id_var
     )
+
+    if routing_params_path is not None:
+        ordered_ids = pd.read_parquet(routing_params_path)[river_id_var].to_numpy()
+        id_to_order = {int(rid): i for i, rid in enumerate(ordered_ids)}
+        df = (
+            df
+            .assign(_sort_key=df[river_id_var].map(id_to_order))
+            .sort_values(['_sort_key', 'area_sqm'], ascending=[True, False])
+            .drop(columns='_sort_key')
+            .reset_index(drop=True)
+        )
+    else:
+        logger.warning('routing_params_path not provided; weight table row order may not match routing network order')
+
+    if save_weights_path:
+        save_attributes = {
+            'description': 'proportions of runoff cells that intersect river catchments to be used with river-route',
+            'grid_path': str(grid_path),
+            'catchments_path': str(catchments_path),
+            'river_route_version': __version__,
+        }
+        ds = xr.Dataset({
+            river_id_var: ('index', df[river_id_var].to_numpy(dtype=np.int64, copy=False)),
+            'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
+            'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
+            'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
+            'y': ('index', df['y'].to_numpy(dtype=np.float64, copy=False)),
+            'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64, copy=False)),
+            'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64, copy=False)),
+        })
+        ds.attrs.update(save_attributes)
+        ds.to_netcdf(save_weights_path)
+
+    return df
 
 
 def _cumulative_to_incremental(df) -> pd.DataFrame:

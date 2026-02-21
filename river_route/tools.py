@@ -4,6 +4,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy
+import xarray as xr
 
 from .typing import PathInput
 
@@ -36,10 +37,10 @@ def subset_configs_to_river(
     pdf.loc[pdf['river_id'] == target_river, 'downstream_river_id'] = -1
     pdf.to_parquet(out_params)
 
-    # todo subset weight table if it exists using new xr.Dataset format
     if weights is not None and out_weights is not None:
-        wdf = pd.read_csv(weights)
-        wdf[wdf['river_id'].isin(upstreams)].to_csv(out_weights, index=False)
+        with xr.open_dataset(weights) as ds:
+            mask = np.isin(ds['river_id'].values, list(upstreams))
+            ds.isel(index=mask).to_netcdf(out_weights)
     return
 
 

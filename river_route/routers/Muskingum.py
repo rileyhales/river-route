@@ -181,7 +181,6 @@ class Muskingum(RoutingConfigs):
         self.logger.info('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
-        # todo update call signatures to be inclusive of variable amounts of other file paths that subclasses pass
         self._write_discharges(dates, discharge_array, self.conf['discharge_file'])
         self._write_final_state()
 
@@ -238,7 +237,7 @@ class Muskingum(RoutingConfigs):
                           dates: DatetimeArray,
                           discharge_array: FloatArray,
                           discharge_file: PathInput,
-                          runoff_file: PathInput, ) -> None:
+                          routed_file: PathInput = '', ) -> None:
         """
         Writes routed discharge from a routing simulation to a netcdf file.
         You can overwrite this method with a custom handler using set_write_discharges.
@@ -246,20 +245,16 @@ class Muskingum(RoutingConfigs):
         Args:
             dates: datetime array corresponding to the discharge rows
             discharge_array: routed discharge values with shape (time, river)
-            discharge_file: the file path to write the discharge data to
-            runoff_file: the file path to the runoff file used to generate the discharge values
+            discharge_file: path to write the discharge data to
+            routed_file: path to the lateral inflow used to generate the discharge values, if applicable.
 
         Returns:
             None
         """
-        # todo: resample before getting to this function.
-        # todo: how can this function be made flexible to pass other file paths so that other classes don't have to
-        #  repeat the same code just to pass more optional arguments??
-        dates = dates[::self.num_runoff_steps_per_discharge].astype('datetime64[s]')
         with nc.Dataset(str(discharge_file), mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=discharge_array.shape[0])
             ds.createDimension(self.conf['var_river_id'], size=discharge_array.shape[1])
-            ds.runoff_file = str(runoff_file)
+            ds.runoff_file = str(routed_file)
             time_var = ds.createVariable('time', 'f8', ('time',))
             time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
             time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)

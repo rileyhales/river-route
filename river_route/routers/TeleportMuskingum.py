@@ -184,6 +184,7 @@ class TeleportMuskingum(Muskingum):
                     ))
                     .mean(axis=1)
                 )
+                dates = dates[::self.num_runoff_steps_per_discharge]
 
             self.logger.info('Writing Discharge Array to File')
             np.round(discharge_array, decimals=2, out=discharge_array)

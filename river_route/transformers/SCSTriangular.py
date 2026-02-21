@@ -1,12 +1,12 @@
 import numpy as np
 
-from .BaseTransformer import BaseTransformer
+from .AbstractBaseTransformer import AbstractBaseTransformer
 from ..typing import FloatArray
 
 __all__ = ['SCSUnitHydrograph', ]
 
 
-class SCSUnitHydrograph(BaseTransformer):
+class SCSUnitHydrograph(AbstractBaseTransformer):
     """
     SCS triangular dimensionless unit hydrograph transformer.
 
@@ -38,15 +38,15 @@ class SCSUnitHydrograph(BaseTransformer):
     Compute mode  __init__(tc, area, dt):
         Builds the kernel from the SCS triangular unit hydrograph equations above.
 
-    Load mode  BaseTransformer.from_cached(dt, kernel, state=None):
-        Inherited classmethod.  Accepts a pre-computed kernel (and optional state) in tall format
+    Load mode  AbstractBaseTransformer.from_cached(dt, kernel, state=None):
+        Inherited class method.  Accepts a pre-computed kernel (and optional state) in tall format
         (n_basins, n_time_steps) as arrays or parquet paths, skipping the SCS computation.
     """
 
     tc: FloatArray
     area: FloatArray
 
-    def __init__(self, tc: FloatArray, area: FloatArray, dt: float) -> None:
+    def __init__(self, dt: float, tc: FloatArray, area: FloatArray) -> None:
         # Step 1: accept a vector of tc values, vector of area in meters squared, and one time step (dt)
         self.tc = np.asarray(tc, dtype=np.float64)
         self.area = np.asarray(area, dtype=np.float64)
@@ -86,6 +86,6 @@ class SCSUnitHydrograph(BaseTransformer):
         u_cum = np.where(t_edges <= tp, rising, falling)  # (max_steps+1, n_basins)
 
         # Average flow over each interval = (u_cum[i+1] - u_cum[i]) / dt
-        # This satisfies the BaseTransformer discretization contract (see base class docstring).
+        # This satisfies the AbstractBaseTransformer discretization contract (see base class docstring).
         # Step 7: zero padding from the clamp means shorter-basin columns are already zero-padded.
         return np.diff(u_cum, axis=0) / self.dt  # (max_steps, n_basins)

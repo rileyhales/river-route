@@ -27,7 +27,7 @@ Every `TeleportMuskingum` or `ClarkMuskingum` run needs:
 - `dt_total` - total simulation duration in seconds
 - `discharge_file` (singular) - output netCDF file path
 
-## Example Configuratin YAML
+## Example Configuration YAML
 
 ```yaml title="Config File Example"
 {% include-markdown "../../examples/config.yaml" %}

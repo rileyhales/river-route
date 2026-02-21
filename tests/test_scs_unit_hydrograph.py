@@ -6,8 +6,8 @@ from river_route.transformers import SCSUnitHydrograph
 def test_kernel_shape_changes_with_dt() -> None:
     tc = np.array([7200.0], dtype=np.float64)
     area = np.array([1000.0], dtype=np.float64)
-    coarse = SCSUnitHydrograph(tc=tc, area=area, dt=3600.0)
-    fine = SCSUnitHydrograph(tc=tc, area=area, dt=1800.0)
+    coarse = SCSUnitHydrograph(dt=3600.0, tc=tc, area=area)
+    fine = SCSUnitHydrograph(dt=1800.0, tc=tc, area=area)
     assert coarse.kernel.shape[1] == 1
     assert fine.kernel.shape[1] == 1
     # tb = 2.67 * (0.6*tc + dt/2)
@@ -20,7 +20,7 @@ def test_kernel_shape_changes_with_dt() -> None:
 def test_kernel_is_interval_average_flow() -> None:
     tc = np.array([7200.0], dtype=np.float64)
     area = np.array([12345.0], dtype=np.float64)
-    transformer = SCSUnitHydrograph(tc=tc, area=area, dt=1800.0)
+    transformer = SCSUnitHydrograph(dt=1800.0, tc=tc, area=area)
     kernel = transformer.kernel[:, 0]
 
     # For 1 m runoff depth, sum(flow * dt) equals basin area (m^3).
@@ -32,7 +32,7 @@ def test_requires_area_vector() -> None:
     tc = np.array([100.0, 200.0], dtype=np.float64)
     area = np.array([1.0], dtype=np.float64)
     try:
-        SCSUnitHydrograph(tc=tc, area=area, dt=60.0)
+        SCSUnitHydrograph(dt=60.0, tc=tc, area=area)
     except ValueError as e:
         assert 'same length' in str(e)
     else:
