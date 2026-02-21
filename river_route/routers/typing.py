@@ -1,15 +1,20 @@
-from pathlib import Path
-from typing import Any
 from typing import Callable
 
-import numpy as np
-from numpy.typing import NDArray
+from ..typing import ConfigDict
+from ..typing import DatetimeArray
+from ..typing import FloatArray
+from ..typing import IntArray
+from ..typing import PathInput
 
-# type hints for checkers
-ConfigDict = dict[str, Any]
-PathInput = str | Path
-FloatArray = NDArray[np.float64]
-IntArray = NDArray[np.int64]
-DatetimeArray = NDArray[np.datetime64]
 WriteDischargesFn = Callable[[DatetimeArray, FloatArray, PathInput, PathInput], None]
 FactorizedSolveFn = Callable[[FloatArray], FloatArray]
+
+__all__ = [
+    'ConfigDict',
+    'PathInput',
+    'FloatArray',
+    'IntArray',
+    'DatetimeArray',
+    'WriteDischargesFn',
+    'FactorizedSolveFn',
+]

@@ -1,13 +1,13 @@
 import logging
-from pathlib import Path
 
 import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy
 
+from .typing import PathInput
+
 logger = logging.getLogger(__name__)
-PathInput = str | Path
 
 __all__ = [
     'subset_configs_to_river',

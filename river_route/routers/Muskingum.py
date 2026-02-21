@@ -33,6 +33,8 @@ class Muskingum(RoutingConfigs):
     Optional config keys:
         start_datetime: simulation start datetime string (defaults to '2000-01-01')
     """
+    # todo implement an ABC for routers and configs to strengthen static checking.
+
     # Network dependent matrices and vectors from routing parameters file
     A: csc_matrix  # n x n - adjacency matrix
     river_ids: IntArray  # n x 1 - river ID for each segment

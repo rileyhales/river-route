@@ -1,17 +1,42 @@
 # Required watershed file
 routing_params_file: ''
-
-# Water input (choose exactly one)
-catchment_volumes_files: ''   # netCDF file or list of files
-runoff_depths_files: ''       # netCDF file or list of files
-weight_table_file: ''         # required when using runoff_depths_files
-
-# Output file(s)
-discharge_files: ''           # netCDF file or list of files
-
-# Initial and final state (optional)
+# Initial and final state (optional, unless using Muskingum only which requires an initial state)
 initial_state_file: ''
 final_state_file: ''
+# Output file(s)
+discharge_files: # list of file paths, even if only 1 file is provided
+  - ''
+# Logging (optional, defaults shown)
+log: true
+progress_bar: true
+log_level: 'INFO'             # DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_stream: 'stdout'          # "stdout" or file path
+log_format: '%(asctime)s - %(levelname)s - %(message)s'
+# Variable names in input/output files (optional, defaults shown)
+var_x: 'x'
+var_y: 'y'
+var_t: 'time'
+var_runoff_depth: 'ro'
+var_catchment_volume: 'volume'
+var_river_id: 'river_id'
+var_discharge: 'Q'
+
+###########
+# If providing lateral inflows, you must use TeleportMuskingum or UnitMuskingum
+###########
+
+# Option 1: volumes per catchment time series
+catchment_volumes_files: # netCDF file or list of files
+  - ''
+# Option 2: runoff depths on a grid and a weight table which produce a volumes per catchment time series
+runoff_depths_files: # netCDF file or list of files
+  - ''
+weight_table_file: # required when using runoff_depths_files
+  - ''
+
+###########
+# If using a unit hydrograph transformer, you may optionally provide a precomputed kernel and/or state to warm start the transformer.
+###########
 
 # Compute options (optional)
 input_type: 'sequential'      # "sequential" or "ensemble"
@@ -23,19 +48,3 @@ dt_discharge: 0               # defaults to runoff timestep
 # Clark-Muskingum options (optional, only used by ClarkMuskingum)
 time_area_file: ''            # parquet time-area histogram file
 precomputed_lateral_inflows: false
-
-# Logging (optional)
-log: true
-progress_bar: true
-log_level: 'INFO'             # DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_stream: 'stdout'          # "stdout" or file path
-log_format: '%(asctime)s - %(levelname)s - %(message)s'
-
-# Variable names in input/output files (optional)
-var_x: 'x'
-var_y: 'y'
-var_t: 'time'
-var_runoff_depth: 'ro'
-var_catchment_volume: 'volume'
-var_river_id: 'river_id'
-var_discharge: 'Q'

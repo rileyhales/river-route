@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -9,6 +8,7 @@ import shapely.ops
 import xarray as xr
 
 from .__metadata__ import __version__
+from .typing import PathInput
 
 __all__ = [
     # for making grid_weights
@@ -21,7 +21,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-PathInput = str | Path
 
 
 def cell_xy_from_regular_grid(dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[

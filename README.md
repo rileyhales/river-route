@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/github/license/rileyhales/river-route)
 
 `river-route` is a Python package for routing catchment runoff volumes through a river network. It provides three
-routers: `Muskingum`, `TeleportMuskingum`, and `ClarkMuskingum`. Routing calculations are vectorized using numpy
+routers: `Muskingum`, `TeleportMuskingum`, and `UnitMuskingum`. Routing calculations are vectorized using numpy
 and scipy sparse matrices, keeping computation times competitive with compiled languages.
 
 Please visit https://river-route.hales.app for documentation
@@ -41,10 +41,10 @@ import river_route as rr
     .TeleportMuskingum('examples/config.yaml')
     .route()
 )
-# ClarkMuskingum: uses Clark Unit Hydrograph runoff transformation on catchments with muskingum channel routing
+# UnitMuskingum: applies a pluggable unit-hydrograph runoff transform before Muskingum channel routing
 (
     rr
-    .ClarkMuskingum('examples/config_clark.yaml')
+    .UnitMuskingum('examples/config_unit.yaml', unit_hydrograph_method='scs')
     .route()
 )
 ```
