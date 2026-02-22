@@ -17,12 +17,12 @@ class Muskingum(AbstractRouter):
 
     Required:
         routing_params_file: parquet file with river_id, downstream_river_id, k, x columns
-        initial_state_file: parquet file with Q and R columns for initial conditions
+        channel_state_file: parquet file with Q and R columns for initial conditions
         dt_routing: routing computation timestep in seconds
         dt_discharge: output timestep in seconds (defaults to dt_routing)
         dt_total: total simulation duration in seconds
-        discharge_file: output netCDF file path
-        final_state_file: parquet file path to write final state
+        discharge_files: output netCDF file path (list with one entry)
+        final_channel_state_file: parquet file path to write final channel state
 
     Optional config keys:
         start_datetime: simulation start datetime string (defaults to '2000-01-01')
@@ -32,9 +32,12 @@ class Muskingum(AbstractRouter):
         super().__init__(config_file, **kwargs)
 
     def _validate_router_configs(self) -> None:
-        if not self.conf.get('discharge_file'):
-            raise ValueError('discharge_file is required for Muskingum routing')
-        directory = os.path.dirname(os.path.abspath(self.conf['discharge_file']))
+        discharge_files = self.conf.get('discharge_files', [])
+        if not discharge_files:
+            raise ValueError('discharge_files is required for Muskingum routing')
+        if len(discharge_files) != 1:
+            raise ValueError('Muskingum routing requires exactly one entry in discharge_files')
+        directory = os.path.dirname(os.path.abspath(discharge_files[0]))
         if not os.path.exists(directory):
             raise NotADirectoryError(f'Output file directory not found at: {directory}')
         if not self.conf.get('dt_routing'):
@@ -49,7 +52,7 @@ class Muskingum(AbstractRouter):
         simulation.
 
         Returns:
-            'Muskingum': the class instance with updated initial_state and output files written to disk
+            'Muskingum': the class instance with updated channel_state and output files written to disk
         """
         self.logger.info('Beginning routing')
         t1 = datetime.datetime.now()
@@ -87,7 +90,7 @@ class Muskingum(AbstractRouter):
         self.logger.info('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
-        self._write_discharges(dates, discharge_array, self.conf['discharge_file'])
+        self._write_discharges(dates, discharge_array, self.conf['discharge_files'][0])
         self._write_final_state()
 
         t2 = datetime.datetime.now()
@@ -102,7 +105,8 @@ class Muskingum(AbstractRouter):
             (I - c2*A) @ Q(t+1) = c1*(A @ Q(t)) + c3*Q(t)
         """
         self.logger.debug('Getting initial state arrays')
-        q_init, _ = self.initial_state
+        q_init = self.channel_state
+        # todo if q_init is null or empty or zeros then raise an error
 
         n = self.A.shape[0]
         discharge_array = np.zeros((num_output_steps, n), dtype=np.float64)
@@ -132,8 +136,8 @@ class Muskingum(AbstractRouter):
 
         discharge_array[discharge_array < 0] = 0
 
-        self.logger.debug('Updating Initial State')
-        self.initial_state = (q_t, np.zeros_like(q_t))
+        self.logger.debug('Updating Channel State')
+        self.channel_state = q_t
 
         t2 = datetime.datetime.now()
         self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')

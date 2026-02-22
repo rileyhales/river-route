@@ -31,7 +31,7 @@ m = (
     rr
     .TeleportMuskingum(**{
         'routing_params_file': params_file,
-        'catchment_volumes_files': volume_files,
+        'lateral_volume_files': volume_files,
         'discharge_files': output_files,
     })
     .route()

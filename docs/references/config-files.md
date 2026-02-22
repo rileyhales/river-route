@@ -1,9 +1,9 @@
 ## Configuration File
 
 `river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
-All three routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`) share the same base config keys.
-`TeleportMuskingum` adds support for multiple files and ensemble mode. `UnitMuskingum` inherits all
-`TeleportMuskingum` keys and adds transformer-specific keys (`uh_type`, `uh_kernel_file`, `uh_state_file`).
+The three routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`) share a set of base config keys and each
+adds router-specific keys. `TeleportMuskingum` and `UnitMuskingum` are parallel routers — they do not share
+input data config keys, so a config file written for one cannot be used with the other without changes.
 
 1. Paths to input and output files
 2. Routing and timestep options
@@ -12,101 +12,82 @@ All three routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`) share the 
 
 ## Minimum Required Inputs
 
-Every `TeleportMuskingum` or `UnitMuskingum` run needs:
+`Muskingum` (channel routing only, no lateral inflows) requires:
+
+- `routing_params_file` - parquet with columns: `river_id`, `downstream_river_id`, `k`, `x`
+- `channel_state_file` - parquet state file to initialize discharge
+- `discharge_files` - output netCDF path as a single-element list
+
+`TeleportMuskingum` requires:
 
 - `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - one water input source:
-    - `catchment_volumes_files`, or
-    - `runoff_depths_files` plus `weight_table_file`
+    - `lateral_volume_files`, or
+    - `runoff_depth_grids` plus `grid_weights_file`
 - `discharge_files` - path(s) where [routed discharge](io-file-schema.md#routed-discharge) output files will be saved (netCDF)
 
-`UnitMuskingum` additionally requires one of:
+`UnitMuskingum` requires:
 
-- `uh_type` - string name of the built-in transformer to use (e.g. `'scs'`), or
-- a transformer injected via `set_transformer()` before calling `route()`
-
-`Muskingum` (base channel routing, no lateral inflows) additionally requires:
-
-- `initial_state_file` - parquet state file to initialize discharge
-- `dt_routing` - routing computation timestep in seconds
-- `dt_total` - total simulation duration in seconds
-- `discharge_file` (singular) - output netCDF file path
+- `routing_params_file` - parquet with additional columns `tc` and `area_sqm`
+- one transformer source:
+    - `uh_type` (e.g. `'scs'`), or
+    - `uh_kernel_file`, or
+    - a transformer injected via `set_transformer()` before calling `route()`
+- one water input source:
+    - `lateral_depth_files`, or
+    - `runoff_depth_grids` plus `grid_weights_file`
+- `discharge_files`
 
 ## Example Configuration YAML
 
-```yaml title="Config File Example"
-{% include-markdown "../../examples/config.yaml" %}
+```yaml title="TeleportMuskingum Config"
+{ % include-markdown "../../examples/config.yaml" % }
 ```
 
-## Config Options Table
+## Required Config Keys
 
-The following table is the full set of recognized keys for `TeleportMuskingum` and `UnitMuskingum`.
+| Config key                     | Description                                               |  Muskingum   |               TeleportMuskingum               |                 UnitMuskingum                 |
+|--------------------------------|-----------------------------------------------------------|:------------:|:---------------------------------------------:|:---------------------------------------------:|
+| **core**                       |                                                           |              |                                               |                                               |
+| `routing_params_file`          | Routing parameters parquet.                               | **Required** |                 **Required**                  |                 **Required**                  |
+| **state**                      |                                                           |              |                                               |                                               |
+| `channel_state_file`           | Parquet with initial channel discharge (column `Q`)       | **Required** |            optional - default to 0            |            optional - default to 0            |
+| `final_channel_state_file`     | Path to save final channel state                          |   optional   |                   optional                    |                   optional                    |
+| `transformer_state_file`       | Parquet with initial transformer state                    |              |                                               |                   optional                    |
+| `final_transformer_state_file` | Path to save final transformer state                      |              |                                               |                   optional                    |
+| **output**                     |                                                           |              |                                               |                                               |
+| `discharge_files`              | Output netCDF path(s); Muskingum requires exactly one     | **Required** |                 **Required**                  |                 **Required**                  |
+| **input data**                 |                                                           |              |                                               |                                               |
+| `lateral_volume_files`         | Pre-computed per-catchment runoff volume time series (m³) |              |                  _Option 1_                   |                                               |
+| `lateral_depth_files`          | Pre-computed per-catchment runoff depth time series (m)   |              |                                               |                  _Option 1_                   |
+| `runoff_depth_grids`           | Gridded runoff depths; requires `grid_weights_file`       |              |                  _Option 2_                   |                  _Option 2_                   |
+| `grid_weights_file`            | Table for converting depth grids to lateral volumes       |              |                  _Option 2_                   |                  _Option 2_                   |
+| **unit hydrograph**            |                                                           |              |                                               |                                               |
+| `uh_type`                      | Transformer type to use                                   |              |                                               |                  _Option 1_                   |
+| `uh_kernel_file`               | Pre-computed convolution kernel                           |              |                                               |                  _Option 2_                   |
+| **time**                       |                                                           |              |                                               |                                               |
+| `dt_total`                     | Total simulation duration in seconds                      | **Required** | optional - see [time docs](time-variables.md) | optional - see [time docs](time-variables.md) |
+| `dt_discharge`                 | Output timestep (s)                                       |   optional   | optional - see [time docs](time-variables.md) | optional - see [time docs](time-variables.md) |
+| `dt_runoff`                    | Runoff data timestep (s)                                  |              | optional - see [time docs](time-variables.md) | optional - see [time docs](time-variables.md) |
+| `dt_routing`                   | Routing computational timestep (s)                        | **Required** | optional - see [time docs](time-variables.md) | optional - see [time docs](time-variables.md) |
+| `start_datetime`               | Simulation start date for output timestamps               |   optional   |                                               |                                               |
+| **compute**                    |                                                           |              |                                               |                                               |
 
-| Parameter Name            | Required               | Type                         | Description                                                               |
-|---------------------------|------------------------|------------------------------|---------------------------------------------------------------------------|
-| `routing_params_file`     | Yes                    | file path                    | Routing parameters parquet file.                                          |
-| `discharge_files`         | Yes                    | file path or list[file path] | Output netCDF discharge file(s). Count must match input file count.       |
-| `catchment_volumes_files` | Conditionally          | file path or list[file path] | Input netCDF volume file(s). Use this or `runoff_depths_files`.           |
-| `runoff_depths_files`     | Conditionally          | file path or list[file path] | Input netCDF runoff depth file(s). Use this or `catchment_volumes_files`. |
-| `weight_table_file`       | Conditionally          | file path                    | Required if `runoff_depths_files` is provided.                            |
-| `uh_type`                 | Conditionally (Unit)   | string                       | Built-in transformer name. Currently `'scs'`.                             |
-| `uh_kernel_file`               | No (Unit only)         | file path                    | Pre-computed transformer kernel parquet `(n_basins, n_time_steps)`.       |
-| `uh_state_file`                | No (Unit only)         | file path                    | Warm-start transformer state parquet `(n_basins, n_time_steps)`.          |
-| `input_type`              | No                     | string                       | `sequential` or `ensemble`. Default: `sequential`.                        |
-| `runoff_type`             | No                     | string                       | `incremental` or `cumulative`. Default: `incremental`.                    |
-| `dt_total`                | No                     | integer                      | Total simulation duration in seconds. Defaults to input duration.         |
-| `dt_routing`              | No                     | integer                      | Routing sub-step in seconds. Defaults to `dt_runoff`.                     |
-| `dt_discharge`            | No                     | integer                      | Output discharge timestep in seconds. Defaults to `dt_runoff`.            |
-| `initial_state_file`      | No                     | file path                    | Parquet state file used to initialize routing state.                      |
-| `final_state_file`        | No                     | file path                    | Path where final state parquet is written.                                |
-| `log`                     | No                     | boolean                      | Enable or disable logging. Default: `true`.                               |
-| `progress_bar`            | No                     | boolean                      | Show tqdm progress bar. Default: same as `log`.                           |
-| `log_level`               | No                     | string                       | Logger level. Default: `INFO`.                                            |
-| `log_stream`              | No                     | string                       | `stdout` or a file path. Default: `stdout`.                               |
-| `log_format`              | No                     | string                       | Python logging format string.                                             |
-| `var_x`                   | No                     | string                       | X-dimension name in runoff depth grids. Default: `x`.                     |
-| `var_y`                   | No                     | string                       | Y-dimension name in runoff depth grids. Default: `y`.                     |
-| `var_t`                   | No                     | string                       | Time dimension name in runoff depth grids. Default: `time`.               |
-| `var_runoff_depth`        | No                     | string                       | Runoff depth variable name. Default: `ro`.                                |
-| `var_catchment_volume`    | No                     | string                       | Catchment volume variable name. Default: `volume`.                        |
-| `var_river_id`            | No                     | string                       | River ID dimension/variable name. Default: `river_id`.                    |
-| `var_discharge`           | No                     | string                       | Discharge variable name in outputs. Default: `Q`.                         |
+## Optional Configs with Defaults
 
-## Config Key Compatibility by Router
-
-This table shows which keys apply to each router. Required = must be provided, optional = may be provided,
-blank = not used by that router.
-
-| Config key                | Muskingum | TeleportMuskingum | UnitMuskingum |
-|---------------------------|-----------|-------------------|---------------|
-| `routing_params_file`     | Required  | Required          | Required      |
-| `discharge_files`         | Required  | Required          | Required      |
-| `catchment_volumes_files` |           | Required*         | Required*     |
-| `runoff_depths_files`     |           | Required*         | Required*     |
-| `weight_table_file`       |           | optional          | optional      |
-| `uh_type`                 |           |                   | Required**    |
-| `uh_kernel_file`               |           |                   | optional      |
-| `uh_state_file`                |           |                   | optional      |
-| `dt_routing`              | Required  | optional          | optional      |
-| `dt_discharge`            | optional  | optional          | optional      |
-| `dt_total`                | Required  | optional          | optional      |
-| `input_type`              |           | optional          | optional      |
-| `runoff_type`             |           | optional          | optional      |
-| `initial_state_file`      | Required  | optional          | optional      |
-| `final_state_file`        | optional  | optional          | optional      |
-| `log`                     | optional  | optional          | optional      |
-| `progress_bar`            | optional  | optional          | optional      |
-| `log_level`               | optional  | optional          | optional      |
-| `log_stream`              | optional  | optional          | optional      |
-| `log_format`              | optional  | optional          | optional      |
-| `var_river_id`            | optional  | optional          | optional      |
-| `var_discharge`           | optional  | optional          | optional      |
-| `var_x`                   |           | optional          | optional      |
-| `var_y`                   |           | optional          | optional      |
-| `var_t`                   |           | optional          | optional      |
-| `var_catchment_volume`    |           | optional          | optional      |
-| `var_runoff_depth`        |           | optional          | optional      |
-
-*Exactly one of `catchment_volumes_files` or `runoff_depths_files` must be provided.
-
-**`uh_type` is required unless a transformer is injected via `set_transformer()` or `uh_kernel_file` is provided.
+| Config Key             | Description                                                | Default                                       |
+|------------------------|------------------------------------------------------------|-----------------------------------------------|
+| `log`                  | Enable or disable logging                                  | True                                          |
+| `progress_bar`         | Show tqdm progress bar                                     | True                                          |
+| `log_level`            | Logger level (`'INFO'`, `'DEBUG'`, etc.)                   | `'INFO'`                                      |
+| `log_stream`           | `'stdout'` or a file path                                  | `'stdout'`                                    |
+| `log_format`           | Python logging format string                               | `'%(asctime)s - %(levelname)s - %(message)s'` |
+| `var_river_id`         | River ID dimension name in files.                          | `'river_id'`                                  |
+| `var_discharge`        | Discharge variable name in output.                         | `'Q'`                                         |
+| `var_catchment_volume` | Volume variable name in `lateral_volume_files`.            | `'volume'`                                    |
+| `var_runoff_depth`     | Depth variable name in depth grid files.                   | `'ro'`                                        |
+| `var_x`                | X-dimension name in depth grids.                           | `'x'`                                         |
+| `var_y`                | Y-dimension name in depth grids.                           | `'y'`                                         |
+| `var_t`                | Time dimension name in depth grids.                        | `'time'`                                      |
+| `runoff_type`          | Whether the lateral inflows are incremental or cumulative  | `'incremental'`                               |                                                            |                             d                              |
+| `input_type`           | see [advanced tutorials](../tutorial/routing-ensembles.md) | `'sequential'` or `'ensemble'`                |

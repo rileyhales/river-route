@@ -23,6 +23,7 @@ nav:
       - Basic Walkthrough: tutorial/basic-tutorial.md
       - Routing Ensembles: tutorial/routing-ensembles.md
       - Advanced Concepts: tutorial/advanced-tutorial.md
+      - Unit Hydrograph Routing: tutorial/unit-hydrograph-routing.md
   - License: terms.md
 plugins:
   - search

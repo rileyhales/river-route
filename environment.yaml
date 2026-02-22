@@ -2,6 +2,7 @@ name: rr
 channels:
   - conda-forge
 dependencies:
+  - python>=3.14
   - dask
   - fastparquet
   - geopandas
@@ -11,7 +12,6 @@ dependencies:
   - networkx
   - numpy
   - pandas
-  - python>=3.14
   - pyyaml
   - scipy
   - shapely
@@ -22,8 +22,7 @@ dependencies:
   - pandas-stubs
   - scipy-stubs
   # for documentation
-  - mkdocs
-  - mkdocs-material
+  - zensical
   - mkdocstrings
   - mkdocstrings-python
   - mkdocs-include-markdown-plugin

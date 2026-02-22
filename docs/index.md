@@ -30,7 +30,7 @@ import river_route as rr
 # Most common: route runoff volumes through the network
 (
     rr
-    .TeleportMuskingum('/path/to/config.yaml')
+    .Muskingum('/path/to/config.yaml')
     .route()
 )
 ```
@@ -62,8 +62,8 @@ graph LR
     direction TB
     a[Build Adjacency Matrix] --> b
     b[Factorize LHS Matrix] --> c
-    c[Read Volume/Depth Array\nTeleportMuskingum & UnitMuskingum] --> d
-    d[Apply UH Transform\nUnitMuskingum only] --> e
+    c[Read Volume/Depth Array TeleportMuskingum & UnitMuskingum] --> d
+    d[Apply UH Transform UnitMuskingum only] --> e
     e[Iterate Routing Timesteps] --> f
     f[Solve Muskingum System] --> g
     g[Enforce Non-negative Flows] --> h & e
@@ -76,7 +76,7 @@ graph LR
     end
 
     subgraph "Cachable-Files"
-    CachedFiles["Final State\nUH Kernel & State\n(UnitMuskingum)"]
+    CachedFiles["Final State UH Kernel & State (UnitMuskingum)"]
     end
 
     Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
@@ -93,11 +93,11 @@ Two initialization paths are available:
 title: UnitMuskingum Transformer Initialization
 ---
 graph TD
-    A{uh_kernel_file\nprovided?} -->|Yes| B[Transformer.from_kernel]
+    A{uh_kernel_file provided?} -->|Yes| B[Transformer.from_kernel]
     A -->|No| C{uh_type}
     C -->|'scs'| D[SCSUnitHydrograph.__init__]
     C -->|custom| E[set_transformer injection]
-    B --> F{uh_state_file\nprovided?}
+    B --> F{transformer_state_file\nprovided?}
     D --> F
     E --> F
     F -->|Yes| G[set_state from parquet]
@@ -128,8 +128,8 @@ classDiagram
         +FloatArray area
         +_build_kernel() FloatArray
     }
-    AbstractBaseTransformer <|-- Transformer : load from parquet
-    AbstractBaseTransformer <|-- SCSUnitHydrograph : compute from params
+    AbstractBaseTransformer <|-- Transformer : Load kernel from file
+    AbstractBaseTransformer <|-- SCSUnitHydrograph : Compute from params
 ```
 
 ## Usage Examples
@@ -152,7 +152,7 @@ import river_route as rr
     rr
     .TeleportMuskingum(**{
         'routing_params_file': '/path/to/routing_params.parquet',
-        'catchment_volumes_files': '/path/to/volumes.nc',
+        'lateral_volume_files': '/path/to/volumes.nc',
         'discharge_files': '/path/to/discharge.nc',
     })
     .route()
@@ -164,7 +164,7 @@ import river_route as rr
     .TeleportMuskingum(
         '/path/to/config.yaml',
         **{
-            'catchment_volumes_files': '/path/to/volumes.nc',
+            'lateral_volume_files': '/path/to/volumes.nc',
             'discharge_files': '/path/to/discharge.nc',
         }
     )

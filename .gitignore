@@ -2,3 +2,5 @@
 .idea/
 *.zip
 tests/data
+site
+.cache

@@ -20,10 +20,10 @@ Required for all routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`):
 
 Additional required columns for `UnitMuskingum`:
 
-| Column      | Data Type | Description                                                   |
-|-------------|-----------|---------------------------------------------------------------|
-| `tc`        | float     | Time of concentration (seconds), must be non-negative         |
-| `area_sqm`  | float     | Catchment area in square meters, must be positive             |
+| Column     | Data Type | Description                                           |
+|------------|-----------|-------------------------------------------------------|
+| `tc`       | float     | Time of concentration (seconds), must be non-negative |
+| `area_sqm` | float     | Catchment area in square meters, must be positive     |
 
 These routing parameters typically come from preprocessing and calibration workflows:
 
@@ -49,7 +49,7 @@ The routing class may not correctly perform the conversions in all cases.
 ### Catchment Volumes (recommended)
 
 ```yaml
-catchment_volumes_files: '/path/to/volumes.nc'
+lateral_volume_files: '/path/to/volumes.nc'
 ```
 
 Catchment volumes are given in a netCDF file.
@@ -68,8 +68,8 @@ example case for guidance on formatting these files.
 ### Runoff Depths
 
 ```yaml
-runoff_depths_files: [ '/path/to/depths1.nc', '/path/to/depths2.nc', ... ]
-weight_table_file: '/path/to/weight_table.nc'
+runoff_depth_grids: [ '/path/to/depths1.nc', '/path/to/depths2.nc', ... ]
+grid_weights_file: '/path/to/weight_table.nc'
 ```
 
 Runoff depths are given in a netCDF file.
@@ -113,35 +113,32 @@ You can change the structure of the output file by overriding the default functi
 ## Initial and Final States
 
 ```yaml
-initial_state_file: '/path/to/initial.parquet'
-final_state_file: '/path/to/final.parquet'
+channel_state_file: '/path/to/initial.parquet'
+final_channel_state_file: '/path/to/final.parquet'
 ```
 
 State information are stored in parquet files. Muskingum routing solves for river discharge at time t+1 as a
 function of inflow volumes at time t and time t+1, and the discharge at time t.
 
-The parquet state file must contain 2 columns in river order:
+The parquet state file must contain 1 column in river order:
 
-| Column | Description                          |
-|--------|--------------------------------------|
-| `Q`    | River discharge state                |
-| `R`    | Previous lateral inflow/runoff state |
+| Column | Description           |
+|--------|-----------------------|
+| `Q`    | River discharge state |
 
 ## UnitMuskingum Transformer State Files (Optional)
 
 ```yaml
 uh_kernel_file: '/path/to/kernel.parquet'
-uh_state_file:  '/path/to/state.parquet'
+transformer_state_file: '/path/to/state.parquet'
 ```
 
 `UnitMuskingum` can optionally load a pre-computed transformer kernel and/or warm-start the transformer state
 from parquet files. Both are stored in **tall format**: shape `(n_basins, n_time_steps)`, one row per basin.
 The router transposes these to the internal `(n_time_steps, n_basins)` layout on load.
 
-- `uh_kernel_file`: skip the kernel computation step and use a previously saved kernel instead.
-  Useful when `tc`/`area_sqm` are fixed and you want to avoid recomputing on every run.
-- `uh_state_file`: warm-start the transformer's rolling state buffer from a prior run.
-  Only meaningful when `uh_kernel_file` is also provided.
+- `uh_kernel_file`: skip the kernel computation step and use a previously saved kernel instead. Note, the kernel depends on tc, area, **and the routing timestep**
+- `transformer_state_file`: warm-start the transformer's rolling state buffer from a prior run. Note, the **state depends on the routing timestep**!
 
 Use `transformer.save_kernel(path)` to write a kernel produced by `SCSUnitHydrograph` or any other
 `AbstractBaseTransformer` subclass.

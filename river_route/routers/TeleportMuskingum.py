@@ -43,47 +43,9 @@ class TeleportMuskingum(AbstractRouter):
         for each river segment. Must match the number of input files (catchment_volumes_files or runoff_depths_files).
         See docs.
     """
-    _network_time_signature: tuple[Any, ...] | None = None
-
-    def _validate_router_configs(self) -> None:
-        # normalize single file strings to lists
-        self.conf['catchment_volumes_files'] = self.conf.get('catchment_volumes_files', [])
-        self.conf['runoff_depths_files'] = self.conf.get('runoff_depths_files', [])
-        self.conf['discharge_files'] = self.conf.get('discharge_files', [])
-        if isinstance(self.conf['catchment_volumes_files'], (str, Path)):
-            self.conf['catchment_volumes_files'] = [self.conf['catchment_volumes_files'], ]
-        if isinstance(self.conf['runoff_depths_files'], (str, Path)):
-            self.conf['runoff_depths_files'] = [self.conf['runoff_depths_files'], ]
-        if isinstance(self.conf['discharge_files'], (str, Path)):
-            self.conf['discharge_files'] = [self.conf['discharge_files'], ]
-
-        n_files = len(self.conf['catchment_volumes_files']) + len(self.conf['runoff_depths_files'])
-        if self.conf['catchment_volumes_files'] and self.conf['runoff_depths_files']:
-            raise ValueError('Provide either catchment volumes files or runoff depths files, not both')
-        if not len(self.conf['discharge_files']) == n_files:
-            raise ValueError('Number of discharge files must match the number of input files (volumes or depths)')
-        for file in self.conf['catchment_volumes_files']:
-            if not os.path.exists(file):
-                raise FileNotFoundError(f'Catchment volumes file not found at: {file}')
-        for file in self.conf['runoff_depths_files']:
-            if not os.path.exists(file):
-                raise FileNotFoundError(f'Runoff depths file not found at: {file}')
-        for directory in set(os.path.dirname(os.path.abspath(file)) for file in self.conf['discharge_files']):
-            if not os.path.exists(directory):
-                raise NotADirectoryError(f'Output file directory not found at: {directory}')
-        if self.conf['runoff_depths_files']:
-            if not self.conf.get('weight_table_file'):
-                raise ValueError('weight_table_file is required when using runoff_depths_files')
-            if not os.path.exists(self.conf['weight_table_file']):
-                raise FileNotFoundError('Weight table file not found')
-
-        if not self.conf['catchment_volumes_files']:
-            del self.conf['catchment_volumes_files']
-        if not self.conf['runoff_depths_files']:
-            del self.conf['runoff_depths_files']
-
     # State variables
     _ensemble_member_states: list[FloatArray]  # for ensemble routing, stores member states for computing final state
+    _network_time_signature: tuple[Any, ...] | None = None
 
     # Time options
     dt_runoff: float
@@ -91,73 +53,62 @@ class TeleportMuskingum(AbstractRouter):
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
 
-    def _write_final_state(self) -> None:
-        final_state_file = self.conf.get('final_state_file', '')
-        if final_state_file == '':
-            return
-        if self.conf['input_type'] == 'sequential':
-            array = np.array(self.initial_state).T
-        elif self.conf['input_type'] == 'ensemble':
-            array = np.array(self._ensemble_member_states).mean(axis=0)
-        else:
-            raise ValueError('Unexpected input type when writing final states')
-        self.logger.debug('Writing Final State to Parquet')
-        pd.DataFrame(array, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
-        return
+    def _validate_router_configs(self) -> None:
+        # normalize single file strings to lists
+        self.conf['lateral_volume_files'] = self.conf.get('lateral_volume_files', [])
+        self.conf['runoff_depth_grids'] = self.conf.get('runoff_depth_grids', [])
+        self.conf['discharge_files'] = self.conf.get('discharge_files', [])
+        if isinstance(self.conf['lateral_volume_files'], (str, Path)):
+            self.conf['lateral_volume_files'] = [self.conf['lateral_volume_files'], ]
+        if isinstance(self.conf['runoff_depth_grids'], (str, Path)):
+            self.conf['runoff_depth_grids'] = [self.conf['runoff_depth_grids'], ]
+        if isinstance(self.conf['discharge_files'], (str, Path)):
+            self.conf['discharge_files'] = [self.conf['discharge_files'], ]
 
-    def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
-        self.logger.debug('Setting and validating time parameters')
-        self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
-        self.dt_discharge = self.conf.get('dt_discharge', self.dt_runoff)
-        self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
-        if not self.conf.get('dt_routing', 0):
-            self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
-        self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
+        # normalize runoff_depth_grids paths explicitly — key lacks 'file' so base loop won't catch it
+        self.conf['runoff_depth_grids'] = [os.path.abspath(p) for p in self.conf['runoff_depth_grids']]
 
-        signature = (self.dt_total, self.dt_runoff, self.dt_discharge, self.dt_routing,)
-        if self._network_time_signature == signature:
-            return
+        n_files = len(self.conf['lateral_volume_files']) + len(self.conf['runoff_depth_grids'])
+        if self.conf['lateral_volume_files'] and self.conf['runoff_depth_grids']:
+            raise ValueError('Provide either lateral_volume_files or runoff_depth_grids, not both')
+        if not len(self.conf['discharge_files']) == n_files:
+            raise ValueError('Number of discharge files must match the number of input files')
+        for file in self.conf['lateral_volume_files']:
+            if not os.path.exists(file):
+                raise FileNotFoundError(f'Catchment volume file not found at: {file}')
+        for file in self.conf['runoff_depth_grids']:
+            if not os.path.exists(file):
+                raise FileNotFoundError(f'Runoff depth grid file not found at: {file}')
+        for directory in set(os.path.dirname(os.path.abspath(file)) for file in self.conf['discharge_files']):
+            if not os.path.exists(directory):
+                raise NotADirectoryError(f'Output file directory not found at: {directory}')
+        if self.conf['runoff_depth_grids']:
+            if not self.conf.get('grid_weights_file'):
+                raise ValueError('grid_weights_file is required when using runoff_depth_grids')
+            if not os.path.exists(self.conf['grid_weights_file']):
+                raise FileNotFoundError('grid_weights_file not found')
 
-        try:
-            # check that time options have the correct sizes
-            assert self.dt_total >= self.dt_runoff, 'dt_total must be >= dt_runoff'
-            assert self.dt_total >= self.dt_discharge, 'dt_total must be >= dt_discharge'
-            assert self.dt_discharge >= self.dt_runoff, 'dt_discharge must be >= dt_runoff'
-            assert self.dt_runoff >= self.dt_routing, 'dt_runoff must be >= dt_routing'
-            # check that time options are evenly divisible
-            assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
-            assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
-            assert self.dt_discharge % self.dt_runoff == 0, 'dt_discharge must be an integer multiple of dt_runoff'
-            assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
-        except AssertionError as e:
-            self.logger.error(e)
-            raise AssertionError('Time options are not valid')
-
-        # set derived datetime parameters for computation cycles later
-        self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
-        self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
-        self.num_routing_steps = int(self.dt_total / self.dt_routing)
-
-        self._set_muskingum_coefficients(self.dt_routing)
-        self._network_time_signature = signature
-        return
+        if not self.conf['lateral_volume_files']:
+            del self.conf['lateral_volume_files']
+        if not self.conf['runoff_depth_grids']:
+            del self.conf['runoff_depth_grids']
 
     def _volumes_generator(self) -> GeneratorSignature:
-        if self.conf.get('catchment_volumes_files', False):
-            for volume_file, discharge_file in zip(self.conf['catchment_volumes_files'], self.conf['discharge_files']):
-                self.logger.info(f'Reading catchment volumes file: {volume_file}')
+        if self.conf.get('lateral_volume_files', False):
+            for volume_file, discharge_file in zip(self.conf['lateral_volume_files'], self.conf['discharge_files']):
+                self.logger.info(f'Reading catchment volume file: {volume_file}')
                 with xr.open_dataset(volume_file) as runoff_ds:
                     self.logger.debug('Reading time array')
                     dates = runoff_ds['time'].values.astype('datetime64[s]')
                     self.logger.debug('Reading volume array')
                     volumes_array = runoff_ds[self.conf['var_catchment_volume']].values
                 yield dates, volumes_array, volume_file, discharge_file
-        elif self.conf.get('runoff_depths_files', False):
-            for runoff_file, discharge_file in zip(self.conf['runoff_depths_files'], self.conf['discharge_files']):
-                self.logger.info(f'Calculating catchment volumes from runoff depths: {runoff_file}')
+        elif self.conf.get('runoff_depth_grids', False):
+            for runoff_file, discharge_file in zip(self.conf['runoff_depth_grids'], self.conf['discharge_files']):
+                self.logger.info(f'Calculating catchment volumes from runoff depth grid: {runoff_file}')
                 volumes_ds = depth_to_volume(
                     runoff_file,
-                    weight_table=self.conf['weight_table_file'],
+                    weight_table=self.conf['grid_weights_file'],
                     runoff_var=self.conf['var_runoff_depth'],
                     x_var=self.conf['var_x'],
                     y_var=self.conf['var_y'],
@@ -168,7 +119,7 @@ class TeleportMuskingum(AbstractRouter):
                 yield volumes_ds['time'].values, volumes_ds[
                     self.conf['var_catchment_volume']].values, runoff_file, discharge_file
         else:
-            raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
+            raise ValueError('No runoff data found in configs. Provide lateral_volume_files or runoff_depth_grids.')
 
     def route(self) -> Self:
         self.logger.info(f'Beginning routing')
@@ -204,6 +155,8 @@ class TeleportMuskingum(AbstractRouter):
             self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
         # write the final state to disc
+        if self.conf['input_type'] == 'ensemble':
+            self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
         self._write_final_state()
 
         t2 = datetime.datetime.now()
@@ -214,19 +167,19 @@ class TeleportMuskingum(AbstractRouter):
     def _router(self, dates: DatetimeArray, volumes: FloatArray) -> FloatArray:
         self.logger.debug('Getting initial state arrays')
         self._read_initial_state()
-        q_init, r_init = self.initial_state  # n x 1 arrays of initial discharges and runoff in each segment
+        q_init = self.channel_state
         self._ensemble_member_states = []
 
         # declare arrays for routing computations once to avoid repeated and duplicate allocations in the loop
         discharge_array = np.zeros((volumes.shape[0], self.A.shape[0]))
         q_t = np.empty_like(q_init, dtype=np.float64)
-        r_prev = np.empty_like(r_init, dtype=np.float64)
+        r_prev = np.zeros_like(q_init, dtype=np.float64)
         rhs = np.zeros(self.A.shape[0], dtype=np.float64)
         buffer = np.zeros(self.A.shape[0], dtype=np.float64)
         c2_r_t = np.zeros(self.A.shape[0], dtype=np.float64)
         interval_sum = np.zeros(self.A.shape[0], dtype=np.float64)
         q_t[:] = q_init
-        r_prev[:] = r_init
+        # r_prev[:] = r_init  todo: correct math to no longer use r_prev
 
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
@@ -257,11 +210,11 @@ class TeleportMuskingum(AbstractRouter):
 
         # if simulation type is ensemble, then do not overwrite the initial state
         if self.conf['input_type'] == 'sequential':
-            self.logger.debug('Updating Initial State for Next Sequential Computation')
-            self.initial_state = (q_t, r_prev)
+            self.logger.debug('Updating Channel State for Next Sequential Computation')
+            self.channel_state = q_t
         if self.conf['input_type'] == 'ensemble':
             self.logger.debug('Recording Member State for Final State Aggregation')
-            self._ensemble_member_states.append(np.array([q_t, r_prev]).T)
+            self._ensemble_member_states.append(q_t.copy())
 
         t2 = datetime.datetime.now()
         self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')

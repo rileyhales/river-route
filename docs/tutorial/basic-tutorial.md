@@ -16,13 +16,13 @@ tutorial explain the process of preparing these files.
 
 Three routers are available:
 
-- **`TeleportMuskingum`** (recommended for most use cases): routes runoff volumes or depths directly into river channel inlets at each timestep.
+- **`Muskingum`**: pure channel routing with no lateral inflows. Routes an existing discharge state forward in time. Requires
+  an explicit initial state, `dt_routing`, and `dt_total`. Use this when your lateral inflows are already handled elsewhere.
+- **`TeleportMuskingum`**: routes runoff volumes or depths directly into river channel inlets at each timestep.
   This is what the `rr` CLI command uses.
 - **`UnitMuskingum`**: same as `TeleportMuskingum` but passes each timestep of runoff through a unit hydrograph transformer before adding
   it to channel routing. Requires additional routing parameters (`tc`, `area_sqm`). See the
   [Unit Hydrograph Routing tutorial](unit-hydrograph-routing.md) for details.
-- **`Muskingum`** (advanced): pure channel routing with no lateral inflows. Routes an existing discharge state forward in time. Requires
-  an explicit initial state, `dt_routing`, and `dt_total`. Use this when your lateral inflows are already handled elsewhere.
 
 This tutorial uses `TeleportMuskingum`. The same workflow applies to `UnitMuskingum` with the additional routing
 parameter columns (`tc`, `area_sqm`) and `uh_type` config key.
@@ -42,8 +42,7 @@ At runtime, routing is a coordinated pipeline, not a single equation call:
 5. Write routed discharge and optional final state for restart
 
 For `TeleportMuskingum`, lateral inflow enters the channel equation directly.
-For `UnitMuskingum`, lateral inflow is first transformed through a unit hydrograph (`tc`, `area_sqm`),
-then added to channel routing.
+For `UnitMuskingum`, lateral inflow is first transformed through a unit hydrograph (`tc`, `area_sqm`), then added to channel routing.
 
 Understanding this sequence helps isolate issues:
 
@@ -196,7 +195,7 @@ enter them into a YAML file that looks like this example.
 
 ```yaml
 routing_params_file: '/path/to/params.parquet'
-catchment_volumes_files: '/path/to/volumes.nc'
+lateral_volume_files: '/path/to/volumes.nc'
 discharge_files: '/path/to/discharges.nc'
 ```
 
@@ -211,21 +210,9 @@ import river_route as rr
 
 config_file_path = '/path/to/config.yaml'
 
-m = (
-    rr
-    .TeleportMuskingum(config_file_path)
-    .route()
-)
-```
-
-For Unit-Muskingum with SCS triangular unit hydrograph transformation:
-
-```python
-import river_route as rr
-
 (
     rr
-    .UnitMuskingum('/path/to/config.yaml')
+    .Muskingum(config_file_path)
     .route()
 )
 ```

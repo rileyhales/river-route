@@ -44,7 +44,7 @@ output_files = ['discharges_member_1.nc',
 def route(input_file: str, output_file: str) -> None:
     rr.TeleportMuskingum(
         routing_params_file=routing_params_file,
-        catchment_volumes_files=input_file,
+        lateral_volume_files=input_file,
         discharge_files=output_file,
     ).route()
 
@@ -58,7 +58,7 @@ if __name__ == '__main__':
 
 Ensembles are often used for forecast simulations. Forecast lead times are typically several days or weeks long but new forecasts are generated one 
 or more times a day. In this case, each day that your route data, you want to initialize at +24 hours from the previous forecast's initial time 
-instead of the final time step. To get a final state at a specific time step instead of the final step, you should not provide a `final_state_file` 
+instead of the final time step. To get a final state at a specific time step instead of the final step, you should not provide a `final_channel_state_file`
 value. Instead, write a custom output function which write the routed discharge to disc and also selects values at a specific time step to write to a 
 final state file while the values are still in memory. This is the most efficient method since you avoid needing to load and filter the outputs in a 
 separate process. Your custom function will need to know the datetime of the next simulation or the number of timesteps after initialization which 

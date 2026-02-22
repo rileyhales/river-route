@@ -1,1 +1,1 @@
-{% include-markdown "../LICENSE.txt" %}
+{% include "../LICENSE.txt" %}

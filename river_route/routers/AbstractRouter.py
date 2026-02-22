@@ -41,7 +41,7 @@ class AbstractRouter(ABC):
     lhs_factorized: FactorizedSolveFn  # callable factorized left hand side matrix for direct
 
     # State variables
-    initial_state: tuple[FloatArray, FloatArray]  # Q init, R init
+    channel_state: FloatArray
 
     # Time options
     dt_total: float
@@ -104,10 +104,6 @@ class AbstractRouter(ABC):
         self.logger.debug('Logger initialized')
         return
 
-    @abstractmethod
-    def _validate_router_configs(self) -> None:
-        """Router-specific config validation. Called at the start of _validate_configs before common checks."""
-
     def _validate_configs(self) -> None:
         self.logger.debug('Validating configs file')
         self._validate_router_configs()
@@ -123,11 +119,11 @@ class AbstractRouter(ABC):
             raise ValueError('Runoff type not recognized')
 
         # if the initial state was provided but is falsey then remove it so future checks behave properly
-        if 'initial_state_file' in self.conf and not self.conf['initial_state_file']:
-            del self.conf['initial_state_file']
-        if self.conf.get('initial_state_file', ''):
-            if not os.path.exists(self.conf['initial_state_file']):
-                raise FileNotFoundError('Initial state file not found')
+        if 'channel_state_file' in self.conf and not self.conf['channel_state_file']:
+            del self.conf['channel_state_file']
+        if self.conf.get('channel_state_file', ''):
+            if not os.path.exists(self.conf['channel_state_file']):
+                raise FileNotFoundError('channel_state_file not found')
 
         # convert all relative paths to absolute paths (after subclass has populated all file keys)
         for arg in [k for k in self.conf.keys() if 'file' in k]:
@@ -136,6 +132,10 @@ class AbstractRouter(ABC):
             elif isinstance(self.conf[arg], (str, Path)):
                 self.conf[arg] = os.path.abspath(self.conf[arg])
         return
+
+    @abstractmethod
+    def _validate_router_configs(self) -> None:
+        """Router-specific config validation. Called at the start of _validate_configs before common checks."""
 
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
         self.logger.debug('Calculating Muskingum coefficients')
@@ -160,30 +160,24 @@ class AbstractRouter(ABC):
         return
 
     def _read_initial_state(self) -> None:
-        if hasattr(self, 'initial_state'):
+        if hasattr(self, 'channel_state'):
             return
 
-        state_file = self.conf.get('initial_state_file', '')
+        state_file = self.conf.get('channel_state_file', '')
         if state_file == '':
-            # todo raise error on muskingum but warning on others? but avoid duplicating code?
-            # raise RuntimeError('initial_state_file not provided. Cannot route without water in the channels')
-            self.logger.warning('initial_state_file not provided. Defaulting to zero initial conditions')
-            initial_state = (np.zeros(self.A.shape[0], dtype=np.float64), np.zeros(self.A.shape[0], dtype=np.float64))
-            self.initial_state = initial_state
+            self.logger.warning('channel_state_file not provided. Defaulting to zero initial conditions')
+            self.channel_state = np.zeros(self.A.shape[0], dtype=np.float64)
             return
         self.logger.debug('Reading Initial State from Parquet')
-        initial_state = pd.read_parquet(state_file).values
-        initial_state = (initial_state[:, 0].flatten(), initial_state[:, 1].flatten())
-        self.initial_state = initial_state
+        self.channel_state = pd.read_parquet(state_file).values.flatten().astype(np.float64, copy=False)
         return
 
     def _write_final_state(self) -> None:
-        final_state_file = self.conf.get('final_state_file', '')
+        final_state_file = self.conf.get('final_channel_state_file', '')
         if final_state_file == '':
             return
         self.logger.debug('Writing Final State to Parquet')
-        array = np.array(self.initial_state).T
-        pd.DataFrame(array, columns=['Q', 'R']).to_parquet(self.conf['final_state_file'])
+        pd.DataFrame({'Q': self.channel_state}).to_parquet(self.conf['final_channel_state_file'])
         return
 
     @abstractmethod
@@ -217,6 +211,43 @@ class AbstractRouter(ABC):
             raise ValueError(
                 f'routing_params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
         self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
+        return
+
+    def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
+        self.logger.debug('Setting and validating time parameters')
+        self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
+        self.dt_discharge = self.conf.get('dt_discharge', self.dt_runoff)
+        self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
+        if not self.conf.get('dt_routing', 0):
+            self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
+        self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
+
+        signature = (self.dt_total, self.dt_runoff, self.dt_discharge, self.dt_routing,)
+        if self._network_time_signature == signature:
+            return
+
+        try:
+            # check that time options have the correct sizes
+            assert self.dt_total >= self.dt_runoff, 'dt_total must be >= dt_runoff'
+            assert self.dt_total >= self.dt_discharge, 'dt_total must be >= dt_discharge'
+            assert self.dt_discharge >= self.dt_runoff, 'dt_discharge must be >= dt_runoff'
+            assert self.dt_runoff >= self.dt_routing, 'dt_runoff must be >= dt_routing'
+            # check that time options are evenly divisible
+            assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
+            assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
+            assert self.dt_discharge % self.dt_runoff == 0, 'dt_discharge must be an integer multiple of dt_runoff'
+            assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
+        except AssertionError as e:
+            self.logger.error(e)
+            raise AssertionError('Time options are not valid')
+
+        # set derived datetime parameters for computation cycles later
+        self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
+        self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
+        self.num_routing_steps = int(self.dt_total / self.dt_routing)
+
+        self._set_muskingum_coefficients(self.dt_routing)
+        self._network_time_signature = signature
         return
 
     def _write_discharges(self,
