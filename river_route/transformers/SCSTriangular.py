@@ -1,7 +1,7 @@
 import numpy as np
 
-from .AbstractBaseTransformer import AbstractBaseTransformer
-from ..typing import FloatArray
+from .AbstractTransformer import AbstractBaseTransformer
+from ..types import FloatArray
 
 __all__ = ['SCSUnitHydrograph', ]
 
@@ -73,7 +73,7 @@ class SCSUnitHydrograph(AbstractBaseTransformer):
         # Clamping to tb[j] makes t_edges[i,j] == tb[j] for all i >= n_steps[j],
         # so np.diff produces zero for those padding rows automatically.
         i_row = np.arange(max_steps + 1, dtype=np.float64)[:, np.newaxis]  # (max_steps+1, 1)
-        t_edges = np.minimum(i_row * self.dt, tb)                           # (max_steps+1, n_basins)
+        t_edges = np.minimum(i_row * self.dt, tb)  # (max_steps+1, n_basins)
 
         # Cumulative integral u_cum(t) = ∫₀ᵗ u(s) ds of the triangular UH, vectorized over all basins:
         #   rising limb  (0 ≤ t ≤ tp): u(t) = qp * t / tp

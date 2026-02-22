@@ -93,11 +93,11 @@ Two initialization paths are available:
 title: UnitMuskingum Transformer Initialization
 ---
 graph TD
-    A{uh_kernel\nprovided?} -->|Yes| B[Transformer.from_kernel]
+    A{uh_kernel_file\nprovided?} -->|Yes| B[Transformer.from_kernel]
     A -->|No| C{uh_type}
     C -->|'scs'| D[SCSUnitHydrograph.__init__]
     C -->|custom| E[set_transformer injection]
-    B --> F{uh_state\nprovided?}
+    B --> F{uh_state_file\nprovided?}
     D --> F
     E --> F
     F -->|Yes| G[set_state from parquet]

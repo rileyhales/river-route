@@ -1,5 +1,5 @@
-from .AbstractBaseTransformer import AbstractBaseTransformer
-from ..typing import FloatArray
+from .AbstractTransformer import AbstractBaseTransformer
+from ..types import FloatArray
 
 __all__ = ['Transformer', ]
 

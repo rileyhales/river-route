@@ -6,7 +6,7 @@ import pandas as pd
 import scipy
 import xarray as xr
 
-from .typing import PathInput
+from .types import PathInput
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def adjacency_matrix(river_ids: np.ndarray, downstream_ids: np.ndarray) -> scipy
     row_indices: list[int] = []
     col_indices: list[int] = []
     for upstream_idx, downstream_river_id in enumerate(downstream_ids.tolist()):
-        if downstream_river_id == -1:
+        if downstream_river_id < 0:
             continue
         if downstream_river_id not in river_index:
             raise ValueError(f'Unknown downstream_river_id: {downstream_river_id}')

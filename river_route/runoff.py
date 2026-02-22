@@ -8,7 +8,7 @@ import shapely.ops
 import xarray as xr
 
 from .__metadata__ import __version__
-from .typing import PathInput
+from .types import PathInput
 
 __all__ = [
     # for making grid_weights

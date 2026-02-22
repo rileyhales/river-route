@@ -1,10 +1,10 @@
 from typing import Callable
 
-from ..typing import ConfigDict
-from ..typing import DatetimeArray
-from ..typing import FloatArray
-from ..typing import IntArray
-from ..typing import PathInput
+from ..types import ConfigDict
+from ..types import DatetimeArray
+from ..types import FloatArray
+from ..types import IntArray
+from ..types import PathInput
 
 WriteDischargesFn = Callable[[DatetimeArray, FloatArray, PathInput, PathInput], None]
 FactorizedSolveFn = Callable[[FloatArray], FloatArray]

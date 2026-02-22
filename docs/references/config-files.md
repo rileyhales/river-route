@@ -3,7 +3,7 @@
 `river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
 All three routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`) share the same base config keys.
 `TeleportMuskingum` adds support for multiple files and ensemble mode. `UnitMuskingum` inherits all
-`TeleportMuskingum` keys and adds transformer-specific keys (`uh_type`, `uh_kernel`, `uh_state`).
+`TeleportMuskingum` keys and adds transformer-specific keys (`uh_type`, `uh_kernel_file`, `uh_state_file`).
 
 1. Paths to input and output files
 2. Routing and timestep options
@@ -50,8 +50,8 @@ The following table is the full set of recognized keys for `TeleportMuskingum` a
 | `runoff_depths_files`     | Conditionally          | file path or list[file path] | Input netCDF runoff depth file(s). Use this or `catchment_volumes_files`. |
 | `weight_table_file`       | Conditionally          | file path                    | Required if `runoff_depths_files` is provided.                            |
 | `uh_type`                 | Conditionally (Unit)   | string                       | Built-in transformer name. Currently `'scs'`.                             |
-| `uh_kernel`               | No (Unit only)         | file path                    | Pre-computed transformer kernel parquet `(n_basins, n_time_steps)`.       |
-| `uh_state`                | No (Unit only)         | file path                    | Warm-start transformer state parquet `(n_basins, n_time_steps)`.          |
+| `uh_kernel_file`               | No (Unit only)         | file path                    | Pre-computed transformer kernel parquet `(n_basins, n_time_steps)`.       |
+| `uh_state_file`                | No (Unit only)         | file path                    | Warm-start transformer state parquet `(n_basins, n_time_steps)`.          |
 | `input_type`              | No                     | string                       | `sequential` or `ensemble`. Default: `sequential`.                        |
 | `runoff_type`             | No                     | string                       | `incremental` or `cumulative`. Default: `incremental`.                    |
 | `dt_total`                | No                     | integer                      | Total simulation duration in seconds. Defaults to input duration.         |
@@ -85,8 +85,8 @@ blank = not used by that router.
 | `runoff_depths_files`     |           | Required*         | Required*     |
 | `weight_table_file`       |           | optional          | optional      |
 | `uh_type`                 |           |                   | Required**    |
-| `uh_kernel`               |           |                   | optional      |
-| `uh_state`                |           |                   | optional      |
+| `uh_kernel_file`               |           |                   | optional      |
+| `uh_state_file`                |           |                   | optional      |
 | `dt_routing`              | Required  | optional          | optional      |
 | `dt_discharge`            | optional  | optional          | optional      |
 | `dt_total`                | Required  | optional          | optional      |
@@ -109,4 +109,4 @@ blank = not used by that router.
 
 *Exactly one of `catchment_volumes_files` or `runoff_depths_files` must be provided.
 
-**`uh_type` is required unless a transformer is injected via `set_transformer()` or `uh_kernel` is provided.
+**`uh_type` is required unless a transformer is injected via `set_transformer()` or `uh_kernel_file` is provided.

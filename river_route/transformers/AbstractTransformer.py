@@ -5,7 +5,7 @@ from typing import Self
 import numpy as np
 import pandas as pd
 
-from ..typing import FloatArray, PathInput
+from ..types import FloatArray, PathInput
 
 __all__ = ['AbstractBaseTransformer', ]
 
@@ -29,9 +29,7 @@ class AbstractBaseTransformer(ABC):
     the unit hydrograph is a function that describes how runoff from a single time step of rainfall (R=1) translates
     into flow at the outlet over time. When we discretize this function into time steps of size dt, we need to compute
     the average flow that would occur in each time step due to that initial runoff. This means integrating the unit
-    hydrograph function over each time step interval and dividing by dt to get the average flow. For example, if the
-    unit hydrograph is defined as a continuous function u(t), then the value in row i of column j should equal the
-    integral of u(t) from t=i*dt to t=(i+1)*dt, divided by dt to get the average flow over that time step.
+    hydrograph function over each time step interval and dividing by dt to get the average flow.
 
     Notes:
     1. The kernel may be very sparse if there is a big difference between the Tc of the longest and shortest basins.

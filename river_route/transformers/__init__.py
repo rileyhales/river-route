@@ -1,4 +1,4 @@
-from .AbstractBaseTransformer import AbstractBaseTransformer
+from .AbstractTransformer import AbstractBaseTransformer
 from .Transformer import Transformer
 from .SCSTriangular import SCSUnitHydrograph
 

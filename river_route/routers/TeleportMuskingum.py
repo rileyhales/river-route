@@ -1,16 +1,15 @@
 import datetime
-from typing import Any, Generator
+import os
+from pathlib import Path
+from typing import Any, Generator, Self
 
 import numpy as np
 import pandas as pd
 import tqdm
 import xarray as xr
-from scipy.sparse import diags
-from scipy.sparse import eye
-from scipy.sparse.linalg import factorized
 
-from .Muskingum import Muskingum
-from .typing import FloatArray, DatetimeArray, PathInput
+from . import AbstractRouter
+from .types import FloatArray, DatetimeArray, PathInput
 from ..runoff import depth_to_volume
 
 __all__ = ['TeleportMuskingum', ]
@@ -18,7 +17,7 @@ __all__ = ['TeleportMuskingum', ]
 GeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
 
 
-class TeleportMuskingum(Muskingum):
+class TeleportMuskingum(AbstractRouter):
     """
     A class for creating a "Teleport" Muskingum model.
 
@@ -44,7 +43,44 @@ class TeleportMuskingum(Muskingum):
         for each river segment. Must match the number of input files (catchment_volumes_files or runoff_depths_files).
         See docs.
     """
-    _network_time_signature: tuple[Any, ...] | None = None  # track if sequential runoffs use the same routing matrices
+    _network_time_signature: tuple[Any, ...] | None = None
+
+    def _validate_router_configs(self) -> None:
+        # normalize single file strings to lists
+        self.conf['catchment_volumes_files'] = self.conf.get('catchment_volumes_files', [])
+        self.conf['runoff_depths_files'] = self.conf.get('runoff_depths_files', [])
+        self.conf['discharge_files'] = self.conf.get('discharge_files', [])
+        if isinstance(self.conf['catchment_volumes_files'], (str, Path)):
+            self.conf['catchment_volumes_files'] = [self.conf['catchment_volumes_files'], ]
+        if isinstance(self.conf['runoff_depths_files'], (str, Path)):
+            self.conf['runoff_depths_files'] = [self.conf['runoff_depths_files'], ]
+        if isinstance(self.conf['discharge_files'], (str, Path)):
+            self.conf['discharge_files'] = [self.conf['discharge_files'], ]
+
+        n_files = len(self.conf['catchment_volumes_files']) + len(self.conf['runoff_depths_files'])
+        if self.conf['catchment_volumes_files'] and self.conf['runoff_depths_files']:
+            raise ValueError('Provide either catchment volumes files or runoff depths files, not both')
+        if not len(self.conf['discharge_files']) == n_files:
+            raise ValueError('Number of discharge files must match the number of input files (volumes or depths)')
+        for file in self.conf['catchment_volumes_files']:
+            if not os.path.exists(file):
+                raise FileNotFoundError(f'Catchment volumes file not found at: {file}')
+        for file in self.conf['runoff_depths_files']:
+            if not os.path.exists(file):
+                raise FileNotFoundError(f'Runoff depths file not found at: {file}')
+        for directory in set(os.path.dirname(os.path.abspath(file)) for file in self.conf['discharge_files']):
+            if not os.path.exists(directory):
+                raise NotADirectoryError(f'Output file directory not found at: {directory}')
+        if self.conf['runoff_depths_files']:
+            if not self.conf.get('weight_table_file'):
+                raise ValueError('weight_table_file is required when using runoff_depths_files')
+            if not os.path.exists(self.conf['weight_table_file']):
+                raise FileNotFoundError('Weight table file not found')
+
+        if not self.conf['catchment_volumes_files']:
+            del self.conf['catchment_volumes_files']
+        if not self.conf['runoff_depths_files']:
+            del self.conf['runoff_depths_files']
 
     # State variables
     _ensemble_member_states: list[FloatArray]  # for ensemble routing, stores member states for computing final state
@@ -102,26 +138,7 @@ class TeleportMuskingum(Muskingum):
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
 
-        self.logger.debug('Calculating network and time dependent vectors')
-        dt_div_k = self.dt_routing / self.k
-        denominator = dt_div_k + (2 * (1 - self.x))
-        _2x = 2 * self.x
-        self.c1 = (dt_div_k + _2x) / denominator
-        self.c2 = (dt_div_k - _2x) / denominator
-        self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
-
-        # sum of coefficients should be 1 (or arbitrarily close) for all segments
-        if not np.allclose(self.c1 + self.c2 + self.c3, 1):
-            self.logger.warning('Muskingum coefficients do not sum to 1')
-            self.logger.debug(f'c1: {self.c1}')
-            self.logger.debug(f'c2: {self.c2}')
-            self.logger.debug(f'c3: {self.c3}')
-            raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
-
-        self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)
-        self.lhs = self.lhs.tocsc()
-        self.logger.info('Calculating factorized LHS matrix')
-        self.lhs_factorized = factorized(self.lhs)
+        self._set_muskingum_coefficients(self.dt_routing)
         self._network_time_signature = signature
         return
 
@@ -153,12 +170,7 @@ class TeleportMuskingum(Muskingum):
         else:
             raise ValueError('No runoff data found in configs. Provide catchment volumes or runoff depths.')
 
-    def route(self) -> 'TeleportMuskingum':
-        """
-
-        Returns:
-
-        """
+    def route(self) -> Self:
         self.logger.info(f'Beginning routing')
         t1 = datetime.datetime.now()
 

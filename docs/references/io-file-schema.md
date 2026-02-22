@@ -130,18 +130,18 @@ The parquet state file must contain 2 columns in river order:
 ## UnitMuskingum Transformer State Files (Optional)
 
 ```yaml
-uh_kernel: '/path/to/kernel.parquet'
-uh_state:  '/path/to/state.parquet'
+uh_kernel_file: '/path/to/kernel.parquet'
+uh_state_file:  '/path/to/state.parquet'
 ```
 
 `UnitMuskingum` can optionally load a pre-computed transformer kernel and/or warm-start the transformer state
 from parquet files. Both are stored in **tall format**: shape `(n_basins, n_time_steps)`, one row per basin.
 The router transposes these to the internal `(n_time_steps, n_basins)` layout on load.
 
-- `uh_kernel`: skip the kernel computation step and use a previously saved kernel instead.
+- `uh_kernel_file`: skip the kernel computation step and use a previously saved kernel instead.
   Useful when `tc`/`area_sqm` are fixed and you want to avoid recomputing on every run.
-- `uh_state`: warm-start the transformer's rolling state buffer from a prior run.
-  Only meaningful when `uh_kernel` is also provided.
+- `uh_state_file`: warm-start the transformer's rolling state buffer from a prior run.
+  Only meaningful when `uh_kernel_file` is also provided.
 
 Use `transformer.save_kernel(path)` to write a kernel produced by `SCSUnitHydrograph` or any other
 `AbstractBaseTransformer` subclass.
