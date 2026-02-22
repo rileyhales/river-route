@@ -6,7 +6,7 @@ Depending on your preference, you may want to generate many config files in adva
 future use.
 
 The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments
-to the `TeleportMuskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file
+to the `RapidMuskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file
 instead.
 
 ```python
@@ -29,7 +29,7 @@ os.makedirs(outputs, exist_ok=True)
 
 m = (
     rr
-    .TeleportMuskingum(**{
+    .RapidMuskingum(**{
         'routing_params_file': params_file,
         'lateral_volume_files': volume_files,
         'discharge_files': output_files,
@@ -74,7 +74,7 @@ def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .TeleportMuskingum('../../examples/config.yaml')
+    .RapidMuskingum('../../examples/config.yaml')
     .set_write_discharges(custom_write_discharges)
     .route()
 )
@@ -100,7 +100,7 @@ def write_discharges_to_sqlite(dates, discharge_array, discharge_file: str, runo
 
 (
     rr
-    .TeleportMuskingum('config.yaml')
+    .RapidMuskingum('config.yaml')
     .set_write_discharges(write_discharges_to_sqlite)
     .route()
 )
@@ -124,7 +124,7 @@ def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .TeleportMuskingum('config.yaml')
+    .RapidMuskingum('config.yaml')
     .set_write_discharges(append_to_existing_file)
     .route()
 )
@@ -149,7 +149,7 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
 
 (
     rr
-    .TeleportMuskingum('config.yaml')
+    .RapidMuskingum('config.yaml')
     .set_write_discharges(save_partial_results)
     .route()
 )

@@ -1,4 +1,4 @@
 from .AbstractRouter import AbstractRouter
 from .Muskingum import Muskingum
-from .TeleportMuskingum import TeleportMuskingum
+from .RapidMuskingum import RapidMuskingum
 from .UnitMuskingum import UnitMuskingum

@@ -1,6 +1,6 @@
 import argparse
 
-from .routers import TeleportMuskingum
+from .routers import RapidMuskingum
 
 
 def main():
@@ -18,5 +18,5 @@ def main():
     args = parser.parse_args()
 
     if args.config:
-        return TeleportMuskingum(args.config).route()
+        return RapidMuskingum(args.config).route()
     return parser.print_help()

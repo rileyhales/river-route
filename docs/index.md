@@ -10,7 +10,7 @@ Three routers are available:
 | Router              | Description                                                                                                   |
 |---------------------|---------------------------------------------------------------------------------------------------------------|
 | `Muskingum`         | Channel routing with no lateral inflows.                                                                      |
-| `TeleportMuskingum` | Overland runoff placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing.     |
+| `RapidMuskingum` | Overland runoff placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing.     |
 | `UnitMuskingum`     | Overland runoff transformed by a pluggable unit hydrograph before channel routing. Muskingum channel routing. |
 
 ## Start Here
@@ -62,7 +62,7 @@ graph LR
     direction TB
     a[Build Adjacency Matrix] --> b
     b[Factorize LHS Matrix] --> c
-    c[Read Volume/Depth Array TeleportMuskingum & UnitMuskingum] --> d
+    c[Read Volume/Depth Array RapidMuskingum & UnitMuskingum] --> d
     d[Apply UH Transform UnitMuskingum only] --> e
     e[Iterate Routing Timesteps] --> f
     f[Solve Muskingum System] --> g
@@ -93,12 +93,9 @@ Two initialization paths are available:
 title: UnitMuskingum Transformer Initialization
 ---
 graph TD
-    A{uh_kernel_file provided?} -->|Yes| B[Transformer.from_kernel]
-    A -->|No| C{uh_type}
-    C -->|'scs'| D[SCSUnitHydrograph.__init__]
-    C -->|custom| E[set_transformer injection]
+    A{Transformer source} -->|transformer_kernel_file| B[Transformer.from_kernel]
+    A -->|set_transformer| E[injected transformer]
     B --> F{transformer_state_file\nprovided?}
-    D --> F
     E --> F
     F -->|Yes| G[set_state from parquet]
     F -->|No| H[zero initial state]
@@ -143,14 +140,14 @@ import river_route as rr
 # Option 1 - Config file only
 (
     rr
-    .TeleportMuskingum('/path/to/config.yaml')
+    .RapidMuskingum('/path/to/config.yaml')
     .route()
 )
 
 # Option 2 - Keyword arguments only
 (
     rr
-    .TeleportMuskingum(**{
+    .RapidMuskingum(**{
         'routing_params_file': '/path/to/routing_params.parquet',
         'lateral_volume_files': '/path/to/volumes.nc',
         'discharge_files': '/path/to/discharge.nc',
@@ -161,7 +158,7 @@ import river_route as rr
 # Option 3 - Config file with keyword argument overrides
 (
     rr
-    .TeleportMuskingum(
+    .RapidMuskingum(
         '/path/to/config.yaml',
         **{
             'lateral_volume_files': '/path/to/volumes.nc',

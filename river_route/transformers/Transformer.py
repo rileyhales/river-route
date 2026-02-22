@@ -19,7 +19,7 @@ class Transformer(AbstractBaseTransformer):
         .set_state('state.parquet')
     )
     """
-
+    # todo use sparse arrays and sparse convolutions if the percentage of zeros is significant or if the user says to
     def _build_kernel(self) -> FloatArray:
         raise NotImplementedError(
             'Transformer should only be instantiated with Transformer.from_kernel() with your pre-computed kernel.'

@@ -1,5 +1,5 @@
-# TeleportMuskingum example configuration
-# Use with: rr.TeleportMuskingum('config.yaml').route()
+# RapidMuskingum example configuration
+# Use with: rr.RapidMuskingum('config.yaml').route()
 
 # ---------------------------------------------------------------------------
 # Required

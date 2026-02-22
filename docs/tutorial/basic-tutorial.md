@@ -18,14 +18,14 @@ Three routers are available:
 
 - **`Muskingum`**: pure channel routing with no lateral inflows. Routes an existing discharge state forward in time. Requires
   an explicit initial state, `dt_routing`, and `dt_total`. Use this when your lateral inflows are already handled elsewhere.
-- **`TeleportMuskingum`**: routes runoff volumes or depths directly into river channel inlets at each timestep.
+- **`RapidMuskingum`**: routes runoff volumes or depths directly into river channel inlets at each timestep.
   This is what the `rr` CLI command uses.
-- **`UnitMuskingum`**: same as `TeleportMuskingum` but passes each timestep of runoff through a unit hydrograph transformer before adding
+- **`UnitMuskingum`**: same as `RapidMuskingum` but passes each timestep of runoff through a unit hydrograph transformer before adding
   it to channel routing. Requires additional routing parameters (`tc`, `area_sqm`). See the
   [Unit Hydrograph Routing tutorial](unit-hydrograph-routing.md) for details.
 
-This tutorial uses `TeleportMuskingum`. The same workflow applies to `UnitMuskingum` with the additional routing
-parameter columns (`tc`, `area_sqm`) and `uh_type` config key.
+This tutorial uses `RapidMuskingum`. The same workflow applies to `UnitMuskingum` with a transformer
+provided via `transformer_kernel_file` or `set_transformer()`. See the [Unit Hydrograph Routing tutorial](unit-hydrograph-routing.md).
 
 1. [Routing Parameters](../references/io-file-schema.md#routing-parameters) - parquet file
 2. [Catchment Volumes](../references/io-file-schema.md#catchment-volumes-or-runoff-depths) - netCDF file
@@ -41,7 +41,7 @@ At runtime, routing is a coordinated pipeline, not a single equation call:
 4. Apply routing equations over sub-steps (`dt_routing`) and aggregate to output interval (`dt_discharge`)
 5. Write routed discharge and optional final state for restart
 
-For `TeleportMuskingum`, lateral inflow enters the channel equation directly.
+For `RapidMuskingum`, lateral inflow enters the channel equation directly.
 For `UnitMuskingum`, lateral inflow is first transformed through a unit hydrograph (`tc`, `area_sqm`), then added to channel routing.
 
 Understanding this sequence helps isolate issues:

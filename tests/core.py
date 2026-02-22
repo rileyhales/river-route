@@ -123,10 +123,10 @@ def core_muskingum_feature_set() -> None:
     compare_with_logs(compare_netcdfs, catchment_volumes_file, expected_volumes_file)
 
     ############# 3 route catchment volumes to discharge using rr.LumpedMuskingum
-    log.info('Routing catchment volumes to discharge using rr.TeleportMuskingum')
+    log.info('Routing catchment volumes to discharge using rr.RapidMuskingum')
     (
         rr
-        .TeleportMuskingum(**{
+        .RapidMuskingum(**{
             'routing_params_file': routing_params_file,
             'catchment_volumes_files': catchment_volumes_file,
             'discharge_files': discharge_from_volumes_file,
@@ -137,7 +137,7 @@ def core_muskingum_feature_set() -> None:
     # 4 route depths and weights to discharge using rr.LumpedMuskingum
     (
         rr
-        .TeleportMuskingum(**{
+        .RapidMuskingum(**{
             'routing_params_file': routing_params_file,
             'weight_table_file': grid_weights_file,
             'runoff_depths_files': runoff_depths_file,

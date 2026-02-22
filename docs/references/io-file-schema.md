@@ -9,7 +9,7 @@ routing_params_file: '/path/to/params.parquet'
 The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
 Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-Required for all routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`):
+Required for all routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`):
 
 | Column                | Data Type | Description                                                |
 |-----------------------|-----------|------------------------------------------------------------|
@@ -18,18 +18,14 @@ Required for all routers (`Muskingum`, `TeleportMuskingum`, `UnitMuskingum`):
 | `k`                   | float     | Muskingum `k` parameter (length / velocity)                |
 | `x`                   | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
 
-Additional required columns for `UnitMuskingum`:
-
-| Column     | Data Type | Description                                           |
-|------------|-----------|-------------------------------------------------------|
-| `tc`       | float     | Time of concentration (seconds), must be non-negative |
-| `area_sqm` | float     | Catchment area in square meters, must be positive     |
-
 These routing parameters typically come from preprocessing and calibration workflows:
 
 1. topology (`river_id`, `downstream_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
-3. catchment response (`tc`, `area_sqm`) from GIS attributes and/or calibration
+
+`UnitMuskingum` does not require additional columns in `routing_params_file`. Catchment-specific parameters
+(e.g. `tc`, `area_sqm` for the SCS unit hydrograph) are consumed when building the transformer kernel in
+Python and are not read by the router itself.
 
 Generally, use physically derived first guesses then calibrate against observed discharge where available.
 
@@ -129,7 +125,7 @@ The parquet state file must contain 1 column in river order:
 ## UnitMuskingum Transformer State Files (Optional)
 
 ```yaml
-uh_kernel_file: '/path/to/kernel.parquet'
+transformer_kernel_file: '/path/to/kernel.parquet'
 transformer_state_file: '/path/to/state.parquet'
 ```
 
@@ -137,7 +133,7 @@ transformer_state_file: '/path/to/state.parquet'
 from parquet files. Both are stored in **tall format**: shape `(n_basins, n_time_steps)`, one row per basin.
 The router transposes these to the internal `(n_time_steps, n_basins)` layout on load.
 
-- `uh_kernel_file`: skip the kernel computation step and use a previously saved kernel instead. Note, the kernel depends on tc, area, **and the routing timestep**
+- `transformer_kernel_file`: skip the kernel computation step and use a previously saved kernel instead. Note, the kernel depends on tc, area, **and the routing timestep**
 - `transformer_state_file`: warm-start the transformer's rolling state buffer from a prior run. Note, the **state depends on the routing timestep**!
 
 Use `transformer.save_kernel(path)` to write a kernel produced by `SCSUnitHydrograph` or any other

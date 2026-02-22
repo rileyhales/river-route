@@ -2,85 +2,55 @@
 
 `UnitMuskingum` applies a **unit hydrograph (UH) transformation** to each timestep of runoff before it
 enters the Muskingum channel routing equations. This adds catchment-scale travel time and attenuation so
-that runoff is spread over time before reaching the channel, rather than being teleported instantly to the
-inlet. Unlike `TeleportMuskingum`, it takes per-catchment runoff **depths** as input (not volumes) — the
-transformer handles depth × area and the temporal convolution internally.
+that runoff is spread over time before reaching the channel, rather than being instantly placed at the
+inlet. The router delegates all transformation logic to a pluggable **transformer** object. A transformer must be
+provided before calling `route()`, via one of two paths:
 
-The router delegates all transformation logic to a pluggable **transformer** object. Two options are available:
-use the built-in SCS triangular unit hydrograph, or inject your own transformer class.
+- **`transformer_kernel_file` in config** — load a pre-computed kernel parquet at runtime
+- **`set_transformer()` in Python** — inject a built or custom transformer directly
 
-## Additional Routing Parameters
+## Option A: Pre-computed Kernel File
 
-`UnitMuskingum` requires two columns beyond the base routing parameters:
+Build a kernel once in Python, save it to disk, then point the config at the file. This is the recommended
+approach for production runs where the network and timestep are fixed.
 
-| Column     | Data Type | Description                                          |
-|------------|-----------|------------------------------------------------------|
-| `tc`       | float     | Time of concentration (seconds), must be ≥ 0        |
-| `area_sqm` | float     | Catchment area in square metres, must be > 0         |
+```python
+import numpy as np
+import river_route as rr
+from river_route.transformers import SCSUnitHydrograph
 
-## Option 1: Built-in SCS Triangular Unit Hydrograph
+# Read tc and area from your routing params (or any other source)
+import pandas as pd
 
-The SCS triangular UH derives a per-basin kernel from `tc` and `area_sqm` using the standard SCS equations:
+df = pd.read_parquet('params.parquet')
 
-- Lag time: `tl = 0.6 * tc`
-- Time to peak: `tp = tl + dt/2`
-- Time to base: `tb = 2.67 * tp`
-- Peak flow: `qp = 2 * area / tb`
+# Build and save the kernel once
+transformer = SCSUnitHydrograph(dt=3600, tc=df['tc'].values, area=df['area_sqm'].values)
+transformer.save_kernel('kernel.parquet')
+```
 
-The kernel is discretized as the average flow over each `dt` interval using the antiderivative of the
-triangular hydrograph, so volume is conserved exactly.
-
-Specify `uh_type: 'scs'` in your config file:
+Then route using only config:
 
 ```yaml
 routing_params_file: '/path/to/params.parquet'
 lateral_depth_files: '/path/to/depths.nc'
 discharge_files: '/path/to/discharge.nc'
-uh_type: 'scs'
+transformer_kernel_file: 'kernel.parquet'
 ```
 
 ```python
 import river_route as rr
 
-(
-    rr
-    .UnitMuskingum('config.yaml')
-    .route()
-)
+rr.UnitMuskingum('config.yaml').route()
 ```
 
-## Caching the Kernel
-
-For large networks with fixed `tc` and `area_sqm`, computing the kernel matrix every run is wasteful.
-Save it once and reload with `uh_kernel_file`:
-
-```python
-import river_route as rr
-from river_route.transformers import SCSUnitHydrograph
-
-# Compute and save the kernel once
-transformer = SCSUnitHydrograph(dt=3600, tc=tc_array, area=area_array)
-transformer.save_kernel('kernel.parquet')
-
-# Subsequent runs load from disk — no uh_type needed
-(
-    rr
-    .UnitMuskingum(
-        routing_params_file='params.parquet',
-        lateral_depth_files='volumes.nc',
-        discharge_files='discharge.nc',
-        uh_kernel_file='kernel.parquet',
-    )
-    .route()
-)
-```
-
-Optionally persist and reload the transformer **state** (the rolling convolution buffer) across runs:
+Optionally persist and reload the transformer **state** (the rolling convolution buffer) to warm-start
+a subsequent run:
 
 ```python
 # After routing, save the transformer state
 router = rr.UnitMuskingum('config.yaml').route()
-router._runoff_transformer.save_kernel('kernel.parquet')  # or skip if already saved
+router._runoff_transformer.save_state('state.parquet')
 
 # Next run: warm-start both kernel and state
 (
@@ -89,14 +59,37 @@ router._runoff_transformer.save_kernel('kernel.parquet')  # or skip if already s
         routing_params_file='params.parquet',
         lateral_depth_files='volumes_next.nc',
         discharge_files='discharge_next.nc',
-        uh_kernel_file='kernel.parquet',
+        transformer_kernel_file='kernel.parquet',
         transformer_state_file='state.parquet',
     )
     .route()
 )
 ```
 
-## Option 2: Custom Transformer
+## Option B: Dependency Injection
+
+Build a transformer in the same script and inject it with `set_transformer()`. Use this when building
+the kernel and routing in a single script, or when using a custom transformer class.
+
+```python
+import river_route as rr
+from river_route.transformers import SCSUnitHydrograph
+
+transformer = SCSUnitHydrograph(dt=3600, tc=tc_array, area=area_array)
+
+(
+    rr
+    .UnitMuskingum(
+        routing_params_file='params.parquet',
+        lateral_depth_files='depths.nc',
+        discharge_files='discharge.nc',
+    )
+    .set_transformer(transformer)
+    .route()
+)
+```
+
+## Custom Transformers
 
 You can supply any transformer that subclasses `AbstractBaseTransformer` and implements `_build_kernel()`.
 The base class handles all state management and calls `transform()` at each routing timestep — you only need
@@ -126,7 +119,7 @@ class LinearReservoirTransformer(AbstractBaseTransformer):
         t_edges = np.arange(max_steps + 1, dtype=np.float64)[:, np.newaxis] * self.dt
         # cumulative integral of (1/K)*exp(-t/K) = 1 - exp(-t/K)
         u_cum = 1.0 - np.exp(-t_edges / self.k_values)  # (max_steps+1, n_basins)
-        return np.diff(u_cum, axis=0) / self.dt           # (max_steps, n_basins)
+        return np.diff(u_cum, axis=0) / self.dt  # (max_steps, n_basins)
 
 
 transformer = LinearReservoirTransformer(k_values=k_array, dt=3600)
@@ -150,13 +143,13 @@ Custom transformer kernels can be saved and reloaded the same way as built-in on
 # Save
 transformer.save_kernel('my_kernel.parquet')
 
-# Reload via Transformer (no uh_type needed; skips _build_kernel)
+# Reload via Transformer (skips _build_kernel)
 from river_route.transformers import Transformer
 
 t = (
     Transformer
     .from_kernel(dt=3600, kernel='my_kernel.parquet')
-    .set_state('my_state.parquet')   # optional warm-start
+    .set_state('my_state.parquet')  # optional warm-start
 )
 
 (

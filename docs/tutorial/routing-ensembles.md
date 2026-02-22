@@ -7,16 +7,16 @@ difference is how the initial and final states are handled. For an individual ru
 routing step. In an ensemble simulation, you have many methods to combine the ensemble into a new next state. There are 2 methods for routing an ensemble of
 runoffs in river-route.
 
-Ensemble routing is supported by `TeleportMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
+Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
 
 1. In a loop or in concurrent/parallel jobs, route each member using same initial conditions and routing parameters for each job. Use the member number
    to make output file names unique and more readily searchable and sortable. Provide all configurations as normal without special considerations. In
-   this situation, you create a new `rr.TeleportMuskingum` instance for each member which each read configs and parameter files. However, you can process each
+   this situation, you create a new `rr.RapidMuskingum` instance for each member which each read configs and parameter files. However, you can process each
    member simultaneously which may be faster.
 2. Provide a list of input and output files and specify `input_type=ensemble` in your configs. This will route each member in the order given by the
    input list, one at a time. Each member will be initialized from the same final state and use the same routing parameters. The final state is still
    from the last routing step but is the average of the final step across all members, not just the first. In this situation, you create a single
-   instance of `rr.TeleportMuskingum`, read configs and parameter files only one time, but the members are processed sequentially which could be slow.
+   instance of `rr.RapidMuskingum`, read configs and parameter files only one time, but the members are processed sequentially which could be slow.
 
 ## Routing ensemble members simultaneously
 
@@ -42,7 +42,7 @@ output_files = ['discharges_member_1.nc',
 
 
 def route(input_file: str, output_file: str) -> None:
-    rr.TeleportMuskingum(
+    rr.RapidMuskingum(
         routing_params_file=routing_params_file,
         lateral_volume_files=input_file,
         discharge_files=output_file,
@@ -99,7 +99,7 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
     # option 2
     init_values = df.iloc[24, :].T  # for if you know the number of time steps after initialization to use
     init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
-    
+
     # continue with writing the full outputs
     ds_out = xr.Dataset(
         data_vars={'Q': (('time', 'river_id'), discharge_array)},
@@ -111,7 +111,7 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
 
 m = (
     rr
-    .TeleportMuskingum('your_config_file.yaml')
+    .RapidMuskingum('your_config_file.yaml')
     .set_write_discharges(custom_output_writer)  # set the custom output writer function
     .route()
 )

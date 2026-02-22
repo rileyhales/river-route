@@ -7,7 +7,7 @@
       show_root_heading: true
       show_source: false
 
-::: river_route.TeleportMuskingum
+::: river_route.RapidMuskingum
     handler: python
     options:
       members_order: source
