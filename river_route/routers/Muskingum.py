@@ -57,6 +57,7 @@ class Muskingum(AbstractRouter):
         self.logger.info('Beginning routing')
         t1 = datetime.datetime.now()
 
+        self._on_before_route()
         self._validate_configs()
         self._set_network_dependent_vectors()
         self.logger.debug(self)
@@ -92,6 +93,7 @@ class Muskingum(AbstractRouter):
         discharge_array = discharge_array.astype(np.float32, copy=False)
         self._write_discharges(dates, discharge_array, self.conf['discharge_files'][0])
         self._write_final_state()
+        self._on_after_route()
 
         t2 = datetime.datetime.now()
         self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')

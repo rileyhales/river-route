@@ -45,7 +45,7 @@ input data config keys, so a config file written for one cannot be used with the
 
 ## Required Config Keys
 
-| Config key                     | Description                                     |  Muskingum   |             RapidMuskingum             |               UnitMuskingum               |
+| Config key                     | Description                                     |  Muskingum   |              RapidMuskingum               |               UnitMuskingum               |
 |--------------------------------|-------------------------------------------------|:------------:|:-----------------------------------------:|:-----------------------------------------:|
 | **core**                       |                                                 |              |                                           |                                           |
 | `routing_params_file`          | Routing parameters parquet.                     | **Required** |               **Required**                |               **Required**                |

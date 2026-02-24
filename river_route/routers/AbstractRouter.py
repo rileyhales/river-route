@@ -6,7 +6,7 @@ import sys
 import traceback
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, Tuple
 
 import netCDF4 as nc
 import numpy as np
@@ -37,16 +37,18 @@ class AbstractRouter(ABC):
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
-    lhs: csc_matrix  # n x n - left hand side of matrix form of routing equation
-    lhs_factorized: FactorizedSolveFn  # callable factorized left hand side matrix for direct
+    lhs: csc_matrix  # n x n - left hand side of matrix form routing equation => f(A, c1)
+    lhs_factorized: FactorizedSolveFn  # callable factorized left hand side matrix for direct => f(lhs)
 
     # State variables
     channel_state: FloatArray
+    _network_time_signature: Tuple[Any, ...] | None = None  # check if time params change between computes
 
     # Time options
-    dt_total: float
-    dt_discharge: float
-    dt_routing: float
+    dt_routing: float  # compute time step, must be divisible into and <= min(dt_runoff, dt_discharge)
+    dt_runoff: float  # time between lateral inflows, must be 1) constant, divisible into and <= dt_total
+    dt_discharge: float  # time to average routed flows and save them, must be <=
+    dt_total: float  # how long to simulate,
 
     # methods that are overridable via dependency injection
     _write_discharges: WriteDischargesFn
@@ -131,6 +133,7 @@ class AbstractRouter(ABC):
                 self.conf[arg] = [os.path.abspath(path) for path in self.conf[arg]]
             elif isinstance(self.conf[arg], (str, Path)):
                 self.conf[arg] = os.path.abspath(self.conf[arg])
+        self._on_after_validate_configs()
         return
 
     @abstractmethod
@@ -211,6 +214,7 @@ class AbstractRouter(ABC):
             raise ValueError(
                 f'routing_params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
         self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
+        self._on_after_read_network()
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
@@ -284,6 +288,22 @@ class AbstractRouter(ABC):
             flow_var.aggregation_method = 'mean'
             flow_var.units = 'm3 s-1'
         return
+
+    def _on_before_route(self) -> None:
+        """Called at the start of route(), before validation. Default: no-op."""
+        pass
+
+    def _on_after_validate_configs(self) -> None:
+        """Called after _validate_configs(). Default: no-op."""
+        pass
+
+    def _on_after_read_network(self) -> None:
+        """Called after _set_network_dependent_vectors(). Default: no-op."""
+        pass
+
+    def _on_after_route(self) -> None:
+        """Called at the end of route(), after writing final state. Default: no-op."""
+        pass
 
     def set_write_discharges(self, func: WriteDischargesFn) -> Self:
         """

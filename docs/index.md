@@ -7,11 +7,11 @@ sparse-matrix solvers. It is designed for large networks of rivers and catchment
 
 Three routers are available:
 
-| Router              | Description                                                                                                   |
-|---------------------|---------------------------------------------------------------------------------------------------------------|
-| `Muskingum`         | Channel routing with no lateral inflows.                                                                      |
+| Router           | Description                                                                                                   |
+|------------------|---------------------------------------------------------------------------------------------------------------|
+| `Muskingum`      | Channel routing with no lateral inflows.                                                                      |
 | `RapidMuskingum` | Overland runoff placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing.     |
-| `UnitMuskingum`     | Overland runoff transformed by a pluggable unit hydrograph before channel routing. Muskingum channel routing. |
+| `UnitMuskingum`  | Overland runoff transformed by a pluggable unit hydrograph before channel routing. Muskingum channel routing. |
 
 ## Start Here
 

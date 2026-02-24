@@ -50,7 +50,7 @@ a subsequent run:
 ```python
 # After routing, save the transformer state
 router = rr.UnitMuskingum('config.yaml').route()
-router._runoff_transformer.save_state('state.parquet')
+router._Transformer.save_state('state.parquet')
 
 # Next run: warm-start both kernel and state
 (

@@ -1,22 +1,17 @@
 import datetime
-import os
-from pathlib import Path
-from typing import Any, Generator, Self, Tuple, List
+from typing import List
 
 import numpy as np
 import tqdm
 import xarray as xr
 
-from . import AbstractRouter
+from .AbstractTransformRouter import AbstractTransformRouter
 from .types import FloatArray, DatetimeArray, PathInput
-from ..runoff import depth_to_volume
 
 __all__ = ['RapidMuskingum', ]
 
-GeneratorSignature = Generator[Tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
 
-
-class RapidMuskingum(AbstractRouter):
+class RapidMuskingum(AbstractTransformRouter):
     """
     A class for creating a RAPID style Muskingum model.
 
@@ -30,138 +25,39 @@ class RapidMuskingum(AbstractRouter):
     - routing_params_file: path to a parquet file containing routing parameters for each river segment. See docs.
 
     # option 1
-    - catchment_volumes_files: list of 1 or more paths to netcdf files containing catchment volume time series for each
+    - lateral_volume_files: list of 1 or more paths to netcdf files containing catchment volume time series for each
         river segment at each time step. See docs.
     # option 2
-    - runoff_depths_files: list of 1 or more paths to netcdf files containing runoff depth time series for each river
-        segment at each time step. Must also have a corresponding weight_table_file. See docs.
-    - weight_table_file: path to a netCDF file containing the weights for converting runoff depths to volumes for each
-        river segment. Must accompany runoff_depths_files. See docs.
+    - runoff_depth_grids: list of 1 or more paths to netcdf files containing runoff depth time series for each river
+        segment at each time step. Must also have a corresponding grid_weights_file. See docs.
+    - grid_weights_file: path to a netCDF file containing the weights for converting runoff depths to volumes for each
+        river segment. Must accompany runoff_depth_grids. See docs.
 
     - discharge_files: list of 1 or more paths to netCDF files where the routed discharge time series will be written
-        for each river segment. Must match the number of input files (catchment_volumes_files or runoff_depths_files).
-        See docs.
+        for each river segment. Must match the number of input files. See docs.
     """
     # State variables
     _ensemble_member_states: List[FloatArray]  # for ensemble routing, stores member states for computing final state
-    _network_time_signature: Tuple[Any, ...] | None = None
 
     # Time options
-    dt_runoff: float
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
 
     def _validate_router_configs(self) -> None:
-        # normalize single file strings to lists
-        self.conf['lateral_volume_files'] = self.conf.get('lateral_volume_files', [])
-        self.conf['runoff_depth_grids'] = self.conf.get('runoff_depth_grids', [])
-        self.conf['discharge_files'] = self.conf.get('discharge_files', [])
-        if isinstance(self.conf['lateral_volume_files'], (str, Path)):
-            self.conf['lateral_volume_files'] = [self.conf['lateral_volume_files'], ]
-        if isinstance(self.conf['runoff_depth_grids'], (str, Path)):
-            self.conf['runoff_depth_grids'] = [self.conf['runoff_depth_grids'], ]
-        if isinstance(self.conf['discharge_files'], (str, Path)):
-            self.conf['discharge_files'] = [self.conf['discharge_files'], ]
+        self._validate_lateral_runoff_configs()
 
-        # normalize runoff_depth_grids paths explicitly — key lacks 'file' so base loop won't catch it
-        self.conf['runoff_depth_grids'] = [os.path.abspath(p) for p in self.conf['runoff_depth_grids']]
+    def _read_lateral_file(self, file_path: PathInput):
+        self.logger.info(f'Reading catchment volume file: {file_path}')
+        with xr.open_dataset(file_path) as ds:
+            return (ds['time'].values.astype('datetime64[s]'),
+                    ds[self.conf['var_catchment_volume']].values)
 
-        n_files = len(self.conf['lateral_volume_files']) + len(self.conf['runoff_depth_grids'])
-        if self.conf['lateral_volume_files'] and self.conf['runoff_depth_grids']:
-            raise ValueError('Provide either lateral_volume_files or runoff_depth_grids, not both')
-        if not len(self.conf['discharge_files']) == n_files:
-            raise ValueError('Number of discharge files must match the number of input files')
-        for file in self.conf['lateral_volume_files']:
-            if not os.path.exists(file):
-                raise FileNotFoundError(f'Catchment volume file not found at: {file}')
-        for file in self.conf['runoff_depth_grids']:
-            if not os.path.exists(file):
-                raise FileNotFoundError(f'Runoff depth grid file not found at: {file}')
-        for directory in set(os.path.dirname(os.path.abspath(file)) for file in self.conf['discharge_files']):
-            if not os.path.exists(directory):
-                raise NotADirectoryError(f'Output file directory not found at: {directory}')
-        if self.conf['runoff_depth_grids']:
-            if not self.conf.get('grid_weights_file'):
-                raise ValueError('grid_weights_file is required when using runoff_depth_grids')
-            if not os.path.exists(self.conf['grid_weights_file']):
-                raise FileNotFoundError('grid_weights_file not found')
-
-        if not self.conf['lateral_volume_files']:
-            del self.conf['lateral_volume_files']
-        if not self.conf['runoff_depth_grids']:
-            del self.conf['runoff_depth_grids']
-
-    def _volumes_generator(self) -> GeneratorSignature:
-        if self.conf.get('lateral_volume_files', False):
-            for volume_file, discharge_file in zip(self.conf['lateral_volume_files'], self.conf['discharge_files']):
-                self.logger.info(f'Reading catchment volume file: {volume_file}')
-                with xr.open_dataset(volume_file) as runoff_ds:
-                    self.logger.debug('Reading time array')
-                    dates = runoff_ds['time'].values.astype('datetime64[s]')
-                    self.logger.debug('Reading volume array')
-                    volumes_array = runoff_ds[self.conf['var_catchment_volume']].values
-                yield dates, volumes_array, volume_file, discharge_file
-        elif self.conf.get('runoff_depth_grids', False):
-            for runoff_file, discharge_file in zip(self.conf['runoff_depth_grids'], self.conf['discharge_files']):
-                self.logger.info(f'Calculating catchment volumes from runoff depth grid: {runoff_file}')
-                volumes_ds = depth_to_volume(
-                    runoff_file,
-                    weight_table=self.conf['grid_weights_file'],
-                    runoff_var=self.conf['var_runoff_depth'],
-                    x_var=self.conf['var_x'],
-                    y_var=self.conf['var_y'],
-                    time_var=self.conf['var_t'],
-                    river_id_var=self.conf['var_river_id'],
-                    cumulative=self.conf['runoff_type'] == 'cumulative'
-                )
-                yield volumes_ds['time'].values, volumes_ds[
-                    self.conf['var_catchment_volume']].values, runoff_file, discharge_file
-        else:
-            raise ValueError('No runoff data found in configs. Provide lateral_volume_files or runoff_depth_grids.')
-
-    def route(self) -> Self:
-        self.logger.info(f'Beginning routing')
-        t1 = datetime.datetime.now()
-
-        self._validate_configs()
-        self._set_network_dependent_vectors()
-        self.logger.debug(self)
-
-        for dates, volumes_array, runoff_file, discharge_file in self._volumes_generator():
-            self.logger.info('-' * 80)
-            self._set_network_and_time_dependent_vectors(dates)
-            volumes_array = volumes_array.astype(np.float64, copy=False)
-            np.divide(volumes_array, self.dt_runoff, out=volumes_array)  # convert volume -> volume/time
-            discharge_array = self._router(dates, volumes_array)
-
-            if self.dt_discharge > self.dt_runoff:
-                self.logger.info('Resampling dates and discharges to specified timestep')
-                discharge_array = (
-                    discharge_array
-                    .reshape((
-                        int(self.dt_total / self.dt_discharge),
-                        int(self.dt_discharge / self.dt_runoff),
-                        self.A.shape[0],
-                    ))
-                    .mean(axis=1)
-                )
-                dates = dates[::self.num_runoff_steps_per_discharge]
-
-            self.logger.info('Writing Discharge Array to File')
-            np.round(discharge_array, decimals=2, out=discharge_array)
-            discharge_array = discharge_array.astype(np.float32, copy=False)
-            self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
-
-        # write the final state to disc
-        if self.conf['input_type'] == 'ensemble':
-            self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
-        self._write_final_state()
-
-        t2 = datetime.datetime.now()
-        self.logger.info('All runoff files routed')
-        self.logger.info(f'Total job time: {(t2 - t1).total_seconds()}')
-        return self
+    def _prepare_lateral_array(self, array: FloatArray) -> FloatArray:
+        """Convert catchment volumes to flow rates (m³ -> m³/s) using the routing timestep."""
+        array = array.astype(np.float64, copy=False)
+        np.divide(array, self.dt_runoff, out=array)
+        return array
 
     def _router(self, dates: DatetimeArray, volumes: FloatArray) -> FloatArray:
         self.logger.debug('Getting initial state arrays')
