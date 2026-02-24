@@ -36,14 +36,6 @@ class RapidMuskingum(AbstractTransformRouter):
     - discharge_files: list of 1 or more paths to netCDF files where the routed discharge time series will be written
         for each river segment. Must match the number of input files. See docs.
     """
-    # State variables
-    _ensemble_member_states: List[FloatArray]  # for ensemble routing, stores member states for computing final state
-
-    # Time options
-    num_routing_steps: int
-    num_routing_steps_per_runoff: int
-    num_runoff_steps_per_discharge: int
-
     def _validate_router_configs(self) -> None:
         self._validate_lateral_runoff_configs()
 

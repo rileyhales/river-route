@@ -2,11 +2,12 @@ import datetime
 import os
 from abc import abstractmethod
 from pathlib import Path
-from typing import Generator, Self, Tuple
+from typing import Generator, Self, Tuple, List
 
 import numpy as np
 
 from .AbstractRouter import AbstractRouter
+from ..transformers import AbstractBaseTransformer
 from .types import DatetimeArray, FloatArray, PathInput
 from ..runoff import depth_to_volume
 
@@ -33,6 +34,16 @@ class AbstractTransformRouter(AbstractRouter):
       - _prepare_lateral_array(array) -> FloatArray  — pre-processing before _router (default: pass-through)
       - _on_runoff_file_start()  — called before _router on each file iteration (default: no-op)
     """
+    # State variables
+    _ensemble_member_states: List[FloatArray]  # for ensemble routing, stores member states for computing final state
+
+    # Time options
+    num_routing_steps: int
+    num_routing_steps_per_runoff: int
+    num_runoff_steps_per_discharge: int
+
+    # for unit hydrograph style convolutions
+    _Transformer: AbstractBaseTransformer | None = None
 
     @property
     def _lateral_water_files_key(self) -> str:

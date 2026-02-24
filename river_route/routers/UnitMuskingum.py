@@ -1,5 +1,5 @@
 import datetime
-from typing import Any, List, Self
+from typing import Any, Self
 
 import numpy as np
 import pandas as pd
@@ -14,16 +14,40 @@ __all__ = ['UnitMuskingum']
 
 
 class UnitMuskingum(AbstractTransformRouter):
-    # additional state variables
-    _ensemble_member_states: List[FloatArray]
+    """
+    A Muskingum router that applies a unit hydrograph transformation to lateral depth inputs before routing.
 
-    # Time options
-    num_routing_steps: int
-    num_routing_steps_per_runoff: int
-    num_runoff_steps_per_discharge: int
+    Runoff depths are first convolved with a unit hydrograph kernel (via a Transformer) to distribute overland
+    flow through time before it enters the channel network. The transformed lateral inflow is then routed between
+    river segments using the Muskingum method. This contrasts with RapidMuskingum, which assumes runoff enters
+    the channel uniformly over its input timestep with no overland travel time.
 
-    _Transformer: AbstractBaseTransformer | None = None
+    The Transformer can be supplied in two ways:
+      1. Set ``transformer_kernel_file`` in config — a Transformer is built automatically from the kernel file.
+      2. Call ``set_transformer()`` before ``route()`` — inject a pre-built or custom ``AbstractBaseTransformer``.
 
+    Required configs:
+    - routing_params_file: path to a parquet file containing Muskingum routing parameters for each river segment.
+
+    Lateral input — one of:
+    - lateral_depth_files: list of 1 or more paths to netCDF files containing per-catchment runoff depth time
+        series for each river segment.
+    - runoff_depth_grids: list of 1 or more paths to netCDF files containing gridded runoff depth time series.
+        Must be accompanied by grid_weights_file.
+    - grid_weights_file: path to a netCDF file of weights for remapping gridded depths to catchment depths.
+        Required when using runoff_depth_grids.
+
+    - discharge_files: list of paths where routed discharge netCDF files will be written. Must match the number
+        of input files.
+
+    Transformer configs:
+    - transformer_kernel_file: path to a file defining the unit hydrograph kernel used to build the Transformer.
+        Required unless set_transformer() is called.
+    - transformer_state_file: (optional) path to a parquet file containing the initial transformer convolution
+        state. Used to warm-start the transformer, e.g. when chaining sequential simulations.
+    - final_transformer_state_file: (optional) path where the final transformer convolution state will be written
+        as a parquet file after routing completes.
+    """
     def __init__(self, config_file: PathInput | None = None, **kwargs: Any) -> None:
         super().__init__(config_file, **kwargs)
 
