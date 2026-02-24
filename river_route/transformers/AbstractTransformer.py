@@ -116,7 +116,7 @@ class AbstractBaseTransformer(ABC):
         The state is transposed from tall (n_basins, n_time_steps) to the internal
         (n_time_steps, n_basins) layout and must match the kernel shape.
         """
-        _state = pd.read_parquet(state).T.to_numpy(dtype=np.float64)
+        _state = pd.read_parquet(state).T.to_numpy(dtype=np.float64, copy=True)
         if _state.shape != self.kernel.shape:
             raise ValueError(
                 f'state shape {_state.shape} does not match kernel shape {self.kernel.shape}'

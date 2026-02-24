@@ -103,7 +103,6 @@ class UnitMuskingum(AbstractTransformRouter):
         self.logger.debug('Getting initial state arrays')
         self._read_initial_state()
         q_init = self.channel_state
-        self._ensemble_member_states = []
 
         discharge_array = np.zeros((volumes.shape[0], self.A.shape[0]), dtype=np.float64)
         q_t = np.empty_like(q_init, dtype=np.float64)

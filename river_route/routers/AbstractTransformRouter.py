@@ -7,9 +7,9 @@ from typing import Generator, Self, Tuple, List
 import numpy as np
 
 from .AbstractRouter import AbstractRouter
-from ..transformers import AbstractBaseTransformer
 from .types import DatetimeArray, FloatArray, PathInput
 from ..runoff import depth_to_volume
+from ..transformers import AbstractBaseTransformer
 
 __all__ = ['AbstractTransformRouter', ]
 
@@ -136,6 +136,8 @@ class AbstractTransformRouter(AbstractRouter):
         self._validate_configs()
         self._set_network_dependent_vectors()
         self.logger.debug(self)
+
+        self._ensemble_member_states = []
 
         for dates, lateral_array, runoff_file, discharge_file in self._lateral_runoff_generator():
             self.logger.info('-' * 80)

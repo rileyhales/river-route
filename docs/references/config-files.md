@@ -86,5 +86,5 @@ input data config keys, so a config file written for one cannot be used with the
 | `var_x`                | X-dimension name in depth grids.                          | `'x'`                                         |
 | `var_y`                | Y-dimension name in depth grids.                          | `'y'`                                         |
 | `var_t`                | Time dimension name in depth grids.                       | `'time'`                                      |
-| `runoff_type`          | Whether the lateral inflows are incremental or cumulative | `'incremental'`                               |                                                            |                             d                              |
+| `runoff_type`          | Whether the lateral inflows are incremental or cumulative | `'incremental'`                               |
 | `input_type`           | [advanced tutorials](../tutorial/routing-ensembles.md)    | `'sequential'` or `'ensemble'`                |

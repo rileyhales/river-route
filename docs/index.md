@@ -102,33 +102,6 @@ graph TD
     G & H --> I[AbstractBaseTransformer ready]
 ```
 
-```mermaid
----
-title: Transformer Class Hierarchy
----
-classDiagram
-    class AbstractBaseTransformer {
-        <<abstract>>
-        +float dt
-        +FloatArray kernel
-        +FloatArray state
-        +from_kernel(dt, kernel_path)$
-        +set_state(state_path)
-        +transform(runoff_vector) FloatArray
-        +_build_kernel()* FloatArray
-    }
-    class Transformer {
-        +_build_kernel() NotImplementedError
-    }
-    class SCSUnitHydrograph {
-        +FloatArray tc
-        +FloatArray area
-        +_build_kernel() FloatArray
-    }
-    AbstractBaseTransformer <|-- Transformer : Load kernel from file
-    AbstractBaseTransformer <|-- SCSUnitHydrograph : Compute from params
-```
-
 ## Usage Examples
 
 Configuration options are passed as a config file path, keyword arguments, or both. Keyword arguments

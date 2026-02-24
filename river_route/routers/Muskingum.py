@@ -108,7 +108,11 @@ class Muskingum(AbstractRouter):
         """
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state
-        # todo if q_init is null or empty or zeros then raise an error
+        if not np.any(q_init):
+            self.logger.warning(
+                'Initial channel state is all zeros. Muskingum routing without lateral inflow requires a '
+                'non-zero initial state to produce meaningful results. Provide channel_state_file.'
+            )
 
         n = self.A.shape[0]
         discharge_array = np.zeros((num_output_steps, n), dtype=np.float64)

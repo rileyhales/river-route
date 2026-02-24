@@ -1,5 +1,4 @@
 import datetime
-from typing import List
 
 import numpy as np
 import tqdm
@@ -36,6 +35,7 @@ class RapidMuskingum(AbstractTransformRouter):
     - discharge_files: list of 1 or more paths to netCDF files where the routed discharge time series will be written
         for each river segment. Must match the number of input files. See docs.
     """
+
     def _validate_router_configs(self) -> None:
         self._validate_lateral_runoff_configs()
 
@@ -55,18 +55,15 @@ class RapidMuskingum(AbstractTransformRouter):
         self.logger.debug('Getting initial state arrays')
         self._read_initial_state()
         q_init = self.channel_state
-        self._ensemble_member_states = []
 
         # declare arrays for routing computations once to avoid repeated and duplicate allocations in the loop
         discharge_array = np.zeros((volumes.shape[0], self.A.shape[0]))
         q_t = np.empty_like(q_init, dtype=np.float64)
-        r_prev = np.zeros_like(q_init, dtype=np.float64)
         rhs = np.zeros(self.A.shape[0], dtype=np.float64)
         buffer = np.zeros(self.A.shape[0], dtype=np.float64)
         c2_r_t = np.zeros(self.A.shape[0], dtype=np.float64)
         interval_sum = np.zeros(self.A.shape[0], dtype=np.float64)
         q_t[:] = q_init
-        # r_prev[:] = r_init  todo: correct math to no longer use r_prev
 
         t1 = datetime.datetime.now()
         if self.conf['progress_bar']:
@@ -78,19 +75,16 @@ class RapidMuskingum(AbstractTransformRouter):
             np.multiply(self.c2, r_t, out=c2_r_t)
             interval_sum.fill(0.0)  # add then divide to avoid accumulating large array and averaging
             for routing_sub_iteration_num in range(self.num_routing_steps_per_runoff):
-                # rhs = (self.c1 * ((self.A @ q_t) + r_prev)) + (self.c2 * r_t) + (self.c3 * q_t)
+                # rhs = c1*(A @ q_t) + c2*r_t + c3*q_t
                 buffer[:] = self.A @ q_t
-                np.add(buffer, r_prev, out=buffer)
                 np.multiply(self.c1, buffer, out=rhs)
                 np.multiply(self.c3, q_t, out=buffer)
                 np.add(rhs, buffer, out=rhs)
                 np.add(rhs, c2_r_t, out=rhs)
-                # solve Ax=b, LHS q_t = rhs
                 q_t[:] = self.lhs_factorized(rhs)
                 # add to interval accumulator for averaging at the end of the runoff time step
                 interval_sum += q_t
             discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
-            r_prev[:] = r_t
 
         # Enforce positive flows in case of negative numerical results
         discharge_array[discharge_array < 0] = 0
