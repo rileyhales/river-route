@@ -21,7 +21,6 @@ class TransformRouter(Router, ABC):
     _ensemble_member_states: List[FloatArray]  # for ensemble routing
 
     # Time options
-    # todo should time steps be handled here or by the config class?
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
@@ -32,14 +31,13 @@ class TransformRouter(Router, ABC):
         """Whether the catchment runoff generator yields volumes (m³) or depths (m)"""
 
     def _catchment_runoff_generator(self) -> RunoffGeneratorSignature:
-        # todo check which option was provided. The keys all always exist now with the new Config class
         if self.cfg.catchment_runoff_files:
             for lateral_file, discharge_file in zip(self.cfg.catchment_runoff_files, self.cfg.discharge_files):
                 with xr.open_dataset(lateral_file) as ds:
                     dates = ds['time'].values.astype('datetime64[s]')
                     array = ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False)
                     yield dates, array, lateral_file, discharge_file
-        elif self.cfg.runoff_grid_files:
+        elif self.cfg.runoff_grid_files and self.cfg.grid_weights_file:
             for runoff_file, discharge_file in zip(self.cfg.runoff_grid_files, self.cfg.discharge_files):
                 self.logger.info(f'Calculating catchment volumes from runoff depth grid: {runoff_file}')
                 ds = grid_to_catchment(

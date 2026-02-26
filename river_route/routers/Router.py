@@ -54,15 +54,7 @@ class Router:
     _write_discharges: WriteDischargesFn
 
     def __init__(self, config_file: PathInput | None = None, **kwargs: Any) -> None:
-        self.logger = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
-        self._set_configs(config_file, **kwargs)
-        return
-
-    def __repr__(self):
-        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in self.cfg.items()]
-        return '\n'.join(messages)
-
-    def _set_configs(self, config_file: PathInput | None, **kwargs: Any) -> None:
+        # combine config inputs and pass to Configs dataclass
         raw: dict[str, Any] = {}
         if config_file is not None and config_file != '':
             if str(config_file).endswith('.json'):
@@ -77,6 +69,7 @@ class Router:
         self.cfg = Configs(**raw)
 
         # configure logging
+        self.logger = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
         self.logger.disabled = not self.cfg.log
         self.logger.setLevel(self.cfg.log_level)
         if self.cfg.log_stream == 'stdout':
@@ -86,6 +79,10 @@ class Router:
         self.logger.handlers[0].setFormatter(logging.Formatter(self.cfg.log_format))
         self.logger.debug('Logger initialized')
         return
+
+    def __repr__(self):
+        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in self.cfg.items()]
+        return '\n'.join(messages)
 
     def _validate_configs(self) -> None:
         self.logger.debug('Validating configs file')
@@ -240,15 +237,17 @@ class Router:
         discharge_array = self._router(num_output_steps, num_routing_per_output)
 
         # Generate date array for output
-        start = np.datetime64(self.cfg.start_datetime)
-        dt_sec = int(self.dt_discharge)
-        dates = start + (np.arange(num_output_steps) * np.timedelta64(dt_sec, 's'))
+        dates = pd.date_range(
+            start=self.cfg.start_datetime,
+            periods=num_output_steps,
+            freq=pd.to_timedelta(self.dt_discharge, unit='s')
+        ).to_numpy()
 
         # write outputs and states
         self.logger.info('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
-        self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])  # todo update signature
+        self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0], None)
         self._write_final_state()
 
         # end hook
@@ -351,7 +350,7 @@ class Router:
                           dates: DatetimeArray,
                           q_array: FloatArray,
                           q_file: PathInput,
-                          routed_file: PathInput = '', ) -> None:
+                          routed_file: PathInput | None = '', ) -> None:
         """
         Writes routed discharge from a routing simulation to a netcdf file.
         You can overwrite this method with a custom handler using set_write_discharges.
@@ -372,7 +371,7 @@ class Router:
             time_var = ds.createVariable('time', 'f8', ('time',))
             time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
             time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
-            id_var = ds.createVariable(self.cfg.var_river_id, 'i4', (self.cfg.var_river_id), )
+            id_var = ds.createVariable(self.cfg.var_river_id, 'i4', self.cfg.var_river_id, )
             id_var[:] = self.river_ids
             flow_var = ds.createVariable(self.cfg.var_discharge, 'f4', ('time', self.cfg.var_river_id))
             flow_var[:] = q_array

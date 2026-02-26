@@ -20,6 +20,10 @@ ch.setFormatter(formatter)
 log.addHandler(ch)
 
 
+# todo check which catchment runoff option was given to TransformRouter. All keys always exist with new Config class.
+#  used to be deleted depending on which one was provided which made checks different.
+
+
 def compare_parquets(file1: Path, file2: Path, **kwargs) -> bool:
     df1 = gpd.read_parquet(file1)
     df2 = gpd.read_parquet(file2)
