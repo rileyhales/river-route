@@ -25,7 +25,7 @@ nav:
       - Channel Routing: tutorial/channel-routing.md
       - Channel Routing with Runoff Transform: tutorial/unit-hydrograph-routing.md
       - Routing Runoff Ensembles: tutorial/routing-ensembles.md
-      - Advanced Uses: tutorial/advanced.md
+      - Advanced Uses: tutorial/advanced-tutorial.md
       - Generating UH Kernels: tutorial/create-uh-kernels.md
 plugins:
   - search

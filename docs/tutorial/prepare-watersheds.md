@@ -94,17 +94,17 @@ vpu_name = 'sample-vpu'
 
 params_file = os.path.join(root_dir, 'configs', vpu_name, 'params.parquet')
 
-volume_files = sorted(glob.glob(os.path.join(root_dir, 'volumes', vpu_name, '*.nc')))
+runoff_files = sorted(glob.glob(os.path.join(root_dir, 'catchment_runoff', vpu_name, '*.nc')))
 
 output_dir = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(output_dir, exist_ok=True)
-output_files = [os.path.join(output_dir, f'Qout_{os.path.basename(f)}') for f in volume_files]
+output_files = [os.path.join(output_dir, f'Qout_{os.path.basename(f)}') for f in runoff_files]
 
 (
     rr
     .RapidMuskingum(
         routing_params_file=params_file,
-        lateral_volume_files=volume_files,
+        catchment_runoff_files=runoff_files,
         discharge_files=output_files,
         dt_routing=3600,
     )
@@ -119,7 +119,7 @@ import yaml
 
 config = {
     'routing_params_file': '/path/to/params.parquet',
-    'lateral_volume_files': ['/path/to/volumes_jan.nc', '/path/to/volumes_feb.nc'],
+    'catchment_runoff_files': ['/path/to/catchment_runoff_jan.nc', '/path/to/catchment_runoff_feb.nc'],
     'discharge_files': ['/path/to/discharge_jan.nc', '/path/to/discharge_feb.nc'],
     'dt_routing': 3600,
     'channel_state_init_file': '/path/to/initial_state.parquet',
@@ -149,7 +149,7 @@ Then reference it in the config:
 
 ```yaml
 routing_params_file: 'params.parquet'
-runoff_depth_grids: 'runoff.nc'
+runoff_grid_files: 'runoff.nc'
 grid_weights_file: 'grid_weights.parquet'
 discharge_files: 'discharge.nc'
 dt_routing: 3600

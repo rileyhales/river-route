@@ -118,10 +118,10 @@ class UnitMuskingum(TransformRouter):
 
         discharge_array[discharge_array < 0] = 0
 
-        if self.cfg.computation_type == 'sequential':
+        if self.cfg.runoff_processing_mode == 'sequential':
             self.logger.debug('Updating Channel State for Next Sequential Computation')
             self.channel_state = q_t
-        elif self.cfg.computation_type == 'ensemble':
+        elif self.cfg.runoff_processing_mode == 'ensemble':
             self.logger.debug('Recording Member State for Final State Aggregation')
             self._ensemble_member_states.append(q_t.copy())
 

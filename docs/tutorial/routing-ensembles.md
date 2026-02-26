@@ -13,7 +13,7 @@ Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the b
    to make output file names unique and more readily searchable and sortable. Provide all configurations as normal without special considerations. In
    this situation, you create a new `rr.RapidMuskingum` instance for each member which each read configs and parameter files. However, you can process each
    member simultaneously which may be faster.
-2. Provide a list of input and output files and specify `input_type=ensemble` in your configs. This will route each member in the order given by the
+2. Provide a list of input and output files and specify `runoff_processing_mode=ensemble` in your configs. This will route each member in the order given by the
    input list, one at a time. Each member will be initialized from the same final state and use the same routing parameters. The final state is still
    from the last routing step but is the average of the final step across all members, not just the first. In this situation, you create a single
    instance of `rr.RapidMuskingum`, read configs and parameter files only one time, but the members are processed sequentially which could be slow.
@@ -25,7 +25,7 @@ more fully utilize computer capacity. There are many methods for concurrency or 
 implement it using `multiprocessing`. You will need to write some custom logic to:
 
 1. Set the config variables and routing parameter files
-2. Find all the volumes files, 1 for each member 
+2. Find all the catchment runoff files, 1 for each member
 3. Determine unique output names for each so you don't overwrite or corrupt files
 4. Submit each input/output file pair to a parallel processing framework
 
@@ -35,8 +35,8 @@ from multiprocessing import Pool
 import river_route as rr
 
 routing_params_file = 'routing_parameters.parquet'
-volumes_files = ['volumes_member_1.nc',
-                 'volumes_member_2.nc', ]
+runoff_files = ['catchment_runoff_member_1.nc',
+                'catchment_runoff_member_2.nc', ]
 output_files = ['discharges_member_1.nc',
                 'discharges_member_2.nc', ]
 
@@ -44,14 +44,14 @@ output_files = ['discharges_member_1.nc',
 def route(input_file: str, output_file: str) -> None:
     rr.RapidMuskingum(
         routing_params_file=routing_params_file,
-        lateral_volume_files=input_file,
+        catchment_runoff_files=input_file,
         discharge_files=output_file,
     ).route()
 
 
 if __name__ == '__main__':
     with Pool() as pool:
-        pool.starmap(route, zip(volumes_files, output_files))
+        pool.starmap(route, zip(runoff_files, output_files))
 ```
 
 ## Customizing initial and final state files
@@ -120,6 +120,5 @@ m = (
 member_init_files = sorted(glob.glob('member_init_from_*.parquet'))
 combo_init = pd.concat([pd.read_parquet(f) for f in member_init_files], axis=1).mean(axis=1)
 combo_init = combo_init.to_frame(name='Q')
-combo_init['R'] = 0  # add runoff state; you can replace with actual runoff-derived values
 combo_init.to_parquet('ensemble_init_state.parquet')  # write the combined state to a file
 ```

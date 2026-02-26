@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterator
+from typing import Any, ClassVar, Iterator, Literal, get_args, get_origin, get_type_hints
 
 from ..types import PathInput, PathList, PathTypes
 
@@ -41,17 +41,17 @@ class Configs:
     # Misc behavior that users may want to override
     log: bool = True
     progress_bar: bool = True
-    log_level: str = 'INFO'
+    log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
     log_stream: str = 'stdout'
     log_format: str = '%(asctime)s - %(levelname)s - %(message)s'
-    computation_type: str = 'sequential'
-    runoff_type: str = 'incremental'
+    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
+    runoff_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
     var_river_id: str = 'river_id'
     var_discharge: str = 'Q'
     var_x: str = 'x'
     var_y: str = 'y'
     var_t: str = 'time'
-    var_catchment_runoff_variable: str = 'volume'
+    var_catchment_runoff_variable: str = 'runoff'
     var_runoff_depth: str = 'ro'
 
     # special subset of auto-detected PathLists where the directory needs to exist, not the file
@@ -63,14 +63,20 @@ class Configs:
         'discharge_files',
     })
 
-    # Populated at module level below via _derive_path_sets(Configs.__annotations__)
+    # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
     _LIST_PATH_FIELDS: ClassVar[frozenset[str]]
+    _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
+
+    def __setattr__(self, name: str, value: object) -> None:
+        allowed = type(self).__dict__.get('_VALID_VALUES', {}).get(name)
+        if allowed is not None and value not in allowed:
+            raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
+        object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
         # turn off progress bar if logging was turned off but progress was left at default on
         self.progress_bar = bool(self.log) and bool(self.progress_bar)
-
         # normalize paths given as strings to lists. make paths absolute.
         self.coerce_path_list_fields()
         self.absolutize_paths()
@@ -78,7 +84,6 @@ class Configs:
         self.verify_output_directories_exist()
 
     # --- path normalization and verification ---
-
     def coerce_path_list_fields(self) -> None:
         """Normalize any list-of-paths field given as a single string to [str]."""
         for key in self._LIST_PATH_FIELDS:
@@ -124,8 +129,6 @@ class Configs:
             if not os.path.exists(d):
                 raise NotADirectoryError(f'Output directory not found for specified output path: {path}')
 
-    # --- dict-compatible interface ---
-
     def get(self, key: str, default: Any = None) -> Any:
         val = getattr(self, key, None)
         return val if (val is not None and val != '' and val != []) else default
@@ -169,14 +172,24 @@ class Configs:
             yield k, getattr(self, k)
 
 
-# automatically find the paths or lists of paths based on type annotations
-# With `from __future__ import annotations`, all annotations are stored as strings,
-# so we can search for 'PathInput' without resolving the alias.
+def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
+    """
+    Inspect evaluated type hints for any field annotated with Literal and return a mapping
+    of field name -> frozenset of allowed values. Used to populate _VALID_VALUES at import time.
+    """
+    result = {}
+    for name, hint in get_type_hints(cls).items():
+        if name.startswith('_'):
+            continue
+        if get_origin(hint) is Literal:
+            result[name] = frozenset(get_args(hint))
+    return result
+
+
 def _derive_path_sets(notations: dict[str, str]) -> tuple[frozenset[str], frozenset[str]]:
     """
-    Inspect class-level annotation strings (produced by `from __future__ import annotations`)
-    and return (single_path_fields, list_path_fields) for any field typed with PathInput or PathList.
-    Fields beginning with '_' are ignored.
+    Automatically find the paths or lists of paths based on type annotations
+    and return (single_path_fields, list_path_fields) for any field typed PathInput or PathList.
     """
     single, lists = set(), set()
     for name, hint in notations.items():
@@ -190,3 +203,4 @@ def _derive_path_sets(notations: dict[str, str]) -> tuple[frozenset[str], frozen
 
 
 Configs._SINGLE_PATH_FIELDS, Configs._LIST_PATH_FIELDS = _derive_path_sets(Configs.__annotations__)
+Configs._VALID_VALUES = _derive_valid_values(Configs)

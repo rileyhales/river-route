@@ -35,7 +35,7 @@ pd.DataFrame(kernel).to_parquet('kernel.parquet')
 
 ```yaml
 routing_params_file: '/path/to/params.parquet'
-lateral_depth_files: '/path/to/depths.nc'
+catchment_runoff_files: '/path/to/depths.nc'
 discharge_files: '/path/to/discharge.nc'
 transformer_kernel_file: 'kernel.parquet'
 dt_routing: 3600
@@ -55,20 +55,20 @@ a continuous simulation from multiple sequential input files.
 ```yaml
 # First run: save the final convolution state
 routing_params_file: 'params.parquet'
-lateral_depth_files: 'depths_period1.nc'
+catchment_runoff_files: 'depths_period1.nc'
 discharge_files: 'discharge_period1.nc'
 transformer_kernel_file: 'kernel.parquet'
-final_transformer_state_file: 'state.parquet'
+transformer_state_final_file: 'state.parquet'
 dt_routing: 3600
 ```
 
 ```yaml
 # Second run: warm-start from the saved state
 routing_params_file: 'params.parquet'
-lateral_depth_files: 'depths_period2.nc'
+catchment_runoff_files: 'depths_period2.nc'
 discharge_files: 'discharge_period2.nc'
 transformer_kernel_file: 'kernel.parquet'
-transformer_state_file: 'state.parquet'
+transformer_state_init_file: 'state.parquet'
 dt_routing: 3600
 ```
 

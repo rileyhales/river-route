@@ -91,10 +91,10 @@ class Router:
 
         if not self.cfg.routing_params_file:
             raise ValueError('routing_params_file is required')
-        if self.cfg.computation_type not in ['sequential', 'ensemble']:
-            raise ValueError('computation_type not recognized')
-        if self.cfg.runoff_type not in ['incremental', 'cumulative']:
-            raise ValueError('runoff_type not recognized')
+        if self.cfg.runoff_processing_mode not in ['sequential', 'ensemble']:
+            raise ValueError('runoff_processing_mode not recognized')
+        if self.cfg.runoff_accumulation_type not in ['incremental', 'cumulative']:
+            raise ValueError('runoff_accumulation_type not recognized')
         if not self.cfg.dt_routing:
             raise ValueError('dt_routing is required for Muskingum routing')
 

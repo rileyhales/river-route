@@ -263,7 +263,7 @@ def grid_to_catchment(
 
     Returns:
         xr.Dataset: catchment runoff with dimensions ``time`` and ``river_id``.
-            Variable is ``volume`` (m³) when ``as_volumes=True``, ``ro`` (m) otherwise.
+            Variable is ``runoff`` (m³) when ``as_volumes=True``, ``ro`` (m) otherwise.
     """
     with xr.open_dataset(weight_table) as ds:
         weight_df = ds[[river_id_var, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
@@ -330,7 +330,7 @@ def grid_to_catchment(
     df = df.fillna(0)
 
     file_prefix = 'volumes' if as_volumes else 'depths'
-    var_name = 'volume' if as_volumes else 'ro'
+    var_name = 'runoff' if as_volumes else 'ro'
     var_units = 'm3' if as_volumes else 'm'
     var_long_name = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
     title = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'

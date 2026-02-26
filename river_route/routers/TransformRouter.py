@@ -48,7 +48,7 @@ class TransformRouter(Router, ABC):
                     y_var=self.cfg.var_y,
                     time_var=self.cfg.var_t,
                     river_id_var=self.cfg.var_river_id,
-                    cumulative=self.cfg.runoff_type == 'cumulative',
+                    cumulative=self.cfg.runoff_accumulation_type == 'cumulative',
                     as_volumes=self._catchment_runoff_as_volume
                 )
                 yield (
@@ -149,7 +149,7 @@ class TransformRouter(Router, ABC):
             discharge_array = discharge_array.astype(np.float32, copy=False)
             self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
-        if self.cfg.computation_type == 'ensemble':
+        if self.cfg.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
         self._write_final_state()
         self._hook_after_route()

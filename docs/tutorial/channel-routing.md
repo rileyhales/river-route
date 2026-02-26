@@ -29,7 +29,7 @@ This tutorial uses `RapidMuskingum`.
 Three files are needed for a routing run:
 
 1. **Routing parameters** (`params.parquet`) — river network topology and Muskingum coefficients.
-2. **Lateral inflow** (`volumes.nc`) — per-catchment runoff volume time series.
+2. **Lateral inflow** (`catchment_runoff.nc`) — per-catchment runoff time series.
 3. **Routed discharge** (`discharge.nc`) — output path where results will be written.
 
 See the [File Schemas reference](../references/io-file-schema.md) for field names and formats.
@@ -64,7 +64,7 @@ override values from the config file.
 
 ```yaml
 routing_params_file: '/path/to/params.parquet'
-lateral_volume_files: '/path/to/volumes.nc'
+catchment_runoff_files: '/path/to/catchment_runoff.nc'
 discharge_files: '/path/to/discharge.nc'
 dt_routing: 3600
 ```
@@ -86,7 +86,7 @@ import river_route as rr
     rr
     .RapidMuskingum(
         routing_params_file='params.parquet',
-        lateral_volume_files='volumes.nc',
+        catchment_runoff_files='catchment_runoff.nc',
         discharge_files='discharge.nc',
         dt_routing=3600,
     )
@@ -106,7 +106,7 @@ import river_route as rr
     rr
     .RapidMuskingum(
         routing_params_file='params.parquet',
-        lateral_volume_files=['volumes_jan.nc', 'volumes_feb.nc', 'volumes_mar.nc'],
+        catchment_runoff_files=['catchment_runoff_jan.nc', 'catchment_runoff_feb.nc', 'catchment_runoff_mar.nc'],
         discharge_files=['discharge_jan.nc', 'discharge_feb.nc', 'discharge_mar.nc'],
         dt_routing=3600,
     )
@@ -120,10 +120,10 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 
 ```yaml
 routing_params_file: 'params.parquet'
-lateral_volume_files: 'volumes.nc'
+catchment_runoff_files: 'catchment_runoff.nc'
 discharge_files: 'discharge.nc'
-channel_state_file: 'state.parquet'         # optional: initial channel state
-final_channel_state_file: 'new_state.parquet' # optional: save final state for next run
+channel_state_init_file: 'state.parquet'         # optional: initial channel state
+channel_state_final_file: 'new_state.parquet'    # optional: save final state for next run
 dt_routing: 3600
 ```
 
