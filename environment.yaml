@@ -22,7 +22,8 @@ dependencies:
   - pandas-stubs
   - scipy-stubs
   # for documentation
-  - zensical
+  - mkdocs<2
+  - mkdocs-material
   - mkdocstrings
   - mkdocstrings-python
   - mkdocs-include-markdown-plugin

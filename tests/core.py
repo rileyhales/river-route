@@ -111,7 +111,7 @@ def core_muskingum_feature_set() -> None:
     (
         rr
         .runoff
-        .depth_to_volume(
+        .grid_to_catchment(
             runoff_depths_file,
             grid_weights_file,
             x_var=runoff_grid_variable_name_params['x_var'],

@@ -14,17 +14,19 @@ theme:
     - toc.follow
 nav:
   - Home: index.md
+  - License: terms.md
   - API Documentation: api.md
   - References:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-variables.md
   - Tutorials:
-      - Basic Walkthrough: tutorial/basic-tutorial.md
-      - Routing Ensembles: tutorial/routing-ensembles.md
-      - Advanced Concepts: tutorial/advanced-tutorial.md
-      - Unit Hydrograph Routing: tutorial/unit-hydrograph-routing.md
-  - License: terms.md
+      - Preparing Watersheds: tutorial/prepare-watersheds.md
+      - Channel Routing: tutorial/channel-routing.md
+      - Channel Routing with Runoff Transform: tutorial/unit-hydrograph-routing.md
+      - Routing Runoff Ensembles: tutorial/routing-ensembles.md
+      - Advanced Uses: tutorial/advanced.md
+      - Generating UH Kernels: tutorial/create-uh-kernels.md
 plugins:
   - search
   - mkdocstrings

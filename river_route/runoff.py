@@ -1,4 +1,5 @@
 import logging
+from typing import Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -17,14 +18,15 @@ __all__ = [
     'compute_voronoi_catchment_intersects',
     'grid_weights',
     # for making catchment volumes from grid weights and depth grids
-    'depth_to_volume',
+    'grid_to_catchment',
 ]
 
 logger = logging.getLogger(__name__)
 
 
-def cell_xy_from_regular_grid(dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat', ) -> tuple[
-    np.ndarray, np.ndarray]:
+def cell_xy_from_regular_grid(
+        dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat',
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get cell center x and y coordinates from a regular grid in expected, common dataset structure.
     """
@@ -42,10 +44,7 @@ def cell_xy_from_regular_grid(dataset: PathInput, x_var: str = 'lon', y_var: str
 
 
 def voronoi_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
-    """
-    Create a GeoDataFrame of Voronoi polygons around the center of each cell in a grid.
-    The voronoi
-    """
+    """Create a GeoDataFrame of Voronoi polygons around the center of each cell in a grid."""
     if x.ndim != 1 or y.ndim != 1:
         raise ValueError('x and y must be 1D arrays')
     if x.shape[0] == 0 or y.shape[0] == 0:
@@ -106,24 +105,28 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
     df['proportion'] = df['area_sqm'] / df['area_sqm_total']
 
     if save_path:
-        save_attributes = {
-            'description': 'proportions of runoff cells that intersect river catchments to be used with river-route',
-            'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
-            'catchments_gdf_crs': catchments_gdf.crs.to_string(),
-            'river_route_version': __version__,
-            **(save_attributes or {}),
-        }
-        ds = xr.Dataset({
-            'river_id': ('index', df[river_id_variable].to_numpy(dtype=np.int64, copy=False)),
-            'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
-            'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
-            'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
-            'y': ('index', df['y'].to_numpy(dtype=np.float64, copy=False)),
-            'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64, copy=False)),
-            'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64, copy=False)),
-        })
-        ds.attrs.update(save_attributes)
-        ds.to_netcdf(save_path)
+        (
+            xr
+            .Dataset(
+                data_vars={
+                    'river_id': ('index', df[river_id_variable].to_numpy(dtype=np.int64, copy=False)),
+                    'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
+                    'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
+                    'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
+                    'y': ('index', df['y'].to_numpy(dtype=np.float64, copy=False)),
+                    'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64, copy=False)),
+                    'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64, copy=False)),
+                },
+                attrs={
+                    'description': 'proportions of runoff cells that intersect catchments for use with river-route',
+                    'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
+                    'catchments_gdf_crs': catchments_gdf.crs.to_string(),
+                    'river_route_version': __version__,
+                    **(save_attributes or {}),
+                }
+            )
+            .to_netcdf(save_path)
+        )
     return df
 
 
@@ -220,7 +223,7 @@ def _get_conversion_factor(unit: str) -> int | float:
         raise ValueError(f"Unknown units: {unit}")
 
 
-def depth_to_volume(
+def grid_to_catchment(
         runoff_data: PathInput | list[PathInput],
         weight_table: PathInput,
         *,
@@ -233,28 +236,37 @@ def depth_to_volume(
         cumulative: bool = False,
         force_positive_runoff: bool = False,
         force_uniform_timesteps: bool = True,
+        as_volumes: bool = False,
 ) -> xr.Dataset:
     """
-    Calculates the catchment runoff volumes from a given runoff dataset and a directory of VPU configs.
+    Aggregates gridded runoff depths to catchment-scale using a weight table.
+
+    The core computation is a weighted average: each grid cell's depth is multiplied by its
+    proportion of the catchment area and summed. When ``as_volumes=True``, the weighted average
+    depth is multiplied by the total catchment area to produce volumes (m³).
 
     Args:
         runoff_data (str | list[str]): path(s) to runoff files
-        weight_table (str): a string path to the weight table
-        runoff_var (str): the name of the runoff variable in the LSM files
-        x_var (str): the name of the x variable in the LSM files
-        y_var (str): the name of the y variable in the LSM files
-        time_var (str): the name of the time variable in the LSM files
-        river_id_var (str): the name of the river ID variable in the parameters file
-        runoff_depth_unit (str): the unit of the depths in the runoff data
-        cumulative (bool): whether the runoff data is cumulative or incremental
-        force_positive_runoff (bool): whether to force all runoff values to be >= 0
-        force_uniform_timesteps (bool): whether to force all timesteps to be uniform
+        weight_table (str): path to the weight table netCDF produced by ``grid_weights()``
+        runoff_var (str): runoff variable name in the LSM files
+        x_var (str): x-coordinate variable name in the LSM files
+        y_var (str): y-coordinate variable name in the LSM files
+        time_var (str): time variable name in the LSM files
+        river_id_var (str): river ID variable name in the weight table and parameters file
+        runoff_depth_unit (str): unit of the depth values; inferred from file attributes if not given
+        cumulative (bool): whether the runoff data is cumulative; converted to incremental if True
+        force_positive_runoff (bool): clip negative runoff values to zero
+        force_uniform_timesteps (bool): resample to a uniform timestep if the input is irregular
+        as_volumes (bool): if True, multiply weighted average depth by total catchment area to
+            produce volumes (m³) suitable for ``RapidMuskingum``; if False (default), return
+            weighted average depths (m) suitable for ``UnitMuskingum``
 
     Returns:
-        xr.Dataset: a Dataset of catchment runoff volumes with dimensions ``time`` and ``river_id``
+        xr.Dataset: catchment runoff with dimensions ``time`` and ``river_id``.
+            Variable is ``volume`` (m³) when ``as_volumes=True``, ``ro`` (m) otherwise.
     """
     with xr.open_dataset(weight_table) as ds:
-        weight_df = ds[[river_id_var, 'x_index', 'y_index', 'area_sqm']].to_dataframe()
+        weight_df = ds[[river_id_var, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
     unique_indexes = (
         weight_df
         [['x_index', 'y_index']]
@@ -285,10 +297,20 @@ def depth_to_volume(
         df
         .loc[:, point_labels]
         .set_axis(weight_df[river_id_var], axis=1)
-        .mul(weight_df['area_sqm'].values * conversion_factor, axis=1)
+        .mul(weight_df['proportion'].values * conversion_factor, axis=1)
         .T.groupby(level=0).sum().T
         .loc[:, unique_sorted_rivers[river_id_var].values]
     )
+
+    if as_volumes:
+        catchment_area = (
+            weight_df
+            .groupby(river_id_var)['area_sqm']
+            .sum()
+            .reindex(unique_sorted_rivers[river_id_var].values)
+            .to_numpy()
+        )
+        df = df.mul(catchment_area, axis=1)
 
     # conversions and restructuring
     if cumulative:
@@ -307,29 +329,29 @@ def depth_to_volume(
         df = _cumulative_to_incremental(df)
     df = df.fillna(0)
 
-    # create xr.Dataset to return
+    file_prefix = 'volumes' if as_volumes else 'depths'
+    var_name = 'volume' if as_volumes else 'ro'
+    var_units = 'm3' if as_volumes else 'm'
+    var_long_name = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
+    title = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
+    description = f'Incremental catchment runoff volumes in {var_units} for each river'
+
     start_date = df.index[0].strftime('%Y%m%d%H')
     end_date = df.index[-1].strftime('%Y%m%d%H')
-    suggested_file_name = f'volumes_{start_date}_{end_date}.nc'
     timestep = int((df.index[1] - df.index[0]).total_seconds()) if df.shape[0] > 1 else 0
     return xr.Dataset(
         {
-            'volume': xr.DataArray(
+            var_name: xr.DataArray(
                 df.to_numpy(dtype=np.float32, copy=False),
                 dims=('time', 'river_id'),
-                attrs={
-                    'long_name': 'Incremental catchment runoff volume',
-                    'units': 'm3',
-                },
+                attrs={'long_name': var_long_name, 'units': var_units},
             ),
         },
         coords={
             'river_id': xr.DataArray(
                 df.columns.to_numpy(dtype=np.int64, copy=False),
                 dims=('river_id',),
-                attrs={
-                    'long_name': 'unique ID number for each river',
-                },
+                attrs={'long_name': 'unique ID number for each river'},
             ),
             'time': xr.DataArray(
                 (df.index - df.index[0]).astype('timedelta64[s]').astype(np.int64),
@@ -344,10 +366,10 @@ def depth_to_volume(
             ),
         },
         attrs={
-            'title': 'Catchment runoff volumes',
-            'description': 'Incremental catchment runoff volumes in m3 for each river',
+            'title': title,
+            'description': description,
             'source': f'river-route v{__version__}',
             'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
-            'suggested_file_name': suggested_file_name,
+            'suggested_file_name': f'{file_prefix}_{start_date}_{end_date}.nc',
         },
     )

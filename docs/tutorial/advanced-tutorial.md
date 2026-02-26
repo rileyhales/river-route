@@ -154,34 +154,3 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
     .route()
 )
 ```
-
-## UnitMuskingum: Injecting a Custom Transformer
-
-`UnitMuskingum` accepts any `AbstractBaseTransformer` subclass via `set_transformer()`. This lets you
-supply your own unit hydrograph logic without touching the routing code. Your class only needs to inherit
-from `AbstractBaseTransformer` and implement `_build_kernel()`, which returns a 2D array of shape
-`(n_time_steps, n_basins)`. The base class handles all state management and the `transform()` call.
-
-```python
-import numpy as np
-import river_route as rr
-from river_route.transformers import AbstractBaseTransformer
-
-class MyTransformer(AbstractBaseTransformer):
-    def __init__(self, my_param: float, dt: float) -> None:
-        self.my_param = my_param
-        super().__init__(dt=dt)   # calls precompute() → _build_kernel() → reset_state()
-
-    def _build_kernel(self) -> np.ndarray:
-        # return a (n_time_steps, n_basins) array representing per-basin unit hydrographs.
-        # each column sums to 1 * dt (unit volume conservation).
-        ...
-
-transformer = MyTransformer(my_param=0.5, dt=3600)
-
-(
-    rr
-    .UnitMuskingum('config.yaml')
-    .set_transformer(transformer)
-    .route()
-)

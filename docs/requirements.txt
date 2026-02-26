@@ -1,4 +1,5 @@
-zensical
+mkdocs
+mkdocs-material
 mkdocstrings
 mkdocstrings-python
 mkdocs-include-markdown-plugin

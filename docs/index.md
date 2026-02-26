@@ -5,20 +5,31 @@ sparse-matrix solvers. It is designed for large networks of rivers and catchment
 
 ## Routers
 
-Three routers are available:
+You have these options for how to do hydrological routing
 
-| Router           | Description                                                                                                   |
-|------------------|---------------------------------------------------------------------------------------------------------------|
-| `Muskingum`      | Channel routing with no lateral inflows.                                                                      |
-| `RapidMuskingum` | Overland runoff placed at catchment inlets uniformly over the runoff timestep. Muskingum channel routing.     |
-| `UnitMuskingum`  | Overland runoff transformed by a pluggable unit hydrograph before channel routing. Muskingum channel routing. |
+### Channel routing only
+
+| Router   | Description                                               |
+|----------|-----------------------------------------------------------|
+| `Router` | Matrix muskingum channel routing with no lateral inflows. |
+
+### Channel routing with runoff lateral inflows
+
+| Router           | Description                                                                                                                    |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `RapidMuskingum` | Runoff is treated as a point source at the catchment inlet which all enters the inlet during the interval the runoff occurs.   | 
+| `UnitMuskingum`  | Runoff transformed via convolution with user provided unit hydrographs at each catchment then routed in the downstream segment |
+
+### (Future) Channel routing with runoff lateral inflows and reservoir routing
 
 ## Start Here
 
-1. [Basic Walkthrough](tutorial/basic-tutorial.md)
-2. [Advanced Concepts](tutorial/advanced-tutorial.md)
-3. [Routing Ensembles](tutorial/routing-ensembles.md)
-4. [Unit Hydrograph Routing](tutorial/unit-hydrograph-routing.md)
+1. [Preparing Watersheds](tutorial/prepare-watersheds.md)
+2. [Muskingum Channel Routing](tutorial/channel-routing.md)
+3. [Channel Routing with Runoff Transformation](tutorial/unit-hydrograph-routing.md)
+4. [Customizing Outputs](tutorial/customizing-outputs.md)
+5. [Routing Ensembles](tutorial/routing-ensembles.md)
+6. [Generating UH Kernels](tutorial/create-uh-kernels.md)
 
 ```commandline
 pip install river-route
@@ -30,7 +41,7 @@ import river_route as rr
 # Most common: route runoff volumes through the network
 (
     rr
-    .Muskingum('/path/to/config.yaml')
+    .RapidMuskingum('/path/to/config.yaml')
     .route()
 )
 ```
@@ -59,47 +70,45 @@ graph LR
     end
 
     subgraph "Computations"
-    direction TB
-    a[Build Adjacency Matrix] --> b
-    b[Factorize LHS Matrix] --> c
-    c[Read Volume/Depth Array RapidMuskingum & UnitMuskingum] --> d
-    d[Apply UH Transform UnitMuskingum only] --> e
-    e[Iterate Routing Timesteps] --> f
-    f[Solve Muskingum System] --> g
-    g[Enforce Non-negative Flows] --> h & e
-    h[Write Discharge to Disk] --> i
-    i[Cache Final State]
+        direction TB
+        a[Build Adjacency Matrix] --> b
+        b[Factorize LHS Matrix] --> c
+        c[Read Volume/Depth Array RapidMuskingum & UnitMuskingum] --> d
+        d[Apply UH Transform UnitMuskingum only] --> e
+        e[Iterate Routing Timesteps] --> f
+        f[Solve Muskingum System] --> g
+        g[Enforce Non-negative Flows] --> h & e
+        h[Write Discharge to Disk] --> i
+        i[Cache Final State]
     end
 
     subgraph "Main-Output"
-    Result[Routed Discharge]
+        Result[Routed Discharge]
     end
 
     subgraph "Cachable-Files"
-    CachedFiles["Final State UH Kernel & State (UnitMuskingum)"]
+        CachedFiles["Final State UH Kernel & State (UnitMuskingum)"]
     end
 
     Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
     Computations ==> Main-Output & Cachable-Files
 ```
 
-## UnitMuskingum Transformer
+## UnitMuskingum Convolution
 
-`UnitMuskingum` delegates runoff transformation to a pluggable `AbstractBaseTransformer` subclass.
-Two initialization paths are available:
+`UnitMuskingum` convolves each runoff timestep with a precomputed unit hydrograph kernel before
+passing the result to channel routing. The kernel is provided as a parquet file.
 
 ```mermaid
 ---
-title: UnitMuskingum Transformer Initialization
+title: UnitMuskingum Kernel Initialization
 ---
 graph TD
-    A{Transformer source} -->|transformer_kernel_file| B[Transformer.from_kernel]
-    A -->|set_transformer| E[injected transformer]
-    B --> F{transformer_state_file\nprovided?}
-    E --> F
-    F -->|Yes| G[set_state from parquet]
-    F -->|No| H[zero initial state]
-    G & H --> I[AbstractBaseTransformer ready]
+    A[transformer_kernel_file] --> B[Read kernel parquet]
+    B --> C{transformer_state_file\nprovided?}
+    C -->|Yes| D[Load warm-start state from parquet]
+    C -->|No| E[Initialize state to zero]
+    D & E --> F[Ready to convolve]
 ```
 
 ## Usage Examples
