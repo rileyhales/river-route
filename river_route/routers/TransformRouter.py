@@ -1,14 +1,12 @@
 import datetime
-import os
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Self, List
 
 import numpy as np
 import xarray as xr
 
 from .Router import Router
-from .types import DatetimeArray, FloatArray, RunoffGeneratorSignature
+from ..types import DatetimeArray, FloatArray, RunoffGeneratorSignature
 
 __all__ = ['TransformRouter', ]
 
@@ -23,11 +21,10 @@ class TransformRouter(Router, ABC):
     _ensemble_member_states: List[FloatArray]  # for ensemble routing
 
     # Time options
+    # todo should time steps be handled here or by the config class?
     num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
-
-    _runoff_key = 'catchment_runoff'
 
     @property
     @abstractmethod
@@ -35,29 +32,30 @@ class TransformRouter(Router, ABC):
         """Whether the catchment runoff generator yields volumes (m³) or depths (m)"""
 
     def _catchment_runoff_generator(self) -> RunoffGeneratorSignature:
-        if self.conf.get(self._runoff_key):
-            for lateral_file, discharge_file in zip(self.conf[self._runoff_key], self.conf['discharge_files']):
+        # todo check which option was provided. The keys all always exist now with the new Config class
+        if self.cfg.catchment_runoff_files:
+            for lateral_file, discharge_file in zip(self.cfg.catchment_runoff_files, self.cfg.discharge_files):
                 with xr.open_dataset(lateral_file) as ds:
                     dates = ds['time'].values.astype('datetime64[s]')
-                    array = ds[self.conf['var_catchment_volume']].values.astype(np.float64, copy=False)
+                    array = ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False)
                     yield dates, array, lateral_file, discharge_file
-        elif self.conf.get('runoff_depth_grids'):
-            for runoff_file, discharge_file in zip(self.conf['runoff_depth_grids'], self.conf['discharge_files']):
+        elif self.cfg.runoff_grid_files:
+            for runoff_file, discharge_file in zip(self.cfg.runoff_grid_files, self.cfg.discharge_files):
                 self.logger.info(f'Calculating catchment volumes from runoff depth grid: {runoff_file}')
                 ds = grid_to_catchment(
                     runoff_file,
-                    weight_table=self.conf['grid_weights_file'],
-                    runoff_var=self.conf['var_runoff_depth'],
-                    x_var=self.conf['var_x'],
-                    y_var=self.conf['var_y'],
-                    time_var=self.conf['var_t'],
-                    river_id_var=self.conf['var_river_id'],
-                    cumulative=self.conf['runoff_type'] == 'cumulative',
+                    weight_table=self.cfg.grid_weights_file,
+                    runoff_var=self.cfg.var_runoff_depth,
+                    x_var=self.cfg.var_x,
+                    y_var=self.cfg.var_y,
+                    time_var=self.cfg.var_t,
+                    river_id_var=self.cfg.var_river_id,
+                    cumulative=self.cfg.runoff_type == 'cumulative',
                     as_volumes=self._catchment_runoff_as_volume
                 )
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
-                    ds[self.conf['var_catchment_volume']].values.astype(np.float64, copy=False),
+                    ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False),
                     runoff_file, discharge_file
                 )
 
@@ -65,53 +63,30 @@ class TransformRouter(Router, ABC):
         """Pre-process the lateral array, precomputed or generated, before passing to _router"""
         return array
 
-    # todo should this be abstract?
     def _validate_lateral_runoff_configs(self) -> None:
-        key = self._lateral_water_files_key
-        for k in (key, 'runoff_depth_grids', 'discharge_files'):
-            self.conf[k] = self.conf.get(k, [])
-            if isinstance(self.conf[k], (str, Path)):
-                self.conf[k] = [self.conf[k]]
-
-        self.conf['runoff_depth_grids'] = [os.path.abspath(p) for p in self.conf['runoff_depth_grids']]
-
-        lateral = self.conf[key]
-        grids = self.conf['runoff_depth_grids']
+        lateral = self.cfg.catchment_runoff_files
+        grids = self.cfg.runoff_grid_files
         n_files = len(lateral) + len(grids)
 
         if lateral and grids:
-            raise ValueError(f'Provide either {key} or runoff_depth_grids, not both')
-        if len(self.conf['discharge_files']) != n_files:
+            raise ValueError('Provide either catchment_runoff_files or runoff_grid_files, not both')
+        if len(self.cfg.discharge_files) != n_files:
             raise ValueError('Number of discharge_files must match number of input files')
-        for f in lateral:
-            if not os.path.exists(f):
-                raise FileNotFoundError(f'Lateral file not found: {f}')
-        for f in grids:
-            if not os.path.exists(f):
-                raise FileNotFoundError(f'Runoff depth grid not found: {f}')
-        for directory in {os.path.dirname(os.path.abspath(f)) for f in self.conf['discharge_files']}:
-            if not os.path.exists(directory):
-                raise NotADirectoryError(f'Output directory not found: {directory}')
-        if grids:
-            if not self.conf.get('grid_weights_file'):
-                raise ValueError('grid_weights_file is required when using runoff_depth_grids')
-            if not os.path.exists(self.conf['grid_weights_file']):
-                raise FileNotFoundError('grid_weights_file not found')
+        if grids and not self.cfg.grid_weights_file:
+            raise ValueError('grid_weights_file is required when using runoff_grid_files')
 
-        if not lateral:
-            del self.conf[key]
         if not grids:
-            del self.conf['runoff_depth_grids']
+            self.cfg.runoff_grid_files = []
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
         self.logger.debug('Setting and validating time parameters')
-        self.dt_runoff = self.conf.get('dt_runoff', (dates[1] - dates[0]).astype('timedelta64[s]').astype(int))
-        self.dt_discharge = self.conf.get('dt_discharge', self.dt_runoff)
-        self.dt_total = self.conf.get('dt_total', self.dt_runoff * dates.shape[0])
-        if not self.conf.get('dt_routing', 0):
+        self.dt_runoff = self.cfg.dt_runoff or (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
+        self.dt_discharge = self.cfg.dt_discharge or self.dt_runoff
+        self.dt_total = self.cfg.dt_total or self.dt_runoff * dates.shape[0]
+        if not self.cfg.dt_routing:
             self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
-        self.dt_routing = self.conf.get('dt_routing', self.dt_runoff)
+        self.dt_routing = self.cfg.dt_routing or self.dt_runoff
 
         signature = (self.dt_total, self.dt_runoff, self.dt_discharge, self.dt_routing,)
         if self._network_time_signature == signature:
@@ -176,7 +151,7 @@ class TransformRouter(Router, ABC):
             discharge_array = discharge_array.astype(np.float32, copy=False)
             self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
 
-        if self.conf['input_type'] == 'ensemble':
+        if self.cfg.computation_type == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
         self._write_final_state()
         self._hook_after_route()

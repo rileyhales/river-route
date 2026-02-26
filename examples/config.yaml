@@ -15,9 +15,9 @@ lateral_volume_files:          # list, even when only one file is provided
   - ''
 
 # Option 2: gridded runoff depths aggregated via a weight table
-# runoff_depth_grids:
+# runoff_grid_files:
 #   - ''
-# grid_weights_file: ''        # required with runoff_depth_grids
+# grid_weights_file: ''        # required with runoff_grid_files
 
 # ---------------------------------------------------------------------------
 # Output

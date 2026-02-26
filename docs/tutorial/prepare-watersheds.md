@@ -7,12 +7,12 @@ describe your river network. This tutorial shows how to build them programmatica
 
 The routing parameters parquet has one row per river segment. Required columns:
 
-| Column                | Type    | Description                                                         |
-|-----------------------|---------|---------------------------------------------------------------------|
-| `river_id`            | int64   | Unique integer ID for each segment                                  |
+| Column                | Type    | Description                                                           |
+|-----------------------|---------|-----------------------------------------------------------------------|
+| `river_id`            | int64   | Unique integer ID for each segment                                    |
 | `downstream_river_id` | int64   | ID of the downstream segment; `-1` (or any negative value) at outlets |
-| `k`                   | float64 | Muskingum K — wave travel time through the segment in seconds       |
-| `x`                   | float64 | Muskingum X — attenuation factor, 0 ≤ x ≤ 0.5                      |
+| `k`                   | float64 | Muskingum K — wave travel time through the segment in seconds         |
+| `x`                   | float64 | Muskingum X — attenuation factor, 0 ≤ x ≤ 0.5                         |
 
 Rows **must be in topological order** — every upstream segment before its downstream neighbor.
 
@@ -66,11 +66,11 @@ K is the wave travel time in seconds. A first estimate comes from channel geomet
 # v_mean = (1/n) * R^(2/3) * S^(1/2)
 import numpy as np
 
-n_manning = 0.035         # Manning's roughness (-)
-slope = rivers['slope']   # channel slope (m/m)
-hydraulic_radius = 1.0    # rough estimate (m) for bankfull
+n_manning = 0.035  # Manning's roughness (-)
+slope = rivers['slope']  # channel slope (m/m)
+hydraulic_radius = 1.0  # rough estimate (m) for bankfull
 
-v_mean = (1 / n_manning) * (hydraulic_radius ** (2/3)) * np.sqrt(slope)
+v_mean = (1 / n_manning) * (hydraulic_radius ** (2 / 3)) * np.sqrt(slope)
 v_wave = (5 / 3) * v_mean  # kinematic wave speed
 
 rivers['k'] = rivers['length_m'] / v_wave
@@ -122,8 +122,8 @@ config = {
     'lateral_volume_files': ['/path/to/volumes_jan.nc', '/path/to/volumes_feb.nc'],
     'discharge_files': ['/path/to/discharge_jan.nc', '/path/to/discharge_feb.nc'],
     'dt_routing': 3600,
-    'channel_state_file': '/path/to/initial_state.parquet',
-    'final_channel_state_file': '/path/to/final_state.parquet',
+    'channel_state_init_file': '/path/to/initial_state.parquet',
+    'channel_state_final_file': '/path/to/final_state.parquet',
 }
 
 with open('config.yaml', 'w') as f:

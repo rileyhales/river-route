@@ -1,19 +1,29 @@
 from pathlib import Path
-from typing import Any
+from typing import Callable, Generator, Tuple
+from typing import List
 
 import numpy as np
 from numpy.typing import NDArray
 
-ConfigDict = dict[str, Any]
 PathInput = str | Path
+PathTypes = (str, Path)  # for isinstance checks rather than type hinting
+PathList = List[PathInput]
 FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int64]
 DatetimeArray = NDArray[np.datetime64]
 
+RunoffGeneratorSignature = Generator[Tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
+WriteDischargesFn = Callable[[DatetimeArray, FloatArray, PathInput, PathInput], None]
+FactorizedSolveFn = Callable[[FloatArray], FloatArray]
+
 __all__ = [
-    'ConfigDict',
     'PathInput',
+    'PathTypes',
+    'PathList',
     'FloatArray',
     'IntArray',
     'DatetimeArray',
+    'RunoffGeneratorSignature',
+    'WriteDischargesFn',
+    'FactorizedSolveFn',
 ]

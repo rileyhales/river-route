@@ -7,9 +7,9 @@ import tqdm
 import xarray as xr
 
 from .TransformRouter import TransformRouter
-from .types import DatetimeArray, FloatArray, PathInput, RunoffGeneratorSignature
+from ..types import DatetimeArray, FloatArray, PathInput
 
-__all__ = ['UnitMuskingum']
+__all__ = ['UnitMuskingum', ]
 
 
 class UnitMuskingum(TransformRouter):
@@ -25,15 +25,15 @@ class UnitMuskingum(TransformRouter):
     - transformer_kernel_file: path to a parquet kernel file (n_basins × n_time_steps).
 
     Lateral input — one of:
-    - lateral_depth_files: list of paths to netCDF files containing per-catchment runoff depths.
-    - runoff_depth_grids + grid_weights_file: gridded runoff depth inputs remapped to catchments.
+    - catchment_runoff_files: list of paths to netCDF files containing per-catchment runoff depths.
+    - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
 
     - discharge_files: list of output paths, one per input file.
     - dt_routing: routing sub-step in seconds (required).
 
     State configs:
-    - transformer_state_file: (optional) path to warm-start the convolution state.
-    - final_transformer_state_file: (optional) path to write the final convolution state.
+    - transformer_state_init_file: (optional) path to warm-start the convolution state.
+    - transformer_state_final_file: (optional) path to write the final convolution state.
     """
 
     _uh_kernel: FloatArray | None = None
@@ -45,29 +45,29 @@ class UnitMuskingum(TransformRouter):
 
     def _validate_router_configs(self) -> None:
         self._validate_lateral_runoff_configs()
-        if not self.conf.get('transformer_kernel_file'):
+        if not self.cfg.transformer_kernel_file:
             raise RuntimeError('transformer_kernel_file is required for UnitMuskingum routing')
 
     def _read_lateral_file(self, file_path: PathInput) -> Tuple[DatetimeArray, FloatArray]:
         self.logger.info(f'Reading lateral depth file: {file_path}')
         with xr.open_dataset(file_path) as ds:
             return (ds['time'].values.astype('datetime64[s]'),
-                    ds[self.conf['var_runoff_depth']].values.astype(np.float64, copy=False))
+                    ds[self.cfg.var_runoff_depth].values.astype(np.float64, copy=False))
 
     def _on_runoff_file_start(self) -> None:
         self._read_uh_kernel()
 
     def _hook_after_route(self) -> None:
-        if self.conf.get('final_transformer_state_file') and self._uh_state is not None:
+        if self.cfg.transformer_state_final_file and self._uh_state is not None:
             self.logger.debug('Writing final convolution state to parquet')
-            pd.DataFrame(self._uh_state.T).to_parquet(self.conf['final_transformer_state_file'])
+            pd.DataFrame(self._uh_state.T).to_parquet(self.cfg.transformer_state_final_file)
 
     def _read_uh_kernel(self) -> None:
         if self._uh_kernel is not None:
             return
         self.logger.debug('Reading UH kernel from parquet')
-        self._uh_kernel = pd.read_parquet(self.conf['transformer_kernel_file']).T.to_numpy(dtype=np.float64)
-        state_file = self.conf.get('transformer_state_file')
+        self._uh_kernel = pd.read_parquet(self.cfg.transformer_kernel_file).T.to_numpy(dtype=np.float64)
+        state_file = self.cfg.transformer_state_init_file
         if state_file:
             self.logger.debug('Reading convolution state from parquet')
             _state = pd.read_parquet(state_file).T.to_numpy(dtype=np.float64, copy=True)
@@ -93,11 +93,13 @@ class UnitMuskingum(TransformRouter):
         interval_sum = np.zeros(n, dtype=np.float64)
 
         t1 = datetime.datetime.now()
-        runoff_iter = tqdm.tqdm(dates, desc='Lateral Depths Routed') if self.conf['progress_bar'] else dates
-        if not self.conf['progress_bar']:
+        runoff_iter = tqdm.tqdm(dates, desc='Lateral Depths Routed') if self.cfg.progress_bar else dates
+        if not self.cfg.progress_bar:
             self.logger.info('Performing routing computation iterations')
 
         for runoff_time_step, _ in enumerate(runoff_iter):
+            # todo check for off by 1 error. the array selector might be right but maybe confusingly named?
+            # todo are we using the notation where the next solved time step is t or t+1? i think its t
             # convolve: accumulate kernel response for this runoff depth, then advance state
             self._uh_state += self._uh_kernel * lateral[runoff_time_step, :]
             ql_t = self._uh_state[0, :].copy()
@@ -118,10 +120,10 @@ class UnitMuskingum(TransformRouter):
 
         discharge_array[discharge_array < 0] = 0
 
-        if self.conf['input_type'] == 'sequential':
+        if self.cfg.computation_type == 'sequential':
             self.logger.debug('Updating Channel State for Next Sequential Computation')
             self.channel_state = q_t
-        elif self.conf['input_type'] == 'ensemble':
+        elif self.cfg.computation_type == 'ensemble':
             self.logger.debug('Recording Member State for Final State Aggregation')
             self._ensemble_member_states.append(q_t.copy())
 

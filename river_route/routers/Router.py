@@ -1,11 +1,9 @@
 import datetime
 import json
 import logging
-import os
 import random
 import sys
 import traceback
-from pathlib import Path
 from typing import Any, Self
 from typing import Tuple
 
@@ -17,16 +15,15 @@ import yaml
 from scipy.sparse import csc_matrix, diags, eye
 from scipy.sparse.linalg import factorized
 
-from .types import ConfigDict, IntArray, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
-from .types import FloatArray, PathInput
-from ..__metadata__ import __version__
+from .Config import Configs
 from ..tools import adjacency_matrix
+from ..types import IntArray, FloatArray, PathInput, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
 
 __all__ = ['Router', ]
 
 
 class Router:
-    conf: ConfigDict
+    cfg: Configs
     logger: logging.Logger
 
     # Network dependent matrices and vectors from routing parameters file
@@ -62,98 +59,62 @@ class Router:
         return
 
     def __repr__(self):
-        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in self.conf.items()]
+        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in self.cfg.items()]
         return '\n'.join(messages)
 
     def _set_configs(self, config_file: PathInput | None, **kwargs: Any) -> None:
-        if config_file is None or config_file == '':
-            self.conf = {}
-        elif str(config_file).endswith('.json'):
-            with open(config_file, 'r') as f:
-                self.conf = json.load(f)
-        elif str(config_file).endswith('.yml') or str(config_file).endswith('.yaml'):
-            with open(config_file, 'r') as f:
-                self.conf = yaml.load(f, Loader=yaml.FullLoader)
-        else:
-            raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
-
-        self.conf.update(kwargs)
-        self.conf['river-route-version'] = __version__
-        self.conf['log'] = bool(self.conf.get('log', True))
-        self.conf['progress_bar'] = self.conf.get('progress_bar', self.conf['log'])
-        self.conf['log_level'] = self.conf.get('log_level', 'INFO')
-
-        # compute and routing options (time is validated separately at compute step)
-        self.conf['input_type'] = self.conf.get('input_type', 'sequential')
-        self.conf['runoff_type'] = self.conf.get('runoff_type', 'incremental')
-
-        # expected variable names in input/output files
-        self.conf['var_river_id'] = self.conf.get('var_river_id', 'river_id')
-        self.conf['var_discharge'] = self.conf.get('var_discharge', 'Q')
-        self.conf['var_x'] = self.conf.get('var_x', 'x')
-        self.conf['var_y'] = self.conf.get('var_y', 'y')
-        self.conf['var_t'] = self.conf.get('var_t', 'time')
-        self.conf['var_catchment_volume'] = self.conf.get('var_catchment_volume', 'volume')
-        self.conf['var_runoff_depth'] = self.conf.get('var_runoff_depth', 'ro')
+        raw: dict[str, Any] = {}
+        if config_file is not None and config_file != '':
+            if str(config_file).endswith('.json'):
+                with open(config_file, 'r') as f:
+                    raw = json.load(f)
+            elif str(config_file).endswith(('.yml', '.yaml')):
+                with open(config_file, 'r') as f:
+                    raw = yaml.load(f, Loader=yaml.FullLoader)
+            else:
+                raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
+        raw.update(kwargs)
+        self.cfg = Configs(**raw)
 
         # configure logging
-        self.logger.disabled = not self.conf.get('log', True)
-        self.logger.setLevel(self.conf.get('log_level', 'INFO'))
-        log_destination = self.conf.get('log_stream', 'stdout')
-        log_format = self.conf.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
-        if log_destination == 'stdout':
+        self.logger.disabled = not self.cfg.log
+        self.logger.setLevel(self.cfg.log_level)
+        if self.cfg.log_stream == 'stdout':
             self.logger.addHandler(logging.StreamHandler(sys.stdout))
-        elif isinstance(log_destination, str):
-            self.logger.addHandler(logging.FileHandler(log_destination))
-        self.logger.handlers[0].setFormatter(logging.Formatter(log_format))
+        else:
+            self.logger.addHandler(logging.FileHandler(self.cfg.log_stream))
+        self.logger.handlers[0].setFormatter(logging.Formatter(self.cfg.log_format))
         self.logger.debug('Logger initialized')
         return
 
     def _validate_configs(self) -> None:
         self.logger.debug('Validating configs file')
+        self.cfg.coerce_path_list_fields()
         self._validate_router_configs()
-        if not self.conf.get('routing_params_file'):
+
+        if not self.cfg.routing_params_file:
             raise ValueError('routing_params_file is required')
-        if not os.path.exists(self.conf['routing_params_file']):
-            raise FileNotFoundError('Routing params file not found')
-
-        # check for valid options
-        if self.conf['input_type'] not in ['sequential', 'ensemble']:
-            raise ValueError('Input type not recognized')
-        if self.conf['runoff_type'] not in ['incremental', 'cumulative']:
-            raise ValueError('Runoff type not recognized')
-
-        # if the initial state was provided but is falsey then remove it so future checks behave properly
-        if 'channel_state_file' in self.conf and not self.conf['channel_state_file']:
-            del self.conf['channel_state_file']
-        if self.conf.get('channel_state_file', ''):
-            if not os.path.exists(self.conf['channel_state_file']):
-                raise FileNotFoundError('channel_state_file not found')
-
-        # convert all relative paths to absolute paths (after subclass has populated all file keys)
-        for arg in [k for k in self.conf.keys() if 'file' in k]:
-            if isinstance(self.conf[arg], list):
-                self.conf[arg] = [os.path.abspath(path) for path in self.conf[arg]]
-            elif isinstance(self.conf[arg], (str, Path)):
-                self.conf[arg] = os.path.abspath(self.conf[arg])
-
-        if not self.conf.get('dt_routing'):
+        if self.cfg.computation_type not in ['sequential', 'ensemble']:
+            raise ValueError('computation_type not recognized')
+        if self.cfg.runoff_type not in ['incremental', 'cumulative']:
+            raise ValueError('runoff_type not recognized')
+        if not self.cfg.dt_routing:
             raise ValueError('dt_routing is required for Muskingum routing')
+
+        self.cfg.absolutize_paths()
+        self.cfg.verify_input_files_exist()
+        self.cfg.verify_output_directories_exist()
 
         self._hook_after_validate_configs()
         return
 
     def _validate_router_configs(self) -> None:
         """Called at the start of _validate_configs() for subclass-specific validation."""
-        discharge_files = self.conf.get('discharge_files', [])
-        if not discharge_files:
+        if not self.cfg.discharge_files:
             raise ValueError('discharge_files is required for Muskingum routing')
-        if len(discharge_files) != 1:
+        if len(self.cfg.discharge_files) != 1:
             raise ValueError('Muskingum routing requires exactly one entry in discharge_files')
-        directory = os.path.dirname(os.path.abspath(discharge_files[0]))
-        if not os.path.exists(directory):
-            raise NotADirectoryError(f'Output file directory not found at: {directory}')
-        if not self.conf.get('dt_total'):
+        if not self.cfg.dt_total:
             raise ValueError('dt_total is required for Muskingum routing')
         return
 
@@ -165,9 +126,9 @@ class Router:
         if hasattr(self, 'channel_state'):
             return
 
-        state_file = self.conf.get('channel_state_file', '')
-        if state_file == '':
-            self.logger.warning('channel_state_file not provided. Defaulting to zero initial conditions')
+        state_file = self.cfg.channel_state_init_file
+        if not state_file:
+            self.logger.warning('channel_state_init_file not provided. Defaulting to zero initial conditions')
             self.channel_state = np.zeros(self.A.shape[0], dtype=np.float64)
             return
         self.logger.debug('Reading Initial State from Parquet')
@@ -175,11 +136,11 @@ class Router:
         return
 
     def _write_final_state(self) -> None:
-        final_state_file = self.conf.get('final_channel_state_file', '')
-        if final_state_file == '':
+        final_state_file = self.cfg.channel_state_final_file
+        if not final_state_file:
             return
         self.logger.debug('Writing Final State to Parquet')
-        pd.DataFrame({'Q': self.channel_state}).to_parquet(self.conf['final_channel_state_file'])
+        pd.DataFrame({'Q': self.channel_state}).to_parquet(self.cfg.channel_state_final_file)
         return
 
     ################################################
@@ -190,18 +151,18 @@ class Router:
         self.logger.debug('Calculating network dependent vectors')
         try:
             df = pd.read_parquet(
-                self.conf['routing_params_file'],
-                columns=[self.conf['var_river_id'], 'k', 'x', 'downstream_river_id']
+                self.cfg.routing_params_file,
+                columns=[self.cfg.var_river_id, 'k', 'x', 'downstream_river_id']
             )
         except Exception as e:
             self.logger.error(f'Error reading required parameter columns from routing_params_file: {e}')
             self.logger.debug(traceback.format_exc())
             raise
 
-        if df[self.conf['var_river_id']].duplicated().any():
+        if df[self.cfg.var_river_id].duplicated().any():
             raise ValueError('routing_params_file contains duplicate river IDs.')
 
-        self.river_ids = df[self.conf['var_river_id']].to_numpy(dtype=np.int64, copy=False)
+        self.river_ids = df[self.cfg.var_river_id].to_numpy(dtype=np.int64, copy=False)
         self.downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
         self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
         self.x = df['x'].to_numpy(dtype=np.float64, copy=False)
@@ -262,9 +223,9 @@ class Router:
         self.logger.debug(self)
 
         # time parameters
-        self.dt_routing = self.conf['dt_routing']
-        self.dt_total = self.conf['dt_total']
-        self.dt_discharge = self.conf.get('dt_discharge', self.dt_routing)
+        self.dt_routing = self.cfg.dt_routing
+        self.dt_total = self.cfg.dt_total
+        self.dt_discharge = self.cfg.dt_discharge or self.dt_routing
         assert self.dt_total >= self.dt_discharge >= self.dt_routing, 'Need dt_total >= dt_discharge >= dt_routing'
         assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
         assert self.dt_discharge % self.dt_routing == 0, 'dt_discharge must be an integer multiple of dt_routing'
@@ -279,7 +240,7 @@ class Router:
         discharge_array = self._router(num_output_steps, num_routing_per_output)
 
         # Generate date array for output
-        start = np.datetime64(self.conf.get('start_datetime', '2000-01-01'))
+        start = np.datetime64(self.cfg.start_datetime)
         dt_sec = int(self.dt_discharge)
         dates = start + (np.arange(num_output_steps) * np.timedelta64(dt_sec, 's'))
 
@@ -287,7 +248,7 @@ class Router:
         self.logger.info('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
-        self._write_discharges(dates, discharge_array, self.conf['discharge_files'][0])  # todo update signature
+        self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])  # todo update signature
         self._write_final_state()
 
         # end hook
@@ -309,7 +270,7 @@ class Router:
         if not np.any(q_init):
             self.logger.warning(
                 'Initial channel state is all zeros. Muskingum routing without lateral inflow requires a '
-                'non-zero initial state to produce meaningful results. Provide channel_state_file.'
+                'non-zero initial state to produce meaningful results. Provide channel_state_init_file.'
             )
 
         n = self.A.shape[0]
@@ -321,7 +282,7 @@ class Router:
 
         t1 = datetime.datetime.now()
         output_iter = range(num_output_steps)
-        if self.conf['progress_bar']:
+        if self.cfg.progress_bar:
             output_iter = tqdm.tqdm(output_iter, desc='Channel Routing')
         else:
             self.logger.info('Performing routing computation iterations')
@@ -418,14 +379,14 @@ class Router:
         """
         with nc.Dataset(str(q_file), mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=q_array.shape[0])
-            ds.createDimension(self.conf['var_river_id'], size=q_array.shape[1])
+            ds.createDimension(self.cfg.var_river_id, size=q_array.shape[1])
             ds.runoff_file = str(routed_file)
             time_var = ds.createVariable('time', 'f8', ('time',))
             time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
             time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
-            id_var = ds.createVariable(self.conf['var_river_id'], 'i4', (self.conf['var_river_id']), )
+            id_var = ds.createVariable(self.cfg.var_river_id, 'i4', (self.cfg.var_river_id), )
             id_var[:] = self.river_ids
-            flow_var = ds.createVariable(self.conf['var_discharge'], 'f4', ('time', self.conf['var_river_id']))
+            flow_var = ds.createVariable(self.cfg.var_discharge, 'f4', ('time', self.cfg.var_river_id))
             flow_var[:] = q_array
             flow_var.long_name = 'Discharge at catchment outlet'
             flow_var.standard_name = 'discharge'

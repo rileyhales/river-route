@@ -4,7 +4,7 @@ import numpy as np
 import tqdm
 
 from .TransformRouter import TransformRouter
-from .types import FloatArray, DatetimeArray
+from ..types import FloatArray, DatetimeArray
 
 __all__ = ['RapidMuskingum', ]
 
@@ -22,8 +22,8 @@ class RapidMuskingum(TransformRouter):
     - routing_params_file: path to routing parameters parquet file.
 
     Lateral input — one of:
-    - lateral_volume_files: list of paths to netCDF files containing per-catchment volumes (m³).
-    - runoff_depth_grids + grid_weights_file: gridded runoff depth inputs remapped to catchments.
+    - catchment_runoff_files: list of paths to netCDF files containing per-catchment volumes (m³).
+    - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
 
     - discharge_files: list of output paths, one per input file.
     - dt_routing: routing sub-step in seconds (required).
@@ -56,8 +56,8 @@ class RapidMuskingum(TransformRouter):
         interval_sum = np.zeros(n, dtype=np.float64)
 
         t1 = datetime.datetime.now()
-        runoff_iter = tqdm.tqdm(dates, desc='Runoff Volumes Routed') if self.conf['progress_bar'] else dates
-        if not self.conf['progress_bar']:
+        runoff_iter = tqdm.tqdm(dates, desc='Runoff Volumes Routed') if self.cfg.progress_bar else dates
+        if not self.cfg.progress_bar:
             self.logger.info('Performing routing computation iterations')
 
         for runoff_time_step, _ in enumerate(runoff_iter):
@@ -77,10 +77,10 @@ class RapidMuskingum(TransformRouter):
 
         discharge_array[discharge_array < 0] = 0
 
-        if self.conf['input_type'] == 'sequential':
+        if self.cfg.computation_type == 'sequential':
             self.logger.debug('Updating Channel State for Next Sequential Computation')
             self.channel_state = q_t
-        elif self.conf['input_type'] == 'ensemble':
+        elif self.cfg.computation_type == 'ensemble':
             self.logger.debug('Recording Member State for Final State Aggregation')
             self._ensemble_member_states.append(q_t.copy())
 

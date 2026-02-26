@@ -38,12 +38,12 @@ See the [File Schemas reference](../references/io-file-schema.md) for field name
 
 The routing parameters parquet must contain at minimum these columns:
 
-| Column                 | Description                                                  |
-|------------------------|--------------------------------------------------------------|
-| `river_id`             | Unique integer ID for each river segment                     |
-| `downstream_river_id`  | ID of the downstream segment (`-1` or `<0` at outlets)      |
-| `k`                    | Muskingum K — travel time (seconds); typically channel length / wave speed |
-| `x`                    | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)              |
+| Column                | Description                                                                |
+|-----------------------|----------------------------------------------------------------------------|
+| `river_id`            | Unique integer ID for each river segment                                   |
+| `downstream_river_id` | ID of the downstream segment (`-1` or `<0` at outlets)                     |
+| `k`                   | Muskingum K — travel time (seconds); typically channel length / wave speed |
+| `x`                   | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
 
 Rows must be in **topological order**: all upstream segments before their downstream neighbors.
 
@@ -116,7 +116,7 @@ import river_route as rr
 
 ## Warm-Starting Channel State
 
-By default the channel starts at zero discharge. Provide a state file to initialize from a previous run:
+By default, the channel starts at zero discharge. Provide a state file to initialize from a previous run:
 
 ```yaml
 routing_params_file: 'params.parquet'
