@@ -98,8 +98,6 @@ class UnitMuskingum(TransformRouter):
             self.logger.info('Performing routing computation iterations')
 
         for runoff_time_step, _ in enumerate(runoff_iter):
-            # todo check for off by 1 error. the array selector might be right but maybe confusingly named?
-            # todo are we using the notation where the next solved time step is t or t+1? i think its t
             # convolve: accumulate kernel response for this runoff depth, then advance state
             self._uh_state += self._uh_kernel * lateral[runoff_time_step, :]
             ql_t = self._uh_state[0, :].copy()

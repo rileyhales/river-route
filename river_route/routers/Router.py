@@ -333,18 +333,6 @@ class Router:
         pass
 
     ################################################
-    # Class promotion methods for users to add behavior without calling the subclass
-    ################################################
-
-    # TODO: implement class-promotion method for rapid-style transformer
-    def enable_transformer_rapid(self):
-        raise NotImplementedError
-
-    # TODO: implement class-promotion method for unit-hydrograph transformer
-    def enable_transformer_unit_hydrograph(self):
-        raise NotImplementedError
-
-    ################################################
     # Dependency injection methods for users to overwrite default behaviors without subclassing
     ################################################
 
