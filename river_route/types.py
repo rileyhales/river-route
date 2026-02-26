@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Generator, Tuple
+from typing import Callable, Generator, Protocol, Tuple
 from typing import List
 
 import numpy as np
@@ -13,7 +13,18 @@ IntArray = NDArray[np.int64]
 DatetimeArray = NDArray[np.datetime64]
 
 RunoffGeneratorSignature = Generator[Tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
-WriteDischargesFn = Callable[[DatetimeArray, FloatArray, PathInput, PathInput], None]
+
+
+class WriteDischargesFn(Protocol):
+    def __call__(
+        self,
+        dates: DatetimeArray,
+        q_array: FloatArray,
+        q_file: PathInput,
+        routed_file: PathInput = '',
+    ) -> None: ...
+
+
 FactorizedSolveFn = Callable[[FloatArray], FloatArray]
 
 __all__ = [

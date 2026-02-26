@@ -1,11 +1,13 @@
-from __future__ import annotations
-
 import dataclasses
 import os
+import types
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Iterator, Literal, get_args, get_origin, get_type_hints
 
 from ..types import PathInput, PathList, PathTypes
+
+# Evaluated members of PathInput (str | Path) — used by _derive_path_sets for type inspection
+_PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
 
 __all__ = ['Configs', ]
 
@@ -14,14 +16,14 @@ _MISSING = object()  # sentinel for distinguishing between missing and None valu
 
 @dataclass
 class Configs:
-    # Class-level annotations with defaults — used by static type checkers AND by _derive_path_sets().
-    # Rule: annotate ALL file path fields with PathInput (or PathList). Non-path fields use concrete types.
+    # Rule: annotate ALL file path fields with PathInput (or PathList) so _derive_path_sets() can
+    # detect them via type inspection. Non-path fields use concrete types.
 
     # Core Routing Files
     routing_params_file: PathInput | None = None
     discharge_files: PathList = field(default_factory=list)
-    channel_state_init_file: PathInput = ''
-    channel_state_final_file: PathInput = ''
+    channel_state_init_file: PathInput | None = None
+    channel_state_final_file: PathInput | None = None
 
     # Time options
     dt_routing: int = 0
@@ -186,21 +188,27 @@ def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
     return result
 
 
-def _derive_path_sets(notations: dict[str, str]) -> tuple[frozenset[str], frozenset[str]]:
+def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
     """
-    Automatically find the paths or lists of paths based on type annotations
-    and return (single_path_fields, list_path_fields) for any field typed PathInput or PathList.
+    Inspect evaluated type hints and return (single_path_fields, list_path_fields) for any
+    field typed with PathInput (str | Path) or PathList (list[str | Path]), including Optional
+    variants. Fields beginning with '_' are ignored.
     """
     single, lists = set(), set()
-    for name, hint in notations.items():
+    for name, hint in get_type_hints(cls).items():
         if name.startswith('_'):
             continue
-        if 'PathList' in hint:
+        origin = get_origin(hint)
+        if origin is list:
             lists.add(name)
-        elif 'PathInput' in hint:
-            single.add(name)
+        elif origin is types.UnionType:
+            non_none = [a for a in get_args(hint) if a is not type(None)]
+            if len(non_none) == 1 and get_origin(non_none[0]) is list:
+                lists.add(name)  # PathList | None
+            elif _PATH_INPUT_TYPES <= set(get_args(hint)):
+                single.add(name)  # PathInput or PathInput | None
     return frozenset(single), frozenset(lists)
 
 
-Configs._SINGLE_PATH_FIELDS, Configs._LIST_PATH_FIELDS = _derive_path_sets(Configs.__annotations__)
+Configs._SINGLE_PATH_FIELDS, Configs._LIST_PATH_FIELDS = _derive_path_sets(Configs)
 Configs._VALID_VALUES = _derive_valid_values(Configs)

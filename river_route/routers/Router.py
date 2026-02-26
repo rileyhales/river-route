@@ -247,7 +247,7 @@ class Router:
         self.logger.info('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
-        self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0], None)
+        self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])
         self._write_final_state()
 
         # end hook
@@ -350,7 +350,7 @@ class Router:
                           dates: DatetimeArray,
                           q_array: FloatArray,
                           q_file: PathInput,
-                          routed_file: PathInput | None = '', ) -> None:
+                          routed_file: PathInput = '', ) -> None:
         """
         Writes routed discharge from a routing simulation to a netcdf file.
         You can overwrite this method with a custom handler using set_write_discharges.

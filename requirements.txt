@@ -1,13 +1,10 @@
-dask
 fastparquet
 geopandas
-matplotlib
-natsort
-netcdf4
+netCDF4
 networkx
 numpy
 pandas
-pyyaml
+PyYAML
 scipy
 shapely
 tqdm

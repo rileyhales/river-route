@@ -85,7 +85,7 @@ def core_muskingum_feature_set() -> None:
     routing_params_file = data_root / 'watershed' / 'prepared_routing_params.parquet'
     catchments_file = data_root / 'watershed' / 'prepared_catchments.parquet'
     runoff_depths_file = data_root / 'watershed' / 'prepared_runoff_depths.nc'
-    expected_grid_weights_file = data_root / 'watershed' / 'prepared_gridweights.nc'
+    expected_grid_weights_file = data_root / 'watershed' / 'prepared_grid_weights.nc'
     expected_voronoi_diagram_file = data_root / 'watershed' / 'voronoi.parquet'
     expected_volumes_file = data_root / 'watershed' / 'volumes.nc'
     expected_discharge_file = data_root / 'watershed' / 'discharge.nc'

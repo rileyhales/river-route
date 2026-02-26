@@ -3,11 +3,8 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.14
-  - dask
   - fastparquet
   - geopandas
-  - matplotlib
-  - natsort
   - netcdf4
   - networkx
   - numpy

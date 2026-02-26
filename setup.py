@@ -6,7 +6,7 @@ NAME = 'river_route'
 DESCRIPTION = 'Perform river routing computations on large river networks'
 URL = 'https://github.com/rileyhales/river-route'
 AUTHOR = 'Riley Hales PhD'
-REQUIRES_PYTHON = '>=3.12.0'
+REQUIRES_PYTHON = '>=3.14.0'
 
 with open(f'./{NAME}/__metadata__.py') as f:
     version_pattern = r'__version__ = [\'"](\d+\.\d+\.\d+)[\'"]'
@@ -32,8 +32,7 @@ setup(
         'Intended Audience :: Science/Research',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.12',
-        'Programming Language :: Python :: 3.13',
+        'Programming Language :: Python :: 3.14',
         'Topic :: Scientific/Engineering',
         'Topic :: Scientific/Engineering :: Atmospheric Science',
         'Topic :: Scientific/Engineering :: GIS',
