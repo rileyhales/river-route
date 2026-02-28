@@ -72,6 +72,8 @@ class Configs:
         'discharge_files',
     })
 
+    _ALWAYS_REQUIRED: ClassVar[tuple[str, ...]] = ('params_file', 'discharge_files')
+
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
     _LIST_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -91,6 +93,10 @@ class Configs:
         self.absolutize_paths()
         self.verify_input_files_exist()
         self.verify_output_directories_exist()
+        # make sure required fields are set
+        for key in self._ALWAYS_REQUIRED:
+            if getattr(self, key) in (None, '', []):
+                raise ValueError(f'Missing required config: {key}')
 
     # --- path normalization and verification ---
     def coerce_path_list_fields(self) -> None:

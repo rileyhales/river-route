@@ -13,7 +13,6 @@ instructions.
 - Changed grid weights format from CSV to NetCDF with `proportion` column.
 - Simplified channel state files from two columns (Q, R) to one column (Q).
 - Added topological sort validation on routing parameters.
-- Added `reservoirs/` subpackage with `LinearReservoir`, `PowerLawReservoir`, `LevelPoolReservoir`, and `TargetReleaseReservoir`.
 - Added `types.py` module centralizing type aliases.
 - Expanded `runoff.py` with Voronoi-based grid weight computation pipeline.
 - Renamed numerous config keys (see migration guide).

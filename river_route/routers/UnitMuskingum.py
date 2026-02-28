@@ -1,13 +1,11 @@
 import datetime
-from typing import Tuple
 
 import numpy as np
 import pandas as pd
 import tqdm
-import xarray as xr
 
 from .TransformRouter import TransformRouter
-from ..types import DatetimeArray, FloatArray, PathInput
+from ..types import DatetimeArray, FloatArray
 
 __all__ = ['UnitMuskingum', ]
 
@@ -22,20 +20,13 @@ class UnitMuskingum(TransformRouter):
 
     Required configs:
     - params_file: path to routing parameters parquet file.
+    - discharge_files: list of output paths, one per input file.
     - transformer_kernel_file: path to a parquet kernel file (n_basins × n_time_steps).
-
     Lateral input — one of:
     - catchment_runoff_files: list of paths to netCDF files containing per-catchment runoff depths.
     - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
-
-    - discharge_files: list of output paths, one per input file.
-    - dt_routing: routing sub-step in seconds (required).
-
-    State configs:
-    - transformer_state_init_file: (optional) path to warm-start the convolution state.
-    - transformer_state_final_file: (optional) path to write the final convolution state.
     """
-
+    _ROUTER_REQUIRED_CONFIGS = ('transformer_kernel_file',)
     _uh_kernel: FloatArray | None = None
     _uh_state: FloatArray | None = None
 
@@ -43,18 +34,7 @@ class UnitMuskingum(TransformRouter):
     def _catchment_runoff_as_volume(self) -> bool:
         return False  # False -> means as depth
 
-    def _validate_router_configs(self) -> None:
-        self._validate_lateral_runoff_configs()
-        if not self.cfg.transformer_kernel_file:
-            raise RuntimeError('transformer_kernel_file is required for UnitMuskingum routing')
-
-    def _read_lateral_file(self, file_path: PathInput) -> Tuple[DatetimeArray, FloatArray]:
-        self.logger.info(f'Reading lateral depth file: {file_path}')
-        with xr.open_dataset(file_path) as ds:
-            return (ds['time'].values.astype('datetime64[s]'),
-                    ds[self.cfg.var_runoff_depth].values.astype(np.float64, copy=False))
-
-    def _on_runoff_file_start(self) -> None:
+    def _hook_before_route(self) -> None:
         self._read_uh_kernel()
 
     def _hook_after_route(self) -> None:
@@ -79,7 +59,6 @@ class UnitMuskingum(TransformRouter):
 
     def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:
         self.logger.debug('Getting initial state arrays')
-        self._read_initial_state()
         q_init = self.channel_state
 
         if self._uh_kernel is None or self._uh_state is None:

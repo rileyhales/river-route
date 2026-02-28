@@ -20,8 +20,6 @@ You have these options for how to do hydrological routing
 | `RapidMuskingum` | Runoff is treated as a point source at the catchment inlet which all enters the inlet during the interval the runoff occurs.   | 
 | `UnitMuskingum`  | Runoff transformed via convolution with user provided unit hydrographs at each catchment then routed in the downstream segment |
 
-### (Future) Channel routing with runoff lateral inflows and reservoir routing
-
 ## Start Here
 
 1. [Preparing Watersheds](tutorial/prepare-watersheds.md)
@@ -29,7 +27,7 @@ You have these options for how to do hydrological routing
 3. [Channel Routing with Runoff Transformation](tutorial/unit-hydrograph-routing.md)
 4. [Routing Ensembles](tutorial/routing-ensembles.md)
 5. [Advanced Uses](tutorial/advanced-tutorial.md)
-5. [Generating UH Kernels](tutorial/create-uh-kernels.md)
+6. [Generating UH Kernels](tutorial/create-uh-kernels.md)
 
 ```commandline
 pip install river-route

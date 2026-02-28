@@ -61,20 +61,16 @@ class TransformRouter(Router, ABC):
         """Pre-process the lateral array, precomputed or generated, before passing to _router"""
         return array
 
-    def _validate_lateral_runoff_configs(self) -> None:
+    def _validate_router_configs(self) -> None:
         lateral = self.cfg.catchment_runoff_files
-        grids = self.cfg.runoff_grid_files
-        n_files = len(lateral) + len(grids)
+        grids = self.cfg.runoff_grid_files and self.cfg.grid_weights_file
 
         if lateral and grids:
-            raise ValueError('Provide either catchment_runoff_files or runoff_grid_files, not both')
-        if len(self.cfg.discharge_files) != n_files:
+            raise ValueError('Provide catchment_runoff_files or runoff_grid_files with grid_weights_file, not both')
+        if not lateral and not grids:
+            raise ValueError('Provide catchment_runoff_files or runoff_grid_files with grid_weights_file')
+        if len(self.cfg.discharge_files) != len(lateral) + len(grids):
             raise ValueError('Number of discharge_files must match number of input files')
-        if grids and not self.cfg.grid_weights_file:
-            raise ValueError('grid_weights_file is required when using runoff_grid_files')
-
-        if not grids:
-            self.cfg.runoff_grid_files = []
         return
 
     def _set_network_and_time_dependent_vectors(self, dates: DatetimeArray) -> None:
@@ -118,11 +114,16 @@ class TransformRouter(Router, ABC):
         self.logger.info('Beginning routing')
         t1 = datetime.datetime.now()
 
-        self._hook_before_route()
+        # validate configuration options
         self._validate_configs()
-        self._set_network_dependent_vectors()
         self.logger.debug(self)
 
+        # set arrays for routing
+        self._set_network_dependent_vectors()
+        self._read_initial_state()
+
+        # hooks
+        self._hook_before_route()
         self._ensemble_member_states = []
 
         for dates, qlateral, runoff_file, discharge_file in self._catchment_runoff_generator():

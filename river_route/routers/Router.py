@@ -26,6 +26,9 @@ class Router:
     cfg: Configs
     logger: logging.Logger
 
+    # any subclass that requires non-null values for configs should have an iterable of the keys needed
+    _ROUTER_REQUIRED_CONFIGS = ('channel_state_init_file', 'dt_routing', 'dt_total')
+
     # Network dependent matrices and vectors from routing parameters file
     A: csc_matrix  # n x n - adjacency matrix
     river_ids: IntArray  # n x 1 - river ID for each segment
@@ -86,33 +89,16 @@ class Router:
 
     def _validate_configs(self) -> None:
         self.logger.debug('Validating configs file')
-        self.cfg.coerce_path_list_fields()
+        for key in self._ROUTER_REQUIRED_CONFIGS:
+            if not getattr(self.cfg, key, None):
+                raise ValueError(f'{key} is required for {type(self).__name__}')
         self._validate_router_configs()
-
-        if not self.cfg.params_file:
-            raise ValueError('params_file is required')
-        if self.cfg.runoff_processing_mode not in ['sequential', 'ensemble']:
-            raise ValueError('runoff_processing_mode not recognized')
-        if self.cfg.runoff_accumulation_type not in ['incremental', 'cumulative']:
-            raise ValueError('runoff_accumulation_type not recognized')
-        if not self.cfg.dt_routing:
-            raise ValueError('dt_routing is required for Muskingum routing')
-
-        self.cfg.absolutize_paths()
-        self.cfg.verify_input_files_exist()
-        self.cfg.verify_output_directories_exist()
-
-        self._hook_after_validate_configs()
         return
 
     def _validate_router_configs(self) -> None:
-        """Called at the start of _validate_configs() for subclass-specific validation."""
-        if not self.cfg.discharge_files:
-            raise ValueError('discharge_files is required for Muskingum routing')
+        """Subclass hook for relational validation beyond _ROUTER_REQUIRED_CONFIGS."""
         if len(self.cfg.discharge_files) != 1:
-            raise ValueError('Muskingum routing requires exactly one entry in discharge_files')
-        if not self.cfg.dt_total:
-            raise ValueError('dt_total is required for Muskingum routing')
+            raise ValueError('Router requires exactly one entry in discharge_files')
         return
 
     ################################################
@@ -171,7 +157,6 @@ class Router:
             raise ValueError(
                 f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
         self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
-        self._hook_after_read_network()
         return
 
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
@@ -212,12 +197,16 @@ class Router:
         self.logger.info('Beginning routing')
         t1 = datetime.datetime.now()
 
-        # hooks
-        self._hook_before_route()
-
         # validate configuration options
         self._validate_configs()
         self.logger.debug(self)
+
+        # set arrays for routing
+        self._set_network_dependent_vectors()
+        self._read_initial_state()
+
+        # hooks
+        self._hook_before_route()
 
         # time parameters
         self.dt_routing = self.cfg.dt_routing
@@ -228,11 +217,7 @@ class Router:
         assert self.dt_discharge % self.dt_routing == 0, 'dt_discharge must be an integer multiple of dt_routing'
         num_output_steps = int(self.dt_total / self.dt_discharge)
         num_routing_per_output = int(self.dt_discharge / self.dt_routing)
-
-        # set arrays for routing
-        self._set_network_dependent_vectors()
         self._set_muskingum_coefficients(self.dt_routing)
-        self._read_initial_state()
 
         discharge_array = self._router(num_output_steps, num_routing_per_output)
 
@@ -311,24 +296,12 @@ class Router:
     # Hooks so that subclasses can cleanly inject behavior with less overriding or duplicating
     ################################################
 
-    def _more_config_validation(self) -> None:
-        """Called at the end of _validate_configs() for subclass-specific validation."""
-        pass
-
     def _hook_before_route(self) -> None:
         """Called at the start of route(), before validation. Default: no-op."""
         pass
 
     def _hook_after_route(self) -> None:
         """Called at the end of route(), after writing final state. Default: no-op."""
-        pass
-
-    def _hook_after_validate_configs(self) -> None:
-        """Called after _validate_configs(). Default: no-op."""
-        pass
-
-    def _hook_after_read_network(self) -> None:
-        """Called after _set_network_dependent_vectors(). Default: no-op."""
         pass
 
     ################################################

@@ -20,21 +20,14 @@ class RapidMuskingum(TransformRouter):
 
     Required configs:
     - params_file: path to routing parameters parquet file.
-
+    - discharge_files: list of output paths, one per input file.
     Lateral input — one of:
     - catchment_runoff_files: list of paths to netCDF files containing per-catchment volumes (m³).
     - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
-
-    - discharge_files: list of output paths, one per input file.
-    - dt_routing: routing sub-step in seconds (required).
     """
-
     @property
     def _catchment_runoff_as_volume(self) -> bool:
         return True  # True -> means as volume
-
-    def _validate_router_configs(self) -> None:
-        self._validate_lateral_runoff_configs()
 
     def _prepare_qlateral(self, array: FloatArray) -> FloatArray:
         """Convert catchment volumes (m³) to flow rates (m³/s) using the runoff time step."""
@@ -44,7 +37,6 @@ class RapidMuskingum(TransformRouter):
 
     def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:
         self.logger.debug('Getting initial state arrays')
-        self._read_initial_state()
         q_init = self.channel_state
 
         n = self.A.shape[0]
