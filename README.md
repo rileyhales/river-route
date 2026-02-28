@@ -45,7 +45,7 @@ import river_route as rr
 # UnitMuskingum: applies a pluggable unit-hydrograph runoff transform before Muskingum channel routing
 (
     rr
-    .UnitMuskingum('examples/config_unit.yaml', unit_hydrograph_method='scs')
+    .UnitMuskingum('examples/config_unit_muskingum.yaml')
     .route()
 )
 ```
