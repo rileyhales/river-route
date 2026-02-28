@@ -27,9 +27,9 @@ You have these options for how to do hydrological routing
 1. [Preparing Watersheds](tutorial/prepare-watersheds.md)
 2. [Muskingum Channel Routing](tutorial/channel-routing.md)
 3. [Channel Routing with Runoff Transformation](tutorial/unit-hydrograph-routing.md)
-4. [Customizing Outputs](tutorial/customizing-outputs.md)
-5. [Routing Ensembles](tutorial/routing-ensembles.md)
-6. [Generating UH Kernels](tutorial/create-uh-kernels.md)
+4. [Routing Ensembles](tutorial/routing-ensembles.md)
+5. [Advanced Uses](tutorial/advanced-tutorial.md)
+5. [Generating UH Kernels](tutorial/create-uh-kernels.md)
 
 ```commandline
 pip install river-route
