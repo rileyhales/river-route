@@ -16,6 +16,7 @@ nav:
   - Home: index.md
   - License: terms.md
   - API Documentation: api.md
+  - Changelog: changelog.md
   - References:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
@@ -27,6 +28,8 @@ nav:
       - Routing Runoff Ensembles: tutorial/routing-ensembles.md
       - Advanced Uses: tutorial/advanced-tutorial.md
       - Generating UH Kernels: tutorial/create-uh-kernels.md
+  - Migration Guides:
+      - v1 to v2: migrating/v1-to-v2.md
 plugins:
   - search
   - mkdocstrings

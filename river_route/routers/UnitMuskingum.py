@@ -21,7 +21,7 @@ class UnitMuskingum(TransformRouter):
     lateral inflow is then routed between river segments using the Muskingum method.
 
     Required configs:
-    - routing_params_file: path to routing parameters parquet file.
+    - params_file: path to routing parameters parquet file.
     - transformer_kernel_file: path to a parquet kernel file (n_basins × n_time_steps).
 
     Lateral input — one of:

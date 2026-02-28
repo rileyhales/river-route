@@ -130,7 +130,7 @@ import river_route as rr
 (
     rr
     .RapidMuskingum(**{
-        'routing_params_file': '/path/to/routing_params.parquet',
+        'params_file': '/path/to/routing_params.parquet',
         'catchment_runoff_files': '/path/to/catchment_runoff.nc',
         'discharge_files': '/path/to/discharge.nc',
     })

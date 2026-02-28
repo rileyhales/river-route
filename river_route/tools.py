@@ -67,7 +67,7 @@ def adjacency_matrix(river_ids: np.ndarray, downstream_ids: np.ndarray) -> scipy
             raise ValueError(f'Unknown downstream_river_id: {downstream_river_id}')
         downstream_idx = river_index[int(downstream_river_id)]
         if downstream_idx <= upstream_idx:
-            raise ValueError('routing_params_file must be topologically sorted upstream to downstream')
+            raise ValueError('params_file must be topologically sorted upstream to downstream')
         row_indices.append(downstream_idx)
         col_indices.append(upstream_idx)
 

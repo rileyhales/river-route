@@ -30,7 +30,7 @@ os.makedirs(outputs, exist_ok=True)
 m = (
     rr
     .RapidMuskingum(**{
-        'routing_params_file': params_file,
+        'params_file': params_file,
         'catchment_runoff_files': runoff_files,
         'discharge_files': output_files,
     })

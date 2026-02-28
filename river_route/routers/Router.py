@@ -15,7 +15,7 @@ import yaml
 from scipy.sparse import csc_matrix, diags, eye
 from scipy.sparse.linalg import factorized
 
-from .Config import Configs
+from river_route.Config import Configs
 from ..tools import adjacency_matrix
 from ..types import IntArray, FloatArray, PathInput, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
 
@@ -89,8 +89,8 @@ class Router:
         self.cfg.coerce_path_list_fields()
         self._validate_router_configs()
 
-        if not self.cfg.routing_params_file:
-            raise ValueError('routing_params_file is required')
+        if not self.cfg.params_file:
+            raise ValueError('params_file is required')
         if self.cfg.runoff_processing_mode not in ['sequential', 'ensemble']:
             raise ValueError('runoff_processing_mode not recognized')
         if self.cfg.runoff_accumulation_type not in ['incremental', 'cumulative']:
@@ -148,16 +148,16 @@ class Router:
         self.logger.debug('Calculating network dependent vectors')
         try:
             df = pd.read_parquet(
-                self.cfg.routing_params_file,
+                self.cfg.params_file,
                 columns=[self.cfg.var_river_id, 'k', 'x', 'downstream_river_id']
             )
         except Exception as e:
-            self.logger.error(f'Error reading required parameter columns from routing_params_file: {e}')
+            self.logger.error(f'Error reading required parameter columns from params_file: {e}')
             self.logger.debug(traceback.format_exc())
             raise
 
         if df[self.cfg.var_river_id].duplicated().any():
-            raise ValueError('routing_params_file contains duplicate river IDs.')
+            raise ValueError('params_file contains duplicate river IDs.')
 
         self.river_ids = df[self.cfg.var_river_id].to_numpy(dtype=np.int64, copy=False)
         self.downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
@@ -169,7 +169,7 @@ class Router:
         unknown_downstream_ids = sorted(downstream_ids - river_id_set)
         if unknown_downstream_ids:
             raise ValueError(
-                f'routing_params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
+                f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
         self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
         self._hook_after_read_network()
         return

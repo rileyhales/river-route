@@ -23,6 +23,21 @@ log.addHandler(ch)
 # todo check which catchment runoff option was given to TransformRouter. All keys always exist with new Config class.
 #  used to be deleted depending on which one was provided which made checks different.
 
+# todo Testing strategy should be as follows:
+#   1. test that a valid config file passes validation
+#   2. test that several versions of an invalid config file fail validation
+#   3. test routing only and compare against known valid outputs (need to be generated, write code to route and write
+#   the code that will be necessary to compare but leave that command commented for now
+#   4. test RapidMuskingum and compare against known valid outputs (need to be generated, write code to route and
+#   write the code that will be necessary to compare but leave that command commented for now
+#   5. test UnitMuskingum and compare against known valid outputs (need to be generated, write code to route and
+#   write the code that will be necessary to compare but leave that command commented for now
+#   6. test that initial states are read and used for channel and transformer (comparing output first values)
+#   7. test that final states are written and correct for channel and transformer (comparing output last values)
+#   8. compare that grid weights can be correctly reproduced, voronoi diagram correctly reproduced, grid to catchment
+#   transform works correctly and produces the same file as a reference, etc.
+#   9. do you get the same answer if you route from depths and weights vs from pre-computed catchment runoff files?
+
 
 def compare_parquets(file1: Path, file2: Path, **kwargs) -> bool:
     df1 = gpd.read_parquet(file1)
@@ -131,7 +146,7 @@ def core_muskingum_feature_set() -> None:
     (
         rr
         .RapidMuskingum(**{
-            'routing_params_file': routing_params_file,
+            'params_file': routing_params_file,
             'catchment_volumes_files': catchment_volumes_file,
             'discharge_files': discharge_from_volumes_file,
             'log': False,
@@ -142,7 +157,7 @@ def core_muskingum_feature_set() -> None:
     (
         rr
         .RapidMuskingum(**{
-            'routing_params_file': routing_params_file,
+            'params_file': routing_params_file,
             'weight_table_file': grid_weights_file,
             'runoff_depths_files': runoff_depths_file,
             'var_x': runoff_grid_variable_name_params['x_var'],

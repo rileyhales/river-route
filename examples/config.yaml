@@ -10,8 +10,8 @@ discharge_files:                 # one output path per input file; netCDF
 
 # runoff input — RapidMuskingum, UnitMuskingum (choose one option)
 # option 1: pre-aggregated per-catchment runoff
-catchment_runoff_files:          # netCDF: dims (time, river_id)
-  - ''
+#catchment_runoff_files:          # netCDF: dims (time, river_id)
+#  - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 # runoff_grid_files:
 #   - ''

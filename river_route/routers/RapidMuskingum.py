@@ -19,7 +19,7 @@ class RapidMuskingum(TransformRouter):
     over the runoff time step.
 
     Required configs:
-    - routing_params_file: path to routing parameters parquet file.
+    - params_file: path to routing parameters parquet file.
 
     Lateral input — one of:
     - catchment_runoff_files: list of paths to netCDF files containing per-catchment volumes (m³).

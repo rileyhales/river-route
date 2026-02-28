@@ -6,14 +6,14 @@ transformer_kernel_file: ''      # parquet: shape (n_basins, n_timesteps)
 discharge_files:                 # one output path per input file; netCDF
   - ''
 
-# runoff input — choose one of two choices
+# runoff input — choose one of two choices for RapidMuskingum, UnitMuskingum
 # option 1: pre-aggregated per-catchment depths (m)
 catchment_runoff_files:          # netCDF: dims (time, river_id); var: runoff
   - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
-# runoff_grid_files:
-#   - ''
-# grid_weights_file: ''          # required with runoff_grid_files
+runoff_grid_files:
+  - ''
+grid_weights_file: ''            # required with runoff_grid_files
 
 # channel state — optional
 channel_state_init_file: ''      # parquet: column Q; omit to default to zero

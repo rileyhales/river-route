@@ -118,7 +118,7 @@ output_files = [os.path.join(output_dir, f'Qout_{os.path.basename(f)}') for f in
 import yaml
 
 config = {
-    'routing_params_file': '/path/to/params.parquet',
+    'params_file': '/path/to/params.parquet',
     'catchment_runoff_files': ['/path/to/catchment_runoff_jan.nc', '/path/to/catchment_runoff_feb.nc'],
     'discharge_files': ['/path/to/discharge_jan.nc', '/path/to/discharge_feb.nc'],
     'dt_routing': 3600,
