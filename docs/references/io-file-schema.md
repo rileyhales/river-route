@@ -9,7 +9,7 @@ routing_params_file: '/path/to/params.parquet'
 The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
 Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
-Required for all routers (`Router`, `RapidMuskingum`, `UnitMuskingum`):
+Required for all routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`):
 
 | Column                | Data Type | Description                                                |
 |-----------------------|-----------|------------------------------------------------------------|

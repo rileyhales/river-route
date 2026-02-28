@@ -5,15 +5,15 @@ import numpy as np
 import tqdm
 import xarray as xr
 
-from .Router import Router
+from .Muskingum import Muskingum
 from ..types import DatetimeArray, FloatArray, RunoffGeneratorSignature
 
-__all__ = ['TransformRouter', ]
+__all__ = ['TransformMuskingum', ]
 
 from ..runoff import grid_to_catchment
 
 
-class TransformRouter(Router, ABC):
+class TransformMuskingum(Muskingum, ABC):
     """
     Intermediate abstract router class adding methods routing methods that require pre-processing of the lateral inflow
     """

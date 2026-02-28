@@ -1,10 +1,10 @@
-from .TransformRouter import TransformRouter
+from .TransformMuskingum import TransformMuskingum
 from ..types import FloatArray
 
 __all__ = ['RapidMuskingum', ]
 
 
-class RapidMuskingum(TransformRouter):
+class RapidMuskingum(TransformMuskingum):
     """
     Muskingum router that accepts pre-aggregated catchment volumes as lateral inflow.
 

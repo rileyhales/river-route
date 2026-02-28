@@ -15,14 +15,14 @@ import yaml
 from scipy.sparse import csc_matrix, diags, eye
 from scipy.sparse.linalg import factorized
 
-from river_route.Config import Configs
+from river_route.routers.Config import Configs
 from ..tools import adjacency_matrix
 from ..types import IntArray, FloatArray, PathInput, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
 
-__all__ = ['Router', ]
+__all__ = ['Muskingum', ]
 
 
-class Router:
+class Muskingum:
     cfg: Configs
     logger: logging.Logger
 
@@ -56,20 +56,23 @@ class Router:
     # methods that are overridable via dependency injection
     _write_discharges: WriteDischargesFn
 
-    def __init__(self, config_file: PathInput | None = None, **kwargs: Any) -> None:
+    def __init__(self, configs: PathInput | Configs | None = None, **kwargs: Any) -> None:
         # combine config inputs and pass to Configs dataclass
-        raw: dict[str, Any] = {}
-        if config_file is not None and config_file != '':
-            if str(config_file).endswith('.json'):
-                with open(config_file, 'r') as f:
-                    raw = json.load(f)
-            elif str(config_file).endswith(('.yml', '.yaml')):
-                with open(config_file, 'r') as f:
-                    raw = yaml.load(f, Loader=yaml.FullLoader)
-            else:
-                raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
-        raw.update(kwargs)
-        self.cfg = Configs(**raw)
+        if isinstance(configs, Configs):
+            self.cfg = configs
+        else:
+            raw: dict[str, Any] = {}
+            if configs is not None and configs != '':
+                if str(configs).endswith('.json'):
+                    with open(configs, 'r') as f:
+                        raw = json.load(f)
+                elif str(configs).endswith(('.yml', '.yaml')):
+                    with open(configs, 'r') as f:
+                        raw = yaml.load(f, Loader=yaml.FullLoader)
+                else:
+                    raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
+            raw.update(kwargs)
+            self.cfg = Configs(**raw)
 
         # configure logging
         self.logger = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
@@ -81,6 +84,10 @@ class Router:
             self.logger.addHandler(logging.FileHandler(self.cfg.log_stream))
         self.logger.handlers[0].setFormatter(logging.Formatter(self.cfg.log_format))
         self.logger.debug('Logger initialized')
+
+        # if a configs instance was passed, the kwargs were ignored. log a warning
+        if isinstance(configs, Configs) and kwargs:
+            self.logger.warning('Configs instance passed to Muskingum, kwargs were ignored!')
         return
 
     def __repr__(self):
@@ -98,7 +105,7 @@ class Router:
     def _validate_router_configs(self) -> None:
         """Subclass hook for relational validation beyond _ROUTER_REQUIRED_CONFIGS."""
         if len(self.cfg.discharge_files) != 1:
-            raise ValueError('Router requires exactly one entry in discharge_files')
+            raise ValueError('Muskingum requires exactly one entry in discharge_files')
         return
 
     ################################################

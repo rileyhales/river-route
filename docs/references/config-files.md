@@ -1,7 +1,7 @@
 ## Configuration File
 
 `river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
-The three routers (`Router`, `RapidMuskingum`, `UnitMuskingum`) share a set of base config keys and each
+The three routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`) share a set of base config keys and each
 adds router-specific keys.
 
 1. Paths to input and output files
@@ -11,7 +11,7 @@ adds router-specific keys.
 
 ## Minimum Required Inputs
 
-`Router` (channel routing only, no lateral inflows) requires:
+`Muskingum` (channel routing only, no lateral inflows) requires:
 
 - `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - `channel_state_init_file` - parquet state file to initialize discharge
@@ -38,9 +38,9 @@ adds router-specific keys.
 
 ## Example Configuration YAML
 
-The general template below covers all routers with annotations. Router-specific minimal templates
+The general template below covers all routers with annotations. Minimal templates
 are also available in the `examples/` directory:
-`config_router.yaml`, `config_rapid_muskingum.yaml`, `config_unit_muskingum.yaml`.
+`config_muskingum.yaml`, `config_rapid_muskingum.yaml`, `config_unit_muskingum.yaml`.
 
 ```yaml title="config.yaml"
 {% include-markdown "../../examples/config.yaml" %}
@@ -48,7 +48,7 @@ are also available in the `examples/` directory:
 
 ## Required Config Keys
 
-| Config key                     | Description                                     |    Router    |              RapidMuskingum               |               UnitMuskingum               |
+| Config key                     | Description                                     |  Muskingum   |              RapidMuskingum               |               UnitMuskingum               |
 |--------------------------------|-------------------------------------------------|:------------:|:-----------------------------------------:|:-----------------------------------------:|
 | **core**                       |                                                 |              |                                           |                                           |
 | `routing_params_file`          | Routing parameters parquet.                     | **Required** |               **Required**                |               **Required**                |

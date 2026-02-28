@@ -1,15 +1,15 @@
 from . import metrics
 from . import runoff
 from . import tools
-from .Config import Configs
 from .__metadata__ import __version__, __author__, __url__
+from .routers import Configs
 from .routers import RapidMuskingum
-from .routers import Router
+from .routers import Muskingum
 from .routers import UnitMuskingum
 
 __all__ = [
     # router classes
-    'Router',
+    'Muskingum',
     'RapidMuskingum',
     'UnitMuskingum',
 

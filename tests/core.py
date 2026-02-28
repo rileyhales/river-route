@@ -136,7 +136,7 @@ def test_valid_config() -> None:
             )
             log.info('[OK] RapidMuskingum config with catchment volumes is valid')
 
-        # Router (channel-only) config
+        # Muskingum (channel-only) config
         cfg = rr.Configs(
             params_file=str(routing_params_file),
             discharge_files=[os.path.join(tmpdir, 'q_musk.nc')],
@@ -145,7 +145,7 @@ def test_valid_config() -> None:
             dt_total=86400,
             log=False,
         )
-        log.info('[OK] Router (Muskingum-only) config is valid')
+        log.info('[OK] Muskingum (channel-only) config is valid')
 
     except Exception as e:
         log.error(f'[FAIL] Config validation raised: {e}')
@@ -221,15 +221,9 @@ def test_muskingum_channel_only() -> None:
         discharge_file = os.path.join(tmpdir, 'q_channel_only.nc')
         final_state_file = os.path.join(tmpdir, 'final_state.parquet')
 
-        rr.Router(
-            params_file=str(routing_params_file),
-            discharge_files=[discharge_file],
-            channel_state_init_file=str(initial_state_file),
-            channel_state_final_file=final_state_file,
-            dt_routing=3600,
-            dt_total=86400,  # 24 hours
-            log=False,
-        ).route()
+        rr.Muskingum(params_file=str(routing_params_file), discharge_files=[discharge_file],
+                     channel_state_init_file=str(initial_state_file), channel_state_final_file=final_state_file,
+                     dt_routing=3600, dt_total=86400, log=False).route()
 
         # Verify output exists and has reasonable values
         with xr.open_dataset(discharge_file) as ds:

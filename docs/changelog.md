@@ -7,7 +7,7 @@
 Major architectural overhaul. See the [Migration Guide](migrating/v1-to-v2.md) for upgrade
 instructions.
 
-- Replaced monolithic `Muskingum` class with `Router`, `RapidMuskingum`, and `UnitMuskingum` router hierarchy.
+- Replaced monolithic `Muskingum` class with `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` router hierarchy.
 - Introduced `Configs` dataclass replacing the untyped config dictionary.
 - Merged `connectivity_file` into `routing_params_file` (single-file network definition).
 - Changed grid weights format from CSV to NetCDF with `proportion` column.

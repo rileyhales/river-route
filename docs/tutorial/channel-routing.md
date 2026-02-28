@@ -7,7 +7,7 @@
 
 `river-route` routes catchment-scale runoff through a vector river network. Three routers are available:
 
-- **`Router`**: pure channel routing with no lateral inflows. Routes an existing discharge state forward in
+- **`Muskingum`**: pure channel routing with no lateral inflows. Routes an existing discharge state forward in
   time using only Muskingum channel equations. Requires an explicit initial state.
 - **`RapidMuskingum`**: routes runoff volumes or depths directly into river channel inlets at each timestep.
   This is the most common starting point.

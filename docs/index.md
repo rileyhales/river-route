@@ -9,9 +9,9 @@ You have these options for how to do hydrological routing
 
 ### Channel routing only
 
-| Router   | Description                                               |
-|----------|-----------------------------------------------------------|
-| `Router` | Matrix muskingum channel routing with no lateral inflows. |
+| Router       | Description                                               |
+|--------------|-----------------------------------------------------------|
+| `Muskingum`  | Matrix muskingum channel routing with no lateral inflows. |
 
 ### Channel routing with runoff lateral inflows
 

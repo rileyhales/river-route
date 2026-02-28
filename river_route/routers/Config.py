@@ -1,8 +1,7 @@
-import dataclasses
 import os
 import types
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterator, Literal, get_args, get_origin, get_type_hints, Self
+from typing import Any, ClassVar, Literal, get_args, get_origin, get_type_hints, Self
 
 import numpy as np
 import pandas as pd
@@ -39,7 +38,7 @@ class Configs:
     dt_runoff: int = 0
     start_datetime: str = '1970-01-01'
 
-    # For runoff transformation - used by TransformRouter subclasses
+    # For runoff transformation - used by TransformMuskingum subclasses
     catchment_runoff_files: PathList = field(default_factory=list)
     runoff_grid_files: PathList | None = field(default_factory=list)
     grid_weights_file: PathInput | None = None
@@ -144,47 +143,19 @@ class Configs:
             if not os.path.exists(d):
                 raise NotADirectoryError(f'Output directory not found for specified output path: {path}')
 
+    # allow some dict like accessors
     def get(self, key: str, default: Any = None) -> Any:
         val = getattr(self, key, None)
         return val if (val is not None and val != '' and val != []) else default
 
-    def update(self, data: dict[str, Any]) -> None:
-        for k, v in data.items():
-            setattr(self, k, v)
-
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        setattr(self, key, value)
-
-    def __delitem__(self, key: str) -> None:
-        fields = {f.name: f for f in dataclasses.fields(self)}
-        if key not in fields:
-            raise KeyError(key)
-        f = fields[key]
-        if f.default is not dataclasses.MISSING:
-            setattr(self, key, f.default)
-        elif f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
-            setattr(self, key, f.default_factory())
-        else:
-            raise KeyError(f'Cannot delete required field: {key}')
 
     def __contains__(self, key: str) -> bool:
         val = getattr(self, key, _MISSING)
         if val is _MISSING:
             return False
         return val is not None and val != '' and val != []
-
-    def keys(self) -> Iterator[str]:
-        for f in dataclasses.fields(self):
-            val = getattr(self, f.name)
-            if val not in (None, '', []):
-                yield f.name
-
-    def items(self) -> Iterator[tuple[str, Any]]:
-        for k in self.keys():
-            yield k, getattr(self, k)
 
     def deep_validate(self) -> Self:
         """Perform deep validation of file contents and inter-file consistency. Raise ValueError if any issues found."""
@@ -282,44 +253,6 @@ class Configs:
             if state_df.shape[0] != params_df.shape[0]:
                 raise ValueError(f'Initial state file must have the same number of rows as {self.params_file}')
         return self
-
-    @classmethod
-    def migrate_v1_to_v2(cls, v1_params, v1_connectivity, v1_weights, v1_state, output_dir) -> None:
-        """read v1 files, rename columns, merge params with connectivity, write new files"""
-        v2_params_file = os.path.join(output_dir, f'rr2_{os.path.basename(v1_params)}')
-        v1_params = pd.read_parquet(v1_params)
-        v1_connectivity = pd.read_parquet(v1_connectivity)
-        (
-            v1_params
-            .merge(v1_connectivity, on='river_id', how='left', )
-            .rename(columns={'ds_river_id': 'downstream_river_id'})
-            [['river_id', 'downstream_river_id', 'k', 'x']]
-            .astype({
-                'river_id': int,
-                'downstream_river_id': int,
-                'k': float,
-                'x': float,
-            })
-            .reset_index(drop=True)
-            .to_parquet(v2_params_file)
-        )
-        # has columns LINKNO, lon_index, lat_index, lon, lat, area_sqm
-        # needs the proportion column to be added, which is area_sqm / sum(area_sqm) for each river_id
-        # write to netcdf where additional metadata can be stored
-        v2_grid_weights_file = os.path.join(output_dir, f'rr2_{os.path.basename(v1_weights)}')
-        v1_weights = pd.read_csv(v1_weights)
-        v1_weights = v1_weights.rename(columns={'LINKNO': 'river_id'})
-        total_area = v1_weights.groupby('river_id')['area_sqm'].sum()
-        v1_weights = v1_weights.merge(total_area, on='river_id', suffixes=('', '_total'))
-        v1_weights['proportion'] = v1_weights['area_sqm'] / v1_weights['area_sqm_total']
-        v1_weights = v1_weights.drop(columns=['area_sqm_total'])
-        v1_weights = v1_weights.to_xarray()
-        v1_weights.to_netcdf(v2_grid_weights_file)
-
-        # v1 state has columns Q and R, but we only need Q
-        v2_state_file = os.path.join(output_dir, f'rr2_{os.path.basename(v1_state)}')
-        pd.read_parquet(v1_state)[['Q']].to_parquet(v2_state_file)
-        return
 
 
 def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:

@@ -15,7 +15,7 @@ The monolithic `Muskingum` class has been replaced by a hierarchy of specialized
 
 | v1 Class    | v2 Replacement   | Use Case                                           |
 |-------------|------------------|----------------------------------------------------|
-| `Muskingum` | `Router`         | Channel-only routing (no lateral inflow)           |
+| `Muskingum` | `Muskingum`      | Channel-only routing (no lateral inflow)           |
 | `Muskingum` | `RapidMuskingum` | Routing with lateral runoff volumes (RAPID-style)  |
 | `Muskingum` | `UnitMuskingum`  | Routing with unit hydrograph runoff transformation |
 
@@ -30,7 +30,7 @@ m = Muskingum(config_file='config.yaml')
 # v2 — choose the router that matches your workflow
 from river_route import RapidMuskingum
 
-m = RapidMuskingum(config_file='config.yaml')
+m = RapidMuskingum(configs='config.yaml')
 ```
 
 ---

@@ -1,13 +1,13 @@
 import numpy as np
 import pandas as pd
 
-from .TransformRouter import TransformRouter
+from .TransformMuskingum import TransformMuskingum
 from ..types import FloatArray
 
 __all__ = ['UnitMuskingum', ]
 
 
-class UnitMuskingum(TransformRouter):
+class UnitMuskingum(TransformMuskingum):
     """
     Muskingum router that applies a unit hydrograph convolution to lateral depth inputs.
 

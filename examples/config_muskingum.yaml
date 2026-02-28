@@ -1,4 +1,4 @@
-# Router config template — channel routing only, no lateral inflow
+# Muskingum config template — channel routing only, no lateral inflow
 
 # required
 routing_params_file: ''          # parquet: river_id, downstream_river_id, k, x
