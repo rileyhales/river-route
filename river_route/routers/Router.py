@@ -175,7 +175,7 @@ class Router:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
-        self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)
+        self.lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
         self.lhs = self.lhs.tocsc()
         self.logger.info('Calculating factorized LHS matrix')
         self.lhs_factorized = factorized(self.lhs)
@@ -247,7 +247,7 @@ class Router:
         Route discharge without lateral inflow.
 
         Muskingum channel routing equation:
-            (I - c2*A) @ Q(t+1) = c1*(A @ Q(t)) + c3*Q(t)
+            (I - c1*A) @ Q(t+1) = c2*(A @ Q(t)) + c3*Q(t)
         """
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state
@@ -274,9 +274,9 @@ class Router:
         for output_step in output_iter:
             interval_sum.fill(0.0)
             for _ in range(num_routing_per_output):
-                # rhs = c1*(A @ q_t) + c3*q_t
+                # rhs = c2*(A @ q_t) + c3*q_t
                 buffer[:] = self.A @ q_t
-                np.multiply(self.c1, buffer, out=rhs)
+                np.multiply(self.c2, buffer, out=rhs)
                 np.multiply(self.c3, q_t, out=buffer)
                 np.add(rhs, buffer, out=rhs)
                 q_t[:] = self.lhs_factorized(rhs)

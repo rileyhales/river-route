@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import xarray as xr
@@ -116,12 +116,19 @@ class TransformRouter(Router, ABC):
             self.logger.info('-' * 80)
             self._set_network_and_time_dependent_vectors(dates)
             qlateral = self._prepare_qlateral(qlateral)
-            discharge_array = self._router(dates, qlateral)
+            q_t, q_array = self._router(dates, qlateral)
+            q_array[q_array < 0] = 0
+            if self.cfg.runoff_processing_mode == 'sequential':
+                self.logger.debug('Updating Channel State for Next Sequential Computation')
+                self.channel_state = q_t
+            elif self.cfg.runoff_processing_mode == 'ensemble':
+                self.logger.debug('Recording Member State for Final State Aggregation')
+                self._ensemble_member_states.append(q_t.copy())
 
             if self.dt_discharge > self.dt_runoff:
                 self.logger.info('Resampling dates and discharges to specified timestep')
-                discharge_array = (
-                    discharge_array
+                q_array = (
+                    q_array
                     .reshape((
                         int(self.dt_total / self.dt_discharge),
                         int(self.dt_discharge / self.dt_runoff),
@@ -132,13 +139,13 @@ class TransformRouter(Router, ABC):
                 dates = dates[::self.num_runoff_steps_per_discharge]
 
             self.logger.info('Writing Discharge Array to File')
-            np.round(discharge_array, decimals=2, out=discharge_array)
-            discharge_array = discharge_array.astype(np.float32, copy=False)
-            self._write_discharges(dates, discharge_array, discharge_file, runoff_file)
+            np.round(q_array, decimals=2, out=q_array)
+            q_array = q_array.astype(np.float32, copy=False)
+            self._write_discharges(dates, q_array, discharge_file, runoff_file)
 
         if self.cfg.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
 
     @abstractmethod
-    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:
+    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> Tuple[FloatArray, FloatArray]:
         """Execute the core routing math for one runoff file and return the discharge array."""

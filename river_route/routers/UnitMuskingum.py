@@ -1,4 +1,4 @@
-import datetime
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -56,7 +56,7 @@ class UnitMuskingum(TransformRouter):
             self.logger.debug('Writing final convolution state to parquet')
             pd.DataFrame(self._uh_state.T).to_parquet(self.cfg.transformer_state_final_file)
 
-    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:
+    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> Tuple[FloatArray, FloatArray]:
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state
 
@@ -70,7 +70,6 @@ class UnitMuskingum(TransformRouter):
         buffer = np.zeros(n, dtype=np.float64)
         interval_sum = np.zeros(n, dtype=np.float64)
 
-        t1 = datetime.datetime.now()
         runoff_iter = tqdm.tqdm(dates, desc='Lateral Depths Routed') if self.cfg.progress_bar else dates
         if not self.cfg.progress_bar:
             self.logger.info('Performing routing computation iterations')
@@ -81,28 +80,15 @@ class UnitMuskingum(TransformRouter):
             ql_t = self._uh_state[0, :].copy()
             self._uh_state[:-1, :] = self._uh_state[1:, :]
             self._uh_state[-1, :] = 0.0
-
             interval_sum.fill(0.0)
             for _ in range(self.num_routing_steps_per_runoff):
-                # rhs = c1*(A @ q_t) + c3*q_t + ql_t
+                # rhs = c2*(A @ q_t) + c3*q_t + ql_t
                 buffer[:] = self.A @ q_t
-                np.multiply(self.c1, buffer, out=rhs)
+                np.multiply(self.c2, buffer, out=rhs)
                 np.multiply(self.c3, q_t, out=buffer)
                 np.add(rhs, buffer, out=rhs)
                 np.add(rhs, ql_t, out=rhs)
                 q_t[:] = self.lhs_factorized(rhs)
                 interval_sum += q_t
             discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
-
-        discharge_array[discharge_array < 0] = 0
-
-        if self.cfg.runoff_processing_mode == 'sequential':
-            self.logger.debug('Updating Channel State for Next Sequential Computation')
-            self.channel_state = q_t
-        elif self.cfg.runoff_processing_mode == 'ensemble':
-            self.logger.debug('Recording Member State for Final State Aggregation')
-            self._ensemble_member_states.append(q_t.copy())
-
-        t2 = datetime.datetime.now()
-        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-        return discharge_array
+        return q_t, discharge_array

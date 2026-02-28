@@ -1,4 +1,4 @@
-import datetime
+from typing import Tuple
 
 import numpy as np
 import tqdm
@@ -25,6 +25,7 @@ class RapidMuskingum(TransformRouter):
     - catchment_runoff_files: list of paths to netCDF files containing per-catchment volumes (m³).
     - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
     """
+
     @property
     def _catchment_runoff_as_volume(self) -> bool:
         return True  # True -> means as volume
@@ -35,7 +36,7 @@ class RapidMuskingum(TransformRouter):
         np.divide(array, self.dt_runoff, out=array)
         return array
 
-    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:
+    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> Tuple[FloatArray, FloatArray]:
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state
 
@@ -44,38 +45,25 @@ class RapidMuskingum(TransformRouter):
         q_t = q_init.astype(np.float64, copy=True)
         rhs = np.zeros(n, dtype=np.float64)
         buffer = np.zeros(n, dtype=np.float64)
-        c2_r_t = np.zeros(n, dtype=np.float64)
+        c1_r_t = np.zeros(n, dtype=np.float64)
         interval_sum = np.zeros(n, dtype=np.float64)
 
-        t1 = datetime.datetime.now()
         runoff_iter = tqdm.tqdm(dates, desc='Runoff Volumes Routed') if self.cfg.progress_bar else dates
         if not self.cfg.progress_bar:
             self.logger.info('Performing routing computation iterations')
 
         for runoff_time_step, _ in enumerate(runoff_iter):
             r_t = lateral[runoff_time_step, :]
-            np.multiply(self.c2, r_t, out=c2_r_t)
+            np.multiply(self.c1, r_t, out=c1_r_t)
             interval_sum.fill(0.0)
             for _ in range(self.num_routing_steps_per_runoff):
-                # rhs = c1*(A @ q_t) + c2*r_t + c3*q_t
+                # rhs = c2*(A @ q_t) + c3*q_t + c1*r_t
                 buffer[:] = self.A @ q_t
-                np.multiply(self.c1, buffer, out=rhs)
+                np.multiply(self.c2, buffer, out=rhs)
                 np.multiply(self.c3, q_t, out=buffer)
                 np.add(rhs, buffer, out=rhs)
-                np.add(rhs, c2_r_t, out=rhs)
+                np.add(rhs, c1_r_t, out=rhs)
                 q_t[:] = self.lhs_factorized(rhs)
                 interval_sum += q_t
             discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
-
-        discharge_array[discharge_array < 0] = 0
-
-        if self.cfg.runoff_processing_mode == 'sequential':
-            self.logger.debug('Updating Channel State for Next Sequential Computation')
-            self.channel_state = q_t
-        elif self.cfg.runoff_processing_mode == 'ensemble':
-            self.logger.debug('Recording Member State for Final State Aggregation')
-            self._ensemble_member_states.append(q_t.copy())
-
-        t2 = datetime.datetime.now()
-        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-        return discharge_array
+        return q_t, discharge_array
