@@ -1,6 +1,5 @@
-import datetime
 from abc import ABC, abstractmethod
-from typing import Self, List
+from typing import List
 
 import numpy as np
 import xarray as xr
@@ -110,20 +109,7 @@ class TransformRouter(Router, ABC):
         self._network_time_signature = signature
         return
 
-    def route(self) -> Self:
-        self.logger.info('Beginning routing')
-        t1 = datetime.datetime.now()
-
-        # validate configuration options
-        self._validate_configs()
-        self.logger.debug(self)
-
-        # set arrays for routing
-        self._set_network_dependent_vectors()
-        self._read_initial_state()
-
-        # hooks
-        self._hook_before_route()
+    def _execute_routing(self) -> None:
         self._ensemble_member_states = []
 
         for dates, qlateral, runoff_file, discharge_file in self._catchment_runoff_generator():
@@ -152,13 +138,6 @@ class TransformRouter(Router, ABC):
 
         if self.cfg.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
-        self._write_final_state()
-        self._hook_after_route()
-
-        t2 = datetime.datetime.now()
-        self.logger.info('All runoff files routed')
-        self.logger.info(f'Total job time: {(t2 - t1).total_seconds()}')
-        return self
 
     @abstractmethod
     def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:

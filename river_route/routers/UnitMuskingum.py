@@ -35,14 +35,7 @@ class UnitMuskingum(TransformRouter):
         return False  # False -> means as depth
 
     def _hook_before_route(self) -> None:
-        self._read_uh_kernel()
-
-    def _hook_after_route(self) -> None:
-        if self.cfg.transformer_state_final_file and self._uh_state is not None:
-            self.logger.debug('Writing final convolution state to parquet')
-            pd.DataFrame(self._uh_state.T).to_parquet(self.cfg.transformer_state_final_file)
-
-    def _read_uh_kernel(self) -> None:
+        # Load the unit hydrograph kernel before routing begins. Kernel is static so it only needs to load once.
         if self._uh_kernel is not None:
             return
         self.logger.debug('Reading UH kernel from parquet')
@@ -56,6 +49,12 @@ class UnitMuskingum(TransformRouter):
             self._uh_state = _state
         else:
             self._uh_state = np.zeros_like(self._uh_kernel, dtype=np.float64)
+
+    def _write_final_state(self) -> None:
+        super()._write_final_state()
+        if self.cfg.transformer_state_final_file and self._uh_state is not None:
+            self.logger.debug('Writing final convolution state to parquet')
+            pd.DataFrame(self._uh_state.T).to_parquet(self.cfg.transformer_state_final_file)
 
     def _router(self, dates: DatetimeArray, lateral: FloatArray) -> FloatArray:
         self.logger.debug('Getting initial state arrays')

@@ -1,3 +1,51 @@
+## Routing Lifecycle
+
+All routers share the same `route()` method. The shared steps — validation, network setup, state
+management, and hooks — run identically. The middle step, `_execute_routing()`, is where
+Router and TransformRouter diverge.
+
+```mermaid
+graph TD
+    A[route] --> B[validate configs]
+    B --> C[set network vectors]
+    C --> D[read initial state]
+    D --> E[hook: before route]
+    E --> F{_execute_routing}
+
+    F -->|Router| G[set time params from config]
+    G --> H[set Muskingum coefficients]
+    H --> I[_router: route for num_output_steps]
+    I --> J[generate date array]
+    J --> K[write discharges]
+
+    F -->|TransformRouter| L[init ensemble state]
+    L --> M[loop: catchment runoff generator]
+    M --> N[set time params from dates]
+    N --> O[prepare qlateral]
+    O --> P[set Muskingum coefficients]
+    P --> Q[_router: route with lateral inflow]
+    Q --> R{dt_discharge > dt_runoff?}
+    R -->|yes| S[resample to discharge timestep]
+    R -->|no| T[write discharges]
+    S --> T
+    T --> U{more runoff files?}
+    U -->|yes| M
+    U -->|no| V{ensemble mode?}
+    V -->|yes| W[mean of member states]
+    V -->|no| X[done]
+    W --> X
+
+    K --> Y[write final state]
+    X --> Y
+    Y --> Z[hook: after route]
+    Z --> AA[log timing]
+```
+
+**Router** reads time parameters directly from the config and runs a single routing pass for a
+fixed number of output steps. **TransformRouter** (used by `RapidMuskingum`, `UnitMuskingum`, and
+`ReservoirMuskingum`) loops over runoff input files, inferring time parameters from each file's
+date array, and optionally resamples output to a coarser discharge timestep.
+
 ## Finding Inputs and Config Files at Runtime
 
 Instead of manually preparing config files in advance, you may want to generate them in your code which executes the

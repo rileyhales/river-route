@@ -182,7 +182,7 @@ class Router:
         return
 
     ################################################
-    # Main method to execute routing simulation
+    # Methods to execute routing simulation
     ################################################
 
     def route(self) -> Self:
@@ -194,20 +194,28 @@ class Router:
         Returns:
             Self: the class instance with updated channel_state and output files written to disk
         """
+        # start timer
         self.logger.info('Beginning routing')
         t1 = datetime.datetime.now()
-
         # validate configuration options
         self._validate_configs()
         self.logger.debug(self)
-
         # set arrays for routing
         self._set_network_dependent_vectors()
         self._read_initial_state()
-
-        # hooks
+        # init hook
         self._hook_before_route()
+        # routing handled by subclass routing logic
+        self._execute_routing()
+        self._write_final_state()
+        # final hook
+        self._hook_after_route()
+        # log total time
+        t2 = datetime.datetime.now()
+        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+        return self
 
+    def _execute_routing(self) -> None:
         # time parameters
         self.dt_routing = self.cfg.dt_routing
         self.dt_total = self.cfg.dt_total
@@ -228,19 +236,11 @@ class Router:
             freq=pd.to_timedelta(self.dt_discharge, unit='s')
         ).to_numpy()
 
-        # write outputs and states
+        # write outputs
         self.logger.info('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
         self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])
-        self._write_final_state()
-
-        # end hook
-        self._hook_after_route()
-
-        t2 = datetime.datetime.now()
-        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
-        return self
 
     def _router(self, num_output_steps: int, num_routing_per_output: int) -> FloatArray:
         """
