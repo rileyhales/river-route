@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple
 
 import numpy as np
+import tqdm
 import xarray as xr
 
 from .Router import Router
@@ -29,6 +30,10 @@ class TransformRouter(Router, ABC):
     def _catchment_runoff_as_volume(self) -> bool:
         """Whether the catchment runoff generator yields volumes (m³) or depths (m)"""
 
+    @abstractmethod
+    def transform_runoff(self, r_t: FloatArray) -> FloatArray:
+        """Transform one timestep of raw lateral runoff into a discharge vector for the routing equation."""
+
     def _catchment_runoff_generator(self) -> RunoffGeneratorSignature:
         if self.cfg.catchment_runoff_files:
             for lateral_file, discharge_file in zip(self.cfg.catchment_runoff_files, self.cfg.discharge_files):
@@ -55,10 +60,6 @@ class TransformRouter(Router, ABC):
                     ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False),
                     runoff_file, discharge_file
                 )
-
-    def _prepare_qlateral(self, array: FloatArray) -> FloatArray:
-        """Pre-process the lateral array, precomputed or generated, before passing to _router"""
-        return array
 
     def _validate_router_configs(self) -> None:
         lateral = self.cfg.catchment_runoff_files
@@ -115,7 +116,6 @@ class TransformRouter(Router, ABC):
         for dates, qlateral, runoff_file, discharge_file in self._catchment_runoff_generator():
             self.logger.info('-' * 80)
             self._set_network_and_time_dependent_vectors(dates)
-            qlateral = self._prepare_qlateral(qlateral)
             q_t, q_array = self._router(dates, qlateral)
             q_array[q_array < 0] = 0
             if self.cfg.runoff_processing_mode == 'sequential':
@@ -146,6 +146,33 @@ class TransformRouter(Router, ABC):
         if self.cfg.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
 
-    @abstractmethod
     def _router(self, dates: DatetimeArray, lateral: FloatArray) -> Tuple[FloatArray, FloatArray]:
         """Execute the core routing math for one runoff file and return the discharge array."""
+        self.logger.debug('Getting initial state arrays')
+        q_init = self.channel_state
+
+        n = self.A.shape[0]
+        discharge_array = np.zeros((lateral.shape[0], n), dtype=np.float64)
+        q_t = q_init.astype(np.float64, copy=True)
+        rhs = np.zeros(n, dtype=np.float64)
+        buffer = np.zeros(n, dtype=np.float64)
+        interval_sum = np.zeros(n, dtype=np.float64)
+
+        runoff_iter = tqdm.tqdm(dates, desc='Runoff Routed') if self.cfg.progress_bar else dates
+        if not self.cfg.progress_bar:
+            self.logger.info('Performing routing computation iterations')
+
+        for runoff_time_step, _ in enumerate(runoff_iter):
+            ql_t = self.transform_runoff(lateral[runoff_time_step, :])
+            interval_sum.fill(0.0)
+            for _ in range(self.num_routing_steps_per_runoff):
+                # rhs = c2*(A @ q_t) + c3*q_t + ql_t
+                buffer[:] = self.A @ q_t
+                np.multiply(self.c2, buffer, out=rhs)
+                np.multiply(self.c3, q_t, out=buffer)
+                np.add(rhs, buffer, out=rhs)
+                np.add(rhs, ql_t, out=rhs)
+                q_t[:] = self.lhs_factorized(rhs)
+                interval_sum += q_t
+            discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
+        return q_t, discharge_array

@@ -1,11 +1,8 @@
-from typing import Tuple
-
 import numpy as np
 import pandas as pd
-import tqdm
 
 from .TransformRouter import TransformRouter
-from ..types import DatetimeArray, FloatArray
+from ..types import FloatArray
 
 __all__ = ['UnitMuskingum', ]
 
@@ -56,39 +53,12 @@ class UnitMuskingum(TransformRouter):
             self.logger.debug('Writing final convolution state to parquet')
             pd.DataFrame(self._uh_state.T).to_parquet(self.cfg.transformer_state_final_file)
 
-    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> Tuple[FloatArray, FloatArray]:
-        self.logger.debug('Getting initial state arrays')
-        q_init = self.channel_state
-
+    def transform_runoff(self, r_t: FloatArray) -> FloatArray:
+        """Convolve runoff depth with the unit hydrograph kernel and advance convolution state."""
         if self._uh_kernel is None or self._uh_state is None:
             raise RuntimeError('UH kernel has not been initialized')
-
-        n = self.A.shape[0]
-        discharge_array = np.zeros((lateral.shape[0], n), dtype=np.float64)
-        q_t = q_init.astype(np.float64, copy=True)
-        rhs = np.zeros(n, dtype=np.float64)
-        buffer = np.zeros(n, dtype=np.float64)
-        interval_sum = np.zeros(n, dtype=np.float64)
-
-        runoff_iter = tqdm.tqdm(dates, desc='Lateral Depths Routed') if self.cfg.progress_bar else dates
-        if not self.cfg.progress_bar:
-            self.logger.info('Performing routing computation iterations')
-
-        for runoff_time_step, _ in enumerate(runoff_iter):
-            # convolve: accumulate kernel response for this runoff depth, then advance state
-            self._uh_state += self._uh_kernel * lateral[runoff_time_step, :]
-            ql_t = self._uh_state[0, :].copy()
-            self._uh_state[:-1, :] = self._uh_state[1:, :]
-            self._uh_state[-1, :] = 0.0
-            interval_sum.fill(0.0)
-            for _ in range(self.num_routing_steps_per_runoff):
-                # rhs = c2*(A @ q_t) + c3*q_t + ql_t
-                buffer[:] = self.A @ q_t
-                np.multiply(self.c2, buffer, out=rhs)
-                np.multiply(self.c3, q_t, out=buffer)
-                np.add(rhs, buffer, out=rhs)
-                np.add(rhs, ql_t, out=rhs)
-                q_t[:] = self.lhs_factorized(rhs)
-                interval_sum += q_t
-            discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
-        return q_t, discharge_array
+        self._uh_state += self._uh_kernel * r_t
+        ql_t = self._uh_state[0, :].copy()
+        self._uh_state[:-1, :] = self._uh_state[1:, :]
+        self._uh_state[-1, :] = 0.0
+        return ql_t
