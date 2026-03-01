@@ -64,7 +64,7 @@ The `connectivity_file` key has been removed entirely — see
 - `routing_params_file` — columns: `river_id`, `k`, `x`
 - `connectivity_file` — columns: `river_id`, `ds_river_id`
 
-**v2** merges these into a single `routing_params_file` with columns:
+**v2** merges these into a single `params_file` with columns:
 
 | Column                | Type    | Description                                          |
 |-----------------------|---------|------------------------------------------------------|
@@ -132,10 +132,10 @@ A = tools.adjacency_matrix(df['river_id'].values, df['downstream_river_id'].valu
 
 ```python
 # v1
-G = tools.connectivity_to_digraph('connectivity.parquet')
+G = rr.tools.connectivity_to_digraph('connectivity.parquet')
 
 # v2
-G = tools.connectivity_to_digraph(df['river_id'].values, df['downstream_river_id'].values)
+G = rr.tools.connectivity_to_digraph(df['river_id'].values, df['downstream_river_id'].values)
 ```
 
 ---

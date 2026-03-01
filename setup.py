@@ -20,6 +20,7 @@ setup(
     name=NAME,
     version=VERSION,
     description=DESCRIPTION,
+    long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
     author=AUTHOR,
     python_requires=REQUIRES_PYTHON,
@@ -42,7 +43,5 @@ setup(
     entry_points={
         'console_scripts': ['rr=river_route._cli:main', ]
     },
-    options={
-        'bdist_wheel': {'universal': True}
-    }
+    options={}
 )

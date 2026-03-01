@@ -9,6 +9,7 @@ from .routers import UnitMuskingum
 
 __all__ = [
     # router classes
+    'Configs',
     'Muskingum',
     'RapidMuskingum',
     'UnitMuskingum',

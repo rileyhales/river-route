@@ -1,7 +1,7 @@
 # Muskingum config template — channel routing only, no lateral inflow
 
 # required
-routing_params_file: ''          # parquet: river_id, downstream_river_id, k, x
+params_file: ''          # parquet: river_id, downstream_river_id, k, x
 discharge_files:                 # single output path; netCDF
   - ''
 dt_routing: 0                    # seconds; routing sub-step
@@ -12,7 +12,6 @@ channel_state_init_file: ''      # parquet: column Q
 channel_state_final_file: ''     # omit to skip writing
 dt_discharge: 0                  # seconds; output timestep (defaults to dt_routing)
 start_datetime: '1970-01-01'     # ISO date for output timestamps
-runoff_processing_mode: 'sequential'   # sequential | ensemble
 
 # logging
 log: true

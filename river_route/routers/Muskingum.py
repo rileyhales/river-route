@@ -5,7 +5,6 @@ import random
 import sys
 import traceback
 from typing import Any, Self
-from typing import Tuple
 
 import netCDF4 as nc
 import numpy as np
@@ -45,7 +44,7 @@ class Muskingum:
 
     # State variables
     channel_state: FloatArray
-    _network_time_signature: Tuple[Any, ...] | None = None  # check if time params change between computes
+    _network_time_signature: tuple[Any, ...] | None = None  # check if time params change between computes
 
     # Time options
     dt_routing: int  # compute time step, must be divisible into and <= min(dt_runoff, dt_discharge)
@@ -91,7 +90,7 @@ class Muskingum:
         return
 
     def __repr__(self):
-        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in self.cfg.items()]
+        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in vars(self.cfg).items()]
         return '\n'.join(messages)
 
     def _validate_configs(self) -> None:
@@ -227,9 +226,12 @@ class Muskingum:
         self.dt_routing = self.cfg.dt_routing
         self.dt_total = self.cfg.dt_total
         self.dt_discharge = self.cfg.dt_discharge or self.dt_routing
-        assert self.dt_total >= self.dt_discharge >= self.dt_routing, 'Need dt_total >= dt_discharge >= dt_routing'
-        assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
-        assert self.dt_discharge % self.dt_routing == 0, 'dt_discharge must be an integer multiple of dt_routing'
+        if not (self.dt_total >= self.dt_discharge >= self.dt_routing):
+            raise ValueError('Need dt_total >= dt_discharge >= dt_routing')
+        if self.dt_total % self.dt_discharge != 0:
+            raise ValueError('dt_total must be an integer multiple of dt_discharge')
+        if self.dt_discharge % self.dt_routing != 0:
+            raise ValueError('dt_discharge must be an integer multiple of dt_routing')
         num_output_steps = int(self.dt_total / self.dt_discharge)
         num_routing_per_output = int(self.dt_discharge / self.dt_routing)
         self._set_muskingum_coefficients(self.dt_routing)

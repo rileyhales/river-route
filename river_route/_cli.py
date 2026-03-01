@@ -3,9 +3,9 @@ import argparse
 from .routers import Muskingum, RapidMuskingum, UnitMuskingum
 
 ROUTERS = {
-    'rapid': RapidMuskingum,
-    'unit': UnitMuskingum,
-    'channel': Muskingum,
+    'rapidmusk': RapidMuskingum,
+    'unitmusk': UnitMuskingum,
+    'muskingum': Muskingum,
 }
 
 

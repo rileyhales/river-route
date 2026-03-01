@@ -23,7 +23,7 @@ import pandas as pd
 
 # Example: build a triangular kernel manually and save it
 n_basins = 100
-n_steps = 12   # must cover the full unit hydrograph base time
+n_steps = 12  # must cover the full unit hydrograph base time
 kernel = np.zeros((n_basins, n_steps))
 
 # ... populate kernel columns with your unit hydrograph values ...
@@ -34,7 +34,7 @@ pd.DataFrame(kernel).to_parquet('kernel.parquet')
 ## Routing with a Kernel File
 
 ```yaml
-routing_params_file: '/path/to/params.parquet'
+params_file: '/path/to/params.parquet'
 catchment_runoff_files: '/path/to/depths.nc'
 discharge_files: '/path/to/discharge.nc'
 transformer_kernel_file: 'kernel.parquet'
@@ -54,7 +54,7 @@ a continuous simulation from multiple sequential input files.
 
 ```yaml
 # First run: save the final convolution state
-routing_params_file: 'params.parquet'
+params_file: 'params.parquet'
 catchment_runoff_files: 'depths_period1.nc'
 discharge_files: 'discharge_period1.nc'
 transformer_kernel_file: 'kernel.parquet'
@@ -64,7 +64,7 @@ dt_routing: 3600
 
 ```yaml
 # Second run: warm-start from the saved state
-routing_params_file: 'params.parquet'
+params_file: 'params.parquet'
 catchment_runoff_files: 'depths_period2.nc'
 discharge_files: 'discharge_period2.nc'
 transformer_kernel_file: 'kernel.parquet'

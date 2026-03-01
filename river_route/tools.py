@@ -33,9 +33,9 @@ def subset_configs_to_river(
     upstreams = list(nx.ancestors(graph, target_river))
     upstreams.append(target_river)
 
-    pdf[pdf['river_id'].isin(upstreams)].to_parquet(out_params)
-    pdf.loc[pdf['river_id'] == target_river, 'downstream_river_id'] = -1
-    pdf.to_parquet(out_params)
+    subset = pdf[pdf['river_id'].isin(upstreams)].copy()
+    subset.loc[subset['river_id'] == target_river, 'downstream_river_id'] = -1
+    subset.to_parquet(out_params)
 
     if weights is not None and out_weights is not None:
         with xr.open_dataset(weights) as ds:

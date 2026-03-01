@@ -103,7 +103,7 @@ output_files = [os.path.join(output_dir, f'Qout_{os.path.basename(f)}') for f in
 (
     rr
     .RapidMuskingum(
-        routing_params_file=params_file,
+        params_file=params_file,
         catchment_runoff_files=runoff_files,
         discharge_files=output_files,
         dt_routing=3600,
@@ -136,21 +136,18 @@ If your runoff data is on a regular grid rather than pre-aggregated to catchment
 aggregate it using a weight table. Weights are computed once from the intersection of grid cells with
 catchment boundaries and reused across all routing runs on the same network and grid.
 
-```python
-# Conceptual steps — use your preferred GIS/intersection tool
-# 1. Intersect grid cell polygons with catchment polygons
-# 2. For each (grid_cell, catchment) pair, record the intersection area
-# 3. Save as a parquet with columns: river_id, row, col, weight (area fraction)
+Conceptual steps to implement with your preferred GIS tool
 
-grid_weights_df.to_parquet('grid_weights.parquet')
-```
+1. Intersect grid cell polygons with catchment polygons
+2. For each (grid_cell, catchment) pair, record the intersection area
+3. Save as a NetCDF with variables: river_id, row, col, weight (area fraction)
 
 Then reference it in the config:
 
 ```yaml
-routing_params_file: 'params.parquet'
+params_file: 'params.parquet'
 runoff_grid_files: 'runoff.nc'
-grid_weights_file: 'grid_weights.parquet'
+grid_weights_file: 'grid_weights.nc'
 discharge_files: 'discharge.nc'
 dt_routing: 3600
 ```

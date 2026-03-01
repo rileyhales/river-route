@@ -2,7 +2,7 @@
 # Routers: Muskingum | RapidMuskingum | UnitMuskingum
 
 # required — all routers
-routing_params_file: ''          # parquet: river_id, downstream_river_id, k, x
+params_file: ''          # parquet: river_id, downstream_river_id, k, x
 
 # output — all routers
 discharge_files:                 # one output path per input file; netCDF

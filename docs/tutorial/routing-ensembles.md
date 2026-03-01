@@ -34,7 +34,7 @@ from multiprocessing import Pool
 
 import river_route as rr
 
-routing_params_file = 'routing_parameters.parquet'
+params_file = 'routing_parameters.parquet'
 runoff_files = ['catchment_runoff_member_1.nc',
                 'catchment_runoff_member_2.nc', ]
 output_files = ['discharges_member_1.nc',
@@ -43,7 +43,7 @@ output_files = ['discharges_member_1.nc',
 
 def route(input_file: str, output_file: str) -> None:
     rr.RapidMuskingum(
-        routing_params_file=routing_params_file,
+        params_file=params_file,
         catchment_runoff_files=input_file,
         discharge_files=output_file,
     ).route()
@@ -56,17 +56,17 @@ if __name__ == '__main__':
 
 ## Customizing initial and final state files
 
-Ensembles are often used for forecast simulations. Forecast lead times are typically several days or weeks long but new forecasts are generated one 
-or more times a day. In this case, each day that your route data, you want to initialize at +24 hours from the previous forecast's initial time 
+Ensembles are often used for forecast simulations. Forecast lead times are typically several days or weeks long but new forecasts are generated one
+or more times a day. In this case, each day that your route data, you want to initialize at +24 hours from the previous forecast's initial time
 instead of the final time step. To get a final state at a specific time step instead of the final step, you should not provide a `final_channel_state_file`
-value. Instead, write a custom output function which write the routed discharge to disc and also selects values at a specific time step to write to a 
-final state file while the values are still in memory. This is the most efficient method since you avoid needing to load and filter the outputs in a 
-separate process. Your custom function will need to know the datetime of the next simulation or the number of timesteps after initialization which 
-corresponds to your next model run's start time. For more information about this, see the 
+value. Instead, write a custom output function which write the routed discharge to disc and also selects values at a specific time step to write to a
+final state file while the values are still in memory. This is the most efficient method since you avoid needing to load and filter the outputs in a
+separate process. Your custom function will need to know the datetime of the next simulation or the number of timesteps after initialization which
+corresponds to your next model run's start time. For more information about this, see the
 [advanced concepts section on custom outputs](./advanced-tutorial.md#customizing-outputs).
 
-After you have written these custom outputs to disc for each member, you can combine them into a single final state. You could calculate an average 
-or median of the member's final states, assimilate gauge data with a Kalman filter, or use some other algorithm or machine learning to aggregate the 
+After you have written these custom outputs to disc for each member, you can combine them into a single final state. You could calculate an average
+or median of the member's final states, assimilate gauge data with a Kalman filter, or use some other algorithm or machine learning to aggregate the
 individual members' final states.
 
 ```python title="Custom Outputs for Ensemble Member Init Files"

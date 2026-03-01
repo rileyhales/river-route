@@ -1,5 +1,4 @@
 import logging
-from typing import Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def cell_xy_from_regular_grid(
         dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat',
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Get cell center x and y coordinates from a regular grid in expected, common dataset structure.
     """
@@ -213,7 +212,7 @@ def _incremental_to_cumulative(df) -> pd.DataFrame:
 
 def _get_conversion_factor(unit: str) -> int | float:
     if unit is None:
-        print("No units attribute found. Assuming meters")
+        logger.warning("No units attribute found. Assuming meters")
         return 1
     if unit in ('m', 'meters', 'kg m-2'):
         return 1
@@ -232,7 +231,7 @@ def grid_to_catchment(
         y_var: str = 'lat',
         time_var: str = 'time',
         river_id_var: str = 'river_id',
-        runoff_depth_unit: str = None,
+        runoff_depth_unit: str | None = None,
         cumulative: bool = False,
         force_positive_runoff: bool = False,
         force_uniform_timesteps: bool = True,
@@ -330,11 +329,11 @@ def grid_to_catchment(
     df = df.fillna(0)
 
     file_prefix = 'volumes' if as_volumes else 'depths'
-    var_name = 'runoff' if as_volumes else 'ro'
+    var_name = 'runoff'
     var_units = 'm3' if as_volumes else 'm'
     var_long_name = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
     title = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
-    description = f'Incremental catchment runoff volumes in {var_units} for each river'
+    description = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"} in {var_units} for each river'
 
     start_date = df.index[0].strftime('%Y%m%d%H')
     end_date = df.index[-1].strftime('%Y%m%d%H')
@@ -354,12 +353,11 @@ def grid_to_catchment(
                 attrs={'long_name': 'unique ID number for each river'},
             ),
             'time': xr.DataArray(
-                (df.index - df.index[0]).astype('timedelta64[s]').astype(np.int64),
+                df.index.values,
                 dims=('time',),
                 attrs={
                     'long_name': 'time',
                     'standard_name': 'time',
-                    'units': f'seconds since {df.index[0].strftime("%Y-%m-%d %H:%M:%S")}',
                     'axis': 'T',
                     'time_step': f'{timestep}',
                 },

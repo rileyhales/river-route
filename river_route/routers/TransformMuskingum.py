@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple
 
 import numpy as np
 import tqdm
@@ -17,8 +16,10 @@ class TransformMuskingum(Muskingum, ABC):
     """
     Intermediate abstract router class adding methods routing methods that require pre-processing of the lateral inflow
     """
+    _ROUTER_REQUIRED_CONFIGS = ()
+
     # State variables
-    _ensemble_member_states: List[FloatArray]  # for ensemble routing
+    _ensemble_member_states: list[FloatArray]  # for ensemble routing
 
     # Time options
     num_routing_steps: int
@@ -69,7 +70,8 @@ class TransformMuskingum(Muskingum, ABC):
             raise ValueError('Provide catchment_runoff_files or runoff_grid_files with grid_weights_file, not both')
         if not lateral and not grids:
             raise ValueError('Provide catchment_runoff_files or runoff_grid_files with grid_weights_file')
-        if len(self.cfg.discharge_files) != len(lateral) + len(grids):
+        n_inputs = len(lateral) + len(self.cfg.runoff_grid_files or [])
+        if len(self.cfg.discharge_files) != n_inputs:
             raise ValueError('Number of discharge_files must match number of input files')
         return
 
@@ -86,20 +88,24 @@ class TransformMuskingum(Muskingum, ABC):
         if self._network_time_signature == signature:
             return
 
-        try:
-            # check that time options have the correct sizes
-            assert self.dt_total >= self.dt_runoff, 'dt_total must be >= dt_runoff'
-            assert self.dt_total >= self.dt_discharge, 'dt_total must be >= dt_discharge'
-            assert self.dt_discharge >= self.dt_runoff, 'dt_discharge must be >= dt_runoff'
-            assert self.dt_runoff >= self.dt_routing, 'dt_runoff must be >= dt_routing'
-            # check that time options are evenly divisible
-            assert self.dt_total % self.dt_runoff == 0, 'dt_total must be an integer multiple of dt_runoff'
-            assert self.dt_total % self.dt_discharge == 0, 'dt_total must be an integer multiple of dt_discharge'
-            assert self.dt_discharge % self.dt_runoff == 0, 'dt_discharge must be an integer multiple of dt_runoff'
-            assert self.dt_runoff % self.dt_routing == 0, 'dt_runoff must be an integer multiple of dt_routing'
-        except AssertionError as e:
-            self.logger.error(e)
-            raise AssertionError('Time options are not valid')
+        # check that time options have the correct sizes
+        if self.dt_total < self.dt_runoff:
+            raise ValueError('dt_total must be >= dt_runoff')
+        if self.dt_total < self.dt_discharge:
+            raise ValueError('dt_total must be >= dt_discharge')
+        if self.dt_discharge < self.dt_runoff:
+            raise ValueError('dt_discharge must be >= dt_runoff')
+        if self.dt_runoff < self.dt_routing:
+            raise ValueError('dt_runoff must be >= dt_routing')
+        # check that time options are evenly divisible
+        if self.dt_total % self.dt_runoff != 0:
+            raise ValueError('dt_total must be an integer multiple of dt_runoff')
+        if self.dt_total % self.dt_discharge != 0:
+            raise ValueError('dt_total must be an integer multiple of dt_discharge')
+        if self.dt_discharge % self.dt_runoff != 0:
+            raise ValueError('dt_discharge must be an integer multiple of dt_runoff')
+        if self.dt_runoff % self.dt_routing != 0:
+            raise ValueError('dt_runoff must be an integer multiple of dt_routing')
 
         # set derived datetime parameters for computation cycles later
         self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
@@ -146,7 +152,7 @@ class TransformMuskingum(Muskingum, ABC):
         if self.cfg.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
 
-    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> Tuple[FloatArray, FloatArray]:
+    def _router(self, dates: DatetimeArray, lateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         """Execute the core routing math for one runoff file and return the discharge array."""
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state

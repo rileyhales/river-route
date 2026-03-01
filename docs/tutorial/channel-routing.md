@@ -63,7 +63,7 @@ Config values can be passed as a YAML/JSON file, as keyword arguments, or both. 
 override values from the config file.
 
 ```yaml
-routing_params_file: '/path/to/params.parquet'
+params_file: '/path/to/params.parquet'
 catchment_runoff_files: '/path/to/catchment_runoff.nc'
 discharge_files: '/path/to/discharge.nc'
 dt_routing: 3600
@@ -85,7 +85,7 @@ import river_route as rr
 (
     rr
     .RapidMuskingum(
-        routing_params_file='params.parquet',
+        params_file='params.parquet',
         catchment_runoff_files='catchment_runoff.nc',
         discharge_files='discharge.nc',
         dt_routing=3600,
@@ -105,7 +105,7 @@ import river_route as rr
 (
     rr
     .RapidMuskingum(
-        routing_params_file='params.parquet',
+        params_file='params.parquet',
         catchment_runoff_files=['catchment_runoff_jan.nc', 'catchment_runoff_feb.nc', 'catchment_runoff_mar.nc'],
         discharge_files=['discharge_jan.nc', 'discharge_feb.nc', 'discharge_mar.nc'],
         dt_routing=3600,
@@ -119,7 +119,7 @@ import river_route as rr
 By default, the channel starts at zero discharge. Provide a state file to initialize from a previous run:
 
 ```yaml
-routing_params_file: 'params.parquet'
+params_file: 'params.parquet'
 catchment_runoff_files: 'catchment_runoff.nc'
 discharge_files: 'discharge.nc'
 channel_state_init_file: 'state.parquet'         # optional: initial channel state

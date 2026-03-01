@@ -13,7 +13,7 @@ adds router-specific keys.
 
 `Muskingum` (channel routing only, no lateral inflows) requires:
 
-- `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
+- `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - `channel_state_init_file` - parquet state file to initialize discharge
 - `discharge_files` - output netCDF path as a single-element list
 - `dt_routing` - routing timestep in seconds
@@ -21,7 +21,7 @@ adds router-specific keys.
 
 `RapidMuskingum` requires:
 
-- `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
+- `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - one water input source:
     - `catchment_runoff_files`, or
     - `runoff_grid_files` plus `grid_weights_file`
@@ -29,7 +29,7 @@ adds router-specific keys.
 
 `UnitMuskingum` requires:
 
-- `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
+- `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - `transformer_kernel_file` - pre-computed parquet kernel
 - one water input source:
     - `catchment_runoff_files`, or
@@ -51,7 +51,7 @@ are also available in the `examples/` directory:
 | Config key                     | Description                                     |  Muskingum   |              RapidMuskingum               |               UnitMuskingum               |
 |--------------------------------|-------------------------------------------------|:------------:|:-----------------------------------------:|:-----------------------------------------:|
 | **core**                       |                                                 |              |                                           |                                           |
-| `routing_params_file`          | Routing parameters parquet.                     | **Required** |               **Required**                |               **Required**                |
+| `params_file`                  | Routing parameters parquet.                     | **Required** |               **Required**                |               **Required**                |
 | **state**                      |                                                 |              |                                           |                                           |
 | `channel_state_init_file`      | Parquet with initial channel state (column `Q`) | **Required** |          optional - default to 0          |          optional - default to 0          |
 | `channel_state_final_file`     | Path to save final channel state                |   optional   |                 optional                  |                 optional                  |

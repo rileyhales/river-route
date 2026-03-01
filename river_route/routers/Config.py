@@ -198,41 +198,34 @@ class Configs:
         if np.any(params_df['x'] < 0) or np.any(params_df['x'] > 0.5):
             raise ValueError(f'{self.params_file} x column must be in the range [0, 0.5]')
 
-        # weights should be netcdf.
-        # should have variables river_id, lon_index, lat_index, lon, lat, area_sqm, area_sqm_total proportion.
-        # river_id should be non-null, integer, and exist in params river_id.
-        # lon_index and lat_index should be non-null numeric types.
-        # lon and lat should be non-null floats representing valid coordinates
-        # area_sqm and area_sqm_total should be non-null, positive, numeric,
-        # proportion should be non-null floats in the range (0, 1] and sum to 1 for each river_id
-        try:
-            ds = xr.load_dataset(self.grid_weights_file)
-        except Exception as e:
-            raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
-        expected_variables = ('river_id', 'lon_index', 'lat_index', 'lon', 'lat', 'area_sqm', 'proportion',)
-        for variable in expected_variables:
-            if variable not in ds:
-                raise ValueError(f'Grid weights file missing {variable} variable')
-        if np.any(ds['river_id'].isnull()):
-            raise ValueError('Grid weights river_id variable contains null values')
-        if not pd.api.types.is_integer_dtype(ds['river_id'].dtype):
-            raise ValueError('Grid weights river_id variable must be integer type')
-        if not set(ds['river_id'].values).issubset(river_ids):
-            raise ValueError('Grid weights river_id values must exist in params river_id')
-        for variable in expected_variables[1:]:
-            if np.any(ds[variable].isnull()):
-                raise ValueError(f'Grid weights {variable} variable contains null values')
-            if not pd.api.types.is_numeric_dtype(ds[variable].dtype):
-                raise ValueError(f'Grid weights {variable} variable must be numeric type')
-        if np.any(ds['area_sqm'] <= 0):
-            raise ValueError('Grid weights area_sqm variable must be positive')
-        if np.any(ds['area_sqm_total'] <= 0):
-            raise ValueError('Grid weights area_sqm_total variable must be positive')
-        if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
-            raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
-        proportions_sum = ds.groupby('river_id')['proportion'].sum()
-        if not np.allclose(proportions_sum.values, 1.0):
-            raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
+        # weights should be netcdf with variables river_id, x_index, y_index, x, y, area_sqm, proportion.
+        if self.grid_weights_file:
+            try:
+                ds = xr.load_dataset(self.grid_weights_file)
+            except Exception as e:
+                raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
+            expected_variables = ('river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion',)
+            for variable in expected_variables:
+                if variable not in ds:
+                    raise ValueError(f'Grid weights file missing {variable} variable')
+            if np.any(ds['river_id'].isnull()):
+                raise ValueError('Grid weights river_id variable contains null values')
+            if not pd.api.types.is_integer_dtype(ds['river_id'].dtype):
+                raise ValueError('Grid weights river_id variable must be integer type')
+            if not set(ds['river_id'].values).issubset(river_ids):
+                raise ValueError('Grid weights river_id values must exist in params river_id')
+            for variable in expected_variables[1:]:
+                if np.any(ds[variable].isnull()):
+                    raise ValueError(f'Grid weights {variable} variable contains null values')
+                if not pd.api.types.is_numeric_dtype(ds[variable].dtype):
+                    raise ValueError(f'Grid weights {variable} variable must be numeric type')
+            if np.any(ds['area_sqm'] <= 0):
+                raise ValueError('Grid weights area_sqm variable must be positive')
+            if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
+                raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
+            proportions_sum = ds.groupby('river_id')['proportion'].sum()
+            if not np.allclose(proportions_sum.values, 1.0):
+                raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
 
         # initial channel state should be parquet with 1 column named Q.
         # Q should be non-null, numeric, and non-negative.

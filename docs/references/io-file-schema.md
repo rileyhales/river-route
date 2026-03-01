@@ -3,7 +3,7 @@
 ### Routing Parameters
 
 ```yaml
-routing_params_file: '/path/to/params.parquet'
+params_file: '/path/to/params.parquet'
 ```
 
 The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
@@ -23,7 +23,7 @@ These routing parameters typically come from preprocessing and calibration workf
 1. topology (`river_id`, `downstream_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
 
-`UnitMuskingum` does not require additional columns in `routing_params_file`. Catchment-specific parameters
+`UnitMuskingum` does not require additional columns in `params_file`. Catchment-specific parameters
 (e.g. `tc`, `area_sqm` for the SCS unit hydrograph) are consumed when building the transformer kernel in
 Python and are not read by the router itself.
 
@@ -37,9 +37,9 @@ You need a time series of per-catchment runoff to be routed. There are 2 ways to
 2. Gridded runoff depths with a weight table (`runoff_grid_files` + `grid_weights_file`)
 
 !!! warning "Runoff Depths Warning"
-There are many projections for grid cells, different names of variables, various file formats, and units
-of the runoff depths. You should be certain you can correctly calculate catchment volumes from runoff
-depth grids separately before using the calculations performed by `river-route`.
+    There are many projections for grid cells, different names of variables, various file formats, and units
+    of the runoff depths. You should be certain you can correctly calculate catchment volumes from runoff
+    depth grids separately before using the calculations performed by `river-route`.
 
 ### Pre-aggregated Catchment Files (recommended)
 
@@ -55,21 +55,21 @@ The file should have 1 runoff variable (default name `runoff`) which is an array
 `(time, river_id)` of dtype float. The variable name can be overridden with `var_catchment_runoff_variable`.
 
 !!! note "Calculating Catchment Volumes"
-`river-route` is not a land surface modeling tool. Refer to the example case for guidance on
-formatting these files.
+    `river-route` is not a land surface modeling tool. Refer to the example case for guidance on
+    formatting these files.
 
 ### Gridded Runoff Depths
 
 ```yaml
 runoff_grid_files: [ '/path/to/depths1.nc', '/path/to/depths2.nc', ... ]
-grid_weights_file: '/path/to/weight_table.parquet'
+grid_weights_file: '/path/to/weight_table.nc'
 ```
 
 Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`. The dimension names
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden
 with `var_runoff_depth` (default `'ro'`).
 
-When providing runoff depths, you must also provide a weight table parquet with the following columns:
+When providing runoff depths, you must also provide a weight table NetCDF with the following variables:
 
 | Column     | Data Type | Description                                                                   |
 |------------|-----------|-------------------------------------------------------------------------------|
@@ -81,8 +81,8 @@ When providing runoff depths, you must also provide a weight table parquet with 
 | `area_sqm` | float     | Area of the grid cell–catchment overlap in square meters                      |
 
 !!! note "Ordering Grid Weights"
-The order of unique `river_id` values in the weight table should be the same as in the routing
-parameters and topologically sorted from upstream to downstream.
+    The order of unique `river_id` values in the weight table should be the same as in the routing
+    parameters and topologically sorted from upstream to downstream.
 
 Weights need to be recomputed if the grid resolution, grid extent, or catchment boundaries change.
 

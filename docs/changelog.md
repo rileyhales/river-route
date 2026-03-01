@@ -9,7 +9,7 @@ instructions.
 
 - Replaced monolithic `Muskingum` class with `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` router hierarchy.
 - Introduced `Configs` dataclass replacing the untyped config dictionary.
-- Merged `connectivity_file` into `routing_params_file` (single-file network definition).
+- Merged `connectivity_file` into `params_file` (single-file network definition).
 - Changed grid weights format from CSV to NetCDF with `proportion` column.
 - Simplified channel state files from two columns (Q, R) to one column (Q).
 - Added topological sort validation on routing parameters.
