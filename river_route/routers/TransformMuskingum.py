@@ -171,9 +171,7 @@ class TransformMuskingum(Muskingum, ABC):
         for runoff_time_step, _ in enumerate(runoff_iter):
             ql_t = self.transform_runoff(lateral[runoff_time_step, :])
             interval_sum.fill(0.0)
-            # r_t = lateral[runoff_time_step, :] / self.dt_runoff  # todo old math uses this
             for _ in range(self.num_routing_steps_per_runoff):
-                # rhs = (self.c1 * ((self.A @ q_t) + r_t)) + (self.c2 * r_t) + (self.c3 * q_t) # todo old math uses this
                 # rhs = c2*(A @ q_t) + c3*q_t + ql_t
                 buffer[:] = self.A @ q_t
                 np.multiply(self.c2, buffer, out=rhs)

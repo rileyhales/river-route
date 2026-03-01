@@ -9,12 +9,10 @@ import xarray as xr
 
 from river_route.types import PathInput, PathList, PathTypes
 
-# Evaluated members of PathInput (str | Path) — used by _derive_path_sets for type inspection
-_PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
-
 __all__ = ['Configs', ]
 
-_MISSING = object()  # sentinel for distinguishing between missing and None values in __contains__ and get() methods
+_PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
+_MISSING = object()  # used to distinguish between missing and None
 
 
 @dataclass

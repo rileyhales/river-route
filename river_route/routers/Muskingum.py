@@ -22,6 +22,14 @@ __all__ = ['Muskingum', ]
 
 
 class Muskingum:
+    """
+    Solves the Muskingum routing equation using matrix form for simultaneous solution on all rivers
+    Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
+    c1 = (dt/k - 2x) / (dt/k + 2(1-x))
+    c2 = (dt/k + 2x) / (dt/k + 2(1-x))
+    c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
+    (I - c1 @ A) Q_t+1 = c2 * (A @ q_t) + c3 * q_t
+    """
     cfg: Configs
     logger: logging.Logger
 
@@ -169,8 +177,8 @@ class Muskingum:
         dt_div_k = dt_routing / self.k
         denominator = dt_div_k + (2 * (1 - self.x))
         _2x = 2 * self.x
-        self.c1 = (dt_div_k + _2x) / denominator
-        self.c2 = (dt_div_k - _2x) / denominator
+        self.c1 = (dt_div_k - _2x) / denominator
+        self.c2 = (dt_div_k + _2x) / denominator
         self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
 
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
@@ -180,7 +188,6 @@ class Muskingum:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
-        # self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)  # todo old math uses c2 here
         self.lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
         self.lhs = self.lhs.tocsc()
         self.logger.info('Calculating factorized LHS matrix')
