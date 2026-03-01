@@ -90,8 +90,7 @@ class Muskingum:
         return
 
     def __repr__(self):
-        messages = ['Configs:', ] + [f'\t{k}: {v}' for k, v in vars(self.cfg).items()]
-        return '\n'.join(messages)
+        return f'{type(self).__name__}(params_file={self.cfg.params_file!r})'
 
     def _validate_configs(self) -> None:
         self.logger.debug('Validating configs file')
