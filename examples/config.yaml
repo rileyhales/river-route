@@ -2,15 +2,16 @@
 # Routers: Muskingum | RapidMuskingum | UnitMuskingum
 
 # required — all routers
-params_file: ''          # parquet: river_id, downstream_river_id, k, x
+params_file: ''                  # parquet: river_id, downstream_river_id, k, x
 
 # output — all routers
-discharge_files:                 # one output path per input file; netCDF
-  - ''
+discharge_dir: ''                # directory for output netCDF files (named after input files)
+# discharge_files:               # optional: explicit output paths instead of discharge_dir
+#   - ''
 
 # runoff input — RapidMuskingum, UnitMuskingum (choose one option)
 # option 1: pre-aggregated per-catchment runoff
-#catchment_runoff_files:          # netCDF: dims (time, river_id)
+#catchment_runoff_files:         # netCDF: dims (time, river_id)
 #  - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 # runoff_grid_files:

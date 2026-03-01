@@ -11,30 +11,29 @@ adds router-specific keys.
 
 ## Minimum Required Inputs
 
-`Muskingum` (channel routing only, no lateral inflows) requires:
+All routing classes require the following 2 configuration options:
 
 - `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
+- `discharge_dir` - directory where [routed discharge](io-file-schema.md#routed-discharge) output files are written (netCDF, named after input files)
+
+`Muskingum` (channel routing only, no lateral inflows) requires:
+
 - `channel_state_init_file` - parquet state file to initialize discharge
-- `discharge_files` - output netCDF path as a single-element list
 - `dt_routing` - routing timestep in seconds
 - `dt_total` - total simulation duration in seconds
 
 `RapidMuskingum` requires:
 
-- `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - one water input source:
     - `catchment_runoff_files`, or
     - `runoff_grid_files` plus `grid_weights_file`
-- `discharge_files` - path(s) where [routed discharge](io-file-schema.md#routed-discharge) output files will be saved (netCDF)
 
 `UnitMuskingum` requires:
 
-- `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - `transformer_kernel_file` - pre-computed parquet kernel
 - one water input source:
     - `catchment_runoff_files`, or
     - `runoff_grid_files` plus `grid_weights_file`
-- `discharge_files`
 
 ## Example Configuration YAML
 
@@ -48,29 +47,30 @@ are also available in the `examples/` directory:
 
 ## Required Config Keys
 
-| Config key                     | Description                                     |  Muskingum   |              RapidMuskingum               |               UnitMuskingum               |
-|--------------------------------|-------------------------------------------------|:------------:|:-----------------------------------------:|:-----------------------------------------:|
-| **core**                       |                                                 |              |                                           |                                           |
-| `params_file`                  | Routing parameters parquet.                     | **Required** |               **Required**                |               **Required**                |
-| **state**                      |                                                 |              |                                           |                                           |
-| `channel_state_init_file`      | Parquet with initial channel state (column `Q`) | **Required** |          optional - default to 0          |          optional - default to 0          |
-| `channel_state_final_file`     | Path to save final channel state                |   optional   |                 optional                  |                 optional                  |
-| **output**                     |                                                 |              |                                           |                                           |
-| `discharge_files`              | Output discharge file path(s)                   | **Required** |               **Required**                |               **Required**                |
-| **input data**                 |                                                 |              |                                           |                                           |
-| `catchment_runoff_files`       | Per-catchment runoff time series (m³ or m)      |              |                _Option 1_                 |                _Option 1_                 |
-| `runoff_grid_files`            | Gridded runoff depths; need `grid_weights_file` |              |                _Option 2_                 |                _Option 2_                 |
-| `grid_weights_file`            | Table to convert depth grids to lateral inflow  |              |                _Option 2_                 |                _Option 2_                 |
-| **unit hydrograph**            |                                                 |              |                                           |                                           |
-| `transformer_kernel_file`      | Pre-computed convolution kernel parquet         |              |                                           |               **Required**                |
-| `transformer_state_init_file`  | Parquet with initial transformer state          |              |                                           |                 optional                  |
-| `transformer_state_final_file` | Path to save final transformer state            |              |                                           |                 optional                  |
-| **time**                       |                                                 |              |                                           |                                           |
-| `dt_total`                     | Total simulation duration in seconds            | **Required** | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `dt_discharge`                 | Output timestep (s)                             |   optional   | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `dt_runoff`                    | Runoff data timestep (s)                        |              | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `dt_routing`                   | Routing computational timestep (s)              | **Required** | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `start_datetime`               | Simulation start date for output timestamps     |   optional   |                                           |                                           |
+| Config key                     | Description                                            |  Muskingum   |              RapidMuskingum               |               UnitMuskingum               |
+|--------------------------------|--------------------------------------------------------|:------------:|:-----------------------------------------:|:-----------------------------------------:|
+| **core**                       |                                                        |              |                                           |                                           |
+| `params_file`                  | Routing parameters parquet.                            | **Required** |               **Required**                |               **Required**                |
+| **state**                      |                                                        |              |                                           |                                           |
+| `channel_state_init_file`      | Parquet with initial channel state (column `Q`)        | **Required** |          optional - default to 0          |          optional - default to 0          |
+| `channel_state_final_file`     | Path to save final channel state                       |   optional   |                 optional                  |                 optional                  |
+| **output**                     |                                                        |              |                                           |                                           |
+| `discharge_dir`                | Directory for output discharge files                   | **Required** |               **Required**                |               **Required**                |
+| `discharge_files`              | Explicit output paths (alternative to `discharge_dir`) |   optional   |                 optional                  |                 optional                  |
+| **input data**                 |                                                        |              |                                           |                                           |
+| `catchment_runoff_files`       | Per-catchment runoff time series (m³ or m)             |              |                _Option 1_                 |                _Option 1_                 |
+| `runoff_grid_files`            | Gridded runoff depths; need `grid_weights_file`        |              |                _Option 2_                 |                _Option 2_                 |
+| `grid_weights_file`            | Table to convert depth grids to lateral inflow         |              |                _Option 2_                 |                _Option 2_                 |
+| **unit hydrograph**            |                                                        |              |                                           |                                           |
+| `transformer_kernel_file`      | Pre-computed convolution kernel parquet                |              |                                           |               **Required**                |
+| `transformer_state_init_file`  | Parquet with initial transformer state                 |              |                                           |                 optional                  |
+| `transformer_state_final_file` | Path to save final transformer state                   |              |                                           |                 optional                  |
+| **time**                       |                                                        |              |                                           |                                           |
+| `dt_total`                     | Total simulation duration in seconds                   | **Required** | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
+| `dt_discharge`                 | Output timestep (s)                                    |   optional   | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
+| `dt_runoff`                    | Runoff data timestep (s)                               |              | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
+| `dt_routing`                   | Routing computational timestep (s)                     | **Required** | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
+| `start_datetime`               | Simulation start date for output timestamps            |   optional   |                                           |                                           |
 
 ## Optional Configs with Defaults
 

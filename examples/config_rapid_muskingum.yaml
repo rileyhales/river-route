@@ -1,9 +1,10 @@
 # RapidMuskingum config template — direct runoff-to-channel routing
 
 # required
-params_file: ''          # parquet: river_id, downstream_river_id, k, x
-discharge_files:                 # one output path per input file; netCDF
-  - ''
+params_file: ''                  # parquet: river_id, downstream_river_id, k, x
+discharge_dir: ''                # directory for output netCDF files (named after input files)
+# discharge_files:               # optional: explicit output paths instead of discharge_dir
+#   - ''
 
 # runoff input — choose one of two choices
 # option 1: pre-aggregated per-catchment volumes (m³)

@@ -1,10 +1,11 @@
 # UnitMuskingum config template — unit hydrograph transform then Muskingum routing
 
 # required
-params_file: ''          # parquet: river_id, downstream_river_id, k, x
+params_file: ''                  # parquet: river_id, downstream_river_id, k, x
 transformer_kernel_file: ''      # parquet: shape (n_basins, n_timesteps)
-discharge_files:                 # one output path per input file; netCDF
-  - ''
+discharge_dir: ''                # directory for output netCDF files (named after input files)
+# discharge_files:               # optional: explicit output paths instead of discharge_dir
+#   - ''
 
 # runoff input — choose one of two choices for RapidMuskingum, UnitMuskingum
 # option 1: pre-aggregated per-catchment depths (m)

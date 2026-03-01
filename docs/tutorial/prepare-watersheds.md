@@ -98,14 +98,13 @@ runoff_files = sorted(glob.glob(os.path.join(root_dir, 'catchment_runoff', vpu_n
 
 output_dir = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(output_dir, exist_ok=True)
-output_files = [os.path.join(output_dir, f'Qout_{os.path.basename(f)}') for f in runoff_files]
 
 (
     rr
     .RapidMuskingum(
         params_file=params_file,
         catchment_runoff_files=runoff_files,
-        discharge_files=output_files,
+        discharge_dir=output_dir,
         dt_routing=3600,
     )
     .route()
@@ -120,7 +119,7 @@ import yaml
 config = {
     'params_file': '/path/to/params.parquet',
     'catchment_runoff_files': ['/path/to/catchment_runoff_jan.nc', '/path/to/catchment_runoff_feb.nc'],
-    'discharge_files': ['/path/to/discharge_jan.nc', '/path/to/discharge_feb.nc'],
+    'discharge_dir': '/path/to/output/',
     'dt_routing': 3600,
     'channel_state_init_file': '/path/to/initial_state.parquet',
     'channel_state_final_file': '/path/to/final_state.parquet',
@@ -148,7 +147,7 @@ Then reference it in the config:
 params_file: 'params.parquet'
 runoff_grid_files: 'runoff.nc'
 grid_weights_file: 'grid_weights.nc'
-discharge_files: 'discharge.nc'
+discharge_dir: 'output/'
 dt_routing: 3600
 ```
 

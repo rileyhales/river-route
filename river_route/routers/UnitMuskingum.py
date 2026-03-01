@@ -17,7 +17,7 @@ class UnitMuskingum(TransformMuskingum):
 
     Required configs:
     - params_file: path to routing parameters parquet file.
-    - discharge_files: list of output paths, one per input file.
+    - discharge_dir: directory where output netCDF files are written (named after input files).
     - transformer_kernel_file: path to a parquet kernel file (n_basins × n_time_steps).
     Lateral input — one of:
     - catchment_runoff_files: list of paths to netCDF files containing per-catchment runoff depths.

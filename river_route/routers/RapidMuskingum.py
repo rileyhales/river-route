@@ -15,7 +15,7 @@ class RapidMuskingum(TransformMuskingum):
 
     Required configs:
     - params_file: path to routing parameters parquet file.
-    - discharge_files: list of output paths, one per input file.
+    - discharge_dir: directory where output netCDF files are written (named after input files).
     Lateral input — one of:
     - catchment_runoff_files: list of paths to netCDF files containing per-catchment volumes (m³).
     - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
@@ -27,4 +27,5 @@ class RapidMuskingum(TransformMuskingum):
 
     def transform_runoff(self, r_t: FloatArray) -> FloatArray:
         """Convert a runoff volume (m³) to the lateral term for the routing equation."""
+        # return r_t / self.dt_runoff * self.c2  # todo old math uses c2 here
         return r_t / self.dt_runoff * self.c1

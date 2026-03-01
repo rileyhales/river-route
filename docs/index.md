@@ -9,9 +9,9 @@ You have these options for how to do hydrological routing
 
 ### Channel routing only
 
-| Router       | Description                                               |
-|--------------|-----------------------------------------------------------|
-| `Muskingum`  | Matrix muskingum channel routing with no lateral inflows. |
+| Router      | Description                                               |
+|-------------|-----------------------------------------------------------|
+| `Muskingum` | Matrix muskingum channel routing with no lateral inflows. |
 
 ### Channel routing with runoff lateral inflows
 
@@ -130,7 +130,7 @@ import river_route as rr
     .RapidMuskingum(**{
         'params_file': '/path/to/routing_params.parquet',
         'catchment_runoff_files': '/path/to/catchment_runoff.nc',
-        'discharge_files': '/path/to/discharge.nc',
+        'discharge_dir': '/path/to/output/',
     })
     .route()
 )
@@ -142,7 +142,7 @@ import river_route as rr
         '/path/to/config.yaml',
         **{
             'catchment_runoff_files': '/path/to/catchment_runoff.nc',
-            'discharge_files': '/path/to/discharge.nc',
+            'discharge_dir': '/path/to/output/',
         }
     )
     .route()

@@ -180,6 +180,7 @@ class Muskingum:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
+        # self.lhs = eye(self.A.shape[0]) - (diags(self.c2) @ self.A)  # todo old math uses c2 here
         self.lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
         self.lhs = self.lhs.tocsc()
         self.logger.info('Calculating factorized LHS matrix')

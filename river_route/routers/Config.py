@@ -27,7 +27,8 @@ class Configs:
 
     # Core Routing Files
     params_file: PathInput | None = None
-    discharge_files: PathList = field(default_factory=list)
+    discharge_dir: PathInput | None = None
+    discharge_files: PathList = field(default_factory=list)  # optional override for explicit output paths
     channel_state_init_file: PathInput | None = None
     channel_state_final_file: PathInput | None = None
 
@@ -67,11 +68,15 @@ class Configs:
         'channel_state_final_file',
         'transformer_state_final_file',
     })
+    # 2 options for specifying how the computed discharge files are saved
+    _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({
+        'discharge_dir',
+    })
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({
         'discharge_files',
     })
 
-    _ALWAYS_REQUIRED: ClassVar[tuple[str, ...]] = ('params_file', 'discharge_files')
+    _ALWAYS_REQUIRED: ClassVar[tuple[str, ...]] = ('params_file',)
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -79,6 +84,8 @@ class Configs:
     _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
 
     def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, '_frozen', False) and name != '_frozen':
+            raise AttributeError(f'Configs is frozen — cannot set {name!r}')
         allowed = type(self).__dict__.get('_VALID_VALUES', {}).get(name)
         if allowed is not None and value not in allowed:
             raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
@@ -90,6 +97,8 @@ class Configs:
         # normalize paths given as strings to lists. make paths absolute.
         self.coerce_path_list_fields()
         self.absolutize_paths()
+        # derive discharge_files from discharge_dir + input files when not explicitly provided
+        self._resolve_discharge_dir()
         self.verify_input_files_exist()
         self.verify_output_directories_exist()
         # make sure required fields are set
@@ -118,7 +127,7 @@ class Configs:
 
     def verify_input_files_exist(self) -> None:
         """Raise FileNotFoundError for any set input path that does not exist."""
-        input_single = self._SINGLE_PATH_FIELDS - self._OUTPUT_FILES
+        input_single = self._SINGLE_PATH_FIELDS - self._OUTPUT_FILES - self._OUTPUT_DIRS
         input_list = self._LIST_PATH_FIELDS - self._OUTPUT_FILE_LISTS
         for key in input_single:
             val = getattr(self, key, None)
@@ -128,6 +137,26 @@ class Configs:
             for path in getattr(self, key, []):
                 if not os.path.exists(path):
                     raise FileNotFoundError(f'{key}: {path} not found')
+
+    def _resolve_discharge_dir(self) -> None:
+        """Populate discharge_files from discharge_dir when explicit paths are not given."""
+        if not self.discharge_dir:
+            if not self.discharge_files:
+                raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
+            return
+        if self.discharge_files:
+            raise ValueError('Provide discharge_dir or discharge_files, not both')
+
+        d = self.discharge_dir
+        input_files = self.catchment_runoff_files or self.runoff_grid_files or []
+        if input_files:
+            self.discharge_files = [
+                os.path.join(d, os.path.splitext(os.path.basename(f))[0] + '.nc')
+                for f in input_files
+            ]
+        else:
+            # Muskingum (no lateral inflow files)
+            self.discharge_files = [os.path.join(d, 'discharge.nc')]
 
     def verify_output_directories_exist(self) -> None:
         """Raise NotADirectoryError for any output path whose parent directory does not exist."""
@@ -142,6 +171,10 @@ class Configs:
             d = os.path.dirname(path)
             if not os.path.exists(d):
                 raise NotADirectoryError(f'Output directory not found for specified output path: {path}')
+        for key in self._OUTPUT_DIRS:
+            val = getattr(self, key, None)
+            if val and not os.path.isdir(val):
+                raise NotADirectoryError(f'Output directory not found: {val}')
 
     # allow some dict like accessors
     def get(self, key: str, default: Any = None) -> Any:

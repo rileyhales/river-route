@@ -1,9 +1,10 @@
 # Muskingum config template — channel routing only, no lateral inflow
 
 # required
-params_file: ''          # parquet: river_id, downstream_river_id, k, x
-discharge_files:                 # single output path; netCDF
-  - ''
+params_file: ''                  # parquet: river_id, downstream_river_id, k, x
+discharge_dir: ''                # directory for output netCDF (writes discharge.nc)
+# discharge_files:               # optional: explicit output path instead of discharge_dir
+#   - ''
 dt_routing: 0                    # seconds; routing sub-step
 dt_total: 0                      # seconds; total simulation duration
 channel_state_init_file: ''      # parquet: column Q

@@ -45,7 +45,7 @@ def route(input_file: str, output_file: str) -> None:
     rr.RapidMuskingum(
         params_file=params_file,
         catchment_runoff_files=input_file,
-        discharge_files=output_file,
+        discharge_dir='output/',
     ).route()
 
 

@@ -72,7 +72,6 @@ params_file = os.path.join(configs, 'params.parquet')
 runoff_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
 
 outputs = os.path.join(root_dir, 'outputs', vpu_name)
-output_files = [os.path.join(outputs, f'Qout_{os.path.basename(f)}') for f in runoff_files]
 os.makedirs(outputs, exist_ok=True)
 
 m = (
@@ -80,7 +79,7 @@ m = (
     .RapidMuskingum(**{
         'params_file': params_file,
         'catchment_runoff_files': runoff_files,
-        'discharge_files': output_files,
+        'discharge_dir': outputs,
     })
     .route()
 )
