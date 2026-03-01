@@ -14,7 +14,7 @@ from ..runoff import grid_to_catchment
 
 class TransformMuskingum(Muskingum, ABC):
     """
-    Intermediate abstract router class adding methods routing methods that require pre-processing of the lateral inflow
+    Intermediate abstract router class adding routing methods that require pre-processing of the lateral inflow
     """
     _ROUTER_REQUIRED_CONFIGS = ()
 

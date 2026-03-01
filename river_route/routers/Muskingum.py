@@ -305,7 +305,7 @@ class Muskingum:
     ################################################
 
     def _hook_before_route(self) -> None:
-        """Called at the start of route(), before validation. Default: no-op."""
+        """Called after validation and network setup, before routing begins. Default: no-op."""
         pass
 
     def _hook_after_route(self) -> None:

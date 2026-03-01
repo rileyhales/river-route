@@ -77,7 +77,7 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
     Create a table of intersections between Voronoi polygons and catchments.
     """
     if river_id_variable not in catchments_gdf.columns:
-        raise KeyError('catchments_gdf must contain a river_id column')
+        raise KeyError(f'catchments_gdf must contain a {river_id_variable} column')
     if not {'x_index', 'y_index', 'x', 'y'}.issubset(voronoi_gdf.columns):
         raise KeyError('voronoi_gdf must include x_index, y_index, x, and y columns')
 
@@ -131,6 +131,7 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
 
 def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
                  x_var: str = 'lon', y_var: str = 'lat', river_id_var: str = 'river_id',
+                 crs: int = 4326,
                  save_voronoi_path: PathInput | None = None,
                  save_weights_path: PathInput | None = None,
                  routing_params_path: PathInput | None = None) -> pd.DataFrame:
@@ -143,6 +144,7 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
         x_var: x-coordinate variable name in the grid file
         y_var: y-coordinate variable name in the grid file
         river_id_var: variable name for river ID in the catchments file
+        crs: EPSG code for the grid coordinate reference system (default: 4326)
         save_voronoi_path: optional path to save the Voronoi polygons as a GeoParquet file
         save_weights_path: optional path to save the grid weights as a NetCDF file
         routing_params_path: optional path to a routing params parquet file whose river_id column order is used to
@@ -153,7 +155,7 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
             ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     """
     x, y = cell_xy_from_regular_grid(grid_path, x_var=x_var, y_var=y_var)
-    voronoi_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=4326)
+    voronoi_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=crs)
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
@@ -262,7 +264,7 @@ def grid_to_catchment(
 
     Returns:
         xr.Dataset: catchment runoff with dimensions ``time`` and ``river_id``.
-            Variable is ``runoff`` (m³) when ``as_volumes=True``, ``ro`` (m) otherwise.
+            Variable is always named ``runoff``; units are m³ when ``as_volumes=True``, m otherwise.
     """
     with xr.open_dataset(weight_table) as ds:
         weight_df = ds[[river_id_var, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
