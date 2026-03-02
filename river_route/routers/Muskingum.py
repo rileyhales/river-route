@@ -180,6 +180,7 @@ class Muskingum:
         self.c1 = (dt_div_k - _2x) / denominator
         self.c2 = (dt_div_k + _2x) / denominator
         self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
+        self.c4 = self.c1 + self.c2  # cached for lateral inflow scaling (RapidMuskingum)
 
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')

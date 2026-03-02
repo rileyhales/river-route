@@ -27,4 +27,4 @@ class RapidMuskingum(TransformMuskingum):
 
     def transform_runoff(self, r_t: FloatArray) -> FloatArray:
         """Convert a runoff volume (m³) to the lateral term for the routing equation."""
-        return r_t / self.dt_runoff * (self.c1 + self.c2)  # note c1 + c2 = c4 in muskingum cunge
+        return r_t / self.dt_runoff * self.c4
