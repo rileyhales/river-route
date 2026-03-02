@@ -149,8 +149,7 @@ class Configs:
         input_files = self.catchment_runoff_files or self.runoff_grid_files or []
         if input_files:
             self.discharge_files = [
-                os.path.join(d, os.path.splitext(os.path.basename(f))[0] + '.nc')
-                for f in input_files
+                os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files
             ]
         else:
             # Muskingum (no lateral inflow files)

@@ -1,7 +1,8 @@
 *.egg-info
 .idea/
 *.zip
-tests/data
+*.tar.gz
+tests/data/
 site
 .cache
 __pycache__/

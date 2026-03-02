@@ -21,6 +21,7 @@ nav:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-variables.md
+      - Test Data: references/test-data.md
   - Tutorials:
       - Preparing Watersheds: tutorial/prepare-watersheds.md
       - Channel Routing: tutorial/channel-routing.md

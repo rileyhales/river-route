@@ -1,0 +1,163 @@
+# Test Data
+
+All test data lives in `tests/data/` at the project root. Tests resolve paths through
+`tests/conftest.py`, which auto-discovers VPUs from Hive-style `vpu=` directory partitioning.
+
+## Directory Layout
+
+```
+tests/data/
+├── era5/                                  # global ERA5 forcing — shared across VPUs
+│   ├── era5_194001.nc
+│   ├── era5_194001_cumulative.nc          # cumulative version of month 1 (for cumulative tests)
+│   ├── era5_194002.nc
+│   └── era5_194003.nc
+├── routing-configs/
+│   └── vpu=718/
+│       ├── params.parquet                 # routing params (river_id, downstream_river_id, k, x)
+│       └── gridweights_era5.nc            # grid weight table
+├── discharge/
+│   └── vpu=718/
+│       ├── discharge_era5_194001.nc       # known-good routed discharge
+│       ├── ...
+│       └── discharge_era5_194012.nc
+├── catchment-volumes/
+│   └── vpu=718/
+│       ├── volumes_194001.nc              # pre-computed catchment volumes (from grid_to_catchment)
+│       ├── volumes_194002.nc
+│       └── volumes_194003.nc
+├── hydrography/
+│   └── vpu=718/
+│       ├── catchments_718.parquet         # catchment boundaries (linkno, geometry)
+│       └── streams_718.gpkg
+├── scripts/                               # data prep scripts (excluded from pytest collection)
+└── solutions/                             # legacy reference data (excluded from pytest collection)
+```
+
+ERA5 is global gridded data and stays shared at the root level. Per-VPU data lives under
+`routing-configs/vpu=N/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, and
+`hydrography/vpu=N/`.
+
+## VPU Auto-Discovery
+
+At import time, `conftest.py` scans `routing-configs/`, `discharge/`, `catchment-volumes/`,
+and `hydrography/` for `vpu=*` subdirectories, unions the VPU IDs, and builds a `VPUData`
+dataclass for each. File discovery uses globs: `*params*.parquet` for params, `gridweights*.nc`
+for weights.
+
+Any test function with a `vpu` parameter is automatically parametrized over all discovered VPUs
+via the `pytest_generate_tests` hook. Test IDs become e.g. `test_foo[vpu=718]`.
+
+### `VPUData` Dataclass
+
+| Field                  | Type           | Description                                     |
+|------------------------|----------------|-------------------------------------------------|
+| `vpu_id`               | `str`          | The VPU identifier (e.g. `"718"`)               |
+| `params_file`          | `Path | None`  | Routing parameters parquet                      |
+| `grid_weights_file`    | `Path | None`  | Grid weight table NetCDF                        |
+| `discharge_dir`        | `Path | None`  | Directory of known-good discharge files         |
+| `catchment_volumes_dir`| `Path | None`  | Directory of pre-computed catchment volume files |
+| `hydrography_dir`      | `Path | None`  | Directory of hydrography files                  |
+
+Fields are `None` when the corresponding data is not available for that VPU.
+
+### `conftest.py` Exports
+
+| Export                               | Type            | Description                                          |
+|--------------------------------------|-----------------|------------------------------------------------------|
+| `VPUData`                            | `dataclass`     | Per-VPU test data paths                              |
+| `ALL_VPUS`                           | `list[VPUData]` | All discovered VPUs                                  |
+| `ERA5_DIR`                           | `Path`          | Directory containing ERA5 forcing files              |
+| `ERA5_KWARGS`                        | `dict`          | `{'var_y': 'latitude', 'var_x': 'longitude', 'var_t': 'valid_time'}` |
+| `era5_files()`                       | `list[str]`     | Sorted list of ERA5 file paths matching `era5_1940*.nc` |
+| `known_discharge_files(vpu)`         | `list[str]`     | Sorted list of known discharge file paths for a VPU  |
+| `known_catchment_volume_files(vpu)`  | `list[str]`     | Sorted list of catchment volume file paths for a VPU |
+| `skip_if_vpu_missing(vpu, ...)`      | `None`          | Skips the test if any named VPU field is unavailable  |
+
+## Data Availability Tiers
+
+Tests are designed to run with whatever data is available. Missing data causes individual tests
+to skip, not fail.
+
+| Tier   | Files                                     | Size    | Source          |
+|--------|-------------------------------------------|---------|-----------------|
+| Core   | `routing-configs/vpu=N/params.parquet`    | ~312 KB | GitHub release  |
+| Medium | `routing-configs/vpu=N/gridweights*.nc`   | ~625 KB | GitHub release  |
+| Large  | `era5/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, `hydrography/vpu=N/` | ~2.5 GB | GitHub release |
+
+All tiers are downloaded in CI via `tests/download_test_data.sh` from the `test-data-v2`
+GitHub release.
+
+## Test Dependency Matrix
+
+| Test file                  | `params_file` | `grid_weights_file` | `era5/` | `discharge/` | `catchment-volumes/` | `hydrography/` |
+|----------------------------|:-------------:|:-------------------:|:-------:|:------------:|:--------------------:|:--------------:|
+| `test_config.py`           | x             | x                   | x       |              |                      |                |
+| `test_metrics.py`          |               |                     |         |              |                      |                |
+| `test_muskingum.py`        | x             |                     |         |              |                      |                |
+| `test_rapid_muskingum.py`  | x             | x                   | x       | x            | x                    |                |
+| `test_runoff.py`           | x             | x                   | x       |              |                      | x              |
+| `test_tools.py`            | x             | x                   |         |              |                      |                |
+| `test_unit_muskingum.py`   | x             |                     |         |              |                      |                |
+
+`test_metrics.py` is pure unit tests with no external data dependencies.
+
+## CI Integration
+
+The GitHub Actions workflow (`.github/workflows/tests.yaml`) runs the test suite on Python
+3.12, 3.13, and 3.14:
+
+1. `tests/download_test_data.sh` downloads the `test-data-v2` release asset
+2. The tarball extracts preserving `vpu=` directory structure into `tests/data/`
+3. `pytest tests/ -v` runs with auto-discovered VPUs
+
+The download script is idempotent — it skips if `routing-configs/vpu=*` directories already exist.
+
+## Adding a New VPU
+
+To add test coverage for a new VPU (e.g. VPU 203):
+
+1. Create the data directories under `tests/data/`:
+    ```
+    routing-configs/vpu=203/
+    discharge/vpu=203/
+    catchment-volumes/vpu=203/    # optional
+    hydrography/vpu=203/          # optional
+    ```
+
+2. Populate with data files:
+    - `routing-configs/vpu=203/*params*.parquet` — routing parameters (must contain
+      `river_id`, `downstream_river_id`, `k`, `x`)
+    - `routing-configs/vpu=203/gridweights*.nc` — grid weight table
+    - `discharge/vpu=203/discharge_era5_1940*.nc` — known-good discharge
+    - `catchment-volumes/vpu=203/volumes_1940*.nc` — pre-computed catchment volumes
+
+3. No code changes needed. `discover_vpus()` finds the new VPU automatically and all
+   VPU-parametrized tests run for it. Tests skip gracefully for any missing data files.
+
+4. Re-package test data for CI:
+    ```bash
+    ./tests/package_test_data.sh 718 203
+    ```
+
+## Shell Scripts
+
+### `tests/package_test_data.sh`
+
+Packages test data into a tarball for uploading as a GitHub release asset. Accepts VPU IDs
+as arguments (defaults to `718`).
+
+```bash
+./tests/package_test_data.sh              # package VPU 718 only
+./tests/package_test_data.sh 718 203      # package multiple VPUs
+```
+
+### `tests/download_test_data.sh`
+
+Downloads test data from the `test-data-v2` GitHub release into `tests/data/`. Used by CI
+and developers who don't have local data. Requires the `gh` CLI or `GH_TOKEN` environment
+variable.
+
+```bash
+./tests/download_test_data.sh
+```
