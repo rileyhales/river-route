@@ -250,24 +250,34 @@ def test_grid_to_catchment_cumulative_input(vpu: VPUData):
     skip_if_vpu_missing(vpu, 'grid_weights_file')
 
     incremental_file = DATA_DIR / 'era5' / 'era5_194001.nc'
-    cumulative_file = DATA_DIR / 'era5' / 'era5_194001_cumulative.nc'
-    if not incremental_file.exists() or not cumulative_file.exists():
-        pytest.skip('Missing ERA5 incremental or cumulative file')
+    if not incremental_file.exists():
+        pytest.skip('Missing ERA5 file')
 
-    kwargs = dict(
-        weight_table=str(vpu.grid_weights_file),
-        runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
-        as_volumes=True,
-    )
+    tmpdir = tempfile.mkdtemp()
+    try:
+        # Generate cumulative version on the fly
+        cumulative_file = os.path.join(tmpdir, 'era5_194001_cumulative.nc')
+        with xr.open_dataset(incremental_file) as ds:
+            ro_cum = np.cumsum(ds['ro'].values.astype(np.float64), axis=0).astype(np.float32)
+            ds_out = ds.copy()
+            ds_out['ro'] = (ds['ro'].dims, ro_cum)
+            ds_out.to_netcdf(cumulative_file)
 
-    ds_inc = grid_to_catchment(str(incremental_file), cumulative=False, **kwargs)
-    ds_cum = grid_to_catchment(str(cumulative_file), cumulative=True, **kwargs)
+        kwargs = dict(
+            weight_table=str(vpu.grid_weights_file),
+            runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
+            as_volumes=True,
+        )
 
-    # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
-    # relative to direct incremental aggregation. This tests that the code path works,
-    # not bit-exact equivalence.
-    np.testing.assert_allclose(
-        ds_inc['runoff'].values, ds_cum['runoff'].values,
-        rtol=0.02, atol=0.15,
-        err_msg='Cumulative input does not produce same volumes as incremental',
-    )
+        ds_inc = grid_to_catchment(str(incremental_file), cumulative=False, **kwargs)
+        ds_cum = grid_to_catchment(cumulative_file, cumulative=True, **kwargs)
+
+        # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
+        # relative to direct incremental aggregation
+        np.testing.assert_allclose(
+            ds_inc['runoff'].values, ds_cum['runoff'].values,
+            rtol=0.02, atol=0.15,
+            err_msg='Cumulative input does not produce same volumes as incremental',
+        )
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)

@@ -9,7 +9,6 @@ All test data lives in `tests/data/` at the project root. Tests resolve paths th
 tests/data/
 ├── era5/                                  # global ERA5 forcing — shared across VPUs
 │   ├── era5_194001.nc
-│   ├── era5_194001_cumulative.nc          # cumulative version of month 1 (for cumulative tests)
 │   ├── era5_194002.nc
 │   └── era5_194003.nc
 ├── routing-configs/
@@ -50,39 +49,39 @@ via the `pytest_generate_tests` hook. Test IDs become e.g. `test_foo[vpu=718]`.
 
 ### `VPUData` Dataclass
 
-| Field                  | Type           | Description                                     |
-|------------------------|----------------|-------------------------------------------------|
-| `vpu_id`               | `str`          | The VPU identifier (e.g. `"718"`)               |
-| `params_file`          | `Path | None`  | Routing parameters parquet                      |
-| `grid_weights_file`    | `Path | None`  | Grid weight table NetCDF                        |
-| `discharge_dir`        | `Path | None`  | Directory of known-good discharge files         |
-| `catchment_volumes_dir`| `Path | None`  | Directory of pre-computed catchment volume files |
-| `hydrography_dir`      | `Path | None`  | Directory of hydrography files                  |
+| Field                   | Type   | Description                                      |
+|-------------------------|--------|--------------------------------------------------|
+| `vpu_id`                | `str`  | The VPU identifier (e.g. `"718"`)                |
+| `params_file`           | `Path` | Routing parameters parquet                       |
+| `grid_weights_file`     | `Path` | Grid weight table NetCDF                         |
+| `discharge_dir`         | `Path` | Directory of known-good discharge files          |
+| `catchment_volumes_dir` | `Path` | Directory of pre-computed catchment volume files |
+| `hydrography_dir`       | `Path` | Directory of hydrography files                   |
 
 Fields are `None` when the corresponding data is not available for that VPU.
 
 ### `conftest.py` Exports
 
-| Export                               | Type            | Description                                          |
-|--------------------------------------|-----------------|------------------------------------------------------|
-| `VPUData`                            | `dataclass`     | Per-VPU test data paths                              |
-| `ALL_VPUS`                           | `list[VPUData]` | All discovered VPUs                                  |
-| `ERA5_DIR`                           | `Path`          | Directory containing ERA5 forcing files              |
-| `ERA5_KWARGS`                        | `dict`          | `{'var_y': 'latitude', 'var_x': 'longitude', 'var_t': 'valid_time'}` |
-| `era5_files()`                       | `list[str]`     | Sorted list of ERA5 file paths matching `era5_1940*.nc` |
-| `known_discharge_files(vpu)`         | `list[str]`     | Sorted list of known discharge file paths for a VPU  |
-| `known_catchment_volume_files(vpu)`  | `list[str]`     | Sorted list of catchment volume file paths for a VPU |
-| `skip_if_vpu_missing(vpu, ...)`      | `None`          | Skips the test if any named VPU field is unavailable  |
+| Export                              | Type            | Description                                                          |
+|-------------------------------------|-----------------|----------------------------------------------------------------------|
+| `VPUData`                           | `dataclass`     | Per-VPU test data paths                                              |
+| `ALL_VPUS`                          | `list[VPUData]` | All discovered VPUs                                                  |
+| `ERA5_DIR`                          | `Path`          | Directory containing ERA5 forcing files                              |
+| `ERA5_KWARGS`                       | `dict`          | `{'var_y': 'latitude', 'var_x': 'longitude', 'var_t': 'valid_time'}` |
+| `era5_files()`                      | `list[str]`     | Sorted list of ERA5 file paths matching `era5_1940*.nc`              |
+| `known_discharge_files(vpu)`        | `list[str]`     | Sorted list of known discharge file paths for a VPU                  |
+| `known_catchment_volume_files(vpu)` | `list[str]`     | Sorted list of catchment volume file paths for a VPU                 |
+| `skip_if_vpu_missing(vpu, ...)`     | `None`          | Skips the test if any named VPU field is unavailable                 |
 
 ## Data Availability Tiers
 
 Tests are designed to run with whatever data is available. Missing data causes individual tests
 to skip, not fail.
 
-| Tier   | Files                                     | Size    | Source          |
-|--------|-------------------------------------------|---------|-----------------|
-| Core   | `routing-configs/vpu=N/params.parquet`    | ~312 KB | GitHub release  |
-| Medium | `routing-configs/vpu=N/gridweights*.nc`   | ~625 KB | GitHub release  |
+| Tier   | Files                                                                         | Size    | Source         |
+|--------|-------------------------------------------------------------------------------|---------|----------------|
+| Core   | `routing-configs/vpu=N/params.parquet`                                        | ~312 KB | GitHub release |
+| Medium | `routing-configs/vpu=N/gridweights*.nc`                                       | ~625 KB | GitHub release |
 | Large  | `era5/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, `hydrography/vpu=N/` | ~2.5 GB | GitHub release |
 
 All tiers are downloaded in CI via `tests/download_test_data.sh` from the `test-data-v2`
@@ -90,15 +89,15 @@ GitHub release.
 
 ## Test Dependency Matrix
 
-| Test file                  | `params_file` | `grid_weights_file` | `era5/` | `discharge/` | `catchment-volumes/` | `hydrography/` |
-|----------------------------|:-------------:|:-------------------:|:-------:|:------------:|:--------------------:|:--------------:|
-| `test_config.py`           | x             | x                   | x       |              |                      |                |
-| `test_metrics.py`          |               |                     |         |              |                      |                |
-| `test_muskingum.py`        | x             |                     |         |              |                      |                |
-| `test_rapid_muskingum.py`  | x             | x                   | x       | x            | x                    |                |
-| `test_runoff.py`           | x             | x                   | x       |              |                      | x              |
-| `test_tools.py`            | x             | x                   |         |              |                      |                |
-| `test_unit_muskingum.py`   | x             |                     |         |              |                      |                |
+| Test file                 | `params_file` | `grid_weights_file` | `era5/` | `discharge/` | `catchment-volumes/` | `hydrography/` |
+|---------------------------|:-------------:|:-------------------:|:-------:|:------------:|:--------------------:|:--------------:|
+| `test_config.py`          |       x       |          x          |    x    |              |                      |                |
+| `test_metrics.py`         |               |                     |         |              |                      |                |
+| `test_muskingum.py`       |       x       |                     |         |              |                      |                |
+| `test_rapid_muskingum.py` |       x       |          x          |    x    |      x       |          x           |                |
+| `test_runoff.py`          |       x       |          x          |    x    |              |                      |       x        |
+| `test_tools.py`           |       x       |          x          |         |              |                      |                |
+| `test_unit_muskingum.py`  |       x       |                     |         |              |                      |                |
 
 `test_metrics.py` is pure unit tests with no external data dependencies.
 
