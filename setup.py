@@ -20,6 +20,7 @@ with open('./docs/requirements.txt') as f:
     DOCS_REQUIRES = f.read().splitlines()
 
 TEST_REQUIRES = ['pytest', ]
+APP_REQUIRES = [f'river-route-app~={VERSION}', ]
 
 setup(
     name=NAME,
@@ -33,9 +34,10 @@ setup(
     packages=find_packages(exclude=["tests", "*.tests", "*.tests.*", "tests.*"]),
     install_requires=INSTALL_REQUIRES,
     extras_require={
-        'all': TEST_REQUIRES + DOCS_REQUIRES,
+        'all': TEST_REQUIRES + DOCS_REQUIRES + APP_REQUIRES,
         'test': TEST_REQUIRES,
         'docs': DOCS_REQUIRES,
+        'app': APP_REQUIRES,
     },
     include_package_data=False,
     classifiers=[

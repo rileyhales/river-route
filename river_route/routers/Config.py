@@ -253,7 +253,7 @@ class Configs:
                 raise ValueError('Grid weights area_sqm variable must be positive')
             if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
                 raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
-            proportions_sum = ds.groupby('river_id')['proportion'].sum()
+            proportions_sum = ds['proportion'].groupby(ds['river_id']).sum()
             if not np.allclose(proportions_sum.values, 1.0):
                 raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
 

@@ -11,10 +11,10 @@ import numpy as np
 import pandas as pd
 import tqdm
 import yaml
-from .Config import Configs
 from scipy.sparse import csc_matrix, diags, eye
 from scipy.sparse.linalg import factorized
 
+from .Config import Configs
 from ..tools import adjacency_matrix
 from ..types import IntArray, FloatArray, PathInput, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
 
