@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from conftest import DATA_DIR, VPUData, skip_if_vpu_missing, era5_files
+from conftest import DATA_DIR, ERA5_FILES, VPUData
 from river_route.runoff import (
     cell_xy_from_regular_grid,
     voronoi_diagram_from_regular_xy,
@@ -23,11 +23,10 @@ from river_route.runoff import (
 
 def test_cell_xy_from_era5():
     """Extract cell coordinates from a real ERA5 file."""
-    files = era5_files()
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    x, y = cell_xy_from_regular_grid(files[0], x_var='longitude', y_var='latitude')
+    x, y = cell_xy_from_regular_grid(ERA5_FILES[0], x_var='longitude', y_var='latitude')
     assert x.ndim == 1
     assert y.ndim == 1
     assert len(x) > 0
@@ -74,11 +73,10 @@ def test_voronoi_diagram_synthetic():
 
 def test_voronoi_diagram_from_era5():
     """Build Voronoi polygons from ERA5 grid coordinates."""
-    files = era5_files()
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    x, y = cell_xy_from_regular_grid(files[0], x_var='longitude', y_var='latitude')
+    x, y = cell_xy_from_regular_grid(ERA5_FILES[0], x_var='longitude', y_var='latitude')
     gdf = voronoi_diagram_from_regular_xy(x, y)
     assert 'geometry' in gdf.columns
     assert 'x_index' in gdf.columns
@@ -98,16 +96,14 @@ def test_compute_voronoi_catchment_intersects(vpu: VPUData):
     """Intersect Voronoi polygons with catchment boundaries."""
     import geopandas as gpd
 
-    files = era5_files()
-    skip_if_vpu_missing(vpu, 'hydrography_dir')
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     catchments_file = vpu.hydrography_dir / 'catchments_718.parquet'
     if not catchments_file.exists():
         pytest.skip(f'Missing {catchments_file}')
 
-    x, y = cell_xy_from_regular_grid(files[0], x_var='longitude', y_var='latitude')
+    x, y = cell_xy_from_regular_grid(ERA5_FILES[0], x_var='longitude', y_var='latitude')
     voronoi_gdf = voronoi_diagram_from_regular_xy(x, y)
     catchments_gdf = gpd.read_parquet(catchments_file)
 
@@ -130,9 +126,7 @@ def test_compute_voronoi_catchment_intersects(vpu: VPUData):
 
 def test_grid_weights(vpu: VPUData):
     """Generate a weight table and compare against existing known-good weight table."""
-    files = era5_files()
-    skip_if_vpu_missing(vpu, 'grid_weights_file', 'hydrography_dir')
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     catchments_file = vpu.hydrography_dir / 'catchments_718.parquet'
@@ -140,7 +134,7 @@ def test_grid_weights(vpu: VPUData):
         pytest.skip(f'Missing {catchments_file}')
 
     result = grid_weights(
-        files[0], str(catchments_file),
+        ERA5_FILES[0], str(catchments_file),
         x_var='longitude', y_var='latitude', river_id_var='linkno',
     )
 
@@ -164,13 +158,11 @@ def test_grid_weights(vpu: VPUData):
 
 def test_grid_to_catchment_as_volumes(vpu: VPUData):
     """Aggregate ERA5 gridded runoff to catchment volumes using the weight table."""
-    files = era5_files()
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     ds = grid_to_catchment(
-        files[0],
+        ERA5_FILES[0],
         weight_table=str(vpu.grid_weights_file),
         runoff_var='ro',
         x_var='longitude',
@@ -187,13 +179,11 @@ def test_grid_to_catchment_as_volumes(vpu: VPUData):
 
 def test_grid_to_catchment_as_depths(vpu: VPUData):
     """Aggregate ERA5 gridded runoff to catchment depths (for UnitMuskingum)."""
-    files = era5_files()
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     ds = grid_to_catchment(
-        files[0],
+        ERA5_FILES[0],
         weight_table=str(vpu.grid_weights_file),
         runoff_var='ro',
         x_var='longitude',
@@ -208,19 +198,17 @@ def test_grid_to_catchment_as_depths(vpu: VPUData):
 
 def test_grid_to_catchment_volumes_vs_depths_ratio(vpu: VPUData):
     """Verify that volumes / depths ≈ catchment area for each river."""
-    files = era5_files()
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     kwargs = dict(
         runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
     )
     ds_vol = grid_to_catchment(
-        files[0], weight_table=str(vpu.grid_weights_file), as_volumes=True, **kwargs,
+        ERA5_FILES[0], weight_table=str(vpu.grid_weights_file), as_volumes=True, **kwargs,
     )
     ds_dep = grid_to_catchment(
-        files[0], weight_table=str(vpu.grid_weights_file), as_volumes=False, **kwargs,
+        ERA5_FILES[0], weight_table=str(vpu.grid_weights_file), as_volumes=False, **kwargs,
     )
 
     # Compute total catchment area per river from the weight table
@@ -245,8 +233,6 @@ def test_grid_to_catchment_volumes_vs_depths_ratio(vpu: VPUData):
 
 def test_grid_to_catchment_cumulative_input(vpu: VPUData):
     """Cumulative runoff input should produce the same volumes as incremental input."""
-    skip_if_vpu_missing(vpu, 'grid_weights_file')
-
     incremental_file = DATA_DIR / 'era5' / 'era5_194001.nc'
     if not incremental_file.exists():
         pytest.skip('Missing ERA5 file')

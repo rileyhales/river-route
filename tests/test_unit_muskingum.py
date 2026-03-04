@@ -5,12 +5,11 @@ import tempfile
 
 import numpy as np
 import pandas as pd
-import pytest
 import scipy.sparse
 import xarray as xr
 
 import river_route as rr
-from conftest import VPUData, skip_if_vpu_missing
+from conftest import VPUData
 
 
 def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
@@ -24,8 +23,6 @@ def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
 
 def test_unit_muskingum_synthetic(vpu: VPUData):
     """Build synthetic runoff + trivial sparse kernel; verify UnitMuskingum runs and produces valid output."""
-    skip_if_vpu_missing(vpu, 'params_file')
-
     params = pd.read_parquet(vpu.params_file)
     river_ids = params['river_id'].values
     n_rivers = len(river_ids)
@@ -78,8 +75,6 @@ def test_unit_muskingum_synthetic(vpu: VPUData):
 
 def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
     """Route 2 files at once vs file1 -> save state -> file2; file2 outputs must match."""
-    skip_if_vpu_missing(vpu, 'params_file')
-
     params = pd.read_parquet(vpu.params_file)
     river_ids = params['river_id'].values
     n_rivers = len(river_ids)

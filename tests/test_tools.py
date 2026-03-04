@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from conftest import VPUData, skip_if_vpu_missing
+from conftest import VPUData
 from river_route.tools import adjacency_matrix, connectivity_to_digraph, subset_configs_to_river
 
 
@@ -24,7 +24,6 @@ def _networkx_adjacency_matrix(params: pd.DataFrame) -> sp.csc_matrix:
 
 
 def test_adjacency_matrix_matches_networkx(vpu: VPUData):
-    skip_if_vpu_missing(vpu, 'params_file')
     params = pd.read_parquet(vpu.params_file)
     nx_adj = _networkx_adjacency_matrix(params)
     adj = adjacency_matrix(params['river_id'].values, params['downstream_river_id'].values)
@@ -33,7 +32,6 @@ def test_adjacency_matrix_matches_networkx(vpu: VPUData):
 
 
 def test_adjacency_matrix_shape(vpu: VPUData):
-    skip_if_vpu_missing(vpu, 'params_file')
     params = pd.read_parquet(vpu.params_file)
     n = len(params)
     adj = adjacency_matrix(params['river_id'].values, params['downstream_river_id'].values)
@@ -41,7 +39,6 @@ def test_adjacency_matrix_shape(vpu: VPUData):
 
 
 def test_adjacency_matrix_outlets_have_no_outgoing_edges(vpu: VPUData):
-    skip_if_vpu_missing(vpu, 'params_file')
     params = pd.read_parquet(vpu.params_file)
     adj = adjacency_matrix(params['river_id'].values, params['downstream_river_id'].values)
     outlet_mask = params['downstream_river_id'].values == -1
@@ -71,7 +68,6 @@ def test_adjacency_matrix_rejects_unknown_downstream():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def test_connectivity_to_digraph(vpu: VPUData):
-    skip_if_vpu_missing(vpu, 'params_file')
     params = pd.read_parquet(vpu.params_file)
     graph = connectivity_to_digraph(params['river_id'].values, params['downstream_river_id'].values)
     assert isinstance(graph, nx.DiGraph)
@@ -94,7 +90,6 @@ def test_connectivity_to_digraph_simple():
 
 def test_subset_configs_to_river(vpu: VPUData):
     """Subset to a known river; verify the target becomes the outlet and upstream rivers are included."""
-    skip_if_vpu_missing(vpu, 'params_file')
     params = pd.read_parquet(vpu.params_file)
     # Pick a river that has upstream tributaries (not a headwater)
     target = params.loc[params['downstream_river_id'] == -1, 'river_id'].iloc[0]
@@ -117,7 +112,6 @@ def test_subset_configs_to_river(vpu: VPUData):
 
 def test_subset_configs_to_river_with_weights(vpu: VPUData):
     """Subset both params and grid weights; verify weight river_ids are a subset of params river_ids."""
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
     params = pd.read_parquet(vpu.params_file)
     target = params.loc[params['downstream_river_id'] == -1, 'river_id'].iloc[0]
 

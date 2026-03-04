@@ -6,12 +6,11 @@ import tempfile
 import pytest
 
 import river_route as rr
-from conftest import VPUData, ERA5_KWARGS, skip_if_vpu_missing, era5_files
+from conftest import ERA5_FILES, ERA5_KWARGS, VPUData
 
 
 def test_valid_muskingum_config(vpu: VPUData):
     """Construct a Muskingum config without error."""
-    skip_if_vpu_missing(vpu, 'params_file')
     tmpdir = tempfile.mkdtemp()
     try:
         rr.Configs(
@@ -27,15 +26,13 @@ def test_valid_muskingum_config(vpu: VPUData):
 
 def test_valid_rapid_muskingum_config(vpu: VPUData):
     """Construct a RapidMuskingum config without error."""
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    files = era5_files()
-    if not files:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
     tmpdir = tempfile.mkdtemp()
     try:
         rr.Configs(
             params_file=str(vpu.params_file),
-            grid_runoff_files=[files[0]],
+            grid_runoff_files=[ERA5_FILES[0]],
             grid_weights_file=str(vpu.grid_weights_file),
             discharge_dir=tmpdir,
             log=False,
@@ -60,7 +57,6 @@ def test_invalid_config_missing_params_file():
 
 
 def test_invalid_config_bad_discharge_dir(vpu: VPUData):
-    skip_if_vpu_missing(vpu, 'params_file')
     with pytest.raises(NotADirectoryError):
         rr.Configs(
             params_file=str(vpu.params_file),
@@ -71,7 +67,6 @@ def test_invalid_config_bad_discharge_dir(vpu: VPUData):
 
 
 def test_invalid_config_bad_processing_mode(vpu: VPUData):
-    skip_if_vpu_missing(vpu, 'params_file')
     tmpdir = tempfile.mkdtemp()
     try:
         with pytest.raises(ValueError):

@@ -8,13 +8,11 @@ import pandas as pd
 import xarray as xr
 
 import river_route as rr
-from conftest import VPUData, skip_if_vpu_missing
+from conftest import VPUData
 
 
 def test_muskingum_channel_only(vpu: VPUData):
     """Route from a synthetic initial state with no lateral inflow; verify decay and final state."""
-    skip_if_vpu_missing(vpu, 'params_file')
-
     params = pd.read_parquet(vpu.params_file)
     n_rivers = len(params)
 
@@ -57,8 +55,6 @@ def test_muskingum_channel_only(vpu: VPUData):
 
 def test_muskingum_zero_initial_state(vpu: VPUData):
     """Routing with zero initial state and no lateral inflow should produce all-zero discharge."""
-    skip_if_vpu_missing(vpu, 'params_file')
-
     params = pd.read_parquet(vpu.params_file)
     n_rivers = len(params)
 

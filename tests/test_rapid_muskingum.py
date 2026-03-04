@@ -9,19 +9,13 @@ import pytest
 import xarray as xr
 
 import river_route as rr
-from conftest import (
-    VPUData, ERA5_KWARGS,
-    skip_if_vpu_missing, era5_files, known_discharge_files, known_catchment_volume_files,
-)
+from conftest import ERA5_FILES, ERA5_KWARGS, VPUData
 
 
 def test_rapid_muskingum_from_depths(vpu: VPUData):
     """Route 1 month of ERA5 through grid weights and compare output against known discharge."""
-    era5 = era5_files()
-    known = known_discharge_files(vpu)
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if not era5 or not known:
-        pytest.skip('Missing ERA5 or known discharge files')
+    if not ERA5_FILES:
+        pytest.skip('Missing ERA5 files')
 
     tmpdir = tempfile.mkdtemp()
     try:
@@ -30,7 +24,7 @@ def test_rapid_muskingum_from_depths(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=[era5[0]],
+            grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[discharge_file],
             log=False,
             progress_bar=False,
@@ -38,7 +32,7 @@ def test_rapid_muskingum_from_depths(vpu: VPUData):
         ).route()
 
         assert os.path.exists(discharge_file)
-        with xr.open_dataset(discharge_file) as ds_new, xr.open_dataset(known[0]) as ds_known:
+        with xr.open_dataset(discharge_file) as ds_new, xr.open_dataset(vpu.discharge_files[0]) as ds_known:
             assert 'Q' in ds_new
             assert ds_new['Q'].shape == ds_known['Q'].shape, \
                 f'Shape mismatch: {ds_new["Q"].shape} vs {ds_known["Q"].shape}'
@@ -53,9 +47,7 @@ def test_rapid_muskingum_from_depths(vpu: VPUData):
 
 def test_initial_state_used(vpu: VPUData):
     """Route same month with vs without initial state; first timestep should differ."""
-    era5 = era5_files()
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if not era5:
+    if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     params = pd.read_parquet(vpu.params_file)
@@ -72,7 +64,7 @@ def test_initial_state_used(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=[era5[0]],
+            grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_with_state],
             channel_state_init_file=init_state_file,
             log=False, progress_bar=False,
@@ -82,7 +74,7 @@ def test_initial_state_used(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=[era5[0]],
+            grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_without_state],
             log=False, progress_bar=False,
             **ERA5_KWARGS,
@@ -104,9 +96,7 @@ def test_initial_state_used(vpu: VPUData):
 
 def test_final_state_roundtrip(vpu: VPUData):
     """Route months 1+2 at once vs month1 -> save state -> month2; month2 outputs must match."""
-    era5 = era5_files()
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if len(era5) < 2:
+    if len(ERA5_FILES) < 2:
         pytest.skip('Need at least 2 ERA5 files')
 
     tmpdir = tempfile.mkdtemp()
@@ -115,7 +105,7 @@ def test_final_state_roundtrip(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=era5[:2],
+            grid_runoff_files=ERA5_FILES[:2],
             discharge_files=q_all,
             log=False, progress_bar=False,
             **ERA5_KWARGS,
@@ -126,7 +116,7 @@ def test_final_state_roundtrip(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=[era5[0]],
+            grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_m1],
             channel_state_final_file=state_after_m1,
             log=False, progress_bar=False,
@@ -137,7 +127,7 @@ def test_final_state_roundtrip(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=[era5[1]],
+            grid_runoff_files=[ERA5_FILES[1]],
             discharge_files=[q_m2],
             channel_state_init_file=state_after_m1,
             log=False, progress_bar=False,
@@ -157,9 +147,7 @@ def test_final_state_roundtrip(vpu: VPUData):
 
 def test_ensemble_routing(vpu: VPUData):
     """Route 2 months in ensemble mode; verify outputs written and final state is reasonable."""
-    era5 = era5_files()
-    skip_if_vpu_missing(vpu, 'params_file', 'grid_weights_file')
-    if len(era5) < 2:
+    if len(ERA5_FILES) < 2:
         pytest.skip('Need at least 2 ERA5 files')
 
     tmpdir = tempfile.mkdtemp()
@@ -170,7 +158,7 @@ def test_ensemble_routing(vpu: VPUData):
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
             grid_weights_file=str(vpu.grid_weights_file),
-            runoff_grid_files=era5[:2],
+            grid_runoff_files=ERA5_FILES[:2],
             discharge_files=discharge_files,
             channel_state_final_file=final_state_file,
             runoff_processing_mode='ensemble',
@@ -192,26 +180,20 @@ def test_ensemble_routing(vpu: VPUData):
 
 def test_rapid_muskingum_from_catchment_volumes(vpu: VPUData):
     """Route from pre-computed catchment volumes and compare against known discharge."""
-    volumes = known_catchment_volume_files(vpu)
-    known = known_discharge_files(vpu)
-    skip_if_vpu_missing(vpu, 'params_file')
-    if not volumes or not known:
-        pytest.skip('Missing catchment volume or known discharge files')
-
     tmpdir = tempfile.mkdtemp()
     try:
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.RapidMuskingum(
             params_file=str(vpu.params_file),
-            catchment_runoff_files=[volumes[0]],
+            catchment_runoff_files=[vpu.catchment_files[0]],
             discharge_files=[discharge_file],
             log=False,
             progress_bar=False,
         ).route()
 
         assert os.path.exists(discharge_file)
-        with xr.open_dataset(discharge_file) as ds_new, xr.open_dataset(known[0]) as ds_known:
+        with xr.open_dataset(discharge_file) as ds_new, xr.open_dataset(vpu.discharge_files[0]) as ds_known:
             assert 'Q' in ds_new
             assert ds_new['Q'].shape == ds_known['Q'].shape, \
                 f'Shape mismatch: {ds_new["Q"].shape} vs {ds_known["Q"].shape}'

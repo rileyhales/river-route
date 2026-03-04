@@ -1,39 +1,23 @@
 #!/usr/bin/env bash
+set -euxo pipefail
+
 # Downloads test data for the river-route test suite.
-# Data is hosted as a compressed archive on cloud storage.
-# Set DATA_URL environment variable to override the default download location.
-set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="${SCRIPT_DIR}/data"
-ARCHIVE="${SCRIPT_DIR}/.test-data.zip"
+# first download era5 and correct catchment volumes and discharges
+wget -q --tries=3 -O routing-test-data.zip "https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip"
+# then unzip it to the test data folder and remove the zip
+unzip -qo routing-test-data.zip -d tests/data
+rm -f routing-test-data.zip
 
-# ── Configuration ────────────────────────────────────────────────────────────
-DEFAULT_URL="https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip"
-DATA_URL="${DATA_URL:-$DEFAULT_URL}"
+# first see what the list of vpu=* directories are contained in tests/data/discharge
+VPUS=$(find tests/data/discharge -type d -name "vpu=*")
 
-# ── Skip if data already exists ──────────────────────────────────────────────
-if [ -f "${DATA_DIR}/routing-configs/vpu=718/params.parquet" ] && \
-   [ -f "${DATA_DIR}/era5/era5_194001.nc" ]; then
-    echo "Test data already present, skipping download."
-    exit 0
-fi
+# for each vpu that test data is provided for, download the hydrography and routing config inputs
+for VPU in $VPUS; do
+    VPU_NAME=$(basename "${VPU}")
+    echo "Downloading test data for ${VPU_NAME} ..."
+    s5cmd cp "s3://geoglows-v2/routing-configs/${VPU_NAME}/*" "tests/data/routing-configs/${VPU_NAME}/"
+    s5cmd cp "s3://geoglows-v2/hydrography/${VPU_NAME}/*" "tests/data/hydrography/${VPU_NAME}/"
+done
 
-# ── Download ─────────────────────────────────────────────────────────────────
-echo "Downloading test data from ${DATA_URL} ..."
-if command -v curl &>/dev/null; then
-    curl -fSL --retry 3 --retry-delay 5 -o "${ARCHIVE}" "${DATA_URL}"
-elif command -v wget &>/dev/null; then
-    wget -q --tries=3 -O "${ARCHIVE}" "${DATA_URL}"
-else
-    echo "Error: neither curl nor wget found" >&2
-    exit 1
-fi
-
-# ── Extract ──────────────────────────────────────────────────────────────────
-echo "Extracting test data to ${DATA_DIR} ..."
-mkdir -p "${DATA_DIR}"
-unzip -qo "${ARCHIVE}" -d "${DATA_DIR}"
-rm -f "${ARCHIVE}"
-
-echo "Test data ready."
+# the inputs then need to be processed by the test suite which happens in another script

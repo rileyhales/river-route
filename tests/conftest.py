@@ -1,109 +1,91 @@
 """Shared fixtures and helpers for the river-route test suite."""
+import os
 from dataclasses import dataclass
 from glob import glob
 from pathlib import Path
 
 import pytest
 
-# ── Path constants ───────────────────────────────────────────────────────────
 TESTS_DIR = Path(__file__).resolve().parent
 DATA_DIR = TESTS_DIR / 'data'
 
-# ERA5 is global gridded data — shared across VPUs
+# provided by the zip downloaded from s3
 ERA5_DIR = DATA_DIR / 'era5'
-ERA5_KWARGS = dict(var_y='latitude', var_x='longitude', var_t='valid_time')
+DISCHARGE_DIR = DATA_DIR / 'discharge'
+CATCHMENT_RUNOFF_DIR = DATA_DIR / 'catchment-runoff'
+# obtained from s3 based on which vpus are given as having solutions
+PARAMS_DIR = DATA_DIR / 'routing-configs'
+HYDROGRAPHY_DIR = DATA_DIR / 'hydrography'
 
-# Exclude data helper scripts and legacy solutions from test collection
-collect_ignore_glob = ['data/scripts/*', 'data/solutions/*']
+ERA5_FILES = sorted(glob(str(ERA5_DIR / 'era5*.nc')))
+ERA5_KWARGS = dict(var_y='latitude', var_x='longitude', var_t='valid_time')
 
 
 # ── VPU dataclass ────────────────────────────────────────────────────────────
 
 @dataclass
 class VPUData:
-    """Per-VPU test data paths. Fields are None when data is not available."""
-    vpu_id: str
-    params_file: Path | None = None
-    grid_weights_file: Path | None = None
-    discharge_dir: Path | None = None
-    catchment_volumes_dir: Path | None = None
-    hydrography_dir: Path | None = None
+    """Per-VPU test data paths. All fields are required and paths should exist"""
+    number: int
+    params_file: Path
+    grid_weights_file: Path
+    discharge_dir: Path
+    catchment_volumes_dir: Path
+    hydrography_dir: Path
+    discharge_files: list[str] = None  # populated in __post_init__
+    catchment_files: list[str] = None  # populated in __post_init__
 
     def __str__(self) -> str:
-        return f'vpu={self.vpu_id}'
+        return f'vpu={self.number}'
+
+    def __post_init__(self):
+        self.discharge_files = list(sorted(glob(str(self.discharge_dir / 'discharge*.nc'))))
+        self.catchment_files = list(sorted(glob(str(self.catchment_volumes_dir / 'inflowing_*.nc'))))
+
+    def valid(self) -> bool:
+        """Check that all paths exist and file lists are non-empty."""
+        path_fields = ('params_file', 'grid_weights_file', 'discharge_dir', 'catchment_volumes_dir', 'hydrography_dir')
+        for field in path_fields:
+            value = getattr(self, field)
+            if not value.exists():
+                print(f'VPU {self.number}: {field} path does not exist: {value}')
+                return False
+
+        if not self.discharge_files:
+            print(f'VPU {self.number}: no discharge files found in {self.discharge_dir}')
+            return False
+        if not self.catchment_files:
+            print(f'VPU {self.number}: no catchment files found in {self.catchment_volumes_dir}')
+            return False
+
+        return True
 
 
-def _resolve_or_none(path: Path) -> Path | None:
-    """Return the path if it exists, otherwise None."""
-    return path if path.exists() else None
-
-
-def _first_glob(directory: Path, pattern: str) -> Path | None:
-    """Return the first file matching *pattern* inside *directory*, or None."""
-    matches = sorted(directory.glob(pattern))
-    return matches[0] if matches else None
-
-
-def discover_vpus() -> list[VPUData]:
-    """Scan data directories for vpu=* subdirs and build a VPUData for each."""
-    vpu_ids: set[str] = set()
-
-    for parent in ('routing-configs', 'discharge', 'catchment-volumes', 'hydrography'):
-        parent_dir = DATA_DIR / parent
-        if parent_dir.is_dir():
-            for child in parent_dir.iterdir():
-                if child.is_dir() and child.name.startswith('vpu='):
-                    vpu_ids.add(child.name.removeprefix('vpu='))
-
-    vpus = []
-    for vpu_id in sorted(vpu_ids):
-        rc_dir = DATA_DIR / 'routing-configs' / f'vpu={vpu_id}'
-        vpus.append(VPUData(
-            vpu_id=vpu_id,
-            params_file=_first_glob(rc_dir, '*params*.parquet') if rc_dir.is_dir() else None,
-            grid_weights_file=_first_glob(rc_dir, 'gridweights*.nc') if rc_dir.is_dir() else None,
-            discharge_dir=_resolve_or_none(DATA_DIR / 'discharge' / f'vpu={vpu_id}'),
-            catchment_volumes_dir=_resolve_or_none(DATA_DIR / 'catchment-volumes' / f'vpu={vpu_id}'),
-            hydrography_dir=_resolve_or_none(DATA_DIR / 'hydrography' / f'vpu={vpu_id}'),
-        ))
-
-    return vpus
+def find_test_units() -> list[VPUData]:
+    """find the vpus of routing configs, then prepare them for river-route version 2 format tests"""
+    # vpus = sorted([os.path.basename(glob(str(PARAMS_DIR / 'vpu=*'))))
+    vpus = [os.path.basename(path) for path in glob(str(PARAMS_DIR / 'vpu=*'))]
+    testable_sets = []
+    for vpu in sorted(vpus):
+        testable_sets.append(
+            VPUData(
+                number=int(vpu.split('=')[1]),
+                params_file=PARAMS_DIR / vpu / 'params.parquet',
+                grid_weights_file=PARAMS_DIR / vpu / 'grid_weights.parquet',
+                discharge_dir=DISCHARGE_DIR / vpu,
+                catchment_volumes_dir=CATCHMENT_RUNOFF_DIR / vpu,
+                hydrography_dir=HYDROGRAPHY_DIR / vpu,
+            )
+        )
+    testable_sets = [vpu for vpu in testable_sets if vpu.valid()]
+    return testable_sets
 
 
 # Discover once at import time
-ALL_VPUS = discover_vpus()
-
+TEST_CASES = find_test_units()
 
 # ── pytest hook: auto-parametrize tests with a `vpu` parameter ──────────────
 
 def pytest_generate_tests(metafunc):
     if 'vpu' in metafunc.fixturenames:
-        metafunc.parametrize('vpu', ALL_VPUS, ids=[str(v) for v in ALL_VPUS])
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def era5_files() -> list[str]:
-    return sorted(glob(str(ERA5_DIR / 'era5_1940*.nc')))
-
-
-def known_discharge_files(vpu: VPUData) -> list[str]:
-    if vpu.discharge_dir is None:
-        return []
-    return sorted(glob(str(vpu.discharge_dir / '*era5_1940*.nc')))
-
-
-def known_catchment_volume_files(vpu: VPUData) -> list[str]:
-    if vpu.catchment_volumes_dir is None:
-        return []
-    return sorted(glob(str(vpu.catchment_volumes_dir / 'volumes_1940*.nc')))
-
-
-def skip_if_vpu_missing(vpu: VPUData, *fields: str) -> None:
-    """Skip the test if any named field on the VPU dataclass is None or doesn't exist."""
-    for field in fields:
-        value = getattr(vpu, field)
-        if value is None:
-            pytest.skip(f'VPU {vpu.vpu_id}: {field} not available')
-        if isinstance(value, Path) and not value.exists():
-            pytest.skip(f'VPU {vpu.vpu_id}: {field} path does not exist: {value}')
+        metafunc.parametrize('vpu', TEST_CASES, ids=[str(v) for v in TEST_CASES])
