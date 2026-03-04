@@ -3,17 +3,16 @@ import sys
 
 from .routers import Muskingum, RapidMuskingum, UnitMuskingum
 
-# check if the optional river-route-app dependency is installed
 try:
-    import river_route_app  # noqa: F401
+    import river_route_app
     APP_AVAILABLE = True
 except ImportError:
     APP_AVAILABLE = False
 
 ROUTERS = {
-    'rapidmusk': RapidMuskingum,
-    'unitmusk': UnitMuskingum,
-    'muskingum': Muskingum,
+    'RapidMuskingum': RapidMuskingum,
+    'UnitMuskingum': UnitMuskingum,
+    'Muskingum': Muskingum,
 }
 
 ROUTER_BY_NAME = {
@@ -60,13 +59,13 @@ def main():
                        choices=list(ROUTER_BY_NAME.keys()),
                        help='Router class to use (Muskingum, RapidMuskingum, or UnitMuskingum)')
 
-    rapid = subparsers.add_parser('rapidmusk', help='RAPID-style Muskingum routing with lateral runoff')
+    rapid = subparsers.add_parser('RapidMuskingum', help='RAPID-style Muskingum routing with lateral runoff')
     _add_config_arg(rapid)
 
-    unit = subparsers.add_parser('unitmusk', help='Unit hydrograph transform then Muskingum routing')
+    unit = subparsers.add_parser('UnitMuskingum', help='Unit hydrograph transform then Muskingum routing')
     _add_config_arg(unit)
 
-    channel = subparsers.add_parser('muskingum', help='Channel-only Muskingum routing (no lateral inflow)')
+    channel = subparsers.add_parser('Muskingum', help='Channel-only Muskingum routing (no lateral inflow)')
     _add_config_arg(channel)
 
     app = subparsers.add_parser('app', help='Launch the browser-based app (requires pip install river-route[app])')

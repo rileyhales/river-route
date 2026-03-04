@@ -50,7 +50,7 @@ class Configs:
     progress_bar: bool = True
     log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
     log_stream: str = 'stdout'
-    log_format: str = '%(asctime)s - %(levelname)s - %(message)s'
+    log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
     runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
     runoff_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
     var_river_id: str = 'river_id'

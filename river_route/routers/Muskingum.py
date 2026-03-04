@@ -1,7 +1,6 @@
 import datetime
 import json
 import logging
-import random
 import sys
 import traceback
 from typing import Any, Self
@@ -24,6 +23,7 @@ __all__ = ['Muskingum', ]
 class Muskingum:
     """
     Solves the Muskingum routing equation using matrix form for simultaneous solution on all rivers
+
     Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
@@ -82,7 +82,7 @@ class Muskingum:
             self.cfg = Configs(**raw)
 
         # configure logging
-        self.logger = logging.getLogger(f'river_route.{''.join([str(random.randint(0, 9)) for _ in range(8)])}')
+        self.logger = logging.getLogger(f'river_route.{id(self):x}')
         self.logger.disabled = not self.cfg.log
         self.logger.setLevel(self.cfg.log_level)
         if self.cfg.log_stream == 'stdout':
@@ -180,7 +180,7 @@ class Muskingum:
         self.c1 = (dt_div_k - _2x) / denominator
         self.c2 = (dt_div_k + _2x) / denominator
         self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
-        self.c4 = self.c1 + self.c2  # cached for lateral inflow scaling (RapidMuskingum)
+        self.c4 = self.c1 + self.c2
 
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')
@@ -191,8 +191,9 @@ class Muskingum:
 
         self.lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
         self.lhs = self.lhs.tocsc()
-        self.logger.info('Calculating factorized LHS matrix')
+        self.logger.info('Factorizing LHS matrix')
         self.lhs_factorized = factorized(self.lhs)
+        self.logger.info('LHS matrix factorized')
         return
 
     ################################################
@@ -221,8 +222,8 @@ class Muskingum:
         self._hook_before_route()
         # routing handled by subclass routing logic
         self._execute_routing()
-        self._write_final_state()
         # final hook
+        self._write_final_state()
         self._hook_after_route()
         # log total time
         t2 = datetime.datetime.now()
@@ -230,6 +231,7 @@ class Muskingum:
         return self
 
     def _execute_routing(self) -> None:
+        self.logger.info('-' * 60)
         # time parameters
         self.dt_routing = self.cfg.dt_routing
         self.dt_total = self.cfg.dt_total
@@ -244,6 +246,7 @@ class Muskingum:
         num_routing_per_output = int(self.dt_discharge / self.dt_routing)
         self._set_muskingum_coefficients(self.dt_routing)
 
+        self.logger.info('Starting routing computation')
         discharge_array = self._router(num_output_steps, num_routing_per_output)
 
         # Generate date array for output
@@ -258,6 +261,8 @@ class Muskingum:
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
         self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])
+        self.logger.info('-' * 60)
+        return
 
     def _router(self, num_output_steps: int, num_routing_per_output: int) -> FloatArray:
         """
@@ -281,7 +286,6 @@ class Muskingum:
         buffer = np.zeros(n, dtype=np.float64)
         interval_sum = np.zeros(n, dtype=np.float64)
 
-        t1 = datetime.datetime.now()
         output_iter = range(num_output_steps)
         if self.cfg.progress_bar:
             output_iter = tqdm.tqdm(output_iter, desc='Channel Routing')
@@ -304,9 +308,6 @@ class Muskingum:
 
         self.logger.debug('Updating Channel State')
         self.channel_state = q_t
-
-        t2 = datetime.datetime.now()
-        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return discharge_array
 
     ################################################

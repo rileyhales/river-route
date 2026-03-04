@@ -1,8 +1,9 @@
 import numpy as np
-import pandas as pd
+from tqdm import tqdm
 
 from .TransformMuskingum import TransformMuskingum
 from ..types import FloatArray
+from ..uhkernels import UnitHydrograph
 
 __all__ = ['UnitMuskingum', ]
 
@@ -11,54 +12,88 @@ class UnitMuskingum(TransformMuskingum):
     """
     Muskingum router that applies a unit hydrograph convolution to lateral depth inputs.
 
-    Runoff depths are convolved with a precomputed unit hydrograph kernel each timestep to
-    distribute overland flow through time before it enters the channel network. The transformed
-    lateral inflow is then routed between river segments using the Muskingum method.
+    Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
+    c1 = (dt/k - 2x) / (dt/k + 2(1-x))
+    c2 = (dt/k + 2x) / (dt/k + 2(1-x))
+    c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
+    c4 = dt/k / (dt/k + 2(1-x)) = c1 + c2
+    Ql_t is the discharge determined by a unit hydrograph convolution at time t
 
-    Required configs:
-    - params_file: path to routing parameters parquet file.
-    - discharge_dir: directory where output netCDF files are written (named after input files).
-    - transformer_kernel_file: path to a parquet kernel file (n_basins × n_time_steps).
-    Lateral input — one of:
-    - catchment_runoff_files: list of paths to netCDF files containing per-catchment runoff depths.
-    - runoff_grid_files + grid_weights_file: gridded runoff depth inputs remapped to catchments.
+    (I - c1 @ A) Q_t+1 = c2 * (A @ q_t) + c3 * q_t + c1 * (A @ Ql_t+1)
+    After solving for Q_t+1 channel routed discharge, superimpose the UH discharge to get the full discharge:
+    Q_t+1 = Q_t+1 + Ql_t+1
+
+    You do it in this order to ensure routing is correctly weighted by coefficients and that each catchment still has
+    the complete discharge reported in each time step
     """
     _ROUTER_REQUIRED_CONFIGS = ('transformer_kernel_file',)
-    _uh_kernel: FloatArray | None = None
-    _uh_state: FloatArray | None = None
+
+    _uh: UnitHydrograph | None = None
 
     @property
     def _catchment_runoff_as_volume(self) -> bool:
         return False  # False -> means as depth
 
     def _hook_before_route(self) -> None:
-        # Load the unit hydrograph kernel before routing begins. Kernel is static so it only needs to load once.
-        if self._uh_kernel is not None:
+        if self._uh is not None:
             return
-        self.logger.debug('Reading UH kernel from parquet')
-        self._uh_kernel = pd.read_parquet(self.cfg.transformer_kernel_file).T.to_numpy(dtype=np.float64)
-        state_file = self.cfg.transformer_state_init_file
-        if state_file:
+        self.logger.info('Loading UH kernel')
+        self._uh = UnitHydrograph(self.cfg.transformer_kernel_file)
+        if self.cfg.transformer_state_init_file:
             self.logger.debug('Reading convolution state from parquet')
-            _state = pd.read_parquet(state_file).T.to_numpy(dtype=np.float64, copy=True)
-            if _state.shape != self._uh_kernel.shape:
-                raise ValueError(f'State shape {_state.shape} does not match kernel shape {self._uh_kernel.shape}')
-            self._uh_state = _state
-        else:
-            self._uh_state = np.zeros_like(self._uh_kernel, dtype=np.float64)
+            self._uh.set_state(self.cfg.transformer_state_init_file)
+
+    def _router(self, lateral: FloatArray) -> tuple[FloatArray, FloatArray]:
+        """Route with UH lateral superimposed on Muskingum channel routing.
+
+        Two state vectors are maintained:
+        - q_channel: flow from Muskingum channel routing only (no lateral accumulated via c3)
+        - q_full: q_channel + ql — the reported discharge and what flows downstream
+
+        The routing equation is:
+            rhs = c1*(A @ ql_t) + c2*(A @ q_full) + c3*q_channel
+            q_channel = (I - c1*A)^{-1} @ rhs
+            q_full = q_channel + ql_t
+
+        This ensures headwater discharge equals the UH output exactly (no Muskingum amplification)
+        while correctly routing all flow downstream through the channel network.
+        """
+        self.logger.info('Precomputing UH convolution for full timeseries')
+        convolved_lateral = self._uh.convolve(lateral)
+
+        n = self.A.shape[0]
+        discharge_array = np.zeros((self.num_runoff_steps, n), dtype=np.float64)
+        q_full = self.channel_state.astype(np.float64, copy=True)
+        q_channel = q_full.copy()
+        rhs = np.zeros(n, dtype=np.float64)
+        buffer = np.zeros(n, dtype=np.float64)
+        interval_sum = np.zeros(n, dtype=np.float64)
+
+        runoff_iter = range(self.num_runoff_steps)
+        self.logger.info('Performing routing computation iterations')
+        if self.cfg.progress_bar:
+            runoff_iter = tqdm(runoff_iter, desc='Runoff Routed')
+
+        for runoff_time_step in runoff_iter:
+            ql_t = convolved_lateral[runoff_time_step]
+            interval_sum.fill(0.0)
+            for _ in range(self.num_routing_steps_per_runoff):
+                buffer[:] = self.A @ ql_t
+                np.multiply(self.c1, buffer, out=rhs)
+                buffer[:] = self.A @ q_full
+                np.multiply(self.c2, buffer, out=buffer)
+                np.add(rhs, buffer, out=rhs)
+                np.multiply(self.c3, q_channel, out=buffer)
+                np.add(rhs, buffer, out=rhs)
+                q_channel[:] = self.lhs_factorized(rhs)
+                np.add(q_channel, ql_t, out=q_full)
+                interval_sum += q_full
+            discharge_array[runoff_time_step, :] = interval_sum / self.num_routing_steps_per_runoff
+
+        return q_full, discharge_array
 
     def _write_final_state(self) -> None:
         super()._write_final_state()
-        if self.cfg.transformer_state_final_file and self._uh_state is not None:
+        if self.cfg.transformer_state_final_file and self._uh is not None:
             self.logger.debug('Writing final convolution state to parquet')
-            pd.DataFrame(self._uh_state.T).to_parquet(self.cfg.transformer_state_final_file)
-
-    def transform_runoff(self, r_t: FloatArray) -> FloatArray:
-        """Convolve runoff depth with the unit hydrograph kernel and advance convolution state."""
-        if self._uh_kernel is None or self._uh_state is None:
-            raise RuntimeError('UH kernel has not been initialized')
-        self._uh_state += self._uh_kernel * r_t
-        ql_t = self._uh_state[0, :].copy()
-        self._uh_state[:-1, :] = self._uh_state[1:, :]
-        self._uh_state[-1, :] = 0.0
-        return ql_t
+            self._uh.write_state(self.cfg.transformer_state_final_file)

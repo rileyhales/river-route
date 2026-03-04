@@ -1,4 +1,4 @@
-"""Tests for UnitMuskingum routing — unit hydrograph convolution + Muskingum."""
+"""Tests for UnitMuskingum routing — sparse UH convolution + Muskingum."""
 import os
 import shutil
 import tempfile
@@ -6,14 +6,24 @@ import tempfile
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.sparse
 import xarray as xr
 
 import river_route as rr
 from conftest import VPUData, skip_if_vpu_missing
 
 
+def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
+    """Build a trivial instant-response sparse kernel and save as npz."""
+    kernel = np.zeros((n_kernel_steps, n_rivers), dtype=np.float64)
+    kernel[0, :] = 1.0
+    path = os.path.join(tmpdir, 'kernel.npz')
+    scipy.sparse.save_npz(path, scipy.sparse.csr_matrix(kernel))
+    return path
+
+
 def test_unit_muskingum_synthetic(vpu: VPUData):
-    """Build synthetic runoff + trivial kernel; verify UnitMuskingum runs and produces valid output."""
+    """Build synthetic runoff + trivial sparse kernel; verify UnitMuskingum runs and produces valid output."""
     skip_if_vpu_missing(vpu, 'params_file')
 
     params = pd.read_parquet(vpu.params_file)
@@ -22,8 +32,8 @@ def test_unit_muskingum_synthetic(vpu: VPUData):
 
     tmpdir = tempfile.mkdtemp()
     try:
-        # Build synthetic catchment runoff (24 hourly steps)
         n_timesteps = 24
+        n_kernel_steps = 3
         dates = pd.date_range('2020-01-01', periods=n_timesteps, freq='h')
         np.random.seed(42)
         depths = np.random.uniform(0, 0.001, (n_timesteps, n_rivers)).astype(np.float32)
@@ -34,13 +44,7 @@ def test_unit_muskingum_synthetic(vpu: VPUData):
         runoff_file = os.path.join(tmpdir, 'synthetic_depths.nc')
         runoff_ds.to_netcdf(runoff_file)
 
-        # Build a trivial kernel: instant response (all runoff enters channel immediately)
-        n_kernel_steps = 3
-        kernel = np.zeros((n_rivers, n_kernel_steps), dtype=np.float64)
-        kernel[:, 0] = 1.0
-        kernel_file = os.path.join(tmpdir, 'kernel.parquet')
-        pd.DataFrame(kernel).to_parquet(kernel_file)
-
+        kernel_file = _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir)
         discharge_file = os.path.join(tmpdir, 'q_uh.nc')
         final_state_file = os.path.join(tmpdir, 'final_state.parquet')
         transformer_state_file = os.path.join(tmpdir, 'transformer_state.parquet')
@@ -82,7 +86,6 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
 
     tmpdir = tempfile.mkdtemp()
     try:
-        # Build 2 synthetic catchment runoff files (24 hourly steps each)
         n_timesteps = 24
         n_kernel_steps = 3
         np.random.seed(42)
@@ -99,11 +102,7 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
             ds.to_netcdf(path)
             runoff_files.append(path)
 
-        # Trivial kernel: instant response
-        kernel = np.zeros((n_rivers, n_kernel_steps), dtype=np.float64)
-        kernel[:, 0] = 1.0
-        kernel_file = os.path.join(tmpdir, 'kernel.parquet')
-        pd.DataFrame(kernel).to_parquet(kernel_file)
+        kernel_file = _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir)
 
         # Route both files at once
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
