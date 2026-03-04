@@ -2,8 +2,6 @@ from abc import ABC
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
-
 from ..types import FloatArray, PathInput
 
 __all__ = ['_SCSBase', ]
@@ -81,11 +79,5 @@ class _SCSBase(ABC):
         """Save the kernel as a parquet file with shape (n_basins, n_kernel_steps)."""
         df = pd.DataFrame(self.kernel.T, columns=[f't{i}' for i in range(self.kernel.shape[0])])
         df.to_parquet(path)
+        return
 
-    def save_sparse(self, path: PathInput) -> None:
-        """Save the kernel as a scipy sparse CSC matrix in .npz format.
-
-        CSC (Compressed Sparse Column) is used because each column is one
-        basin's UH with trailing zeros past its base time.
-        """
-        sp.save_npz(path, sp.csc_matrix(self.kernel))

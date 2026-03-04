@@ -19,7 +19,7 @@ log: true
 progress_bar: true
 log_level: 'INFO'                # DEBUG | INFO | WARNING | ERROR | CRITICAL
 log_stream: 'stdout'             # stdout | /path/to/logfile.log
-log_format: '%(asctime)s - %(levelname)s - %(message)s'
+log_format: '%(levelname)s - %(asctime)s - %(message)s'
 
 # variable names
 var_river_id: 'river_id'

@@ -22,13 +22,19 @@ __all__ = ['Muskingum', ]
 
 class Muskingum:
     """
-    Solves the Muskingum routing equation using matrix form for simultaneous solution on all rivers
+    Solves the Muskingum routing equation using matrix form for simultaneous solution on all rivers.
+
+    Channel-only routing (no lateral inflow). Inflow to each river segment is the sum of discharge
+    from all upstream segments: I_t = A @ Q_t, where A is the adjacency matrix.
 
     Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
     c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
-    (I - c1 @ A) Q_t+1 = c2 * (A @ q_t) + c3 * q_t
+    I_t = A @ Q_t
+
+    In matrix form, the router needs to solve the equation:
+        (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t
     """
     cfg: Configs
     logger: logging.Logger
@@ -47,7 +53,6 @@ class Muskingum:
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
-    lhs: csc_matrix  # n x n - left hand side of matrix form routing equation => f(A, c1)
     lhs_factorized: FactorizedSolveFn  # callable factorized left hand side matrix for direct => f(lhs)
 
     # State variables
@@ -97,7 +102,7 @@ class Muskingum:
             self.logger.warning('Configs instance passed to Muskingum, kwargs were ignored!')
         return
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'{type(self).__name__}(params_file={self.cfg.params_file!r})'
 
     def _validate_configs(self) -> None:
@@ -180,8 +185,6 @@ class Muskingum:
         self.c1 = (dt_div_k - _2x) / denominator
         self.c2 = (dt_div_k + _2x) / denominator
         self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
-        self.c4 = self.c1 + self.c2
-
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')
             self.logger.debug(f'c1: {self.c1}')
@@ -189,10 +192,10 @@ class Muskingum:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
-        self.lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
-        self.lhs = self.lhs.tocsc()
+        lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
+        lhs = lhs.tocsc()
         self.logger.info('Factorizing LHS matrix')
-        self.lhs_factorized = factorized(self.lhs)
+        self.lhs_factorized = factorized(lhs)
         self.logger.info('LHS matrix factorized')
         return
 
@@ -316,11 +319,11 @@ class Muskingum:
 
     def _hook_before_route(self) -> None:
         """Called after validation and network setup, before routing begins. Default: no-op."""
-        pass
+        return
 
     def _hook_after_route(self) -> None:
         """Called at the end of route(), after writing final state. Default: no-op."""
-        pass
+        return
 
     ################################################
     # Dependency injection methods for users to overwrite default behaviors without subclassing

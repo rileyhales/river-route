@@ -10,21 +10,25 @@ __all__ = ['UnitMuskingum', ]
 
 class UnitMuskingum(TransformMuskingum):
     """
-    Muskingum router that applies a unit hydrograph convolution to lateral depth inputs.
+    Muskingum channel routing with unit hydrograph lateral inflow.
 
-    Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
+    Lateral inflow at each segment is determined by convolving runoff depths (m) with a precomputed
+    unit hydrograph kernel, producing discharge Ql_t (m³/s). Inflow from upstream segments is
+    I_t = A @ Q_t, where A is the adjacency matrix.
+
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
     c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
-    c4 = dt/k / (dt/k + 2(1-x)) = c1 + c2
-    Ql_t is the discharge determined by a unit hydrograph convolution at time t
+    Ql_t = unit hydrograph convolution output at time t (m³/s)
+    I_t = A @ Q_t
 
-    (I - c1 @ A) Q_t+1 = c2 * (A @ q_t) + c3 * q_t + c1 * (A @ Ql_t+1)
-    After solving for Q_t+1 channel routed discharge, superimpose the UH discharge to get the full discharge:
-    Q_t+1 = Q_t+1 + Ql_t+1
+    In matrix form, the router needs to solve the equations:
+        (I - c1 * A) @ Q_channel_t+1 = c1 * (A @ Ql_t+1) + c2 * (A @ Q_full_t) + c3 * Q_channel_t
+        Q_full_t+1 = Q_channel_t+1 + Ql_t+1
 
-    You do it in this order to ensure routing is correctly weighted by coefficients and that each catchment still has
-    the complete discharge reported in each time step
+    The channel and full discharge are tracked separately so that headwater segments report exactly
+    the UH output without Muskingum amplification, while downstream segments receive correctly
+    routed contributions from all upstream sources.
     """
     _ROUTER_REQUIRED_CONFIGS = ('transformer_kernel_file',)
 

@@ -26,9 +26,9 @@ jobs:
           pip install ".[test]"
 
       - name: Download test data
-        run: ./tests/download_test_data.sh  # todo prepare a downloading script
+        run: ./tests/download_test_data.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATA_URL: ${{ vars.TEST_DATA_URL }}
 
       - name: Run tests
         run: pytest tests/ -v

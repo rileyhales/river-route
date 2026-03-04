@@ -80,12 +80,12 @@ to skip, not fail.
 
 | Tier   | Files                                                                         | Size    | Source         |
 |--------|-------------------------------------------------------------------------------|---------|----------------|
-| Core   | `routing-configs/vpu=N/params.parquet`                                        | ~312 KB | GitHub release |
-| Medium | `routing-configs/vpu=N/gridweights*.nc`                                       | ~625 KB | GitHub release |
-| Large  | `era5/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, `hydrography/vpu=N/` | ~2.5 GB | GitHub release |
+| Core   | `routing-configs/vpu=N/params.parquet`                                        | ~312 KB | Cloud storage |
+| Medium | `routing-configs/vpu=N/gridweights*.nc`                                       | ~625 KB | Cloud storage |
+| Large  | `era5/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, `hydrography/vpu=N/` | ~2.5 GB | Cloud storage |
 
-All tiers are downloaded in CI via `tests/download_test_data.sh` from the `test-data-v2`
-GitHub release.
+All tiers are downloaded in CI via `tests/download_test_data.sh` from a cloud storage URL
+configured as the `DATA_URL` repository variable.
 
 ## Test Dependency Matrix
 
@@ -106,7 +106,7 @@ GitHub release.
 The GitHub Actions workflow (`.github/workflows/tests.yaml`) runs the test suite on Python
 3.12, 3.13, and 3.14:
 
-1. `tests/download_test_data.sh` downloads the `test-data-v2` release asset
+1. `tests/download_test_data.sh` downloads the test data tarball from the `DATA_URL` repository variable
 2. The tarball extracts preserving `vpu=` directory structure into `tests/data/`
 3. `pytest tests/ -v` runs with auto-discovered VPUs
 
@@ -153,9 +153,8 @@ as arguments (defaults to `718`).
 
 ### `tests/download_test_data.sh`
 
-Downloads test data from the `test-data-v2` GitHub release into `tests/data/`. Used by CI
-and developers who don't have local data. Requires the `gh` CLI or `GH_TOKEN` environment
-variable.
+Downloads test data from cloud storage into `tests/data/`. Used by CI and developers who
+don't have local data. Uses the default S3 URL, or override with `DATA_URL`.
 
 ```bash
 ./tests/download_test_data.sh

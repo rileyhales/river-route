@@ -8,6 +8,9 @@ URL = 'https://github.com/rileyhales/river-route'
 AUTHOR = 'Riley Hales PhD'
 REQUIRES_PYTHON = '>=3.12.0'
 
+with open('README.md') as f:
+    long_description = f.read()
+
 with open(f'./{NAME}/__metadata__.py') as f:
     version_pattern = r'__version__ = [\'"](\d+\.\d+\.\d+)[\'"]'
     VERSION = re.search(version_pattern, f.read()).group(1)
@@ -19,14 +22,14 @@ with open('./requirements.txt') as f:
 with open('./docs/requirements.txt') as f:
     DOCS_REQUIRES = f.read().splitlines()
 
-TEST_REQUIRES = ['pytest', ]
+TEST_REQUIRES = ['pytest>=9.0.2', ]
 APP_REQUIRES = [f'river-route-app~={VERSION}', ]
 
 setup(
     name=NAME,
     version=VERSION,
     description=DESCRIPTION,
-    long_description=open('README.md').read(),
+    long_description=long_description,
     long_description_content_type='text/markdown',
     author=AUTHOR,
     python_requires=REQUIRES_PYTHON,
@@ -57,5 +60,4 @@ setup(
     entry_points={
         'console_scripts': ['rr=river_route._cli:main', ]
     },
-    options={}
 )

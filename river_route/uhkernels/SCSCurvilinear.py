@@ -9,8 +9,10 @@ class SCSCurvilinear(_SCSBase):
     """
     SCS curvilinear dimensionless unit hydrograph transformer.
 
-    Uses a tabulated NRCS dimensionless UH (NEH Part 630, Ch. 16), has a duration of 5 * tp, and has a smooth
-    S-shaped rise and recession.
+    Standard NRCS (SCS) dimensionless unit hydrograph table.
+    Source: NRCS National Engineering Handbook (NEH) Part 630, Chapter 16, Table 16-1.
+    Abscissa: t/tp (dimensionless time)
+    Ordinate: q/qp (dimensionless discharge)
 
     Parameters
     ----------
@@ -31,11 +33,6 @@ class SCSCurvilinear(_SCSBase):
     The kernel is built by evaluating the precomputed cumulative integral of the
     piecewise-linear dimensionless UH at each time-edge point and dividing by tr.
     """
-
-    # Standard NRCS (SCS) dimensionless unit hydrograph table.
-    # Source: NRCS National Engineering Handbook (NEH) Part 630, Chapter 16, Table 16-1.
-    # Abscissa: t/tp (dimensionless time)
-    # Ordinate: q/qp (dimensionless discharge)
     _scalar_t = np.array([
         0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
         1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,

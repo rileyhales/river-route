@@ -103,6 +103,7 @@ class Configs:
         for key in self._ALWAYS_REQUIRED:
             if getattr(self, key) in (None, '', []):
                 raise ValueError(f'Missing required config: {key}')
+        return
 
     # --- path normalization and verification ---
     def coerce_path_list_fields(self) -> None:
@@ -111,6 +112,7 @@ class Configs:
             val = getattr(self, key)
             if isinstance(val, PathTypes) and val:
                 setattr(self, key, [str(val)])
+        return
 
     def absolutize_paths(self) -> None:
         """Convert all relative path fields to absolute paths in-place."""
@@ -122,6 +124,7 @@ class Configs:
             val = getattr(self, key, [])
             if val:
                 setattr(self, key, [os.path.abspath(p) for p in val])
+        return
 
     def verify_input_files_exist(self) -> None:
         """Raise FileNotFoundError for any set input path that does not exist."""
@@ -135,6 +138,7 @@ class Configs:
             for path in getattr(self, key, []):
                 if not os.path.exists(path):
                     raise FileNotFoundError(f'{key}: {path} not found')
+        return
 
     def _resolve_discharge_dir(self) -> None:
         """Populate discharge_files from discharge_dir when explicit paths are not given."""
@@ -154,6 +158,7 @@ class Configs:
         else:
             # Muskingum (no lateral inflow files)
             self.discharge_files = [os.path.join(d, 'discharge.nc')]
+        return
 
     def verify_output_directories_exist(self) -> None:
         """Raise NotADirectoryError for any output path whose parent directory does not exist."""
@@ -172,6 +177,7 @@ class Configs:
             val = getattr(self, key, None)
             if val and not os.path.isdir(val):
                 raise NotADirectoryError(f'Output directory not found: {val}')
+        return
 
     # allow some dict like accessors
     def get(self, key: str, default: Any = None) -> Any:
@@ -194,7 +200,6 @@ class Configs:
         # downstream_river_id should be non-null, integer, all -1 or positive, and exist in river_id (except for -1)
         # k should be positive float
         # x should be positive float less than or equal to 0.5
-        # todo check that the rivers are topologically sorted
         try:
             params_df = pd.read_parquet(self.params_file)
         except Exception as e:
@@ -227,6 +232,14 @@ class Configs:
             raise ValueError(f'{self.params_file} k column must be positive')
         if np.any(params_df['x'] < 0) or np.any(params_df['x'] > 0.5):
             raise ValueError(f'{self.params_file} x column must be in the range [0, 0.5]')
+
+        # check topological sort: every downstream_river_id must appear later in the table than its upstream
+        river_id_index = {int(rid): i for i, rid in enumerate(params_df['river_id'])}
+        for upstream_idx, ds_id in enumerate(params_df['downstream_river_id']):
+            if int(ds_id) < 0:
+                continue
+            if river_id_index[int(ds_id)] <= upstream_idx:
+                raise ValueError(f'{self.params_file} is not topologically sorted (upstream to downstream)')
 
         # weights should be netcdf with variables river_id, x_index, y_index, x, y, area_sqm, proportion.
         if self.grid_weights_file:

@@ -9,21 +9,23 @@ __all__ = ['RapidMuskingum', ]
 
 class RapidMuskingum(TransformMuskingum):
     """
-    Solves the Muskingum Cunge routing equation for channel routing with a lateral inflow component, Ql.
+    Muskingum channel routing with a direct lateral inflow component, Ql.
+
+    Inflow to each segment is the sum of upstream discharge (I_t = A @ Q_t) plus a lateral term
+    representing runoff volume divided by the runoff timestep. All runoff enters the channel in the
+    interval it is generated — best suited for long timesteps (e.g. daily) where the within-step
+    distribution matters less relative to travel times.
 
     Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t) + (c4 * Ql_t)
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
     c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
-    c4 = dt/k / (dt/k + 2(1-x)) = c1 + c2
-    Ql_t is the lateral inflow volume generated at time t divided by dt, the time step of the runoff file.
+    c4 = c1 + c2
+    Ql_t = lateral runoff volume at time t / dt_runoff
+    I_t = A @ Q_t
 
-    (I - c1 @ A) Q_t+1 = c2 * (A @ q_t) + c3 * q_t + c4 * Ql_t
-
-    Because of the definition of Ql_t used here, all runoff is assumed to make it into the channel and is routed
-    during the interval it is generated. This assumption is best for long time steps, such as daily averages, where the
-    runoff distribution matters less compared to the time step and travel times. It can have the affect of speeding up
-    and amplifying the peak discharges compared to using an overland flow runoff transformation.
+    In matrix form, the router needs to solve the equation:
+        (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t + c4 * Ql_t
     """
 
     @property

@@ -79,6 +79,7 @@ When providing runoff depths, you must also provide a weight table NetCDF with t
 | `x`        | float     | The x coordinate of the runoff grid cell                                      |
 | `y`        | float     | The y coordinate of the runoff grid cell                                      |
 | `area_sqm` | float     | Area of the grid cell–catchment overlap in square meters                      |
+| `proportion` | float   | Fraction of catchment area covered by this grid cell, sums to 1.0 per river_id |
 
 !!! note "Ordering Grid Weights"
     The order of unique `river_id` values in the weight table should be the same as in the routing

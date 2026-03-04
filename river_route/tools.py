@@ -25,7 +25,17 @@ def subset_configs_to_river(
         out_weights: PathInput | None = None,
 ) -> None:
     """
-    Subset routing parameters and weight tables to only rivers including and upstream of a given id
+    Subset routing parameters and weight tables to the target river and all rivers upstream of it.
+
+    The target river becomes the outlet (downstream_river_id set to -1) in the subset. If weight
+    table paths are provided, the weight table is also filtered to only include matching rivers.
+
+    Args:
+        target_river: river_id of the river to subset to (becomes the outlet)
+        params: path to the full routing parameters parquet file
+        out_params: path to write the subsetted parameters parquet file
+        weights: path to the full grid weights netCDF file (optional)
+        out_weights: path to write the subsetted grid weights netCDF file (optional, required if weights is given)
     """
     pdf = pd.read_parquet(params)
 
@@ -46,7 +56,16 @@ def subset_configs_to_river(
 
 def connectivity_to_digraph(river_ids: np.ndarray, downstream_ids: np.ndarray) -> nx.DiGraph:
     """
-    Generate directed graph from the routing parameters file
+    Build a NetworkX DiGraph from river connectivity arrays.
+
+    Each edge goes from a river to its downstream river (including the -1 sentinel for outlets).
+
+    Args:
+        river_ids: 1D array of river ID integers
+        downstream_ids: 1D array of downstream river ID integers (-1 for outlets)
+
+    Returns:
+        Directed graph with edges from each river_id to its downstream_river_id
     """
     graph = nx.DiGraph()
     graph.add_edges_from(zip(river_ids, downstream_ids))
@@ -55,7 +74,22 @@ def connectivity_to_digraph(river_ids: np.ndarray, downstream_ids: np.ndarray) -
 
 def adjacency_matrix(river_ids: np.ndarray, downstream_ids: np.ndarray) -> scipy.sparse.csc_matrix:
     """
-    Generate adjacency matrix from routing params file
+    Build a sparse adjacency matrix for the river network.
+
+    Entry A[downstream_idx, upstream_idx] = 1 for each river that flows into a downstream river.
+    Outlet rivers (downstream_id < 0) have no outgoing edges. The input arrays must be topologically
+    sorted (upstream before downstream) — a ValueError is raised otherwise.
+
+    Args:
+        river_ids: 1D array of river ID integers, topologically sorted upstream to downstream
+        downstream_ids: 1D array of downstream river ID integers (-1 for outlets)
+
+    Returns:
+        Sparse CSC matrix of shape (n, n) where n = len(river_ids)
+
+    Raises:
+        ValueError: if a downstream_id is not found in river_ids, or if the arrays are not
+            topologically sorted
     """
     river_index = {int(river_id): idx for idx, river_id in enumerate(river_ids.tolist())}
     row_indices: list[int] = []

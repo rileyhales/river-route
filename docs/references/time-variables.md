@@ -1,23 +1,23 @@
 ## Time Variables
 
-Only 1 time option is a required input in the configuration file:
+Time requirements depend on which router you use:
 
-- `dt_routing` - the time interval, in seconds, between routing calculation steps. It must be constant across all rivers
-  and for the full simulation.
+**`Muskingum`** (channel-only routing, no lateral inflow) requires:
 
-By default, river-route reports routed flows as the average flow that occurred over the same time frequency that the
-runoff volumes are provided in. If you provide 3-hourly runoff volumes for each catchment. Your output will be the
-average flow in each river segment over the same 3-hour interval. You can change this by specifying:
+- `dt_routing` - the routing computational timestep in seconds
+- `dt_total` - the total simulation duration in seconds
 
-- `dt_discharge` - the time interval, in seconds, between discharge values which get written to disc. It must be constant
-  between all discharge time steps.
+**`RapidMuskingum` and `UnitMuskingum`** (lateral inflow routers) auto-detect time parameters
+from the input runoff files. All time options are optional — override them only when you need
+a different routing sub-step or output frequency:
 
-By way of information, 2 other time parameters are calculated and verified internally by river-route.
-
-- `dt_runoff` - the time interval, in seconds, between runoff volume values. It must be constant between all time steps
-  of runoff.
-- `dt_total` - the total time, in seconds, of the runoff data. It is equal to the number of time steps multiplied
-  by `dt_runoff`.
+- `dt_routing` - the time interval, in seconds, between routing calculation steps. Defaults to the runoff timestep.
+  It must be constant across all rivers and for the full simulation.
+- `dt_discharge` - the time interval, in seconds, between discharge values which get written to disc. Defaults to
+  the runoff timestep. It must be constant between all discharge time steps.
+- `dt_total` - the total simulation duration in seconds. Defaults to the full length of the input runoff data.
+- `dt_runoff` - the time interval, in seconds, between runoff volume values. Auto-detected from the input file.
+  It must be constant between all time steps of runoff.
 
 The following relationships must be true for all 4 time variables
 

@@ -10,12 +10,6 @@ except ImportError:
     APP_AVAILABLE = False
 
 ROUTERS = {
-    'RapidMuskingum': RapidMuskingum,
-    'UnitMuskingum': UnitMuskingum,
-    'Muskingum': Muskingum,
-}
-
-ROUTER_BY_NAME = {
     'Muskingum': Muskingum,
     'RapidMuskingum': RapidMuskingum,
     'UnitMuskingum': UnitMuskingum,
@@ -28,9 +22,9 @@ def _add_config_arg(subparser: argparse.ArgumentParser) -> None:
 
 def _route(args):
     """Run routing from a config file using the router specified by --router."""
-    router_cls = ROUTER_BY_NAME.get(args.router)
+    router_cls = ROUTERS.get(args.router)
     if router_cls is None:
-        print(f'Unknown router: {args.router!r}. Must be one of: {", ".join(ROUTER_BY_NAME)}')
+        print(f'Unknown router: {args.router!r}. Must be one of: {", ".join(ROUTERS)}')
         sys.exit(1)
 
     router_cls(args.config).route()
@@ -56,7 +50,7 @@ def main():
     route = subparsers.add_parser('route', help='Run routing from a config file with a specified router')
     _add_config_arg(route)
     route.add_argument('--router', type=str, required=True,
-                       choices=list(ROUTER_BY_NAME.keys()),
+                       choices=list(ROUTERS.keys()),
                        help='Router class to use (Muskingum, RapidMuskingum, or UnitMuskingum)')
 
     rapid = subparsers.add_parser('RapidMuskingum', help='RAPID-style Muskingum routing with lateral runoff')

@@ -1,9 +1,7 @@
-from pathlib import Path
 from typing import Self
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
 
 from ..types import FloatArray, PathInput
 
@@ -27,7 +25,7 @@ class UnitHydrograph:
 
     Parameters
     ----------
-    kernel_file : path to a parquet or scipy sparse .npz file containing the kernel
+    kernel_file : path to a parquet file containing the kernel
 
     Notes
     -----
@@ -38,17 +36,14 @@ class UnitHydrograph:
     state: FloatArray  # (n_kernel_steps, n_basins)
 
     def __init__(self, kernel_file: PathInput) -> None:
-        p = Path(kernel_file)
-        if p.suffix == '.npz':
-            self.kernel = sp.load_npz(p).toarray().astype(np.float64)
-        else:
-            self.kernel = pd.read_parquet(p).T.to_numpy(dtype=np.float64, copy=True)
+        self.kernel = pd.read_parquet(kernel_file).T.to_numpy(dtype=np.float64, copy=True)
         if self.kernel.ndim != 2:
             raise ValueError('kernel must be a 2D array')
         self.reset_state()
 
     def reset_state(self) -> None:
         self.state = np.zeros_like(self.kernel, dtype=np.float64)
+        return
 
     def set_state(self, path: PathInput) -> Self:
         """
@@ -65,6 +60,7 @@ class UnitHydrograph:
     def write_state(self, path: PathInput) -> None:
         """Write convolution carryover state to a parquet file with shape (n_basins, n_kernel_steps)."""
         pd.DataFrame(self.state.T).to_parquet(path)
+        return
 
     def convolve_incrementally(self, runoff_vector: FloatArray) -> FloatArray:
         """

@@ -18,7 +18,7 @@ instructions.
 - Renamed numerous config keys (see migration guide).
 - Changed `tools.py` function signatures to accept arrays instead of file paths; removed RAPID conversion utilities.
 - Added new documentation tutorials for channel routing, unit hydrograph routing, watershed preparation, and UH kernel generation.
-- Increased minimum Python version to 3.14.
+- Increased minimum Python version to 3.12.
 
 ---
 

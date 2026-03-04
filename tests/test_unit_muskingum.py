@@ -150,13 +150,3 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
             )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def test_unit_muskingum_from_grid():
-    """TODO: Route ERA5 gridded depths through grid weights using UnitMuskingum.
-
-    Needs:
-    - A unit hydrograph kernel file for VPU 718
-    - Known-good discharge outputs for comparison (note: existing reference is RapidMuskingum only)
-    """
-    pytest.skip('TODO: need UH kernel file and known-good outputs for UnitMuskingum')

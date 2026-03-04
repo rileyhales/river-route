@@ -4,11 +4,10 @@ import numpy as np
 import xarray as xr
 
 from .Muskingum import Muskingum
+from ..runoff import grid_to_catchment
 from ..types import DatetimeArray, FloatArray, RunoffGeneratorSignature
 
 __all__ = ['TransformMuskingum', ]
-
-from ..runoff import grid_to_catchment
 
 
 class TransformMuskingum(Muskingum, ABC):
@@ -112,6 +111,7 @@ class TransformMuskingum(Muskingum, ABC):
         self.num_routing_steps = int(self.dt_total / self.dt_routing)
 
         self._set_muskingum_coefficients(self.dt_routing)
+        self.c4 = self.c1 + self.c2
         self._network_time_signature = signature
         return
 

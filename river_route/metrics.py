@@ -24,6 +24,8 @@ def kling_gupta_efficiency_2012(y_true, y_pred):
     std_true = np.std(y_true)
     std_pred = np.std(y_pred)
 
+    if std_true == 0 or std_pred == 0 or mean_true == 0:
+        return np.nan
     beta = mean_pred / mean_true
     gamma = (mean_pred / std_pred) / (mean_true / std_true)
 

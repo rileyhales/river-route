@@ -55,8 +55,8 @@ are also available in the `examples/` directory:
 | `channel_state_init_file`      | Parquet with initial channel state (column `Q`)        | **Required** |          optional - default to 0          |          optional - default to 0          |
 | `channel_state_final_file`     | Path to save final channel state                       |   optional   |                 optional                  |                 optional                  |
 | **output**                     |                                                        |              |                                           |                                           |
-| `discharge_dir`                | Directory for output discharge files                   | **Required** |               **Required**                |               **Required**                |
-| `discharge_files`              | Explicit output paths (alternative to `discharge_dir`) |   optional   |                 optional                  |                 optional                  |
+| `discharge_dir`                | Directory for output discharge files                   | one of `discharge_dir` / `discharge_files` required | one of `discharge_dir` / `discharge_files` required | one of `discharge_dir` / `discharge_files` required |
+| `discharge_files`              | Explicit output paths (alternative to `discharge_dir`) | one of `discharge_dir` / `discharge_files` required | one of `discharge_dir` / `discharge_files` required | one of `discharge_dir` / `discharge_files` required |
 | **input data**                 |                                                        |              |                                           |                                           |
 | `catchment_runoff_files`       | Per-catchment runoff time series (m³ or m)             |              |                _Option 1_                 |                _Option 1_                 |
 | `runoff_grid_files`            | Gridded runoff depths; need `grid_weights_file`        |              |                _Option 2_                 |                _Option 2_                 |
@@ -80,7 +80,7 @@ are also available in the `examples/` directory:
 | `progress_bar`                  | Show tqdm progress bar                                                     | `True`                                        |
 | `log_level`                     | Logger level (`'INFO'`, `'DEBUG'`, etc.)                                   | `'INFO'`                                      |
 | `log_stream`                    | `'stdout'` or a file path                                                  | `'stdout'`                                    |
-| `log_format`                    | Python logging format string                                               | `'%(asctime)s - %(levelname)s - %(message)s'` |
+| `log_format`                    | Python logging format string                                               | `'%(levelname)s - %(asctime)s - %(message)s'` |
 | `var_river_id`                  | River ID dimension name in files                                           | `'river_id'`                                  |
 | `var_discharge`                 | Discharge variable name in output                                          | `'Q'`                                         |
 | `var_catchment_runoff_variable` | Runoff variable name in `catchment_runoff_files`                           | `'runoff'`                                    |
