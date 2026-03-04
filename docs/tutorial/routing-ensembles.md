@@ -63,7 +63,7 @@ value. Instead, write a custom output function which write the routed discharge 
 final state file while the values are still in memory. This is the most efficient method since you avoid needing to load and filter the outputs in a
 separate process. Your custom function will need to know the datetime of the next simulation or the number of timesteps after initialization which
 corresponds to your next model run's start time. For more information about this, see the
-[advanced concepts section on custom outputs](./advanced-tutorial.md#customizing-outputs).
+[advanced concepts section on custom outputs](advanced.md#customizing-outputs).
 
 After you have written these custom outputs to disc for each member, you can combine them into a single final state. You could calculate an average
 or median of the member's final states, assimilate gauge data with a Kalman filter, or use some other algorithm or machine learning to aggregate the

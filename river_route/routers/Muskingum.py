@@ -22,19 +22,16 @@ __all__ = ['Muskingum', ]
 
 class Muskingum:
     """
-    Solves the Muskingum routing equation using matrix form for simultaneous solution on all rivers.
-
-    Channel-only routing (no lateral inflow). Inflow to each river segment is the sum of discharge
-    from all upstream segments: I_t = A @ Q_t, where A is the adjacency matrix.
+    Solves Muskingum routing using a matrix form for simultaneous solution on all rivers. Channel routing only.
+    Inflow to each river segment is the sum of discharge from upstream segments.
 
     Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
     c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
-    I_t = A @ Q_t
 
     In matrix form, the router needs to solve the equation:
-        (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t
+    (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t
     """
     cfg: Configs
     logger: logging.Logger

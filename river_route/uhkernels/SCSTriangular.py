@@ -8,15 +8,16 @@ __all__ = ['SCSTriangular', ]
 class SCSTriangular(_SCSBase):
     """
     SCS triangular dimensionless unit hydrograph transformer.
-
-    Builds a kernel from basin time-of-concentration and area values using the
-    SCS triangular UH equations, then delegates all state management to Transformer.
+    Standard NRCS (SCS) dimensionless unit hydrograph table.
+    Source: NRCS National Engineering Handbook (NEH) Part 630, Chapter 16, Table 16-1.
+    Abscissa: t/tp (dimensionless time)
+    Ordinate: q/qp (dimensionless discharge)
 
     Parameters
     ----------
-    tr   : duration of runoff generation in seconds (tr > 0)
     tc   : 1D array of time-of-concentration values in seconds, one per basin
     area : 1D array of basin areas in m², one per basin
+    tr   : duration of runoff generation in seconds (tr > 0)
 
     Notes
     -----

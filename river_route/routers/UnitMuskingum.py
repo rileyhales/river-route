@@ -10,21 +10,18 @@ __all__ = ['UnitMuskingum', ]
 
 class UnitMuskingum(TransformMuskingum):
     """
-    Muskingum channel routing with unit hydrograph lateral inflow.
-
-    Lateral inflow at each segment is determined by convolving runoff depths (m) with a precomputed
-    unit hydrograph kernel, producing discharge Ql_t (m³/s). Inflow from upstream segments is
-    I_t = A @ Q_t, where A is the adjacency matrix.
+    Muskingum channel routing with unit hydrograph lateral inflow. Lateral inflow at each segment is determined by
+    convolving runoff depths (m) with a precomputed unit hydrograph kernel. Discharge is the superposition of overland
+    flow by unit hydrograph and channel routing which are merged together at each time step.
 
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
     c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
     Ql_t = unit hydrograph convolution output at time t (m³/s)
-    I_t = A @ Q_t
 
     In matrix form, the router needs to solve the equations:
-        (I - c1 * A) @ Q_channel_t+1 = c1 * (A @ Ql_t+1) + c2 * (A @ Q_full_t) + c3 * Q_channel_t
-        Q_full_t+1 = Q_channel_t+1 + Ql_t+1
+    (I - c1 * A) @ Q_channel_t+1 = c1 * (A @ Ql_t+1) + c2 * (A @ Q_full_t) + c3 * Q_channel_t
+    Q_full_t+1 = Q_channel_t+1 + Ql_t+1
 
     The channel and full discharge are tracked separately so that headwater segments report exactly
     the UH output without Muskingum amplification, while downstream segments receive correctly

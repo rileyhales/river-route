@@ -1,12 +1,8 @@
 ## Routing Lifecycle
 
-All routers share the same `route()` method. The shared steps — validation, network setup, state
-management, and hooks — run identically. The middle step, `_execute_routing()`, is where
-Muskingum and TransformMuskingum diverge.
-
 ```mermaid
 graph TD
-    A[route] --> B[validate configs]
+    A[route method] --> B[validate configs]
     B --> C[set network vectors]
     C --> D[read initial state]
     D --> E[hook: before route]
@@ -14,7 +10,7 @@ graph TD
 
     F -->|Muskingum| G[set time params from config]
     G --> H[set Muskingum coefficients]
-    H --> I[_router: route for num_output_steps]
+    H --> I[route for num_output_steps]
     I --> J[generate date array]
     J --> K[write discharges]
 

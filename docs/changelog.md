@@ -4,19 +4,21 @@
 
 ### [v2.0.0](https://github.com/rileyhales/river-route/tree/v2.0.0) — Unreleased
 
-Major architectural overhaul. See the [Migration Guide](migrating/v1-to-v2.md) for upgrade
-instructions.
+Major architectural overhaul. See the [Migration Guide](migrating/v1-to-v2.md) for upgrade instructions.
 
-- Replaced monolithic `Muskingum` class with `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` router hierarchy.
-- Introduced `Configs` dataclass replacing the untyped config dictionary.
+- Replaced `Muskingum` class with 3 separate classes `Muskingum`, `RapidMuskingum`, and `UnitMuskingum`.
+- New class `Muskingum` is channel routing only with no runoff-transformation.
+- New class `RapidMuskingum` is a reimplementation of the previous Muskingum class with routing and runoff transformation.
+- New class `UnitMuskingum` is a new implementation of unit hydrograph runoff transformation and channel routing.
+- Introduced `Configs` dataclass replacing the untyped config dictionary to centralize and validate configs.
 - Merged `connectivity_file` into `params_file` (single-file network definition).
-- Changed grid weights format from CSV to NetCDF with `proportion` column.
+- Changed grid weights format from CSV to netCDF with `proportion` column.
 - Simplified channel state files from two columns (Q, R) to one column (Q).
 - Added topological sort validation on routing parameters.
-- Added `types.py` module centralizing type aliases.
-- Expanded `runoff.py` with Voronoi-based grid weight computation pipeline.
+- Added `types.py` and significantly improved type annotations and static checking coverage.
+- Expanded `runoff.py` functions for Voronoi diagrams and grid weight computations.
 - Renamed numerous config keys (see migration guide).
-- Changed `tools.py` function signatures to accept arrays instead of file paths; removed RAPID conversion utilities.
+- Removed RAPID conversion utilities.
 - Added new documentation tutorials for channel routing, unit hydrograph routing, watershed preparation, and UH kernel generation.
 - Increased minimum Python version to 3.12.
 

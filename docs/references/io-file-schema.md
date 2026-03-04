@@ -1,5 +1,8 @@
 ## Watershed Description Files
 
+You can view some example inputs by downloading the sample data used in the GEOGLOWS River Forecast System 
+available on AWS S3 at [s3://geoglows-v2/routing-test-data.zip/](https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip).
+
 ### Routing Parameters
 
 ```yaml
@@ -25,9 +28,8 @@ These routing parameters typically come from preprocessing and calibration workf
 
 `UnitMuskingum` does not require additional columns in `params_file`. Catchment-specific parameters
 (e.g. `tc`, `area_sqm` for the SCS unit hydrograph) are consumed when building the transformer kernel in
-Python and are not read by the router itself.
-
-Generally, use physically derived first guesses then calibrate against observed discharge where available.
+Python and are not read by the router itself. Generally, use physically derived first guesses then
+calibrate against observed discharge where available.
 
 ## Catchment Runoff Files
 
@@ -37,55 +39,52 @@ You need a time series of per-catchment runoff to be routed. There are 2 ways to
 2. Gridded runoff depths with a weight table (`runoff_grid_files` + `grid_weights_file`)
 
 !!! warning "Runoff Depths Warning"
-    There are many projections for grid cells, different names of variables, various file formats, and units
-    of the runoff depths. You should be certain you can correctly calculate catchment volumes from runoff
-    depth grids separately before using the calculations performed by `river-route`.
+    There are many projections for grid cells, different names of variables, various file formats, and units of the
+    runoff depths. You should be certain you can correctly calculate catchment volumes from runoff depth grids
+    separately before using the calculations performed by `river-route`. Do not blindly trust this result!
 
 ### Pre-aggregated Catchment Files (recommended)
 
 ```yaml
-catchment_runoff_files: '/path/to/catchment_runoff.nc'
+catchment_runoff_files:
+  - '/path/to/catchment_runoff.nc'
 ```
 
-Catchment runoff is given in a netCDF file. The file should have 2 dimensions: `time` and `river_id`.
-The `river_id` dimension must contain exactly the same IDs *and* be sorted in the same order as the
-`river_id` column of the routing parameters file.
+!!! note "Ordering River IDs"
+    The `river_id` values **must** be the same values and order as in the routing parameters
 
-The file should have 1 runoff variable (default name `runoff`) which is an array of shape
-`(time, river_id)` of dtype float. The variable name can be overridden with `var_catchment_runoff_variable`.
-
-!!! note "Calculating Catchment Volumes"
-    `river-route` is not a land surface modeling tool. Refer to the example case for guidance on
-    formatting these files.
+Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
+exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
+should have 1 data variable, named `runoff`, which is an array of shape `(time, river_id)` of dtype float.
 
 ### Gridded Runoff Depths
 
 ```yaml
-runoff_grid_files: [ '/path/to/depths1.nc', '/path/to/depths2.nc', ... ]
+grid_runoff_files:
+  - '/path/to/grid1.nc'
+  - '/path/to/grid2.nc'
 grid_weights_file: '/path/to/weight_table.nc'
 ```
+
+!!! note "Ordering River IDs"
+    The `river_id` values **must** be the same values and order as in the routing parameters
 
 Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`. The dimension names
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden
 with `var_runoff_depth` (default `'ro'`).
 
-When providing runoff depths, you must also provide a weight table NetCDF with the following variables:
-
-| Column     | Data Type | Description                                                                   |
-|------------|-----------|-------------------------------------------------------------------------------|
-| `river_id` | integer   | Unique ID of a river segment                                                  |
-| `x_index`  | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary |
-| `y_index`  | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary |
-| `x`        | float     | The x coordinate of the runoff grid cell                                      |
-| `y`        | float     | The y coordinate of the runoff grid cell                                      |
-| `area_sqm` | float     | Area of the grid cell–catchment overlap in square meters                      |
-| `proportion` | float   | Fraction of catchment area covered by this grid cell, sums to 1.0 per river_id |
-
-!!! note "Ordering Grid Weights"
-    The order of unique `river_id` values in the weight table should be the same as in the routing
-    parameters and topologically sorted from upstream to downstream.
-
 Weights need to be recomputed if the grid resolution, grid extent, or catchment boundaries change.
+The grid weights netCDF has the following variables:
+
+| Column       | Data Type | Description                                                                    |
+|--------------|-----------|--------------------------------------------------------------------------------|
+| `river_id`   | integer   | Unique ID of a river segment                                                   |
+| `x_index`    | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary  |
+| `y_index`    | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary  |
+| `x`          | float     | The x coordinate of the runoff grid cell                                       |
+| `y`          | float     | The y coordinate of the runoff grid cell                                       |
+| `area_sqm`   | float     | Area of the grid cell–catchment overlap in square meters                       |
+| `proportion` | float     | Fraction of catchment area covered by this grid cell, sums to 1.0 per river_id |
 
 ## Output Files
 
@@ -95,7 +94,7 @@ Routed discharge outputs are given in a netCDF file with 2 dimensions: `time` an
 have 1 variable named `Q` which is an array of shape `(time, river_id)` of dtype float.
 
 You can change the structure of the output file by overriding the default write function.
-See the [Advanced Uses](../tutorial/advanced-tutorial.md) page for more information.
+See the [Advanced Uses](../tutorial/advanced.md) page for more information.
 
 ## Initial and Final States
 

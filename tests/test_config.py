@@ -35,7 +35,7 @@ def test_valid_rapid_muskingum_config(vpu: VPUData):
     try:
         rr.Configs(
             params_file=str(vpu.params_file),
-            runoff_grid_files=[files[0]],
+            grid_runoff_files=[files[0]],
             grid_weights_file=str(vpu.grid_weights_file),
             discharge_dir=tmpdir,
             log=False,

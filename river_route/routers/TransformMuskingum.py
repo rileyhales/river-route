@@ -38,8 +38,8 @@ class TransformMuskingum(Muskingum, ABC):
                     dates = ds['time'].values.astype('datetime64[s]')
                     array = ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False)
                     yield dates, array, lateral_file, discharge_file
-        elif self.cfg.runoff_grid_files and self.cfg.grid_weights_file:
-            for runoff_file, discharge_file in zip(self.cfg.runoff_grid_files, self.cfg.discharge_files):
+        elif self.cfg.grid_runoff_files and self.cfg.grid_weights_file:
+            for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
                 self.logger.info(f'Calculating catchment volumes from runoff depth grid: {runoff_file}')
                 ds = grid_to_catchment(
@@ -50,7 +50,7 @@ class TransformMuskingum(Muskingum, ABC):
                     y_var=self.cfg.var_y,
                     time_var=self.cfg.var_t,
                     river_id_var=self.cfg.var_river_id,
-                    cumulative=self.cfg.runoff_accumulation_type == 'cumulative',
+                    cumulative=self.cfg.grid_accumulation_type == 'cumulative',
                     as_volumes=self._catchment_runoff_as_volume
                 )
                 yield (
@@ -61,13 +61,13 @@ class TransformMuskingum(Muskingum, ABC):
 
     def _validate_router_configs(self) -> None:
         lateral = self.cfg.catchment_runoff_files
-        grids = self.cfg.runoff_grid_files and self.cfg.grid_weights_file
+        grids = self.cfg.grid_runoff_files and self.cfg.grid_weights_file
 
         if lateral and grids:
-            raise ValueError('Provide catchment_runoff_files or runoff_grid_files with grid_weights_file, not both')
+            raise ValueError('Provide catchment_runoff_files or grid_runoff_files with grid_weights_file, not both')
         if not lateral and not grids:
-            raise ValueError('Provide catchment_runoff_files or runoff_grid_files with grid_weights_file')
-        n_inputs = len(lateral) + len(self.cfg.runoff_grid_files or [])
+            raise ValueError('Provide catchment_runoff_files or grid_runoff_files with grid_weights_file')
+        n_inputs = len(lateral) + len(self.cfg.grid_runoff_files or [])
         if len(self.cfg.discharge_files) != n_inputs:
             raise ValueError('Number of resolved discharge output files must match number of input files')
         return

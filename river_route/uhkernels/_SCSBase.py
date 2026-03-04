@@ -33,7 +33,7 @@ class _SCSBase(ABC):
     tb: FloatArray  # time to base (duration of the UH)
     qp: FloatArray  # peak flow (m²/s)
 
-    def __init__(self, tr: float, tc: FloatArray, area: FloatArray) -> None:
+    def __init__(self, *, tc: FloatArray, area: FloatArray, tr: float, ) -> None:
         if float(tr) <= 0:
             raise ValueError('tr must be > 0')
         tc = np.asarray(tc, dtype=np.float64)
@@ -80,4 +80,3 @@ class _SCSBase(ABC):
         df = pd.DataFrame(self.kernel.T, columns=[f't{i}' for i in range(self.kernel.shape[0])])
         df.to_parquet(path)
         return
-

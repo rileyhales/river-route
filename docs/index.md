@@ -22,12 +22,11 @@ You have these options for how to do hydrological routing
 
 ## Start Here
 
-1. [Preparing Watersheds](tutorial/prepare-watersheds.md)
-2. [Muskingum Channel Routing](tutorial/channel-routing.md)
+1. [Muskingum Channel Routing](tutorial/basics.md)
+2. [Preparing Watersheds](tutorial/prepare-watersheds.md)
 3. [Channel Routing with Runoff Transformation](tutorial/unit-hydrograph-routing.md)
 4. [Routing Ensembles](tutorial/routing-ensembles.md)
-5. [Advanced Uses](tutorial/advanced-tutorial.md)
-6. [Generating UH Kernels](tutorial/create-uh-kernels.md)
+5. [Advanced Uses](tutorial/advanced.md)
 
 ```commandline
 pip install river-route
@@ -42,71 +41,6 @@ import river_route as rr
     .RapidMuskingum('/path/to/config.yaml')
     .route()
 )
-```
-
-## Computation Process
-
-```mermaid
----
-title: River Route Process Diagram
----
-graph LR
-    subgraph "Required-Inputs"
-        Inputs["Routing Parameters\nCatchment Volumes (or Runoff Depths)\nDischarge Files"]
-    end
-
-    subgraph "Compute-Options"
-        co1["Routing Timestep\nDischarge Timestep\nRunoff Type\nInput Type"]
-    end
-
-    subgraph "Initialization"
-        i1["Initial State File"]
-    end
-
-    subgraph "Logging-Options"
-        management["Log File Path\nProgress Bar\nLog Level"]
-    end
-
-    subgraph "Computations"
-        direction TB
-        a[Build Adjacency Matrix] --> b
-        b[Factorize LHS Matrix] --> c
-        c[Read Volume/Depth Array RapidMuskingum & UnitMuskingum] --> d
-        d[Apply UH Transform UnitMuskingum only] --> e
-        e[Iterate Routing Timesteps] --> f
-        f[Solve Muskingum System] --> g
-        g[Enforce Non-negative Flows] --> h & e
-        h[Write Discharge to Disk] --> i
-        i[Cache Final State]
-    end
-
-    subgraph "Main-Output"
-        Result[Routed Discharge]
-    end
-
-    subgraph "Cachable-Files"
-        CachedFiles["Final State UH Kernel & State (UnitMuskingum)"]
-    end
-
-    Required-Inputs & Compute-Options & Initialization & Logging-Options ==> Computations
-    Computations ==> Main-Output & Cachable-Files
-```
-
-## UnitMuskingum Convolution
-
-`UnitMuskingum` convolves each runoff timestep with a precomputed unit hydrograph kernel before
-passing the result to channel routing. The kernel is provided as a parquet file.
-
-```mermaid
----
-title: UnitMuskingum Kernel Initialization
----
-graph TD
-    A[transformer_kernel_file] --> B[Read kernel parquet]
-    B --> C{transformer_state_file\nprovided?}
-    C -->|Yes| D[Load warm-start state from parquet]
-    C -->|No| E[Initialize state to zero]
-    D & E --> F[Ready to convolve]
 ```
 
 ## Usage Examples
@@ -145,13 +79,6 @@ import river_route as rr
             'discharge_dir': '/path/to/output/',
         }
     )
-    .route()
-)
-
-# Unit-Muskingum (with SCS triangular unit hydrograph)
-(
-    rr
-    .UnitMuskingum('/path/to/config.yaml')
     .route()
 )
 ```

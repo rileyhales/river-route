@@ -1,5 +1,7 @@
 # API Documentation
 
+## Routers
+
 ::: river_route.Configs
     handler: python
     options:
@@ -28,6 +30,8 @@
       show_root_heading: true
       show_source: false
 
+## Unit Hydrograph Kernel Generators
+
 ::: river_route.uhkernels.UnitHydrograph
     handler: python
     options:
@@ -49,6 +53,8 @@
       show_root_heading: true
       show_source: false
 
+## Various Supporting Functions
+
 ::: river_route.metrics
     handler: python
     options:
@@ -69,4 +75,3 @@
       members_order: source
       show_root_heading: true
       show_source: false
-

@@ -39,8 +39,10 @@ class Configs:
 
     # For runoff transformation - used by TransformMuskingum subclasses
     catchment_runoff_files: PathList = field(default_factory=list)
-    runoff_grid_files: PathList | None = field(default_factory=list)
+    grid_runoff_files: PathList | None = field(default_factory=list)
     grid_weights_file: PathInput | None = None
+    grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
+    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
     transformer_kernel_file: PathInput | None = None
     transformer_state_init_file: PathInput | None = None
     transformer_state_final_file: PathInput | None = None
@@ -51,8 +53,6 @@ class Configs:
     log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
     log_stream: str = 'stdout'
     log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
-    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
-    runoff_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
     var_river_id: str = 'river_id'
     var_discharge: str = 'Q'
     var_x: str = 'x'
@@ -150,7 +150,7 @@ class Configs:
             raise ValueError('Provide discharge_dir or discharge_files, not both')
 
         d = self.discharge_dir
-        input_files = self.catchment_runoff_files or self.runoff_grid_files or []
+        input_files = self.catchment_runoff_files or self.grid_runoff_files or []
         if input_files:
             self.discharge_files = [
                 os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files
@@ -178,20 +178,6 @@ class Configs:
             if val and not os.path.isdir(val):
                 raise NotADirectoryError(f'Output directory not found: {val}')
         return
-
-    # allow some dict like accessors
-    def get(self, key: str, default: Any = None) -> Any:
-        val = getattr(self, key, None)
-        return val if (val is not None and val != '' and val != []) else default
-
-    def __getitem__(self, key: str) -> Any:
-        return getattr(self, key)
-
-    def __contains__(self, key: str) -> bool:
-        val = getattr(self, key, _MISSING)
-        if val is _MISSING:
-            return False
-        return val is not None and val != '' and val != []
 
     def deep_validate(self) -> Self:
         """Perform deep validation of file contents and inter-file consistency. Raise ValueError if any issues found."""
@@ -292,10 +278,6 @@ class Configs:
 
 
 def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
-    """
-    Inspect evaluated type hints for any field annotated with Literal and return a mapping
-    of field name -> frozenset of allowed values. Used to populate _VALID_VALUES at import time.
-    """
     result = {}
     for name, hint in get_type_hints(cls).items():
         if name.startswith('_'):
@@ -306,11 +288,6 @@ def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
 
 
 def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
-    """
-    Inspect evaluated type hints and return (single_path_fields, list_path_fields) for any
-    field typed with PathInput (str | Path) or PathList (list[str | Path]), including Optional
-    variants. Fields beginning with '_' are ignored.
-    """
     single, lists = set(), set()
     for name, hint in get_type_hints(cls).items():
         if name.startswith('_'):

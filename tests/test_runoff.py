@@ -10,7 +10,7 @@ import xarray as xr
 from conftest import DATA_DIR, VPUData, skip_if_vpu_missing, era5_files
 from river_route.runoff import (
     cell_xy_from_regular_grid,
-    voronoi_diagram_from_regular_grid_cell_xy,
+    voronoi_diagram_from_regular_xy,
     compute_voronoi_catchment_intersects,
     grid_weights,
     grid_to_catchment,
@@ -64,7 +64,7 @@ def test_voronoi_diagram_synthetic():
     """Build Voronoi polygons from a small synthetic grid."""
     x = np.array([0.0, 1.0, 2.0])
     y = np.array([0.0, 1.0])
-    gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y)
+    gdf = voronoi_diagram_from_regular_xy(x, y)
     assert 'geometry' in gdf.columns
     assert 'x_index' in gdf.columns
     assert 'y_index' in gdf.columns
@@ -79,7 +79,7 @@ def test_voronoi_diagram_from_era5():
         pytest.skip('Missing ERA5 files')
 
     x, y = cell_xy_from_regular_grid(files[0], x_var='longitude', y_var='latitude')
-    gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y)
+    gdf = voronoi_diagram_from_regular_xy(x, y)
     assert 'geometry' in gdf.columns
     assert 'x_index' in gdf.columns
     assert 'y_index' in gdf.columns
@@ -108,12 +108,10 @@ def test_compute_voronoi_catchment_intersects(vpu: VPUData):
         pytest.skip(f'Missing {catchments_file}')
 
     x, y = cell_xy_from_regular_grid(files[0], x_var='longitude', y_var='latitude')
-    voronoi_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y)
+    voronoi_gdf = voronoi_diagram_from_regular_xy(x, y)
     catchments_gdf = gpd.read_parquet(catchments_file)
 
-    result = compute_voronoi_catchment_intersects(
-        voronoi_gdf, catchments_gdf, river_id_variable='linkno',
-    )
+    result = compute_voronoi_catchment_intersects(voronoi_gdf, catchments_gdf, river_id_variable='linkno')
 
     expected_cols = {'linkno', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion'}
     assert expected_cols.issubset(set(result.columns)), \

@@ -23,12 +23,11 @@ nav:
       - Time Variables: references/time-variables.md
       - Test Data: references/test-data.md
   - Tutorials:
+      - Basics: tutorial/basics.md
       - Preparing Watersheds: tutorial/prepare-watersheds.md
-      - Channel Routing: tutorial/channel-routing.md
-      - Channel Routing with Runoff Transform: tutorial/unit-hydrograph-routing.md
-      - Routing Runoff Ensembles: tutorial/routing-ensembles.md
-      - Advanced Uses: tutorial/advanced-tutorial.md
-      - Generating UH Kernels: tutorial/create-uh-kernels.md
+      - Channel Routing with Unit Hydrographs: tutorial/unit-hydrograph-routing.md
+      - Routing Runoff Ensemble: tutorial/routing-ensembles.md
+      - Advanced Uses: tutorial/advanced.md
   - Migration Guides:
       - v1 to v2: migrating/v1-to-v2.md
 plugins:

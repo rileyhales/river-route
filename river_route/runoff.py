@@ -13,7 +13,7 @@ from .types import PathInput
 __all__ = [
     # for making grid_weights
     'cell_xy_from_regular_grid',
-    'voronoi_diagram_from_regular_grid_cell_xy',
+    'voronoi_diagram_from_regular_xy',
     'compute_voronoi_catchment_intersects',
     'grid_weights',
     # for making catchment volumes from grid weights and depth grids
@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 def cell_xy_from_regular_grid(
         dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat',
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Get cell center x and y coordinates from a regular grid in expected, common dataset structure.
-    """
+    """Get cell center x and y coordinates from a regular grid common dataset structure."""
     with xr.open_dataset(dataset) as ds:
         if x_var not in ds.variables:
             raise KeyError(f'{x_var} must be a variable in {dataset}')
@@ -42,7 +40,7 @@ def cell_xy_from_regular_grid(
     return x, y
 
 
-def voronoi_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
+def voronoi_diagram_from_regular_xy(x: np.ndarray, y: np.ndarray, crs: int = 4326) -> gpd.GeoDataFrame:
     """Create a GeoDataFrame of Voronoi polygons around the center of each cell in a grid."""
     if x.ndim != 1 or y.ndim != 1:
         raise ValueError('x and y must be 1D arrays')
@@ -71,7 +69,7 @@ def voronoi_diagram_from_regular_grid_cell_xy(x: np.ndarray, y: np.ndarray, crs:
 
 
 def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
-                                         save_path: PathInput | None = None, save_attributes: dict | None = None,
+                                         save_path: PathInput | None = None, attributes: dict | None = None,
                                          river_id_variable: str = 'river_id') -> pd.DataFrame:
     """
     Create a table of intersections between Voronoi polygons and catchments.
@@ -105,25 +103,15 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
 
     if save_path:
         (
-            xr
-            .Dataset(
-                data_vars={
-                    'river_id': ('index', df[river_id_variable].to_numpy(dtype=np.int64, copy=False)),
-                    'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
-                    'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
-                    'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
-                    'y': ('index', df['y'].to_numpy(dtype=np.float64, copy=False)),
-                    'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64, copy=False)),
-                    'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64, copy=False)),
-                },
-                attrs={
-                    'description': 'proportions of runoff cells that intersect catchments for use with river-route',
-                    'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
-                    'catchments_gdf_crs': catchments_gdf.crs.to_string(),
-                    'river_route_version': __version__,
-                    **(save_attributes or {}),
-                }
-            )
+            df
+            .to_xarray()
+            .set_attrs({
+                'description': 'proportions of runoff cells that intersect catchments for use with river',
+                'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
+                'catchments_gdf_crs': catchments_gdf.crs.to_string(),
+                'river_route_version': __version__,
+                **(attributes or {}),
+            })
             .to_netcdf(save_path)
         )
     return df
@@ -155,13 +143,13 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
             ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     """
     x, y = cell_xy_from_regular_grid(grid_path, x_var=x_var, y_var=y_var)
-    voronoi_gdf = voronoi_diagram_from_regular_grid_cell_xy(x, y, crs=crs)
+    voronoi_gdf = voronoi_diagram_from_regular_xy(x, y, crs=crs)
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
     df = compute_voronoi_catchment_intersects(
         voronoi_gdf, catchments_gdf, save_path=None,
-        save_attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)},
+        attributes=dict(grid_path=str(grid_path), catchments_path=str(catchments_path)),
         river_id_variable=river_id_var
     )
 
@@ -179,23 +167,18 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
         logger.warning('routing_params_path not provided; weight table row order may not match routing network order')
 
     if save_weights_path:
-        save_attributes = {
-            'description': 'proportions of runoff cells that intersect river catchments to be used with river-route',
-            'grid_path': str(grid_path),
-            'catchments_path': str(catchments_path),
-            'river_route_version': __version__,
-        }
-        ds = xr.Dataset({
-            river_id_var: ('index', df[river_id_var].to_numpy(dtype=np.int64, copy=False)),
-            'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64, copy=False)),
-            'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64, copy=False)),
-            'x': ('index', df['x'].to_numpy(dtype=np.float64, copy=False)),
-            'y': ('index', df['y'].to_numpy(dtype=np.float64, copy=False)),
-            'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64, copy=False)),
-            'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64, copy=False)),
-        })
-        ds.attrs.update(save_attributes)
-        ds.to_netcdf(save_weights_path)
+        (
+            df
+            [[river_id_var, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']]
+            .to_xarray()
+            .set_attrs({
+                'description': 'proportions of runoff cells that intersect river catchments',
+                'grid_path': str(grid_path),
+                'catchments_path': str(catchments_path),
+                'river_route_version': __version__,
+            })
+            .to_netcdf(save_weights_path)
+        )
 
     return df
 

@@ -1,8 +1,3 @@
-!!! warning "Non-Comprehensive Tutorial"
-    This tutorial does not teach hydrological theory, watershed delineation, or parameter calibration. It assumes
-    you already have a vector watershed definition and associated routing parameters. GIS software such as QGIS or
-    ArcGIS can be used to delineate watersheds and compute stream network attributes.
-
 ## Overview
 
 `river-route` routes catchment-scale runoff through a vector river network. Three routers are available:

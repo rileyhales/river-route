@@ -5,6 +5,7 @@ from .routers import Muskingum, RapidMuskingum, UnitMuskingum
 
 try:
     import river_route_app
+
     APP_AVAILABLE = True
 except ImportError:
     APP_AVAILABLE = False
@@ -53,14 +54,14 @@ def main():
                        choices=list(ROUTERS.keys()),
                        help='Router class to use (Muskingum, RapidMuskingum, or UnitMuskingum)')
 
+    channel = subparsers.add_parser('Muskingum', help='Channel-only Muskingum routing (no lateral inflow)')
+    _add_config_arg(channel)
+
     rapid = subparsers.add_parser('RapidMuskingum', help='RAPID-style Muskingum routing with lateral runoff')
     _add_config_arg(rapid)
 
     unit = subparsers.add_parser('UnitMuskingum', help='Unit hydrograph transform then Muskingum routing')
     _add_config_arg(unit)
-
-    channel = subparsers.add_parser('Muskingum', help='Channel-only Muskingum routing (no lateral inflow)')
-    _add_config_arg(channel)
 
     app = subparsers.add_parser('app', help='Launch the browser-based app (requires pip install river-route[app])')
     app.add_argument('--port', type=int, default=8000, help='Port to listen on (default: 8000)')

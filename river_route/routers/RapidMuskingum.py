@@ -9,23 +9,18 @@ __all__ = ['RapidMuskingum', ]
 
 class RapidMuskingum(TransformMuskingum):
     """
-    Muskingum channel routing with a direct lateral inflow component, Ql.
-
-    Inflow to each segment is the sum of upstream discharge (I_t = A @ Q_t) plus a lateral term
-    representing runoff volume divided by the runoff timestep. All runoff enters the channel in the
-    interval it is generated — best suited for long timesteps (e.g. daily) where the within-step
-    distribution matters less relative to travel times.
+    Muskingum channel routing with a direct lateral inflow component, Ql. Lateral flow is the runoff volume divided
+    by the runoff timestep. All runoff enters the channel in the interval it is generated which ignores the overland
+    flow time, or in other words the runoff transformation.
 
     Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t) + (c4 * Ql_t)
     c1 = (dt/k - 2x) / (dt/k + 2(1-x))
     c2 = (dt/k + 2x) / (dt/k + 2(1-x))
     c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
     c4 = c1 + c2
-    Ql_t = lateral runoff volume at time t / dt_runoff
-    I_t = A @ Q_t
 
     In matrix form, the router needs to solve the equation:
-        (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t + c4 * Ql_t
+    (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t + c4 * Ql_t
     """
 
     @property

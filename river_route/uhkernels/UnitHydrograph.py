@@ -18,8 +18,8 @@ class UnitHydrograph:
     - The kernel integrates to basin area over time: sum(kernel[:, j] * dt) == area[j]
 
     Two convolution modes are provided:
-    - ``transform(runoff_vector)`` — incremental single-step convolution
-    - ``convolve(lateral)`` — full timeseries convolution in one pass
+    - ``convolve`` — full timeseries convolution for a vector or 2D array of runoff timeseries
+    - ``convolve_incrementally`` — incremental convolution for one timestep of runoff from a 1D vector of runoff
 
     Both modes maintain internal state so that carryover between successive calls is handled automatically.
 

@@ -1,5 +1,5 @@
-from pathlib import Path
 from collections.abc import Generator, Callable
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -17,11 +17,11 @@ RunoffGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput,
 
 class WriteDischargesFn(Protocol):
     def __call__(
-        self,
-        dates: DatetimeArray,
-        q_array: FloatArray,
-        q_file: PathInput,
-        routed_file: PathInput = '',
+            self,
+            dates: DatetimeArray,
+            q_array: FloatArray,
+            q_file: PathInput,
+            routed_file: PathInput = '',
     ) -> None: ...
 
 

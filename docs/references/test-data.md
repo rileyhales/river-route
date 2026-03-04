@@ -7,35 +7,25 @@ All test data lives in `tests/data/` at the project root. Tests resolve paths th
 
 ```
 tests/data/
-├── era5/                                  # global ERA5 forcing — shared across VPUs
+├── era5/                              # global ERA5 forcing — shared across VPUs
 │   ├── era5_194001.nc
 │   ├── era5_194002.nc
 │   └── era5_194003.nc
 ├── routing-configs/
-│   └── vpu=718/
-│       ├── params.parquet                 # routing params (river_id, downstream_river_id, k, x)
-│       └── gridweights_era5.nc            # grid weight table
+│   ├── params.parquet                 # routing params (river_id, downstream_river_id, k, x)
+│   └── gridweights_era5.nc            # grid weight table
 ├── discharge/
-│   └── vpu=718/
-│       ├── discharge_era5_194001.nc       # known-good routed discharge
-│       ├── ...
-│       └── discharge_era5_194012.nc
+│   ├── discharge_era5_194001.nc       # known-good routed discharge
+│   ├── ...
+│   └── discharge_era5_194012.nc
 ├── catchment-volumes/
-│   └── vpu=718/
-│       ├── volumes_194001.nc              # pre-computed catchment volumes (from grid_to_catchment)
-│       ├── volumes_194002.nc
-│       └── volumes_194003.nc
+│   ├── volumes_194001.nc              # pre-computed catchment volumes (from grid_to_catchment)
+│   ├── volumes_194002.nc
+│   └── volumes_194003.nc
 ├── hydrography/
-│   └── vpu=718/
-│       ├── catchments_718.parquet         # catchment boundaries (linkno, geometry)
-│       └── streams_718.gpkg
-├── scripts/                               # data prep scripts (excluded from pytest collection)
-└── solutions/                             # legacy reference data (excluded from pytest collection)
+│   ├── catchments_718.parquet         # catchment boundaries (linkno, geometry)
+│   └── streams_718.gpkg
 ```
-
-ERA5 is global gridded data and stays shared at the root level. Per-VPU data lives under
-`routing-configs/vpu=N/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, and
-`hydrography/vpu=N/`.
 
 ## VPU Auto-Discovery
 
@@ -78,8 +68,8 @@ Fields are `None` when the corresponding data is not available for that VPU.
 Tests are designed to run with whatever data is available. Missing data causes individual tests
 to skip, not fail.
 
-| Tier   | Files                                                                         | Size    | Source         |
-|--------|-------------------------------------------------------------------------------|---------|----------------|
+| Tier   | Files                                                                         | Size    | Source        |
+|--------|-------------------------------------------------------------------------------|---------|---------------|
 | Core   | `routing-configs/vpu=N/params.parquet`                                        | ~312 KB | Cloud storage |
 | Medium | `routing-configs/vpu=N/gridweights*.nc`                                       | ~625 KB | Cloud storage |
 | Large  | `era5/`, `discharge/vpu=N/`, `catchment-volumes/vpu=N/`, `hydrography/vpu=N/` | ~2.5 GB | Cloud storage |
@@ -98,8 +88,6 @@ configured as the `DATA_URL` repository variable.
 | `test_runoff.py`          |       x       |          x          |    x    |              |                      |       x        |
 | `test_tools.py`           |       x       |          x          |         |              |                      |                |
 | `test_unit_muskingum.py`  |       x       |                     |         |              |                      |                |
-
-`test_metrics.py` is pure unit tests with no external data dependencies.
 
 ## CI Integration
 
