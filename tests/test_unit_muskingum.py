@@ -23,7 +23,7 @@ def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
 
 def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
     """Build synthetic runoff + trivial sparse kernel; verify UnitMuskingum runs and produces valid output."""
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     river_ids = params['river_id'].values
     n_rivers = len(river_ids)
 

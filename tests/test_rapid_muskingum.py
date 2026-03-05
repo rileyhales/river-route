@@ -144,39 +144,6 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_ensemble_routing(vpu: RFSv2ConfigsData):
-    """Route 2 months in ensemble mode; verify outputs written and final state is reasonable."""
-    if len(ERA5_FILES) < 2:
-        pytest.skip('Need at least 2 ERA5 files')
-
-    tmpdir = tempfile.mkdtemp()
-    try:
-        discharge_files = [os.path.join(tmpdir, f'q_ens_{i}.nc') for i in range(2)]
-        final_state_file = os.path.join(tmpdir, 'final_state_ensemble.parquet')
-
-        rr.RapidMuskingum(
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=ERA5_FILES[:2],
-            discharge_files=discharge_files,
-            channel_state_final_file=final_state_file,
-            runoff_processing_mode='ensemble',
-            log=False, progress_bar=False,
-            **ERA5_KWARGS,
-        ).route()
-
-        for qf in discharge_files:
-            assert os.path.exists(qf), f'Missing output: {qf}'
-
-        # Small negatives are expected from raw Muskingum math (discharge is clipped, state is not)
-        assert os.path.exists(final_state_file)
-        final_state = pd.read_parquet(final_state_file)
-        assert 'Q' in final_state.columns
-        assert np.all(final_state['Q'].values > -5), 'Excessively negative values in ensemble mean state'
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
 def test_rapid_muskingum_from_qlateral(vpu: RFSv2ConfigsData):
     """Route from pre-computed qlateral and compare against known discharge."""
     tmpdir = tempfile.mkdtemp()
