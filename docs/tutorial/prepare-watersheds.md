@@ -145,7 +145,7 @@ Then reference it in the config:
 
 ```yaml
 params_file: 'params.parquet'
-runoff_grid_files: 'runoff.nc'
+grid_runoff_files: 'runoff.nc'
 grid_weights_file: 'grid_weights.nc'
 discharge_dir: 'output/'
 dt_routing: 3600

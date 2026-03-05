@@ -11,7 +11,7 @@ Major architectural overhaul. See the [Migration Guide](migrating/v1-to-v2.md) f
 - New class `RapidMuskingum` is a reimplementation of the previous Muskingum class with routing and runoff transformation.
 - New class `UnitMuskingum` is a new implementation of unit hydrograph runoff transformation and channel routing.
 - Introduced `Configs` dataclass replacing the untyped config dictionary to centralize and validate configs.
-- Merged `connectivity_file` into `rr1_params_file` (single-file network definition).
+- Merged `connectivity_file` into `params_file` (single-file network definition).
 - Changed grid weights format from CSV to netCDF with `proportion` column.
 - Simplified channel state files from two columns (Q, R) to one column (Q).
 - Added topological sort validation on routing parameters.

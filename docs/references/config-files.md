@@ -21,14 +21,14 @@ All routing classes require the following 2 configuration options:
 
 - one water input source:
     - `qlateral_files`, or
-    - `runoff_grid_files` plus `grid_weights_file`
+    - `grid_runoff_files` plus `grid_weights_file`
 
 `UnitMuskingum` also requires:
 
 - `transformer_kernel_file` - pre-computed scipy sparse npz kernel
 - one water input source:
     - `qlateral_files`, or
-    - `runoff_grid_files` plus `grid_weights_file`
+    - `grid_runoff_files` plus `grid_weights_file`
 
 ## Required Config Keys
 

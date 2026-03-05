@@ -36,7 +36,7 @@ calibrate against observed discharge where available.
 You need a time series of per-catchment runoff to be routed. There are 2 ways to provide it:
 
 1. Pre-aggregated catchment files (`qlateral_files`)
-2. Gridded runoff depths with a weight table (`runoff_grid_files` + `grid_weights_file`)
+2. Gridded runoff depths with a weight table (`grid_runoff_files` + `grid_weights_file`)
 
 !!! warning "Runoff Depths Warning"
     There are many projections for grid cells, different names of variables, various file formats, and units of the

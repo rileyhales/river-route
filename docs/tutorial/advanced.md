@@ -38,8 +38,7 @@ graph TD
 ```
 
 **Muskingum** reads time parameters directly from the config and runs a single routing pass for a
-fixed number of output steps. **TransformMuskingum** (used by `RapidMuskingum`, `UnitMuskingum`, and
-`ReservoirMuskingum`) loops over runoff input files, inferring time parameters from each file's
+fixed number of output steps. **TransformMuskingum** (used by `RapidMuskingum` and `UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's
 date array, and optionally resamples output to a coarser discharge timestep.
 
 ## Finding Inputs and Config Files at Runtime

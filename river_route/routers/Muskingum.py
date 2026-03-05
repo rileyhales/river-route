@@ -81,6 +81,7 @@ class Muskingum:
                 else:
                     raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
             raw.update(kwargs)
+            raw.pop('_router', None)
             self.cfg = Configs(**raw)
 
         # configure logging
