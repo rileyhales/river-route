@@ -5,6 +5,8 @@ from glob import glob
 from pathlib import Path
 
 import pandas as pd
+import river_route as rr
+import xarray as xr
 
 TESTS_DIR = Path(__file__).resolve().parent
 DATA_DIR = TESTS_DIR / 'data'
@@ -49,6 +51,16 @@ class RFSv2ConfigsData:
             [['river_id', 'downstream_river_id', 'k', 'x']]
             .to_parquet(self.rr2_params_file, index=False)
         )
+        # create a triangular scs kernel to test uh routing wtih
+        grid_weights = xr.open_dataset(self.grid_weights_file).to_dataframe()
+        kfactor = 5
+        tc = pdf['k'] * kfactor
+        area = grid_weights.groupby('river_id')['area_sqm'].sum().sort_index()
+        rr.uhkernels.SCSTriangular(
+            tc=tc,
+            area=area,
+            tr=3600,
+        ).save(self.configs_dir / f'kernel.scs_triangular.kfactor={kfactor}.tr=3600.npz')
         return
 
     @property

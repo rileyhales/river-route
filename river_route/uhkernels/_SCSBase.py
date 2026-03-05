@@ -1,7 +1,8 @@
 from abc import ABC
 
 import numpy as np
-import pandas as pd
+import scipy.sparse
+
 from ..types import FloatArray, PathInput
 
 __all__ = ['_SCSBase', ]
@@ -73,10 +74,9 @@ class _SCSBase(ABC):
         u_cum = i_cum_dim * (self.qp * self.tp)
 
         # Average flow over each interval = Δu_cum / tr
-        self.kernel = np.diff(u_cum, axis=0) / self.tr  # (max_steps, n_basins)
+        self.kernel = scipy.sparse.csr_matrix(np.diff(u_cum, axis=0) / self.tr)  # (max_steps, n_basins)
 
     def save(self, path: PathInput) -> None:
-        """Save the kernel as a parquet file with shape (n_basins, n_kernel_steps)."""
-        df = pd.DataFrame(self.kernel.T, columns=[f't{i}' for i in range(self.kernel.shape[0])])
-        df.to_parquet(path)
+        """Save the kernel as a scipy sparse npz file."""
+        scipy.sparse.save_npz(path, self.kernel)
         return

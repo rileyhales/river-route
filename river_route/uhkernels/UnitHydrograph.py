@@ -3,6 +3,7 @@ from typing import Self
 import numpy as np
 import pandas as pd
 import scipy.sparse
+from scipy.signal import fftconvolve
 
 from ..types import FloatArray, PathInput
 
@@ -93,16 +94,13 @@ class UnitHydrograph:
         convolved : array of shape (t, n_basins), convolved lateral inflow (m³/s)
         """
         t = lateral.shape[0]
-        n_ks, n_basins = self.kernel.shape
+        n_ks = self.kernel.shape[0]
 
-        buf = np.zeros((t + n_ks - 1, n_basins), dtype=np.float64)
+        # fast fourier transform to convolve along time axis for all basins at once
+        buf = fftconvolve(lateral, self.kernel, axes=0, mode='full')  # (t + n_ks - 1, n_basins)
 
         # Inject carryover state from previous call
         buf[:n_ks] += self.state
-
-        # Dense convolution: each kernel row k shifts the lateral by k steps
-        for k in range(n_ks):
-            buf[k:k + t] += self.kernel[k] * lateral
 
         # Save tail as carryover state for next call
         self.state[:] = 0
