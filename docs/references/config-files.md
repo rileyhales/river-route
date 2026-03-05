@@ -20,14 +20,14 @@ All routing classes require the following 2 configuration options:
 `RapidMuskingum` also requires:
 
 - one water input source:
-    - `catchment_runoff_files`, or
+    - `qlateral_files`, or
     - `runoff_grid_files` plus `grid_weights_file`
 
 `UnitMuskingum` also requires:
 
 - `transformer_kernel_file` - pre-computed scipy sparse npz kernel
 - one water input source:
-    - `catchment_runoff_files`, or
+    - `qlateral_files`, or
     - `runoff_grid_files` plus `grid_weights_file`
 
 ## Required Config Keys
@@ -43,13 +43,13 @@ All routing classes require the following 2 configuration options:
 | `discharge_dir`                | Directory for output discharge files             |   _Option 1_    |                _Option 1_                 |                _Option 1_                 |
 | `discharge_files`              | Explicit output paths                            |   _Option 2_    |                _Option 2_                 |                _Option 2_                 |
 | **input data**                 |                                                  |                 |                                           |                                           |
-| `catchment_runoff_files`       | Per-catchment runoff time series                 |                 |                _Option 1_                 |                _Option 1_                 |
+| `qlateral_files`               | Per-catchment runoff time series                 |                 |                _Option 1_                 |                _Option 1_                 |
 | `grid_runoff_files`            | Gridded runoff depths                            |                 |                _Option 2_                 |                _Option 2_                 |
 | `grid_weights_file`            | Converts depth grids to lateral inflow           |                 |                _Option 2_                 |                _Option 2_                 |
 | `grid_accumulation_type`       | Is runoff grid `'incremental'` or `'cumulative'` | `'incremental'` |                                           |                                           |
 | `runoff_processing_mode`       | Are runoff `'sequential'` or `'ensemble'` inputs | `'sequential'`  |                                           |                                           |
 | **unit hydrograph**            |                                                  |                 |                                           |                                           |
-| `transformer_kernel_file`      | Pre-computed convolution kernel parquet          |                 |                                           |               **Required**                |
+| `transformer_kernel_file`      | Pre-computed convolution kernel (scipy sparse npz)          |                 |                                           |               **Required**                |
 | `transformer_state_init_file`  | Parquet with initial transformer state           |                 |                                           |                 optional                  |
 | `transformer_state_final_file` | Path to save final transformer state             |                 |                                           |                 optional                  |
 | **time**                       |                                                  |                 |                                           |                                           |

@@ -103,7 +103,7 @@ os.makedirs(output_dir, exist_ok=True)
     rr
     .RapidMuskingum(
         params_file=params_file,
-        catchment_runoff_files=runoff_files,
+        qlateral_files=runoff_files,
         discharge_dir=output_dir,
         dt_routing=3600,
     )
@@ -118,7 +118,7 @@ import yaml
 
 config = {
     'params_file': '/path/to/params.parquet',
-    'catchment_runoff_files': ['/path/to/catchment_runoff_jan.nc', '/path/to/catchment_runoff_feb.nc'],
+    'qlateral_files': ['/path/to/catchment_runoff_jan.nc', '/path/to/catchment_runoff_feb.nc'],
     'discharge_dir': '/path/to/output/',
     'dt_routing': 3600,
     'channel_state_init_file': '/path/to/initial_state.parquet',

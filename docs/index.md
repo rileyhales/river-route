@@ -63,7 +63,7 @@ import river_route as rr
     rr
     .RapidMuskingum(**{
         'params_file': '/path/to/routing_params.parquet',
-        'catchment_runoff_files': '/path/to/catchment_runoff.nc',
+        'qlateral_files': '/path/to/catchment_runoff.nc',
         'discharge_dir': '/path/to/output/',
     })
     .route()
@@ -75,7 +75,7 @@ import river_route as rr
     .RapidMuskingum(
         '/path/to/config.yaml',
         **{
-            'catchment_runoff_files': '/path/to/catchment_runoff.nc',
+            'qlateral_files': '/path/to/catchment_runoff.nc',
             'discharge_dir': '/path/to/output/',
         }
     )

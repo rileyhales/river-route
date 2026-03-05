@@ -35,7 +35,7 @@ calibrate against observed discharge where available.
 
 You need a time series of per-catchment runoff to be routed. There are 2 ways to provide it:
 
-1. Pre-aggregated catchment files (`catchment_runoff_files`)
+1. Pre-aggregated catchment files (`qlateral_files`)
 2. Gridded runoff depths with a weight table (`runoff_grid_files` + `grid_weights_file`)
 
 !!! warning "Runoff Depths Warning"
@@ -46,7 +46,7 @@ You need a time series of per-catchment runoff to be routed. There are 2 ways to
 ### Pre-aggregated Catchment Files (recommended)
 
 ```yaml
-catchment_runoff_files:
+qlateral_files:
   - '/path/to/catchment_runoff.nc'
 ```
 
@@ -55,8 +55,8 @@ catchment_runoff_files:
 
 Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
 exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
-should have 1 data variable which is an array of shape `(time, river_id)` of dtype float. The expected variable name
-depends on the router: `volume` (m³) for `RapidMuskingum`, `depth` (m) for `UnitMuskingum`.
+should have 1 data variable named `qlateral` which is an array of shape `(time, river_id)` of dtype float.
+`RapidMuskingum` expects volumes (m³) and `UnitMuskingum` expects depths (m).
 
 ### Gridded Runoff Depths
 
@@ -116,15 +116,16 @@ The parquet state file must contain 1 column in river order:
 ## UnitMuskingum Transformer State Files (Optional)
 
 ```yaml
-transformer_kernel_file: '/path/to/kernel.parquet'
+transformer_kernel_file: '/path/to/kernel.npz'
 transformer_state_init_file: '/path/to/state.parquet'
 transformer_state_final_file: '/path/to/final_state.parquet'
 ```
 
 `UnitMuskingum` reads a pre-computed convolution kernel and can optionally warm-start the transformer
-state from a previous run. Both are stored in shape `(n_basins, n_time_steps)`, one row per basin.
+state from a previous run. The kernel is a scipy sparse npz file and the state files are parquet,
+both with shape `(n_basins, n_time_steps)`, one row per basin.
 
-- `transformer_kernel_file`: the unit hydrograph kernel parquet. Required for `UnitMuskingum`. Note
+- `transformer_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Required for `UnitMuskingum`. Note
   that the kernel depends on `tc`, `area`, **and the routing timestep**.
 - `transformer_state_init_file`: warm-start the transformer's rolling state buffer from a prior run.
   Note, the **state depends on the routing timestep**.

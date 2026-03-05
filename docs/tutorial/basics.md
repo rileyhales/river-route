@@ -59,7 +59,7 @@ override values from the config file.
 
 ```yaml
 params_file: '/path/to/params.parquet'
-catchment_runoff_files: '/path/to/catchment_runoff.nc'
+qlateral_files: '/path/to/catchment_runoff.nc'
 discharge_dir: '/path/to/output/'
 dt_routing: 3600
 ```
@@ -81,7 +81,7 @@ import river_route as rr
     rr
     .RapidMuskingum(
         params_file='params.parquet',
-        catchment_runoff_files='catchment_runoff.nc',
+        qlateral_files='catchment_runoff.nc',
         discharge_dir='output/',
         dt_routing=3600,
     )
@@ -101,7 +101,7 @@ import river_route as rr
     rr
     .RapidMuskingum(
         params_file='params.parquet',
-        catchment_runoff_files=['catchment_runoff_jan.nc', 'catchment_runoff_feb.nc', 'catchment_runoff_mar.nc'],
+        qlateral_files=['catchment_runoff_jan.nc', 'catchment_runoff_feb.nc', 'catchment_runoff_mar.nc'],
         discharge_dir='output/',
         dt_routing=3600,
     )
@@ -115,7 +115,7 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 
 ```yaml
 params_file: 'params.parquet'
-catchment_runoff_files: 'catchment_runoff.nc'
+qlateral_files: 'catchment_runoff.nc'
 discharge_dir: 'output/'
 channel_state_init_file: 'state.parquet'         # optional: initial channel state
 channel_state_final_file: 'new_state.parquet'    # optional: save final state for next run

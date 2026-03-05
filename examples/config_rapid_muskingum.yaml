@@ -8,7 +8,7 @@ discharge_dir: ''                # directory for output netCDF files (named afte
 
 # runoff input — choose one of two choices
 # option 1: pre-aggregated per-catchment volumes (m³)
-catchment_runoff_files:          # netCDF: dims (time, river_id); var: runoff
+qlateral_files:                  # netCDF: dims (time, river_id); var: qlateral
   - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 # grid_runoff_files:

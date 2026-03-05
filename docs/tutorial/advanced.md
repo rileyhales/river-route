@@ -74,7 +74,7 @@ m = (
     rr
     .RapidMuskingum(**{
         'params_file': params_file,
-        'catchment_runoff_files': runoff_files,
+        'qlateral_files': runoff_files,
         'discharge_dir': outputs,
     })
     .route()

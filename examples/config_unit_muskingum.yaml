@@ -2,14 +2,14 @@
 
 # required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x
-transformer_kernel_file: ''      # parquet: shape (n_basins, n_timesteps)
+transformer_kernel_file: ''      # scipy sparse npz: shape (n_basins, n_timesteps)
 discharge_dir: ''                # directory for output netCDF files (named after input files)
 # discharge_files:               # optional: explicit output paths instead of discharge_dir
 #   - ''
 
 # runoff input — choose one of two choices for RapidMuskingum, UnitMuskingum
 # option 1: pre-aggregated per-catchment depths (m)
-catchment_runoff_files:          # netCDF: dims (time, river_id); var: runoff
+qlateral_files:                  # netCDF: dims (time, river_id); var: qlateral
   - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 # grid_runoff_files:

@@ -26,7 +26,7 @@ class UnitHydrograph:
 
     Parameters
     ----------
-    kernel_file : path to a scipy sparse npy array
+    kernel_file : path to a scipy sparse npz file
 
     Notes
     -----
