@@ -8,23 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  download-test-data:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ".[test]"
 
       - name: Cache test data
         id: cache-test-data
@@ -36,6 +23,31 @@ jobs:
       - name: Download test data
         if: steps.cache-test-data.outputs.cache-hit != 'true'
         run: ./tests/download_test_data.sh
+
+  test:
+    needs: download-test-data
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore test data cache
+        uses: actions/cache@v4
+        with:
+          path: tests/data
+          key: test-data-v1-${{ hashFiles('tests/download_test_data.sh') }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[test]"
 
       - name: Run tests
         run: pytest tests/ -v -s
