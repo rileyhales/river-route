@@ -22,8 +22,8 @@ def test_rapid_muskingum_from_depths(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[discharge_file],
             log=False,
@@ -49,7 +49,7 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     n_rivers = len(params)
 
     tmpdir = tempfile.mkdtemp()
@@ -61,8 +61,8 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
         q_without_state = os.path.join(tmpdir, 'q_without.nc')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_with_state],
             channel_state_init_file=init_state_file,
@@ -71,8 +71,8 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
         ).route()
 
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_without_state],
             log=False, progress_bar=False,
@@ -102,8 +102,8 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
     try:
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=ERA5_FILES[:2],
             discharge_files=q_all,
             log=False, progress_bar=False,
@@ -113,8 +113,8 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
         q_m1 = os.path.join(tmpdir, 'q_m1.nc')
         state_after_m1 = os.path.join(tmpdir, 'state_m1.parquet')
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_m1],
             channel_state_final_file=state_after_m1,
@@ -124,8 +124,8 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
 
         q_m2 = os.path.join(tmpdir, 'q_m2.nc')
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[1]],
             discharge_files=[q_m2],
             channel_state_init_file=state_after_m1,
@@ -155,8 +155,8 @@ def test_ensemble_routing(vpu: RFSv2ConfigsData):
         final_state_file = os.path.join(tmpdir, 'final_state_ensemble.parquet')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
-            grid_weights_file=str(vpu.rr1_grid_weights_file),
+            params_file=str(vpu.rr2_params_file),
+            grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=ERA5_FILES[:2],
             discharge_files=discharge_files,
             channel_state_final_file=final_state_file,
@@ -184,7 +184,7 @@ def test_rapid_muskingum_from_qlateral(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             qlateral_files=[vpu.qlateral_files[0]],
             discharge_files=[discharge_file],
             log=False,

@@ -43,16 +43,10 @@ class TransformMuskingum(Muskingum, ABC):
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
                 self.logger.info(f'Calculating qlateral: {runoff_file}')
-                ds = grid_to_qlateral(
-                    runoff_file,
-                    weight_table=self.cfg.grid_weights_file,
-                    runoff_var=self.cfg.var_grid_runoff,
-                    x_var=self.cfg.var_x,
-                    y_var=self.cfg.var_y,
-                    time_var=self.cfg.var_t,
-                    river_id_var=self.cfg.var_river_id,
-                    cumulative=self.cfg.grid_accumulation_type == 'cumulative',
-                )
+                ds = grid_to_qlateral(runoff_file, grid_weights_file=self.cfg.grid_weights_file,
+                                      var_runoff=self.cfg.var_grid_runoff, var_x=self.cfg.var_x, var_y=self.cfg.var_y,
+                                      var_t=self.cfg.var_t, var_river_id=self.cfg.var_river_id,
+                                      cumulative=self.cfg.grid_accumulation_type == 'cumulative')
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
                     ds['depth'].values.astype(np.float64, copy=False),

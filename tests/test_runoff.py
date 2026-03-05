@@ -99,12 +99,12 @@ def test_compute_voronoi_catchment_intersects(vpu: RFSv2ConfigsData):
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    if not catchments_file.exists():
-        pytest.skip(f'Missing {catchments_file}')
+    if not vpu.catchments.exists():
+        pytest.skip(f'Missing {vpu.catchments}')
 
     x, y = cell_xy_from_regular_grid(ERA5_FILES[0], x_var='longitude', y_var='latitude')
     voronoi_gdf = voronoi_diagram_from_regular_xy(x, y)
-    catchments_gdf = gpd.read_parquet(catchments_file)
+    catchments_gdf = gpd.read_parquet(vpu.catchments)
 
     result = compute_voronoi_catchment_intersects(voronoi_gdf, catchments_gdf, river_id_variable='linkno')
 
@@ -128,21 +128,21 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    catchments_file = vpu.hydrography_dir / 'catchments_718.parquet'
-    if not catchments_file.exists():
-        pytest.skip(f'Missing {catchments_file}')
+    if not vpu.catchments.exists():
+        pytest.skip(f'Missing {vpu.catchments}')
 
     result = grid_weights(
-        ERA5_FILES[0], str(catchments_file),
+        ERA5_FILES[0], str(vpu.catchments),
         x_var='longitude', y_var='latitude', river_id_var='linkno',
     )
 
     expected_cols = {'linkno', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion'}
     assert expected_cols.issubset(set(result.columns)), \
         f'Missing columns: {expected_cols - set(result.columns)}'
+    # todo check for exact equality by sorting in a predictable way and then comparing the columns
 
     # Compare against known-good weight table
-    known = xr.open_dataset(str(vpu.rr1_grid_weights_file))
+    known = xr.open_dataset(str(vpu.grid_weights_file))
     known_rivers = set(known['river_id'].values.tolist())
     result_rivers = set(result['linkno'].values.tolist())
     # Generated weights should cover the same rivers
@@ -160,14 +160,8 @@ def test_grid_to_qlateral(vpu: RFSv2ConfigsData):
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    ds = grid_to_qlateral(
-        ERA5_FILES[0],
-        weight_table=str(vpu.rr1_grid_weights_file),
-        runoff_var='ro',
-        x_var='longitude',
-        y_var='latitude',
-        time_var='valid_time',
-    )
+    ds = grid_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
+                          var_x='longitude', var_y='latitude', var_t='valid_time')
     assert 'depth' in ds
     assert 'volume' in ds
     assert 'time' in ds.dims
@@ -181,14 +175,11 @@ def test_grid_to_qlateral_volumes_vs_depths_ratio(vpu: RFSv2ConfigsData):
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    ds = grid_to_qlateral(
-        ERA5_FILES[0],
-        weight_table=str(vpu.rr1_grid_weights_file),
-        runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
-    )
+    ds = grid_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
+                          var_x='longitude', var_y='latitude', var_t='valid_time')
 
     # Compute total catchment area per river from the weight table
-    wt_df = xr.open_dataset(str(vpu.rr1_grid_weights_file))[['river_id', 'area_sqm']].to_dataframe()
+    wt_df = xr.open_dataset(str(vpu.grid_weights_file))[['river_id', 'area_sqm']].to_dataframe()
     catchment_area = wt_df.groupby('river_id')['area_sqm'].sum()
     # Align to the river_id order in the output
     area = catchment_area.reindex(ds['river_id'].values).values
@@ -224,7 +215,7 @@ def test_grid_to_qlateral_cumulative_input(vpu: RFSv2ConfigsData):
             ds_out.to_netcdf(cumulative_file)
 
         kwargs = dict(
-            weight_table=str(vpu.rr1_grid_weights_file),
+            weight_table=str(vpu.grid_weights_file),
             runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
         )
 

@@ -26,24 +26,22 @@ def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
         final_state_file = os.path.join(tmpdir, 'final_state.parquet')
 
         rr.Muskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,
             channel_state_final_file=final_state_file,
             dt_routing=3600,
-            dt_total=86400,
+            dt_total=3600 * 24 * 30,
             log=False,
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:
             assert 'Q' in ds
             q_vals = ds['Q'].values
-            assert q_vals.shape[0] == 24, f'Expected 24 time steps, got {q_vals.shape[0]}'
+            assert q_vals.shape[0] == 24 * 30, f'Expected 720 timesteps, got {q_vals.shape[0]}'
             assert np.all(q_vals >= 0), 'Negative discharge values found'
-            # With no lateral inflow, total discharge should decrease over time
-            total_per_step = q_vals.sum(axis=1)
-            assert total_per_step[-1] <= total_per_step[0], \
-                'Total discharge should not increase without lateral inflow'
+            # With no lateral inflow, rivers should drain over time
+            assert (q_vals[-1, :] <= q_vals[0, :]).all(), 'Total discharge should not increase without lateral inflow'
 
         assert os.path.exists(final_state_file)
         final_state = pd.read_parquet(final_state_file)
@@ -67,7 +65,7 @@ def test_muskingum_zero_initial_state(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.Muskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,
             dt_routing=3600,

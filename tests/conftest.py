@@ -64,7 +64,7 @@ class RFSv2ConfigsData:
         return self.configs_dir / 'connectivity.parquet'
 
     @property
-    def rr1_grid_weights_file(self) -> Path:
+    def grid_weights_file(self) -> Path:
         return self.configs_dir / f'gridweights_ERA5_vpu={self.number}.nc'
 
     @property
@@ -73,7 +73,7 @@ class RFSv2ConfigsData:
 
     @property
     def streams(self) -> Path:
-        return self.hydrography_dir / f'streams_{self.number}.parquet'
+        return self.hydrography_dir / f'streams_{self.number}.gpkg'
 
     def valid(self) -> bool:
         """Check that all paths exist and file lists are non-empty."""
@@ -97,7 +97,7 @@ class RFSv2ConfigsData:
         if not self.rr1_connectivity_file.exists():
             print(f'VPU {self.number}: connectivity file does not exist')
             return False
-        if not self.rr1_grid_weights_file.exists():
+        if not self.grid_weights_file.exists():
             print(f'VPU {self.number}: grid weights file does not exist')
             return False
         if not self.catchments.exists():

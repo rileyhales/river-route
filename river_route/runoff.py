@@ -207,13 +207,13 @@ def _get_conversion_factor(unit: str) -> int | float:
 
 def grid_to_qlateral(
         runoff_data: PathInput | list[PathInput],
-        weight_table: PathInput,
+        grid_weights_file: PathInput,
         *,
-        runoff_var: str = 'ro',
-        x_var: str = 'lon',
-        y_var: str = 'lat',
-        time_var: str = 'time',
-        river_id_var: str = 'river_id',
+        var_runoff: str = 'ro',
+        var_x: str = 'lon',
+        var_y: str = 'lat',
+        var_t: str = 'time',
+        var_river_id: str = 'river_id',
         runoff_depth_unit: str | None = None,
         cumulative: bool = False,
         force_positive_runoff: bool = False,
@@ -225,12 +225,12 @@ def grid_to_qlateral(
 
     Args:
         runoff_data (str | list[str]): path(s) to runoff files
-        weight_table (str): path to the weight table netCDF produced by ``grid_weights()``
-        runoff_var (str): runoff variable name in the LSM files
-        x_var (str): x-coordinate variable name in the LSM files
-        y_var (str): y-coordinate variable name in the LSM files
-        time_var (str): time variable name in the LSM files
-        river_id_var (str): river ID variable name in the weight table and parameters file
+        grid_weights_file (str): path to the weight table netCDF produced by ``grid_weights()``
+        var_runoff (str): runoff variable name in the LSM files
+        var_x (str): x-coordinate variable name in the LSM files
+        var_y (str): y-coordinate variable name in the LSM files
+        var_t (str): time variable name in the LSM files
+        var_river_id (str): river ID variable name in the weight table and parameters file
         runoff_depth_unit (str): unit of the depth values; checked for in file attributes, defaulting to meters
         cumulative (bool): whether the runoff data is cumulative; converted to incremental if True
         force_positive_runoff (bool): clip negative runoff values to zero
@@ -240,8 +240,8 @@ def grid_to_qlateral(
         xr.Dataset: qlateral with dimensions ``time`` and ``river_id``.
             Contains two variables: ``depth`` (m) and ``volume`` (m³).
     """
-    with xr.open_dataset(weight_table) as ds:
-        weight_df = ds[[river_id_var, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
+    with xr.open_dataset(grid_weights_file) as ds:
+        weight_df = ds[[var_river_id, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
     unique_indexes = (
         weight_df
         [['x_index', 'y_index']]
@@ -250,38 +250,38 @@ def grid_to_qlateral(
         .reset_index()
         .astype(int)
     )
-    unique_sorted_rivers = weight_df[[river_id_var, ]].drop_duplicates().sort_index()  # index already topo sorted
+    unique_sorted_rivers = weight_df[[var_river_id, ]].drop_duplicates().sort_index()  # index already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:
-        runoff_depth_unit = runoff_depth_unit or ds[runoff_var].attrs.get('units', 'm')
+        runoff_depth_unit = runoff_depth_unit or ds[var_runoff].attrs.get('units', 'm')
         conversion_factor = _get_conversion_factor(runoff_depth_unit)
         df = pd.DataFrame(
             ds
-            [runoff_var]
+            [var_runoff]
             .isel({
-                x_var: xr.DataArray(unique_indexes['x_index'].values, dims="points"),
-                y_var: xr.DataArray(unique_indexes['y_index'].values, dims="points")
+                var_x: xr.DataArray(unique_indexes['x_index'].values, dims="points"),
+                var_y: xr.DataArray(unique_indexes['y_index'].values, dims="points")
             })
-            .transpose(time_var, "points")
+            .transpose(var_t, "points")
             .values,
             columns=unique_indexes[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
-            index=ds[time_var].to_numpy()
+            index=ds[var_t].to_numpy()
         )
     point_labels = weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)
     df = (
         df
         .loc[:, point_labels]
-        .set_axis(weight_df[river_id_var], axis=1)
+        .set_axis(weight_df[var_river_id], axis=1)
         .mul(weight_df['proportion'].values * conversion_factor, axis=1)
         .T.groupby(level=0).sum().T
-        .loc[:, unique_sorted_rivers[river_id_var].values]
+        .loc[:, unique_sorted_rivers[var_river_id].values]
     )
 
     catchment_area = (
         weight_df
-        .groupby(river_id_var)['area_sqm']
+        .groupby(var_river_id)['area_sqm']
         .sum()
-        .reindex(unique_sorted_rivers[river_id_var].values)
+        .reindex(unique_sorted_rivers[var_river_id].values)
         .to_numpy()
     )
 

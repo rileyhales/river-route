@@ -26,7 +26,7 @@ def test_volume_conservation(kernel_cls):
     tr = 3600.0
     tc = np.array([7200.0, 14400.0, 3600.0])
     area = np.array([1e6, 5e6, 2e5])
-    uh = kernel_cls(tr, tc, area)
+    uh = kernel_cls(tr=tr, tc=tc, area=area)
     integrated = uh.kernel.sum(axis=0) * tr
     np.testing.assert_allclose(
         integrated, area, rtol=1e-6,
@@ -40,7 +40,7 @@ def test_kernel_shape(kernel_cls):
     tr = 3600.0
     tc = np.array([7200.0, 14400.0])
     area = np.array([1e6, 5e6])
-    uh = kernel_cls(tr, tc, area)
+    uh = kernel_cls(tr=tr, tc=tc, area=area)
     assert uh.kernel.ndim == 2
     assert uh.kernel.shape[1] == 2
     assert uh.kernel.shape[0] >= 1

@@ -47,7 +47,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         transformer_state_file = os.path.join(tmpdir, 'transformer_state.parquet')
 
         rr.UnitMuskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             transformer_kernel_file=kernel_file,
             qlateral_files=[runoff_file],
             discharge_files=[discharge_file],
@@ -102,7 +102,7 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
         # Route both files at once
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
         rr.UnitMuskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             transformer_kernel_file=kernel_file,
             qlateral_files=runoff_files,
             discharge_files=q_all,
@@ -114,7 +114,7 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
         channel_state = os.path.join(tmpdir, 'channel_state.parquet')
         transformer_state = os.path.join(tmpdir, 'transformer_state.parquet')
         rr.UnitMuskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             transformer_kernel_file=kernel_file,
             qlateral_files=[runoff_files[0]],
             discharge_files=[q_f1],
@@ -126,7 +126,7 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
         # Route file 2 from saved state
         q_f2 = os.path.join(tmpdir, 'q_f2.nc')
         rr.UnitMuskingum(
-            params_file=str(vpu.rr1_params_file),
+            params_file=str(vpu.rr2_params_file),
             transformer_kernel_file=kernel_file,
             qlateral_files=[runoff_files[1]],
             discharge_files=[q_f2],

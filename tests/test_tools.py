@@ -24,7 +24,7 @@ def _networkx_adjacency_matrix(params: pd.DataFrame) -> sp.csc_matrix:
 
 
 def test_adjacency_matrix_matches_networkx(vpu: RFSv2ConfigsData):
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     nx_adj = _networkx_adjacency_matrix(params)
     adj = adjacency_matrix(params['river_id'].values, params['downstream_river_id'].values)
     diff = nx_adj - adj
@@ -32,14 +32,14 @@ def test_adjacency_matrix_matches_networkx(vpu: RFSv2ConfigsData):
 
 
 def test_adjacency_matrix_shape(vpu: RFSv2ConfigsData):
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     n = len(params)
     adj = adjacency_matrix(params['river_id'].values, params['downstream_river_id'].values)
     assert adj.shape == (n, n)
 
 
 def test_adjacency_matrix_outlets_have_no_outgoing_edges(vpu: RFSv2ConfigsData):
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     adj = adjacency_matrix(params['river_id'].values, params['downstream_river_id'].values)
     outlet_mask = params['downstream_river_id'].values == -1
     outlet_indices = np.where(outlet_mask)[0]
@@ -68,7 +68,7 @@ def test_adjacency_matrix_rejects_unknown_downstream():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def test_connectivity_to_digraph(vpu: RFSv2ConfigsData):
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     graph = connectivity_to_digraph(params['river_id'].values, params['downstream_river_id'].values)
     assert isinstance(graph, nx.DiGraph)
     assert graph.number_of_nodes() > 0
@@ -90,14 +90,14 @@ def test_connectivity_to_digraph_simple():
 
 def test_subset_configs_to_river(vpu: RFSv2ConfigsData):
     """Subset to a known river; verify the target becomes the outlet and upstream rivers are included."""
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     # Pick a river that has upstream tributaries (not a headwater)
     target = params.loc[params['downstream_river_id'] == -1, 'river_id'].iloc[0]
 
     tmpdir = tempfile.mkdtemp()
     try:
         out_params = os.path.join(tmpdir, 'subset.parquet')
-        subset_configs_to_river(target, str(vpu.rr1_params_file), out_params)
+        subset_configs_to_river(target, str(vpu.rr2_params_file), out_params)
 
         sub = pd.read_parquet(out_params)
         assert target in sub['river_id'].values
@@ -112,15 +112,15 @@ def test_subset_configs_to_river(vpu: RFSv2ConfigsData):
 
 def test_subset_configs_to_river_with_weights(vpu: RFSv2ConfigsData):
     """Subset both params and grid weights; verify weight river_ids are a subset of params river_ids."""
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     target = params.loc[params['downstream_river_id'] == -1, 'river_id'].iloc[0]
 
     tmpdir = tempfile.mkdtemp()
     try:
         out_params = os.path.join(tmpdir, 'subset.parquet')
         out_weights = os.path.join(tmpdir, 'subset_weights.nc')
-        subset_configs_to_river(target, str(vpu.rr1_params_file), out_params,
-                                weights=str(vpu.rr1_grid_weights_file), out_weights=out_weights)
+        subset_configs_to_river(target, str(vpu.rr2_params_file), out_params,
+                                weights=str(vpu.grid_weights_file), out_weights=out_weights)
 
         import xarray as xr
         sub = pd.read_parquet(out_params)
