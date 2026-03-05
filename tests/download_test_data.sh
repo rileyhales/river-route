@@ -32,8 +32,8 @@ VPUS=$(find tests/data/discharge -type d -name "vpu=*")
 for VPU in $VPUS; do
     VPU_NAME=$(basename "${VPU}")
     echo "Downloading test data for ${VPU_NAME} ..."
-    s5cmd --no-sign-request cp "s3://geoglows-v2/routing-configs/${VPU_NAME}/*" tests/data/routing-configs/${VPU_NAME}/
-    s5cmd --no-sign-request cp "s3://geoglows-v2/hydrography/${VPU_NAME}/*" tests/data/hydrography/${VPU_NAME}/
+    aws s3 cp "s3://geoglows-v2/routing-configs/${VPU_NAME}/" "tests/data/routing-configs/${VPU_NAME}/" --recursive --no-sign-request
+    aws s3 cp "s3://geoglows-v2/hydrography/${VPU_NAME}/" "tests/data/hydrography/${VPU_NAME}/" --recursive --no-sign-request
 done
 
 # the inputs then need to be processed by the test suite which happens in another script
