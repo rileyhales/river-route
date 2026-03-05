@@ -25,11 +25,7 @@ class TransformMuskingum(Muskingum, ABC):
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
 
-    @property
-    @abstractmethod
-    def qlateral_variable(self) -> str:
-        """The variable name to read from qlateral files or the intermediate dataset created from grid runoff files."""
-        ...
+    _as_volumes: bool = False
 
     def _qlateral_generator(self) -> QlateralGeneratorSignature:
         if self.cfg.qlateral_files:
@@ -37,8 +33,8 @@ class TransformMuskingum(Muskingum, ABC):
                 self.logger.info('-' * 60)
                 with xr.open_dataset(lateral_file) as ds:
                     dates = ds['time'].values.astype('datetime64[s]')
-                    array = ds[self.qlateral_variable].values.astype(np.float64, copy=False)
-                    yield dates, array, array, lateral_file, discharge_file
+                    array = ds['qlateral'].values.astype(np.float64, copy=False)
+                    yield dates, array, lateral_file, discharge_file
         elif self.cfg.grid_runoff_files and self.cfg.grid_weights_file:
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
@@ -46,11 +42,11 @@ class TransformMuskingum(Muskingum, ABC):
                 ds = grid_to_qlateral(runoff_file, grid_weights_file=self.cfg.grid_weights_file,
                                       var_runoff=self.cfg.var_grid_runoff, var_x=self.cfg.var_x, var_y=self.cfg.var_y,
                                       var_t=self.cfg.var_t, var_river_id=self.cfg.var_river_id,
-                                      cumulative=self.cfg.grid_accumulation_type == 'cumulative')
+                                      cumulative=self.cfg.grid_accumulation_type == 'cumulative',
+                                      as_volumes=self._as_volumes)
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
-                    ds['depth'].values.astype(np.float64, copy=False),
-                    ds['volume'].values.astype(np.float64, copy=False),
+                    ds['qlateral'].values.astype(np.float64, copy=False),
                     runoff_file, discharge_file
                 )
 
@@ -113,11 +109,11 @@ class TransformMuskingum(Muskingum, ABC):
     def _execute_routing(self) -> None:
         self._ensemble_member_states = []
 
-        for dates, qlateral_depth, qlateral_volume, runoff_file, discharge_file in self._qlateral_generator():
+        for dates, qlateral, runoff_file, discharge_file in self._qlateral_generator():
             self.logger.info(f'Routing lateral inflow: {runoff_file}')
             self._set_network_and_time_dependent_vectors(dates)
             self.logger.info('Starting routing computation')
-            q_t, q_array = self._router(qlateral_depth, qlateral_volume)
+            q_t, q_array = self._router(qlateral)
             q_array[q_array < 0] = 0
             if self.cfg.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
@@ -150,5 +146,5 @@ class TransformMuskingum(Muskingum, ABC):
         return
 
     @abstractmethod
-    def _router(self, qlateral_depth: FloatArray, qlateral_volume: FloatArray) -> tuple[FloatArray, FloatArray]:
+    def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         ...

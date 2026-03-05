@@ -3,7 +3,9 @@ import os
 import shutil
 import tempfile
 
+import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -14,10 +16,6 @@ from river_route.runoff import (
 )
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# grid_weights (end-to-end weight table generation)
-# ═════════════════════════════════════════════════════════════════════════════
-
 def test_grid_weights(vpu: RFSv2ConfigsData):
     """Generate a weight table and compare against existing known-good weight table."""
     if not ERA5_FILES:
@@ -26,70 +24,56 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
     if not vpu.catchments.exists():
         pytest.skip(f'Missing {vpu.catchments}')
 
-    result = grid_weights(
-        ERA5_FILES[0], str(vpu.catchments),
-        x_var='longitude', y_var='latitude', river_id_var='linkno',
+    # Detect the river_id column name in the catchments file (LINKNO vs linkno)
+    catchment_cols = gpd.read_parquet(str(vpu.catchments)).columns
+    river_id_col = next((c for c in catchment_cols if c.lower() == 'linkno'), None)
+    if river_id_col is None:
+        pytest.fail(f'No linkno/LINKNO column in {vpu.catchments}; found {list(catchment_cols)}')
+
+    result = grid_weights(ERA5_FILES[0], str(vpu.catchments), var_x='longitude', var_y='latitude',
+                          var_river_id=river_id_col)
+
+    expected_cols = {river_id_col, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion'}
+    assert expected_cols.issubset(set(result.columns)), f'Missing columns: {expected_cols - set(result.columns)}'
+
+    # Compare against known-good weight table by sorting both on (river_id, x_index, y_index)
+    sort_keys = ['river_id', 'x_index', 'y_index', 'area_sqm']
+    compare_cols = ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
+    known = (
+        xr.open_dataset(str(vpu.grid_weights_file))
+        [compare_cols]
+        .to_dataframe()
+        .reset_index(drop=True)
+        .sort_values(sort_keys)
+        .reset_index(drop=True)
     )
+    generated = (
+        result
+        .rename(columns={river_id_col: 'river_id'})
+        [compare_cols]
+        .sort_values(sort_keys)
+        .reset_index(drop=True)
+    )
+    pd.testing.assert_frame_equal(generated, known, check_exact=False, check_dtype=False, rtol=1e-5)
 
-    expected_cols = {'linkno', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion'}
-    assert expected_cols.issubset(set(result.columns)), \
-        f'Missing columns: {expected_cols - set(result.columns)}'
-    # todo check for exact equality by sorting in a predictable way and then comparing the columns
-
-    # Compare against known-good weight table
-    known = xr.open_dataset(str(vpu.grid_weights_file))
-    known_rivers = set(known['river_id'].values.tolist())
-    result_rivers = set(result['linkno'].values.tolist())
-    # Generated weights should cover the same rivers
-    assert known_rivers == result_rivers, \
-        f'{len(known_rivers - result_rivers)} rivers in known but not generated, ' \
-        f'{len(result_rivers - known_rivers)} rivers generated but not in known'
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# grid_to_qlateral
-# ═════════════════════════════════════════════════════════════════════════════
 
 def test_grid_to_qlateral(vpu: RFSv2ConfigsData):
-    """Aggregate ERA5 gridded runoff to qlateral depths and volumes using the weight table."""
+    """Aggregate ERA5 gridded runoff to qlateral depths using the weight table."""
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
     ds = grid_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
-                          var_x='longitude', var_y='latitude', var_t='valid_time')
-    assert 'depth' in ds
-    assert 'volume' in ds
+                          var_x='longitude', var_y='latitude', var_t='valid_time', as_volumes=True)
+    assert 'qlateral' in ds
     assert 'time' in ds.dims
     assert 'river_id' in ds.dims
-    # Volumes should be non-negative (m³)
-    assert np.all(ds['volume'].values >= 0), 'Negative volumes found'
 
-
-def test_grid_to_qlateral_volumes_vs_depths_ratio(vpu: RFSv2ConfigsData):
-    """Verify that volumes / depths ≈ catchment area for each river."""
-    if not ERA5_FILES:
-        pytest.skip('Missing ERA5 files')
-
-    ds = grid_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
-                          var_x='longitude', var_y='latitude', var_t='valid_time')
-
-    # Compute total catchment area per river from the weight table
-    wt_df = xr.open_dataset(str(vpu.grid_weights_file))[['river_id', 'area_sqm']].to_dataframe()
-    catchment_area = wt_df.groupby('river_id')['area_sqm'].sum()
-    # Align to the river_id order in the output
-    area = catchment_area.reindex(ds['river_id'].values).values
-
-    # volumes should equal depths * area (for non-zero depths)
-    depths = ds['depth'].values
-    volumes = ds['volume'].values
-    expected_volumes = depths * area[np.newaxis, :].astype(np.float32)
-
-    # Only check where depths are non-trivial to avoid division noise
-    mask = np.abs(depths) > 1e-12
+    # compare for exact match against known-good qlateral file for this month
+    known_file = vpu.qlateral_files[0]
+    ds_known = xr.open_dataset(known_file)
     np.testing.assert_allclose(
-        volumes[mask], expected_volumes[mask],
-        rtol=1e-6,
-        err_msg='volumes != depths * catchment_area',
+        ds['qlateral'].values, ds_known['qlateral'].values, atol=0.1,
+        err_msg='Aggregated qlateral does not match known-good output',
     )
 
 
@@ -120,9 +104,9 @@ def test_grid_to_qlateral_cumulative_input(vpu: RFSv2ConfigsData):
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation
         np.testing.assert_allclose(
-            ds_inc['volume'].values, ds_cum['volume'].values,
+            ds_inc['qlateral'].values, ds_cum['qlateral'].values,
             rtol=0.02, atol=0.15,
-            err_msg='Cumulative input does not produce same volumes as incremental',
+            err_msg='Cumulative input does not produce same qlateral as incremental',
         )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -29,7 +29,7 @@ class UnitMuskingum(TransformMuskingum):
     """
     _ROUTER_REQUIRED_CONFIGS = ('transformer_kernel_file',)
     _uh: UnitHydrograph | None = None
-    qlateral_variable = 'depth'
+    _as_volumes = False
 
     def _hook_before_route(self) -> None:
         if self._uh is not None:
@@ -40,7 +40,7 @@ class UnitMuskingum(TransformMuskingum):
             self.logger.debug('Reading convolution state from parquet')
             self._uh.set_state(self.cfg.transformer_state_init_file)
 
-    def _router(self, qlateral_depth: FloatArray, qlateral_volume: FloatArray) -> tuple[FloatArray, FloatArray]:
+    def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         """Route with UH lateral superimposed on Muskingum channel routing.
 
         Two state vectors are maintained:
@@ -56,7 +56,7 @@ class UnitMuskingum(TransformMuskingum):
         while correctly routing all flow downstream through the channel network.
         """
         self.logger.info('Precomputing UH convolution for full timeseries')
-        convolved_lateral = self._uh.convolve(qlateral_depth)
+        convolved_lateral = self._uh.convolve(qlateral)
 
         n = self.A.shape[0]
         discharge_array = np.zeros((self.num_runoff_steps, n), dtype=np.float64)

@@ -13,10 +13,10 @@ permissions:
   pages: write
   id-token: write
 
-# Only one deployment at a time, but don't cancel in-progress runs
+# Only one deployment at a time; cancel in-progress if a new one is triggered
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:

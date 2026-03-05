@@ -6,6 +6,7 @@ import tempfile
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.sparse
 
 from river_route.uhkernels import SCSTriangular, SCSCurvilinear, UnitHydrograph
 
@@ -52,9 +53,9 @@ def test_kernel_shape(kernel_cls):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _make_kernel_file(kernel: np.ndarray, tmpdir: str) -> str:
-    """Save a kernel array as parquet and return the path."""
-    path = os.path.join(tmpdir, 'kernel.parquet')
-    pd.DataFrame(kernel.T).to_parquet(path)
+    """Save a kernel array as sparse npz and return the path."""
+    path = os.path.join(tmpdir, 'kernel.npz')
+    scipy.sparse.save_npz(path, scipy.sparse.csr_matrix(kernel))
     return path
 
 

@@ -22,13 +22,13 @@ class RapidMuskingum(TransformMuskingum):
     In matrix form, the router needs to solve the equation:
     (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t + c4 * Ql_t
     """
-    qlateral_variable = 'volume'
+    _as_volumes = True
 
     def transform_runoff(self, r_t: FloatArray) -> FloatArray:
         """Convert a runoff volume (m³) to the lateral term for the routing equation."""
         return r_t / self.dt_runoff * self.c4
 
-    def _router(self, qlateral_depth: FloatArray, qlateral_volume: FloatArray) -> tuple[FloatArray, FloatArray]:
+    def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         """Execute the core routing math for one runoff file and return the discharge array."""
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state
@@ -46,7 +46,7 @@ class RapidMuskingum(TransformMuskingum):
             runoff_iter = tqdm(runoff_iter, desc='Runoff Routed')
 
         for runoff_time_step in runoff_iter:
-            ql_t = self.transform_runoff(qlateral_volume[runoff_time_step, :])
+            ql_t = self.transform_runoff(qlateral[runoff_time_step, :])
             interval_sum.fill(0.0)
             for _ in range(self.num_routing_steps_per_runoff):
                 # rhs = c2*(A @ q_t) + c3*q_t + c4*ql_t

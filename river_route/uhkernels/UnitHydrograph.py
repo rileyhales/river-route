@@ -2,6 +2,7 @@ from typing import Self
 
 import numpy as np
 import pandas as pd
+import scipy.sparse
 
 from ..types import FloatArray, PathInput
 
@@ -25,7 +26,7 @@ class UnitHydrograph:
 
     Parameters
     ----------
-    kernel_file : path to a parquet file containing the kernel
+    kernel_file : path to a scipy sparse npy array
 
     Notes
     -----
@@ -36,7 +37,7 @@ class UnitHydrograph:
     state: FloatArray  # (n_kernel_steps, n_basins)
 
     def __init__(self, kernel_file: PathInput) -> None:
-        self.kernel = pd.read_parquet(kernel_file).T.to_numpy(dtype=np.float64, copy=True)
+        self.kernel = scipy.sparse.load_npz(kernel_file).toarray().astype(np.float64, copy=False)
         if self.kernel.ndim != 2:
             raise ValueError('kernel must be a 2D array')
         self.reset_state()

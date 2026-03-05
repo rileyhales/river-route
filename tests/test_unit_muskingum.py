@@ -33,9 +33,9 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         n_kernel_steps = 3
         dates = pd.date_range('2020-01-01', periods=n_timesteps, freq='h')
         np.random.seed(42)
-        depths = np.random.uniform(0, 0.001, (n_timesteps, n_rivers)).astype(np.float32)
+        depths = np.random.uniform(0, 0.2, (n_timesteps, n_rivers)).astype(np.float32)
         runoff_ds = xr.Dataset(
-            {'runoff': xr.DataArray(depths, dims=('time', 'river_id'))},
+            {'qlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
             coords={'time': dates, 'river_id': river_ids},
         )
         runoff_file = os.path.join(tmpdir, 'synthetic_depths.nc')
@@ -75,7 +75,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
 
 def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
     """Route 2 files at once vs file1 -> save state -> file2; file2 outputs must match."""
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     river_ids = params['river_id'].values
     n_rivers = len(river_ids)
 
@@ -90,7 +90,7 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
             dates = pd.date_range(f'2020-01-0{i + 1}', periods=n_timesteps, freq='h')
             depths = np.random.uniform(0, 0.001, (n_timesteps, n_rivers)).astype(np.float32)
             ds = xr.Dataset(
-                {'runoff': xr.DataArray(depths, dims=('time', 'river_id'))},
+                {'qlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
                 coords={'time': dates, 'river_id': river_ids},
             )
             path = os.path.join(tmpdir, f'runoff_{i}.nc')
