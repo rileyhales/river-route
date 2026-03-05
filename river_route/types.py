@@ -11,8 +11,7 @@ PathList = list[PathInput]
 FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int64]
 DatetimeArray = NDArray[np.datetime64]
-
-RunoffGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
+QlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, FloatArray, PathInput, PathInput], None, None]
 
 
 class WriteDischargesFn(Protocol):
@@ -34,7 +33,7 @@ __all__ = [
     'FloatArray',
     'IntArray',
     'DatetimeArray',
-    'RunoffGeneratorSignature',
+    'QlateralGeneratorSignature',
     'WriteDischargesFn',
     'FactorizedSolveFn',
 ]

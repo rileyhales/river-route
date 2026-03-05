@@ -8,12 +8,12 @@ import pandas as pd
 import xarray as xr
 
 import river_route as rr
-from conftest import VPUData
+from conftest import RFSv2ConfigsData
 
 
-def test_muskingum_channel_only(vpu: VPUData):
+def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
     """Route from a synthetic initial state with no lateral inflow; verify decay and final state."""
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr1_params_file)
     n_rivers = len(params)
 
     tmpdir = tempfile.mkdtemp()
@@ -26,14 +26,13 @@ def test_muskingum_channel_only(vpu: VPUData):
         final_state_file = os.path.join(tmpdir, 'final_state.parquet')
 
         rr.Muskingum(
-            params_file=str(vpu.params_file),
+            params_file=str(vpu.rr1_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,
             channel_state_final_file=final_state_file,
             dt_routing=3600,
             dt_total=86400,
             log=False,
-            progress_bar=False,
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:
@@ -51,11 +50,12 @@ def test_muskingum_channel_only(vpu: VPUData):
         assert 'Q' in final_state.columns
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+    return
 
 
-def test_muskingum_zero_initial_state(vpu: VPUData):
+def test_muskingum_zero_initial_state(vpu: RFSv2ConfigsData):
     """Routing with zero initial state and no lateral inflow should produce all-zero discharge."""
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr1_params_file)
     n_rivers = len(params)
 
     tmpdir = tempfile.mkdtemp()
@@ -67,13 +67,12 @@ def test_muskingum_zero_initial_state(vpu: VPUData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.Muskingum(
-            params_file=str(vpu.params_file),
+            params_file=str(vpu.rr1_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,
             dt_routing=3600,
             dt_total=3600 * 6,
             log=False,
-            progress_bar=False,
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:

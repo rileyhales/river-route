@@ -4,8 +4,8 @@ import numpy as np
 import xarray as xr
 
 from .Muskingum import Muskingum
-from ..runoff import grid_to_catchment
-from ..types import DatetimeArray, FloatArray, RunoffGeneratorSignature
+from ..runoff import grid_to_qlateral
+from ..types import DatetimeArray, FloatArray, QlateralGeneratorSignature
 
 __all__ = ['TransformMuskingum', ]
 
@@ -27,47 +27,48 @@ class TransformMuskingum(Muskingum, ABC):
 
     @property
     @abstractmethod
-    def _catchment_runoff_as_volume(self) -> bool:
-        """Whether the catchment runoff generator yields volumes (m³) or depths (m)"""
+    def qlateral_variable(self) -> str:
+        """The variable name to read from qlateral files or the intermediate dataset created from grid runoff files."""
+        ...
 
-    def _catchment_runoff_generator(self) -> RunoffGeneratorSignature:
-        if self.cfg.catchment_runoff_files:
-            for lateral_file, discharge_file in zip(self.cfg.catchment_runoff_files, self.cfg.discharge_files):
+    def _qlateral_generator(self) -> QlateralGeneratorSignature:
+        if self.cfg.qlateral_files:
+            for lateral_file, discharge_file in zip(self.cfg.qlateral_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
                 with xr.open_dataset(lateral_file) as ds:
                     dates = ds['time'].values.astype('datetime64[s]')
-                    array = ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False)
-                    yield dates, array, lateral_file, discharge_file
+                    array = ds[self.qlateral_variable].values.astype(np.float64, copy=False)
+                    yield dates, array, array, lateral_file, discharge_file
         elif self.cfg.grid_runoff_files and self.cfg.grid_weights_file:
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
-                self.logger.info(f'Calculating catchment volumes from runoff depth grid: {runoff_file}')
-                ds = grid_to_catchment(
+                self.logger.info(f'Calculating qlateral: {runoff_file}')
+                ds = grid_to_qlateral(
                     runoff_file,
                     weight_table=self.cfg.grid_weights_file,
-                    runoff_var=self.cfg.var_runoff_depth,
+                    runoff_var=self.cfg.var_grid_runoff,
                     x_var=self.cfg.var_x,
                     y_var=self.cfg.var_y,
                     time_var=self.cfg.var_t,
                     river_id_var=self.cfg.var_river_id,
                     cumulative=self.cfg.grid_accumulation_type == 'cumulative',
-                    as_volumes=self._catchment_runoff_as_volume
                 )
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
-                    ds[self.cfg.var_catchment_runoff_variable].values.astype(np.float64, copy=False),
+                    ds['depth'].values.astype(np.float64, copy=False),
+                    ds['volume'].values.astype(np.float64, copy=False),
                     runoff_file, discharge_file
                 )
 
     def _validate_router_configs(self) -> None:
-        lateral = self.cfg.catchment_runoff_files
+        qlateral = self.cfg.qlateral_files
         grids = self.cfg.grid_runoff_files and self.cfg.grid_weights_file
 
-        if lateral and grids:
-            raise ValueError('Provide catchment_runoff_files or grid_runoff_files with grid_weights_file, not both')
-        if not lateral and not grids:
-            raise ValueError('Provide catchment_runoff_files or grid_runoff_files with grid_weights_file')
-        n_inputs = len(lateral) + len(self.cfg.grid_runoff_files or [])
+        if qlateral and grids:
+            raise ValueError('Provide qlateral_files or grid_runoff_files with grid_weights_file, not both')
+        if not qlateral and not grids:
+            raise ValueError('Provide qlateral_files or grid_runoff_files with grid_weights_file')
+        n_inputs = len(qlateral) + len(self.cfg.grid_runoff_files or [])
         if len(self.cfg.discharge_files) != n_inputs:
             raise ValueError('Number of resolved discharge output files must match number of input files')
         return
@@ -118,11 +119,11 @@ class TransformMuskingum(Muskingum, ABC):
     def _execute_routing(self) -> None:
         self._ensemble_member_states = []
 
-        for dates, qlateral, runoff_file, discharge_file in self._catchment_runoff_generator():
+        for dates, qlateral_depth, qlateral_volume, runoff_file, discharge_file in self._qlateral_generator():
             self.logger.info(f'Routing lateral inflow: {runoff_file}')
             self._set_network_and_time_dependent_vectors(dates)
             self.logger.info('Starting routing computation')
-            q_t, q_array = self._router(qlateral)
+            q_t, q_array = self._router(qlateral_depth, qlateral_volume)
             q_array[q_array < 0] = 0
             if self.cfg.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
@@ -155,5 +156,5 @@ class TransformMuskingum(Muskingum, ABC):
         return
 
     @abstractmethod
-    def _router(self, lateral: FloatArray) -> tuple[FloatArray, FloatArray]:
+    def _router(self, qlateral_depth: FloatArray, qlateral_volume: FloatArray) -> tuple[FloatArray, FloatArray]:
         ...

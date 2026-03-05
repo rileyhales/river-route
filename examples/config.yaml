@@ -11,7 +11,7 @@ discharge_dir: ''                # directory for output netCDF files (named afte
 
 # runoff input — RapidMuskingum, UnitMuskingum (choose one option)
 # option 1: pre-aggregated per-catchment runoff
-#catchment_runoff_files:         # netCDF: dims (time, river_id)
+# catchment_runoff_files:         # netCDF: dims (time, river_id)
 #  - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 # grid_runoff_files:
@@ -48,8 +48,7 @@ log_format: '%(levelname)s - %(asctime)s - %(message)s'
 # variable names — optional; override if your files use different names
 var_river_id: 'river_id'
 var_discharge: 'Q'
-var_catchment_runoff_variable: 'runoff'
-var_runoff_depth: 'ro'
+var_grid_runoff: 'ro'
 var_x: 'x'
 var_y: 'y'
 var_t: 'time'

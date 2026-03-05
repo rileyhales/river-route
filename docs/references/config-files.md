@@ -61,20 +61,19 @@ All routing classes require the following 2 configuration options:
 
 ## Optional Configs with Defaults
 
-| Config Key                      | Description                                      | Default                                       |
-|---------------------------------|--------------------------------------------------|-----------------------------------------------|
-| `log`                           | Enable or disable logging                        | `True`                                        |
-| `progress_bar`                  | Show tqdm progress bar                           | `True`                                        |
-| `log_level`                     | Logger level (`'INFO'`, `'DEBUG'`, etc.)         | `'INFO'`                                      |
-| `log_stream`                    | `'stdout'` or a file path                        | `'stdout'`                                    |
-| `log_format`                    | Python logging format string                     | `'%(levelname)s - %(asctime)s - %(message)s'` |
-| `var_river_id`                  | River ID dimension name in files                 | `'river_id'`                                  |
-| `var_discharge`                 | Discharge variable name in output                | `'Q'`                                         |
-| `var_catchment_runoff_variable` | Runoff variable name in `catchment_runoff_files` | `'runoff'`                                    |
-| `var_runoff_depth`              | Depth variable name in `runoff_grid_files`       | `'ro'`                                        |
-| `var_x`                         | X-dimension name in depth grids                  | `'x'`                                         |
-| `var_y`                         | Y-dimension name in depth grids                  | `'y'`                                         |
-| `var_t`                         | Time dimension name in depth grids               | `'time'`                                      |
+| Config Key        | Description                                 | Default                                       |
+|-------------------|---------------------------------------------|-----------------------------------------------|
+| `log`             | Enable or disable logging                   | `True`                                        |
+| `progress_bar`    | Show tqdm progress bar                      | `True`                                        |
+| `log_level`       | Logger level (`'INFO'`, `'DEBUG'`, etc.)    | `'INFO'`                                      |
+| `log_stream`      | `'stdout'` or a file path                   | `'stdout'`                                    |
+| `log_format`      | Python logging format string                | `'%(levelname)s - %(asctime)s - %(message)s'` |
+| `var_river_id`    | River ID dimension name in files            | `'river_id'`                                  |
+| `var_discharge`   | Discharge variable name in output           | `'Q'`                                         |
+| `var_grid_runoff` | Runoff variable name in `grid_runoff_files` | `'ro'`                                        |
+| `var_x`           | X-dimension name in depth grids             | `'x'`                                         |
+| `var_y`           | Y-dimension name in depth grids             | `'y'`                                         |
+| `var_t`           | Time dimension name in depth grids          | `'time'`                                      |
 
 ## Example Configuration YAMLs
 

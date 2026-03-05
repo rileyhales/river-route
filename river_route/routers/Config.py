@@ -37,8 +37,8 @@ class Configs:
     dt_runoff: int = 0
     start_datetime: str = '1970-01-01'
 
-    # For runoff transformation - used by TransformMuskingum subclasses
-    catchment_runoff_files: PathList = field(default_factory=list)
+    # For qlateral / runoff transformation - used by TransformMuskingum subclasses
+    qlateral_files: PathList = field(default_factory=list)
     grid_runoff_files: PathList | None = field(default_factory=list)
     grid_weights_file: PathInput | None = None
     grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
@@ -55,11 +55,10 @@ class Configs:
     log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
     var_river_id: str = 'river_id'
     var_discharge: str = 'Q'
+    var_grid_runoff: str = 'ro'
     var_x: str = 'x'
     var_y: str = 'y'
     var_t: str = 'time'
-    var_catchment_runoff_variable: str = 'runoff'
-    var_runoff_depth: str = 'ro'
 
     # special subset of auto-detected PathLists where the directory needs to exist, not the file
     _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({
@@ -150,7 +149,7 @@ class Configs:
             raise ValueError('Provide discharge_dir or discharge_files, not both')
 
         d = self.discharge_dir
-        input_files = self.catchment_runoff_files or self.grid_runoff_files or []
+        input_files = self.qlateral_files or self.grid_runoff_files or []
         if input_files:
             self.discharge_files = [
                 os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files

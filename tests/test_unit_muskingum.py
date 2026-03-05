@@ -9,7 +9,7 @@ import scipy.sparse
 import xarray as xr
 
 import river_route as rr
-from conftest import VPUData
+from conftest import RFSv2ConfigsData
 
 
 def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
@@ -21,9 +21,9 @@ def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
     return path
 
 
-def test_unit_muskingum_synthetic(vpu: VPUData):
+def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
     """Build synthetic runoff + trivial sparse kernel; verify UnitMuskingum runs and produces valid output."""
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr1_params_file)
     river_ids = params['river_id'].values
     n_rivers = len(river_ids)
 
@@ -47,9 +47,9 @@ def test_unit_muskingum_synthetic(vpu: VPUData):
         transformer_state_file = os.path.join(tmpdir, 'transformer_state.parquet')
 
         rr.UnitMuskingum(
-            params_file=str(vpu.params_file),
+            params_file=str(vpu.rr1_params_file),
             transformer_kernel_file=kernel_file,
-            catchment_runoff_files=[runoff_file],
+            qlateral_files=[runoff_file],
             discharge_files=[discharge_file],
             channel_state_final_file=final_state_file,
             transformer_state_final_file=transformer_state_file,
@@ -73,9 +73,9 @@ def test_unit_muskingum_synthetic(vpu: VPUData):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
+def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
     """Route 2 files at once vs file1 -> save state -> file2; file2 outputs must match."""
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr1_params_file)
     river_ids = params['river_id'].values
     n_rivers = len(river_ids)
 
@@ -102,9 +102,9 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
         # Route both files at once
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
         rr.UnitMuskingum(
-            params_file=str(vpu.params_file),
+            params_file=str(vpu.rr1_params_file),
             transformer_kernel_file=kernel_file,
-            catchment_runoff_files=runoff_files,
+            qlateral_files=runoff_files,
             discharge_files=q_all,
             log=False, progress_bar=False,
         ).route()
@@ -114,9 +114,9 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
         channel_state = os.path.join(tmpdir, 'channel_state.parquet')
         transformer_state = os.path.join(tmpdir, 'transformer_state.parquet')
         rr.UnitMuskingum(
-            params_file=str(vpu.params_file),
+            params_file=str(vpu.rr1_params_file),
             transformer_kernel_file=kernel_file,
-            catchment_runoff_files=[runoff_files[0]],
+            qlateral_files=[runoff_files[0]],
             discharge_files=[q_f1],
             channel_state_final_file=channel_state,
             transformer_state_final_file=transformer_state,
@@ -126,9 +126,9 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: VPUData):
         # Route file 2 from saved state
         q_f2 = os.path.join(tmpdir, 'q_f2.nc')
         rr.UnitMuskingum(
-            params_file=str(vpu.params_file),
+            params_file=str(vpu.rr1_params_file),
             transformer_kernel_file=kernel_file,
-            catchment_runoff_files=[runoff_files[1]],
+            qlateral_files=[runoff_files[1]],
             discharge_files=[q_f2],
             channel_state_init_file=channel_state,
             transformer_state_init_file=transformer_state,

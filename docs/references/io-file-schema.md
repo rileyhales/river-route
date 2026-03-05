@@ -55,7 +55,8 @@ catchment_runoff_files:
 
 Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
 exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
-should have 1 data variable, named `runoff`, which is an array of shape `(time, river_id)` of dtype float.
+should have 1 data variable which is an array of shape `(time, river_id)` of dtype float. The expected variable name
+depends on the router: `volume` (m³) for `RapidMuskingum`, `depth` (m) for `UnitMuskingum`.
 
 ### Gridded Runoff Depths
 
@@ -71,7 +72,7 @@ grid_weights_file: '/path/to/weight_table.nc'
 
 Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`. The dimension names
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden
-with `var_runoff_depth` (default `'ro'`).
+with `var_grid_runoff` (default `'ro'`).
 
 Weights need to be recomputed if the grid resolution, grid extent, or catchment boundaries change.
 The grid weights netCDF has the following variables:

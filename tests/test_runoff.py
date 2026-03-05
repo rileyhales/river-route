@@ -1,4 +1,4 @@
-"""Tests for river_route.runoff — grid coordinate extraction, voronoi diagrams, weight tables, catchment aggregation."""
+"""Tests for river_route.runoff — grid coordinate extraction, voronoi diagrams, weight tables, qlateral aggregation."""
 import os
 import shutil
 import tempfile
@@ -7,13 +7,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from conftest import DATA_DIR, ERA5_FILES, VPUData
+from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
 from river_route.runoff import (
     cell_xy_from_regular_grid,
     voronoi_diagram_from_regular_xy,
     compute_voronoi_catchment_intersects,
     grid_weights,
-    grid_to_catchment,
+    grid_to_qlateral,
 )
 
 
@@ -92,14 +92,13 @@ def test_voronoi_diagram_from_era5():
 # compute_voronoi_catchment_intersects
 # ═════════════════════════════════════════════════════════════════════════════
 
-def test_compute_voronoi_catchment_intersects(vpu: VPUData):
+def test_compute_voronoi_catchment_intersects(vpu: RFSv2ConfigsData):
     """Intersect Voronoi polygons with catchment boundaries."""
     import geopandas as gpd
 
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    catchments_file = vpu.hydrography_dir / 'catchments_718.parquet'
     if not catchments_file.exists():
         pytest.skip(f'Missing {catchments_file}')
 
@@ -124,7 +123,7 @@ def test_compute_voronoi_catchment_intersects(vpu: VPUData):
 # grid_weights (end-to-end weight table generation)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def test_grid_weights(vpu: VPUData):
+def test_grid_weights(vpu: RFSv2ConfigsData):
     """Generate a weight table and compare against existing known-good weight table."""
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
@@ -143,7 +142,7 @@ def test_grid_weights(vpu: VPUData):
         f'Missing columns: {expected_cols - set(result.columns)}'
 
     # Compare against known-good weight table
-    known = xr.open_dataset(str(vpu.grid_weights_file))
+    known = xr.open_dataset(str(vpu.rr1_grid_weights_file))
     known_rivers = set(known['river_id'].values.tolist())
     result_rivers = set(result['linkno'].values.tolist())
     # Generated weights should cover the same rivers
@@ -153,74 +152,51 @@ def test_grid_weights(vpu: VPUData):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# grid_to_catchment
+# grid_to_qlateral
 # ═════════════════════════════════════════════════════════════════════════════
 
-def test_grid_to_catchment_as_volumes(vpu: VPUData):
-    """Aggregate ERA5 gridded runoff to catchment volumes using the weight table."""
+def test_grid_to_qlateral(vpu: RFSv2ConfigsData):
+    """Aggregate ERA5 gridded runoff to qlateral depths and volumes using the weight table."""
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    ds = grid_to_catchment(
+    ds = grid_to_qlateral(
         ERA5_FILES[0],
-        weight_table=str(vpu.grid_weights_file),
+        weight_table=str(vpu.rr1_grid_weights_file),
         runoff_var='ro',
         x_var='longitude',
         y_var='latitude',
         time_var='valid_time',
-        as_volumes=True,
     )
-    assert 'runoff' in ds
+    assert 'depth' in ds
+    assert 'volume' in ds
     assert 'time' in ds.dims
     assert 'river_id' in ds.dims
     # Volumes should be non-negative (m³)
-    assert np.all(ds['runoff'].values >= 0), 'Negative volumes found'
+    assert np.all(ds['volume'].values >= 0), 'Negative volumes found'
 
 
-def test_grid_to_catchment_as_depths(vpu: VPUData):
-    """Aggregate ERA5 gridded runoff to catchment depths (for UnitMuskingum)."""
-    if not ERA5_FILES:
-        pytest.skip('Missing ERA5 files')
-
-    ds = grid_to_catchment(
-        ERA5_FILES[0],
-        weight_table=str(vpu.grid_weights_file),
-        runoff_var='ro',
-        x_var='longitude',
-        y_var='latitude',
-        time_var='valid_time',
-        as_volumes=False,
-    )
-    assert 'runoff' in ds
-    assert 'time' in ds.dims
-    assert 'river_id' in ds.dims
-
-
-def test_grid_to_catchment_volumes_vs_depths_ratio(vpu: VPUData):
+def test_grid_to_qlateral_volumes_vs_depths_ratio(vpu: RFSv2ConfigsData):
     """Verify that volumes / depths ≈ catchment area for each river."""
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    kwargs = dict(
+    ds = grid_to_qlateral(
+        ERA5_FILES[0],
+        weight_table=str(vpu.rr1_grid_weights_file),
         runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
-    )
-    ds_vol = grid_to_catchment(
-        ERA5_FILES[0], weight_table=str(vpu.grid_weights_file), as_volumes=True, **kwargs,
-    )
-    ds_dep = grid_to_catchment(
-        ERA5_FILES[0], weight_table=str(vpu.grid_weights_file), as_volumes=False, **kwargs,
     )
 
     # Compute total catchment area per river from the weight table
-    wt_df = xr.open_dataset(str(vpu.grid_weights_file))[['river_id', 'area_sqm']].to_dataframe()
+    wt_df = xr.open_dataset(str(vpu.rr1_grid_weights_file))[['river_id', 'area_sqm']].to_dataframe()
     catchment_area = wt_df.groupby('river_id')['area_sqm'].sum()
     # Align to the river_id order in the output
-    area = catchment_area.reindex(ds_vol['river_id'].values).values
+    area = catchment_area.reindex(ds['river_id'].values).values
 
     # volumes should equal depths * area (for non-zero depths)
-    depths = ds_dep['runoff'].values
-    volumes = ds_vol['runoff'].values
-    expected_volumes = depths * area[np.newaxis, :]
+    depths = ds['depth'].values
+    volumes = ds['volume'].values
+    expected_volumes = depths * area[np.newaxis, :].astype(np.float32)
 
     # Only check where depths are non-trivial to avoid division noise
     mask = np.abs(depths) > 1e-12
@@ -231,7 +207,7 @@ def test_grid_to_catchment_volumes_vs_depths_ratio(vpu: VPUData):
     )
 
 
-def test_grid_to_catchment_cumulative_input(vpu: VPUData):
+def test_grid_to_qlateral_cumulative_input(vpu: RFSv2ConfigsData):
     """Cumulative runoff input should produce the same volumes as incremental input."""
     incremental_file = DATA_DIR / 'era5' / 'era5_194001.nc'
     if not incremental_file.exists():
@@ -248,18 +224,17 @@ def test_grid_to_catchment_cumulative_input(vpu: VPUData):
             ds_out.to_netcdf(cumulative_file)
 
         kwargs = dict(
-            weight_table=str(vpu.grid_weights_file),
+            weight_table=str(vpu.rr1_grid_weights_file),
             runoff_var='ro', x_var='longitude', y_var='latitude', time_var='valid_time',
-            as_volumes=True,
         )
 
-        ds_inc = grid_to_catchment(str(incremental_file), cumulative=False, **kwargs)
-        ds_cum = grid_to_catchment(cumulative_file, cumulative=True, **kwargs)
+        ds_inc = grid_to_qlateral(str(incremental_file), cumulative=False, **kwargs)
+        ds_cum = grid_to_qlateral(cumulative_file, cumulative=True, **kwargs)
 
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation
         np.testing.assert_allclose(
-            ds_inc['runoff'].values, ds_cum['runoff'].values,
+            ds_inc['volume'].values, ds_cum['volume'].values,
             rtol=0.02, atol=0.15,
             err_msg='Cumulative input does not produce same volumes as incremental',
         )

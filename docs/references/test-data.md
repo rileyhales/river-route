@@ -30,14 +30,14 @@ tests/data/
 ## VPU Auto-Discovery
 
 At import time, `conftest.py` scans `routing-configs/`, `discharge/`, `catchment-volumes/`,
-and `hydrography/` for `vpu=*` subdirectories, unions the VPU IDs, and builds a `VPUData`
+and `hydrography/` for `vpu=*` subdirectories, unions the VPU IDs, and builds a `RFSv2ConfigsData`
 dataclass for each. File discovery uses globs: `*params*.parquet` for params, `gridweights*.nc`
 for weights.
 
 Any test function with a `vpu` parameter is automatically parametrized over all discovered VPUs
 via the `pytest_generate_tests` hook. Test IDs become e.g. `test_foo[vpu=718]`.
 
-### `VPUData` Dataclass
+### `RFSv2ConfigsData` Dataclass
 
 | Field                   | Type   | Description                                      |
 |-------------------------|--------|--------------------------------------------------|
@@ -52,16 +52,16 @@ Fields are `None` when the corresponding data is not available for that VPU.
 
 ### `conftest.py` Exports
 
-| Export                              | Type            | Description                                                          |
-|-------------------------------------|-----------------|----------------------------------------------------------------------|
-| `VPUData`                           | `dataclass`     | Per-VPU test data paths                                              |
-| `ALL_VPUS`                          | `list[VPUData]` | All discovered VPUs                                                  |
-| `ERA5_DIR`                          | `Path`          | Directory containing ERA5 forcing files                              |
-| `ERA5_KWARGS`                       | `dict`          | `{'var_y': 'latitude', 'var_x': 'longitude', 'var_t': 'valid_time'}` |
-| `era5_files()`                      | `list[str]`     | Sorted list of ERA5 file paths matching `era5_1940*.nc`              |
-| `known_discharge_files(vpu)`        | `list[str]`     | Sorted list of known discharge file paths for a VPU                  |
-| `known_catchment_volume_files(vpu)` | `list[str]`     | Sorted list of catchment volume file paths for a VPU                 |
-| `skip_if_vpu_missing(vpu, ...)`     | `None`          | Skips the test if any named VPU field is unavailable                 |
+| Export                              | Type                     | Description                                                          |
+|-------------------------------------|--------------------------|----------------------------------------------------------------------|
+| `RFSv2ConfigsData`                  | `dataclass`              | Per-VPU test data paths                                              |
+| `ALL_VPUS`                          | `list[RFSv2ConfigsData]` | All discovered VPUs                                                  |
+| `ERA5_DIR`                          | `Path`                   | Directory containing ERA5 forcing files                              |
+| `ERA5_KWARGS`                       | `dict`                   | `{'var_y': 'latitude', 'var_x': 'longitude', 'var_t': 'valid_time'}` |
+| `era5_files()`                      | `list[str]`              | Sorted list of ERA5 file paths matching `era5_1940*.nc`              |
+| `known_discharge_files(vpu)`        | `list[str]`              | Sorted list of known discharge file paths for a VPU                  |
+| `known_catchment_volume_files(vpu)` | `list[str]`              | Sorted list of catchment volume file paths for a VPU                 |
+| `skip_if_vpu_missing(vpu, ...)`     | `None`                   | Skips the test if any named VPU field is unavailable                 |
 
 ## Data Availability Tiers
 

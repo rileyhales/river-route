@@ -48,7 +48,7 @@ The following config keys have been renamed. Update your YAML/JSON config files 
 | `catchment_volumes_files` | `catchment_runoff_files`        |
 | `runoff_depths_files`     | `runoff_grid_files`             |
 | `weight_table_file`       | `grid_weights_file`             |
-| `var_catchment_volume`    | `var_catchment_runoff_variable` |
+| `var_catchment_volume`    | _(removed)_                     |
 
 The `connectivity_file` key has been removed entirely — see
 [Routing Parameters](#routing-parameters) below.

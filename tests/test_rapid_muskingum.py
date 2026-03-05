@@ -9,10 +9,10 @@ import pytest
 import xarray as xr
 
 import river_route as rr
-from conftest import ERA5_FILES, ERA5_KWARGS, VPUData
+from conftest import ERA5_FILES, ERA5_KWARGS, RFSv2ConfigsData
 
 
-def test_rapid_muskingum_from_depths(vpu: VPUData):
+def test_rapid_muskingum_from_depths(vpu: RFSv2ConfigsData):
     """Route 1 month of ERA5 through grid weights and compare output against known discharge."""
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
@@ -22,8 +22,8 @@ def test_rapid_muskingum_from_depths(vpu: VPUData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[discharge_file],
             log=False,
@@ -37,20 +37,19 @@ def test_rapid_muskingum_from_depths(vpu: VPUData):
             assert ds_new['Q'].shape == ds_known['Q'].shape, \
                 f'Shape mismatch: {ds_new["Q"].shape} vs {ds_known["Q"].shape}'
             np.testing.assert_allclose(
-                ds_new['Q'].values, ds_known['Q'].values,
-                rtol=1e-4, atol=0.01,
+                ds_new['Q'].values, ds_known['Q'].values, atol=0.01,
                 err_msg='Routed discharge does not match known-good output',
             )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_initial_state_used(vpu: VPUData):
+def test_initial_state_used(vpu: RFSv2ConfigsData):
     """Route same month with vs without initial state; first timestep should differ."""
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    params = pd.read_parquet(vpu.params_file)
+    params = pd.read_parquet(vpu.rr1_params_file)
     n_rivers = len(params)
 
     tmpdir = tempfile.mkdtemp()
@@ -62,8 +61,8 @@ def test_initial_state_used(vpu: VPUData):
         q_without_state = os.path.join(tmpdir, 'q_without.nc')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_with_state],
             channel_state_init_file=init_state_file,
@@ -72,8 +71,8 @@ def test_initial_state_used(vpu: VPUData):
         ).route()
 
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_without_state],
             log=False, progress_bar=False,
@@ -94,7 +93,7 @@ def test_initial_state_used(vpu: VPUData):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_final_state_roundtrip(vpu: VPUData):
+def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
     """Route months 1+2 at once vs month1 -> save state -> month2; month2 outputs must match."""
     if len(ERA5_FILES) < 2:
         pytest.skip('Need at least 2 ERA5 files')
@@ -103,8 +102,8 @@ def test_final_state_roundtrip(vpu: VPUData):
     try:
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=ERA5_FILES[:2],
             discharge_files=q_all,
             log=False, progress_bar=False,
@@ -114,8 +113,8 @@ def test_final_state_roundtrip(vpu: VPUData):
         q_m1 = os.path.join(tmpdir, 'q_m1.nc')
         state_after_m1 = os.path.join(tmpdir, 'state_m1.parquet')
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
             discharge_files=[q_m1],
             channel_state_final_file=state_after_m1,
@@ -125,8 +124,8 @@ def test_final_state_roundtrip(vpu: VPUData):
 
         q_m2 = os.path.join(tmpdir, 'q_m2.nc')
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=[ERA5_FILES[1]],
             discharge_files=[q_m2],
             channel_state_init_file=state_after_m1,
@@ -145,7 +144,7 @@ def test_final_state_roundtrip(vpu: VPUData):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_ensemble_routing(vpu: VPUData):
+def test_ensemble_routing(vpu: RFSv2ConfigsData):
     """Route 2 months in ensemble mode; verify outputs written and final state is reasonable."""
     if len(ERA5_FILES) < 2:
         pytest.skip('Need at least 2 ERA5 files')
@@ -156,8 +155,8 @@ def test_ensemble_routing(vpu: VPUData):
         final_state_file = os.path.join(tmpdir, 'final_state_ensemble.parquet')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
+            params_file=str(vpu.rr1_params_file),
+            grid_weights_file=str(vpu.rr1_grid_weights_file),
             grid_runoff_files=ERA5_FILES[:2],
             discharge_files=discharge_files,
             channel_state_final_file=final_state_file,
@@ -178,15 +177,15 @@ def test_ensemble_routing(vpu: VPUData):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_rapid_muskingum_from_catchment_volumes(vpu: VPUData):
-    """Route from pre-computed catchment volumes and compare against known discharge."""
+def test_rapid_muskingum_from_qlateral(vpu: RFSv2ConfigsData):
+    """Route from pre-computed qlateral and compare against known discharge."""
     tmpdir = tempfile.mkdtemp()
     try:
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.RapidMuskingum(
-            params_file=str(vpu.params_file),
-            catchment_runoff_files=[vpu.catchment_files[0]],
+            params_file=str(vpu.rr1_params_file),
+            qlateral_files=[vpu.qlateral_files[0]],
             discharge_files=[discharge_file],
             log=False,
             progress_bar=False,
@@ -200,7 +199,7 @@ def test_rapid_muskingum_from_catchment_volumes(vpu: VPUData):
             np.testing.assert_allclose(
                 ds_new['Q'].values, ds_known['Q'].values,
                 rtol=1e-4, atol=0.01,
-                err_msg='Discharge from catchment volumes does not match known-good output',
+                err_msg='Discharge from qlateral does not match known-good output',
             )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

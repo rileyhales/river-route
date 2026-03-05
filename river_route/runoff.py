@@ -11,13 +11,11 @@ from .__metadata__ import __version__
 from .types import PathInput
 
 __all__ = [
-    # for making grid_weights
     'cell_xy_from_regular_grid',
     'voronoi_diagram_from_regular_xy',
     'compute_voronoi_catchment_intersects',
     'grid_weights',
-    # for making catchment volumes from grid weights and depth grids
-    'grid_to_catchment',
+    'grid_to_qlateral',
 ]
 
 logger = logging.getLogger(__name__)
@@ -207,7 +205,7 @@ def _get_conversion_factor(unit: str) -> int | float:
         raise ValueError(f"Unknown units: {unit}")
 
 
-def grid_to_catchment(
+def grid_to_qlateral(
         runoff_data: PathInput | list[PathInput],
         weight_table: PathInput,
         *,
@@ -220,14 +218,10 @@ def grid_to_catchment(
         cumulative: bool = False,
         force_positive_runoff: bool = False,
         force_uniform_timesteps: bool = True,
-        as_volumes: bool = False,
 ) -> xr.Dataset:
     """
-    Aggregates gridded runoff depths to catchment-scale using a weight table.
-
-    The core computation is a weighted average: each grid cell's depth is multiplied by its
-    proportion of the catchment area and summed. When ``as_volumes=True``, the weighted average
-    depth is multiplied by the total catchment area to produce volumes (m³).
+    Aggregates gridded runoff depths to catchment level qlateral as depth and volumes.
+    The core computation is an area weighted average of the cell's runoff value
 
     Args:
         runoff_data (str | list[str]): path(s) to runoff files
@@ -237,17 +231,14 @@ def grid_to_catchment(
         y_var (str): y-coordinate variable name in the LSM files
         time_var (str): time variable name in the LSM files
         river_id_var (str): river ID variable name in the weight table and parameters file
-        runoff_depth_unit (str): unit of the depth values; inferred from file attributes if not given
+        runoff_depth_unit (str): unit of the depth values; checked for in file attributes, defaulting to meters
         cumulative (bool): whether the runoff data is cumulative; converted to incremental if True
         force_positive_runoff (bool): clip negative runoff values to zero
         force_uniform_timesteps (bool): resample to a uniform timestep if the input is irregular
-        as_volumes (bool): if True, multiply weighted average depth by total catchment area to
-            produce volumes (m³) suitable for ``RapidMuskingum``; if False (default), return
-            weighted average depths (m) suitable for ``UnitMuskingum``
 
     Returns:
-        xr.Dataset: catchment runoff with dimensions ``time`` and ``river_id``.
-            Variable is always named ``runoff``; units are m³ when ``as_volumes=True``, m otherwise.
+        xr.Dataset: qlateral with dimensions ``time`` and ``river_id``.
+            Contains two variables: ``depth`` (m) and ``volume`` (m³).
     """
     with xr.open_dataset(weight_table) as ds:
         weight_df = ds[[river_id_var, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
@@ -259,10 +250,10 @@ def grid_to_catchment(
         .reset_index()
         .astype(int)
     )
-    unique_sorted_rivers = weight_df[[river_id_var, ]].drop_duplicates().sort_index()  # index -> already topo sorted
+    unique_sorted_rivers = weight_df[[river_id_var, ]].drop_duplicates().sort_index()  # index already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:
-        runoff_depth_unit = runoff_depth_unit if runoff_depth_unit else ds[runoff_var].attrs.get('units', 'm')
+        runoff_depth_unit = runoff_depth_unit or ds[runoff_var].attrs.get('units', 'm')
         conversion_factor = _get_conversion_factor(runoff_depth_unit)
         df = pd.DataFrame(
             ds
@@ -286,15 +277,13 @@ def grid_to_catchment(
         .loc[:, unique_sorted_rivers[river_id_var].values]
     )
 
-    if as_volumes:
-        catchment_area = (
-            weight_df
-            .groupby(river_id_var)['area_sqm']
-            .sum()
-            .reindex(unique_sorted_rivers[river_id_var].values)
-            .to_numpy()
-        )
-        df = df.mul(catchment_area, axis=1)
+    catchment_area = (
+        weight_df
+        .groupby(river_id_var)['area_sqm']
+        .sum()
+        .reindex(unique_sorted_rivers[river_id_var].values)
+        .to_numpy()
+    )
 
     # conversions and restructuring
     if cumulative:
@@ -313,22 +302,23 @@ def grid_to_catchment(
         df = _cumulative_to_incremental(df)
     df = df.fillna(0)
 
-    file_prefix = 'volumes' if as_volumes else 'depths'
-    var_name = 'runoff'
-    var_units = 'm3' if as_volumes else 'm'
-    var_long_name = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
-    title = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"}'
-    description = f'Incremental catchment runoff {"volumes" if as_volumes else "depths"} in {var_units} for each river'
+    depth_values = df.to_numpy(dtype=np.float32, copy=False)
+    volume_values = depth_values * catchment_area[np.newaxis, :].astype(np.float32)
 
     start_date = df.index[0].strftime('%Y%m%d%H')
     end_date = df.index[-1].strftime('%Y%m%d%H')
     timestep = int((df.index[1] - df.index[0]).total_seconds()) if df.shape[0] > 1 else 0
     return xr.Dataset(
         {
-            var_name: xr.DataArray(
-                df.to_numpy(dtype=np.float32, copy=False),
+            'depth': xr.DataArray(
+                depth_values,
                 dims=('time', 'river_id'),
-                attrs={'long_name': var_long_name, 'units': var_units},
+                attrs={'long_name': 'Incremental qlateral depths', 'units': 'm'},
+            ),
+            'volume': xr.DataArray(
+                volume_values,
+                dims=('time', 'river_id'),
+                attrs={'long_name': 'Incremental qlateral volumes', 'units': 'm3'},
             ),
         },
         coords={
@@ -349,10 +339,10 @@ def grid_to_catchment(
             ),
         },
         attrs={
-            'title': title,
-            'description': description,
+            'title': 'Incremental qlateral depths and volumes',
+            'description': 'Incremental qlateral depths (m) and volumes (m³) for each river',
             'source': f'river-route v{__version__}',
             'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
-            'suggested_file_name': f'{file_prefix}_{start_date}_{end_date}.nc',
+            'suggested_file_name': f'qlateral_{start_date}_{end_date}.nc',
         },
     )
