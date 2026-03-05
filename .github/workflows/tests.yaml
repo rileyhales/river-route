@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -25,10 +26,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install ".[test]"
 
+      - name: Cache test data
+        id: cache-test-data
+        uses: actions/cache@v4
+        with:
+          path: tests/data
+          key: test-data-v1-${{ hashFiles('tests/download_test_data.sh') }}
+
       - name: Download test data
+        if: steps.cache-test-data.outputs.cache-hit != 'true'
         run: ./tests/download_test_data.sh
-        env:
-          DATA_URL: ${{ vars.TEST_DATA_URL }}
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: pytest tests/ -v -s
