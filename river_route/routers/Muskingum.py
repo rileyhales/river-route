@@ -8,11 +8,11 @@ from typing import Any, Self
 import netCDF4 as nc
 import numpy as np
 import pandas as pd
-import tqdm
 import yaml
 from scipy.sparse import csc_matrix, diags, eye
 from scipy.sparse.linalg import factorized
 
+from ._numba_kernels import HAS_NUMBA, muskingum_route
 from .Config import Configs
 from ..tools import adjacency_matrix
 from ..types import IntArray, FloatArray, PathInput, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
@@ -84,10 +84,10 @@ class Muskingum:
             raw.pop('_router', None)
             self.cfg = Configs(**raw)
 
-        # configure logging
+        # configure logging - progress bar and info/debug logs are mutually exclusive
         self.logger = logging.getLogger(f'river_route.{id(self):x}')
         self.logger.disabled = not self.cfg.log
-        self.logger.setLevel(self.cfg.log_level)
+        self.logger.setLevel(logging.WARNING if self.cfg.progress_bar else self.cfg.log_level)
         if self.cfg.log_stream == 'stdout':
             self.logger.addHandler(logging.StreamHandler(sys.stdout))
         else:
@@ -173,6 +173,7 @@ class Muskingum:
             raise ValueError(
                 f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
         self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
+        self.logger.info(f'Network: {self.A.shape[0]} river segments')
         return
 
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
@@ -190,11 +191,20 @@ class Muskingum:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
-        lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
-        lhs = lhs.tocsc()
-        self.logger.info('Factorizing LHS matrix')
-        self.lhs_factorized = factorized(lhs)
-        self.logger.info('LHS matrix factorized')
+        A_csc = self.A.tocsc()
+        if HAS_NUMBA:
+            # LHS = I - diags(c1) @ A is unit lower triangular.
+            # Off-diagonal entries share A's sparsity: data = -c1[row] per edge.
+            self.logger.debug('Stored CSC arrays for numba triangular solve')
+            self._csc_indptr = A_csc.indptr
+            self._csc_indices = A_csc.indices
+            self._lhs_off_data = np.ascontiguousarray(-self.c1[A_csc.indices])
+        else:
+            lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
+            lhs = lhs.tocsc()
+            self.logger.debug('Factorizing LHS matrix')
+            self.lhs_factorized = factorized(lhs)
+            self.logger.debug('LHS matrix factorized')
         return
 
     ################################################
@@ -218,6 +228,7 @@ class Muskingum:
         self.logger.debug(self)
         # set arrays for routing
         self._set_network_dependent_vectors()
+        self.logger.info(f'Using {"numba" if HAS_NUMBA else "scipy"} solver')
         self._read_initial_state()
         # init hook
         self._hook_before_route()
@@ -247,7 +258,7 @@ class Muskingum:
         num_routing_per_output = int(self.dt_discharge / self.dt_routing)
         self._set_muskingum_coefficients(self.dt_routing)
 
-        self.logger.info('Starting routing computation')
+        self.logger.debug('Starting routing computation')
         discharge_array = self._router(num_output_steps, num_routing_per_output)
 
         # Generate date array for output
@@ -258,7 +269,7 @@ class Muskingum:
         ).to_numpy()
 
         # write outputs
-        self.logger.info('Writing Discharge Array to File')
+        self.logger.debug('Writing Discharge Array to File')
         np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
         self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])
@@ -283,27 +294,30 @@ class Muskingum:
         n = self.A.shape[0]
         discharge_array = np.zeros((num_output_steps, n), dtype=np.float64)
         q_t = q_init.astype(np.float64, copy=True)
-        rhs = np.zeros(n, dtype=np.float64)
-        buffer = np.zeros(n, dtype=np.float64)
-        interval_sum = np.zeros(n, dtype=np.float64)
 
-        output_iter = range(num_output_steps)
-        if self.cfg.progress_bar:
-            output_iter = tqdm.tqdm(output_iter, desc='Channel Routing')
+        if muskingum_route is not None:
+            muskingum_route(
+                self._csc_indptr, self._csc_indices, self._lhs_off_data,
+                self.c2, self.c3, q_t,
+                discharge_array,
+                num_output_steps, num_routing_per_output,
+            )
         else:
-            self.logger.info('Performing routing computation iterations')
+            rhs = np.zeros(n, dtype=np.float64)
+            buffer = np.zeros(n, dtype=np.float64)
+            interval_sum = np.zeros(n, dtype=np.float64)
+            output_iter = range(num_output_steps)
 
-        for output_step in output_iter:
-            interval_sum.fill(0.0)
-            for _ in range(num_routing_per_output):
-                # rhs = c2*(A @ q_t) + c3*q_t
-                buffer[:] = self.A @ q_t
-                np.multiply(self.c2, buffer, out=rhs)
-                np.multiply(self.c3, q_t, out=buffer)
-                np.add(rhs, buffer, out=rhs)
-                q_t[:] = self.lhs_factorized(rhs)
-                interval_sum += q_t
-            discharge_array[output_step, :] = interval_sum / num_routing_per_output
+            for output_step in output_iter:
+                interval_sum.fill(0.0)
+                for _ in range(num_routing_per_output):
+                    buffer[:] = self.A @ q_t
+                    np.multiply(self.c2, buffer, out=rhs)
+                    np.multiply(self.c3, q_t, out=buffer)
+                    np.add(rhs, buffer, out=rhs)
+                    q_t[:] = self.lhs_factorized(rhs)
+                    interval_sum += q_t
+                discharge_array[output_step, :] = interval_sum / num_routing_per_output
 
         discharge_array[discharge_array < 0] = 0
 

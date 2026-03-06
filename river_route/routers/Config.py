@@ -49,7 +49,7 @@ class Configs:
 
     # Misc behavior that users may want to override
     log: bool = True
-    progress_bar: bool = True
+    progress_bar: bool = False
     log_level: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'
     log_stream: str = 'stdout'
     log_format: str = '%(levelname)s - %(asctime)s - %(message)s'

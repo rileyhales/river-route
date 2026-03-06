@@ -64,7 +64,7 @@ All routing classes require the following 2 configuration options:
 | Config Key        | Description                                 | Default                                       |
 |-------------------|---------------------------------------------|-----------------------------------------------|
 | `log`             | Enable or disable logging                   | `True`                                        |
-| `progress_bar`    | Show tqdm progress bar                      | `True`                                        |
+| `progress_bar`    | Show tqdm progress bar                      | `False`                                       |
 | `log_level`       | Logger level (`'INFO'`, `'DEBUG'`, etc.)    | `'INFO'`                                      |
 | `log_stream`      | `'stdout'` or a file path                   | `'stdout'`                                    |
 | `log_format`      | Python logging format string                | `'%(levelname)s - %(asctime)s - %(message)s'` |

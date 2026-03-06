@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import xarray as xr
+from tqdm import tqdm
 
 from .Muskingum import Muskingum
 from ..runoff import grid_to_qlateral
@@ -38,7 +39,7 @@ class TransformMuskingum(Muskingum, ABC):
         elif self.cfg.grid_runoff_files and self.cfg.grid_weights_file:
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
-                self.logger.info(f'Calculating qlateral: {runoff_file}')
+                self.logger.debug(f'Calculating qlateral: {runoff_file}')
                 ds = grid_to_qlateral(runoff_file, grid_weights_file=self.cfg.grid_weights_file,
                                       var_runoff=self.cfg.var_grid_runoff, var_x=self.cfg.var_x, var_y=self.cfg.var_y,
                                       var_t=self.cfg.var_t, var_river_id=self.cfg.var_river_id,
@@ -109,10 +110,15 @@ class TransformMuskingum(Muskingum, ABC):
     def _execute_routing(self) -> None:
         self._ensemble_member_states = []
 
-        for dates, qlateral, runoff_file, discharge_file in self._qlateral_generator():
-            self.logger.info(f'Routing lateral inflow: {runoff_file}')
+        total_files = len(self.cfg.qlateral_files or self.cfg.grid_runoff_files)
+        file_iter = self._qlateral_generator()
+        if self.cfg.progress_bar:
+            file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
+
+        for dates, qlateral, runoff_file, discharge_file in file_iter:
+            self.logger.info(f'Routing qlateral: {runoff_file}')
             self._set_network_and_time_dependent_vectors(dates)
-            self.logger.info('Starting routing computation')
+            self.logger.debug('Starting routing computation')
             q_t, q_array = self._router(qlateral)
             q_array[q_array < 0] = 0
             if self.cfg.runoff_processing_mode == 'sequential':
@@ -123,7 +129,7 @@ class TransformMuskingum(Muskingum, ABC):
                 self._ensemble_member_states.append(q_t.copy())
 
             if self.dt_discharge > self.dt_runoff:
-                self.logger.info('Resampling dates and discharges to specified timestep')
+                self.logger.debug('Resampling dates and discharges to specified timestep')
                 q_array = (
                     q_array
                     .reshape((
@@ -135,7 +141,7 @@ class TransformMuskingum(Muskingum, ABC):
                 )
                 dates = dates[::self.num_runoff_steps_per_discharge]
 
-            self.logger.info('Writing Discharge Array to File')
+            self.logger.debug('Writing Discharge Array to File')
             np.round(q_array, decimals=2, out=q_array)
             q_array = q_array.astype(np.float32, copy=False)
             self._write_discharges(dates, q_array, discharge_file, runoff_file)

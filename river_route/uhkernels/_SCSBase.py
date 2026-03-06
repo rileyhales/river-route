@@ -74,9 +74,9 @@ class _SCSBase(ABC):
         u_cum = i_cum_dim * (self.qp * self.tp)
 
         # Average flow over each interval = Δu_cum / tr
-        self.kernel = scipy.sparse.csr_matrix(np.diff(u_cum, axis=0) / self.tr)  # (max_steps, n_basins)
+        self.kernel = np.diff(u_cum, axis=0) / self.tr  # (max_steps, n_basins)
 
     def save(self, path: PathInput) -> None:
         """Save the kernel as a scipy sparse npz file."""
-        scipy.sparse.save_npz(path, self.kernel)
+        scipy.sparse.save_npz(path, scipy.sparse.csr_matrix(self.kernel))
         return

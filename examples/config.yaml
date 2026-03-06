@@ -40,7 +40,7 @@ grid_accumulation_type: 'incremental' # incremental | cumulative
 
 # logging — optional
 log: true
-progress_bar: true
+progress_bar: false
 log_level: 'INFO'                # DEBUG | INFO | WARNING | ERROR | CRITICAL
 log_stream: 'stdout'             # stdout | /path/to/logfile.log
 log_format: '%(levelname)s - %(asctime)s - %(message)s'

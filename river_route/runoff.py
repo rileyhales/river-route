@@ -3,6 +3,7 @@ import logging
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import scipy.sparse
 import shapely.geometry
 import shapely.ops
 import xarray as xr
@@ -266,7 +267,7 @@ def grid_to_qlateral(
     with xr.open_mfdataset(runoff_data) as ds:
         runoff_depth_unit = runoff_depth_unit or ds[var_runoff].attrs.get('units', 'm')
         conversion_factor = _get_conversion_factor(runoff_depth_unit)
-        df = pd.DataFrame(
+        runoff_raw = (
             ds
             [var_runoff]
             .isel({
@@ -274,18 +275,29 @@ def grid_to_qlateral(
                 var_y: xr.DataArray(unique_indexes['y_index'].values, dims="points")
             })
             .transpose(var_t, "points")
-            .values,
-            columns=unique_indexes[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1),
-            index=ds[var_t].to_numpy()
+            .values
         )
-    point_labels = weight_df[['x_index', 'y_index']].astype(str).apply('_'.join, axis=1)
-    df = (
-        df
-        .loc[:, point_labels]
-        .set_axis(weight_df[var_river_id], axis=1)
-        .mul(weight_df['proportion'].values * conversion_factor, axis=1)
-        .T.groupby(level=0).sum().T
-        .loc[:, unique_sorted_rivers[var_river_id].values]
+        time_index = ds[var_t].to_numpy()
+
+    # Build sparse weight matrix W: (n_rivers, n_unique_points)
+    point_idx = (
+        weight_df[['x_index', 'y_index']]
+        .merge(unique_indexes, on=['x_index', 'y_index'], how='left')
+        ['index'].values
+    )
+    river_ids_ordered = unique_sorted_rivers[var_river_id].values
+    river_id_to_row = pd.Series(np.arange(len(river_ids_ordered)), index=river_ids_ordered)
+    river_idx = river_id_to_row.loc[weight_df[var_river_id].values].values
+
+    W = scipy.sparse.csr_matrix(
+        (weight_df['proportion'].values * conversion_factor, (river_idx, point_idx)),
+        shape=(len(river_ids_ordered), len(unique_indexes)),
+    )
+
+    df = pd.DataFrame(
+        np.asarray(W @ runoff_raw.T).T,
+        index=time_index,
+        columns=river_ids_ordered,
     )
 
     catchment_area = (

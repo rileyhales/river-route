@@ -16,7 +16,7 @@ start_datetime: '1970-01-01'     # ISO date for output timestamps
 
 # logging
 log: true
-progress_bar: true
+progress_bar: false
 log_level: 'INFO'                # DEBUG | INFO | WARNING | ERROR | CRITICAL
 log_stream: 'stdout'             # stdout | /path/to/logfile.log
 log_format: '%(levelname)s - %(asctime)s - %(message)s'

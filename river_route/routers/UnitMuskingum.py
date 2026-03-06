@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.sparse import diags, eye
 from scipy.sparse.linalg import factorized
-from tqdm import tqdm
 
+from ._numba_kernels import HAS_NUMBA, unit_substeps
 from .TransformMuskingum import TransformMuskingum
 from ..types import FloatArray
 from ..uhkernels import UnitHydrograph
@@ -36,7 +36,7 @@ class UnitMuskingum(TransformMuskingum):
 
     def _hook_before_route(self) -> None:
         if self._uh is None:
-            self.logger.info('Loading UH kernel')
+            self.logger.debug('Loading UH kernel')
             self._uh = UnitHydrograph(self.cfg.transformer_kernel_file)
             if self.cfg.transformer_state_init_file:
                 self.logger.debug('Reading convolution state from parquet')
@@ -64,11 +64,18 @@ class UnitMuskingum(TransformMuskingum):
         self._c1_inner = self.c1[self._inner_idx]
         self._c2_inner = self.c2[self._inner_idx]
         self._c3_inner = self.c3[self._inner_idx]
-        # Re-factorize with the reduced inner matrix
+
         n_inner = len(self._inner_idx)
-        lhs = eye(n_inner) - (diags(self._c1_inner) @ self._A_inner)
-        self.logger.info(f'Factorizing reduced LHS matrix ({n_inner} x {n_inner})')
-        self.lhs_factorized = factorized(lhs.tocsc())
+        if HAS_NUMBA:
+            A_inner_csc = self._A_inner.tocsc()
+            self._inner_csc_indptr = A_inner_csc.indptr
+            self._inner_csc_indices = A_inner_csc.indices
+            self._inner_lhs_off_data = np.ascontiguousarray(-self._c1_inner[A_inner_csc.indices])
+            self.logger.debug(f'Stored reduced CSC arrays for numba triangular solve ({n_inner} x {n_inner})')
+        else:
+            lhs = eye(n_inner) - (diags(self._c1_inner) @ self._A_inner)
+            self.logger.debug(f'Factorizing reduced LHS matrix ({n_inner} x {n_inner})')
+            self.lhs_factorized = factorized(lhs.tocsc())
 
     def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         """Route with UH lateral superimposed on Muskingum channel routing.
@@ -76,7 +83,7 @@ class UnitMuskingum(TransformMuskingum):
         Headwater discharge is entirely the UH convolution output. Their outflow
         is injected as a known RHS contribution to the reduced inner system.
         """
-        self.logger.info('Precomputing UH convolution for full timeseries')
+        self.logger.debug('Precomputing UH convolution for full timeseries')
         convolved_lateral = self._uh.convolve(qlateral)
 
         n = self.A.shape[0]
@@ -91,43 +98,59 @@ class UnitMuskingum(TransformMuskingum):
         q_full_inner = q_ch_inner.copy()
 
         rhs = np.zeros(n_inner, dtype=np.float64)
-        buffer = np.zeros(n_inner, dtype=np.float64)
         interval_sum_inner = np.zeros(n_inner, dtype=np.float64)
 
         runoff_iter = range(self.num_runoff_steps)
-        self.logger.info('Performing routing computation iterations')
-        if self.cfg.progress_bar:
-            runoff_iter = tqdm(runoff_iter, desc='Runoff Routed')
+        self.logger.debug('Performing routing computation iterations')
 
-        for runoff_time_step in runoff_iter:
-            ql_t = convolved_lateral[runoff_time_step]
-            ql_hw = ql_t[hw_idx]
-            ql_inner = ql_t[inner_idx]
+        if unit_substeps is not None:
+            for runoff_time_step in runoff_iter:
+                ql_t = convolved_lateral[runoff_time_step]
+                ql_hw = ql_t[hw_idx]
+                ql_inner = np.ascontiguousarray(ql_t[inner_idx])
 
-            # Headwater discharge is purely the UH output
-            discharge_array[runoff_time_step, hw_idx] = ql_hw
+                discharge_array[runoff_time_step, hw_idx] = ql_hw
 
-            # Precompute lateral upstream contribution (constant within routing substeps)
-            c1_A_ql = self._c1_inner * (self._A_inner @ ql_inner + self._A_hw_to_inner @ ql_hw)
+                c1_A_ql = self._c1_inner * (self._A_inner @ ql_inner + self._A_hw_to_inner @ ql_hw)
+                hw_contrib = np.asarray(self._A_hw_to_inner @ ql_hw).ravel()
 
-            interval_sum_inner.fill(0.0)
+                interval_sum_inner.fill(0.0)
+                unit_substeps(
+                    self._inner_csc_indptr, self._inner_csc_indices, self._inner_lhs_off_data,
+                    self._c2_inner, self._c3_inner,
+                    c1_A_ql, hw_contrib, ql_inner,
+                    q_ch_inner, q_full_inner,
+                    rhs, interval_sum_inner,
+                    self.num_routing_steps_per_runoff,
+                )
+                discharge_array[runoff_time_step, inner_idx] = interval_sum_inner / self.num_routing_steps_per_runoff
+        else:
+            buffer = np.zeros(n_inner, dtype=np.float64)
+            for runoff_time_step in runoff_iter:
+                ql_t = convolved_lateral[runoff_time_step]
+                ql_hw = ql_t[hw_idx]
+                ql_inner = ql_t[inner_idx]
 
-            for _ in range(self.num_routing_steps_per_runoff):
-                # Inner RHS: c1*(A @ ql) + c2*(A @ q_full) + c3*q_channel
-                rhs[:] = c1_A_ql
-                buffer[:] = self._A_inner @ q_full_inner
-                buffer += self._A_hw_to_inner @ ql_hw
-                np.multiply(self._c2_inner, buffer, out=buffer)
-                np.add(rhs, buffer, out=rhs)
-                np.multiply(self._c3_inner, q_ch_inner, out=buffer)
-                np.add(rhs, buffer, out=rhs)
+                discharge_array[runoff_time_step, hw_idx] = ql_hw
 
-                q_ch_inner[:] = self.lhs_factorized(rhs)
-                np.add(q_ch_inner, ql_inner, out=q_full_inner)
+                c1_A_ql = self._c1_inner * (self._A_inner @ ql_inner + self._A_hw_to_inner @ ql_hw)
 
-                interval_sum_inner += q_full_inner
+                interval_sum_inner.fill(0.0)
+                for _ in range(self.num_routing_steps_per_runoff):
+                    rhs[:] = c1_A_ql
+                    buffer[:] = self._A_inner @ q_full_inner
+                    buffer += self._A_hw_to_inner @ ql_hw
+                    np.multiply(self._c2_inner, buffer, out=buffer)
+                    np.add(rhs, buffer, out=rhs)
+                    np.multiply(self._c3_inner, q_ch_inner, out=buffer)
+                    np.add(rhs, buffer, out=rhs)
 
-            discharge_array[runoff_time_step, inner_idx] = interval_sum_inner / self.num_routing_steps_per_runoff
+                    q_ch_inner[:] = self.lhs_factorized(rhs)
+                    np.add(q_ch_inner, ql_inner, out=q_full_inner)
+
+                    interval_sum_inner += q_full_inner
+
+                discharge_array[runoff_time_step, inner_idx] = interval_sum_inner / self.num_routing_steps_per_runoff
 
         # Recombine final state
         q_final = np.empty(n, dtype=np.float64)
