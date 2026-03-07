@@ -14,12 +14,6 @@ from river_route.runoff import grid_weights, runoff_to_qlateral
 
 def test_grid_weights(vpu: RFSv2ConfigsData):
     """Generate a weight table and compare against existing known-good weight table."""
-    if not ERA5_FILES:
-        pytest.skip('Missing ERA5 files')
-
-    if not vpu.catchments.exists():
-        pytest.skip(f'Missing {vpu.catchments}')
-
     # Detect the river_id column name in the catchments file (LINKNO vs linkno)
     catchment_cols = gpd.read_parquet(str(vpu.catchments)).columns
     river_id_col = next((c for c in catchment_cols if c.lower() == 'linkno'), None)
@@ -55,9 +49,6 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
 
 def test_grid_to_qlateral(vpu: RFSv2ConfigsData):
     """Aggregate ERA5 gridded runoff to qlateral depths using the weight table."""
-    if not ERA5_FILES:
-        pytest.skip('Missing ERA5 files')
-
     ds = runoff_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
                             var_x='longitude', var_y='latitude', var_t='valid_time', as_volumes=True)
     assert 'qlateral' in ds

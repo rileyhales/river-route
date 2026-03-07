@@ -35,7 +35,7 @@ class UnitMuskingum(TransformMuskingum):
     reduced system as a known RHS contribution, cutting the sparse linear solve size
     roughly in half.
     """
-    _ROUTER_REQUIRED_CONFIGS = ('transformer_kernel_file',)
+    _ROUTER_REQUIRED_CONFIGS = ('uh_kernel_file',)
     _uh: UnitHydrograph | None = None
     _as_volumes = False
 

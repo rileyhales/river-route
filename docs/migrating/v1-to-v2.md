@@ -4,8 +4,8 @@ river-route v2 is a major release with breaking changes to the public API, confi
 formats. This guide covers everything you need to update.
 
 !!! tip
-    A migration script is provided at `examples/migrate_v1_to_v2.py` to automate the file format
-    conversions described below. See [Using the Migration Script](#using-the-migration-script) for details.
+    Helper functions for file format conversions are provided in `examples/migrate_v1_to_v2.py`.
+    See [Using the Migration Helpers](#using-the-migration-helpers) for details.
 
 ---
 
@@ -88,16 +88,18 @@ The `proportion` column is new in v2 and is required.
 
 ---
 
-## Using the Migration Script
+## Using the Migration Helpers
 
-The migration script at `examples/migrate_v1_to_v2.py` automates the three file format conversions.
+`examples/migrate_v1_to_v2.py` provides three functions for file format conversions:
 
 ### Merge Routing Parameters
 
 Combine your v1 routing params and connectivity files into a single parquet:
 
-```bash
-python examples/migrate_v1_to_v2.py routing-params routing_params.parquet connectivity.parquet -o params_v2.parquet
+```python
+from examples.migrate_v1_to_v2 import merge_routing_params
+
+merge_routing_params('routing_params.parquet', 'connectivity.parquet', 'params_v2.parquet')
 ```
 
 This handles legacy column renames (`ds_river_id` → `downstream_river_id`) automatically.
@@ -109,19 +111,23 @@ This handles legacy column renames (`ds_river_id` → `downstream_river_id`) aut
 
 Convert a v1 CSV grid weights file to a v2 NetCDF file:
 
-```bash
-python examples/migrate_v1_to_v2.py grid-weights weight_table.csv -o grid_weights.nc
+```python
+from examples.migrate_v1_to_v2 import convert_grid_weights
+
+convert_grid_weights('weight_table.csv', 'grid_weights.nc')
 ```
 
-If the CSV has an `area_sqm` column but no `proportion` column, the script computes proportions
+If the CSV has an `area_sqm` column but no `proportion` column, the function computes proportions
 automatically.
 
 ### Convert State Files
 
 Strip the `R` column from a v1 state file:
 
-```bash
-python examples/migrate_v1_to_v2.py state-file initial_state.parquet -o channel_state.parquet
+```python
+from examples.migrate_v1_to_v2 import convert_state_file
+
+convert_state_file('initial_state.parquet', 'channel_state.parquet')
 ```
 
 ---
@@ -136,7 +142,7 @@ Numba is now a required dependency and, as such, you should install with conda.
 
 ## Manual Steps
 
-The migration script handles file format conversions, but you will also need to:
+The migration helpers handle file format conversions, but you will also need to:
 
 1. **Rename config keys** in your YAML/JSON files (see [Config Key Renames](#config-key-renames)).
 2. **Update your Python code** to import and use the new router classes (see [Router Class Changes](#router-class-changes)).

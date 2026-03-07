@@ -37,3 +37,9 @@ import river_route as rr
     .route()
 )
 ```
+
+Run the tests by downloading test data and using Pytest to run all the tests
+
+```bash
+pytest tests/ -v -s 
+```

@@ -1,19 +1,6 @@
 """
-Migrate river-route v1 input files to v2 format.
-
-v2 introduced several breaking file-format changes:
-  - Routing params and connectivity are merged into a single parquet
-  - Grid weights changed from CSV to NetCDF with a ``proportion`` column
-  - Channel state files are single-column (Q only, no R)
-
-This script provides one-shot converters for each format. It is intended to be
-run from the command line:
-
-    python migrate_v1_to_v2.py routing-params params.parquet connectivity.parquet -o merged.parquet
-    python migrate_v1_to_v2.py grid-weights weights.csv -o weights.nc
-    python migrate_v1_to_v2.py state-file state.parquet -o state_v2.parquet
+example code to convert river-route 1 files to river-route 2 format.
 """
-import argparse
 
 import numpy as np
 import pandas as pd
@@ -33,7 +20,8 @@ _GRID_WEIGHTS_COLUMN_RENAMES = {
 
 
 def merge_routing_params(routing_params_path: str, connectivity_path: str, output_path: str) -> None:
-    """Merge separate routing-params and connectivity parquets into one v2 file.
+    """
+    Merge separate routing-params and connectivity parquets into one v2 file.
 
     Args:
         routing_params_path: Path to the v1 routing parameters parquet (river_id, k, x).
@@ -116,49 +104,3 @@ def convert_state_file(state_path: str, output_path: str) -> None:
     df = df[['Q']]
     df.to_parquet(output_path, index=False)
     print(f'Wrote state file ({len(df)} rows) to {output_path}')
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog='migrate_v1_to_v2',
-        description='Migrate river-route v1 input files to v2 format.',
-    )
-    subparsers = parser.add_subparsers(dest='command', required=True)
-
-    # routing-params
-    rp = subparsers.add_parser(
-        'routing-params',
-        help='Merge routing params and connectivity parquets into one file.',
-    )
-    rp.add_argument('routing_params', help='Path to v1 routing parameters parquet')
-    rp.add_argument('connectivity', help='Path to v1 connectivity parquet')
-    rp.add_argument('-o', '--output', required=True, help='Output path for merged parquet')
-
-    # grid-weights
-    gw = subparsers.add_parser(
-        'grid-weights',
-        help='Convert grid weights CSV to NetCDF.',
-    )
-    gw.add_argument('csv', help='Path to v1 grid weights CSV')
-    gw.add_argument('-o', '--output', required=True, help='Output path for NetCDF file')
-
-    # state-file
-    sf = subparsers.add_parser(
-        'state-file',
-        help='Convert two-column state parquet (Q, R) to single-column (Q).',
-    )
-    sf.add_argument('state', help='Path to v1 state parquet')
-    sf.add_argument('-o', '--output', required=True, help='Output path for v2 state parquet')
-
-    return parser
-
-
-if __name__ == '__main__':
-    args = _build_parser().parse_args()
-
-    if args.command == 'routing-params':
-        merge_routing_params(args.routing_params, args.connectivity, args.output)
-    elif args.command == 'grid-weights':
-        convert_grid_weights(args.csv, args.output)
-    elif args.command == 'state-file':
-        convert_state_file(args.state, args.output)

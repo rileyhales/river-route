@@ -47,7 +47,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
 
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
-            transformer_kernel_file=kernel_file,
+            uh_kernel_file=kernel_file,
             qlateral_files=[runoff_file],
             discharge_files=[discharge_file],
             channel_state_final_file=final_state_file,
@@ -102,7 +102,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
-            transformer_kernel_file=kernel_file,
+            uh_kernel_file=kernel_file,
             qlateral_files=runoff_files,
             discharge_files=q_all,
             log=False, progress_bar=False,
@@ -114,7 +114,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         uh_state = os.path.join(tmpdir, 'uh_state.parquet')
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
-            transformer_kernel_file=kernel_file,
+            uh_kernel_file=kernel_file,
             qlateral_files=[runoff_files[0]],
             discharge_files=[q_f1],
             channel_state_final_file=channel_state,
@@ -126,7 +126,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         q_f2 = os.path.join(tmpdir, 'q_f2.nc')
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
-            transformer_kernel_file=kernel_file,
+            uh_kernel_file=kernel_file,
             qlateral_files=[runoff_files[1]],
             discharge_files=[q_f2],
             channel_state_init_file=channel_state,
