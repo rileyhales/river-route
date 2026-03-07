@@ -37,8 +37,11 @@ plugins:
   - include-markdown:
       comments: false
 extra_javascript:
-  - javascripts/mathjax.js
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+  - javascripts/katex.js
+extra_css:
+  - https://unpkg.com/katex@0/dist/katex.min.css
 markdown_extensions:
   - admonition
   - pymdownx.snippets
