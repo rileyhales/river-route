@@ -3,13 +3,6 @@ import sys
 
 from .routers import Muskingum, RapidMuskingum, UnitMuskingum
 
-try:
-    import river_route_app
-
-    APP_AVAILABLE = True
-except ImportError:
-    APP_AVAILABLE = False
-
 ROUTERS = {
     'Muskingum': Muskingum,
     'RapidMuskingum': RapidMuskingum,
@@ -29,16 +22,6 @@ def _route(args):
         sys.exit(1)
 
     router_cls(args.config).route()
-
-
-def _run_app(args):
-    if not APP_AVAILABLE:
-        print('river-route-app is not installed.')
-        print('Install it with:  pip install river-route[app]')
-        sys.exit(1)
-    import uvicorn
-    port = args.port
-    uvicorn.run('river_route_app.server:app', host='127.0.0.1', port=port)
 
 
 def main():
@@ -63,18 +46,13 @@ def main():
     unit = subparsers.add_parser('UnitMuskingum', help='Unit hydrograph transform then Muskingum routing')
     _add_config_arg(unit)
 
-    app = subparsers.add_parser('app', help='Launch the browser-based app (requires pip install river-route[app])')
-    app.add_argument('--port', type=int, default=8000, help='Port to listen on (default: 8000)')
-
     args = parser.parse_args()
 
     if args.command is None:
         parser.print_help()
         return
 
-    if args.command == 'app':
-        _run_app(args)
-    elif args.command == 'route':
+    if args.command == 'route':
         _route(args)
     else:
         ROUTERS[args.command](args.config).route()
