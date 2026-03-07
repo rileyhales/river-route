@@ -24,6 +24,22 @@ def _route(args):
     router_cls(args.config).route()
 
 
+def _launch_app(args):
+    """Launch river-route-app from the rr namespace if installed."""
+    try:
+        import uvicorn
+        from river_route_app.server import app as rr_app
+    except Exception as e:
+        print(
+            'rr app requires river-route-app to be installed in this environment.\n'
+            'Install it with: pip install river-route-app'
+        )
+        print(f'Details: {e}')
+        sys.exit(1)
+
+    uvicorn.run(rr_app, host=args.host, port=args.port)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog='rr',
@@ -46,6 +62,10 @@ def main():
     unit = subparsers.add_parser('UnitMuskingum', help='Unit hydrograph transform then Muskingum routing')
     _add_config_arg(unit)
 
+    app = subparsers.add_parser('app', help='Launch river-route-app web UI')
+    app.add_argument('--host', type=str, default='127.0.0.1', help='Host interface for the app server')
+    app.add_argument('--port', type=int, default=8000, help='Port for the app server')
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -54,5 +74,7 @@ def main():
 
     if args.command == 'route':
         _route(args)
+    elif args.command == 'app':
+        _launch_app(args)
     else:
         ROUTERS[args.command](args.config).route()

@@ -21,7 +21,7 @@ discharge_files:                 # optional: explicit output paths instead of di
 # grid_weights_file: ''          # required with grid_runoff_files
 
 # unit hydrograph — UnitMuskingum only
-# transformer_kernel_file: ''    # scipy sparse npz: shape (n_basins, n_timesteps)
+# uh_kernel_file: ''    # scipy sparse npz: shape (n_basins, n_timesteps)
 # uh_state_init_file: ''
 # uh_state_final_file: ''
 

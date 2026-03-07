@@ -111,7 +111,7 @@ The parquet state file must contain 1 column in river order:
 ## UnitMuskingum UH State Files (Optional)
 
 ```yaml
-transformer_kernel_file: '/path/to/kernel.npz'
+uh_kernel_file: '/path/to/kernel.npz'
 uh_state_init_file: '/path/to/state.parquet'
 uh_state_final_file: '/path/to/final_state.parquet'
 ```
@@ -120,7 +120,7 @@ uh_state_final_file: '/path/to/final_state.parquet'
 state from a previous run. The kernel is a scipy sparse npz file and the state files are parquet,
 both with shape `(n_basins, n_time_steps)`, one row per basin.
 
-- `transformer_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Required for `UnitMuskingum`. Note
+- `uh_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Required for `UnitMuskingum`. Note
   that the kernel depends on `tc`, `area`, **and the routing timestep**.
 - `uh_state_init_file`: warm-start the UH rolling state buffer from a prior run.
   Note, the **state depends on the routing timestep**.
