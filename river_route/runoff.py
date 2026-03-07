@@ -215,7 +215,6 @@ def _get_conversion_factor(unit: str) -> int | float:
         raise ValueError(f"Unknown units: {unit}")
 
 
-# noinspection PyPep8Naming
 def runoff_to_qlateral(
         runoff_data: PathInput | list[PathInput],
         grid_weights_file: PathInput,
@@ -295,11 +294,9 @@ def runoff_to_qlateral(
         shape=(len(river_ids_ordered), len(unique_indexes)),
     )
 
-    df = pd.DataFrame(
-        np.asarray(W @ runoff_raw.T).T,
-        index=time_index,
-        columns=river_ids_ordered,
-    )
+    # Area-weighted aggregation via sparse matrix multiply, then free the grid data
+    qlateral = np.asarray(W @ runoff_raw.T).T  # (time, n_rivers)
+    del runoff_raw
 
     catchment_area = (
         weight_df
@@ -309,53 +306,58 @@ def runoff_to_qlateral(
         .to_numpy()
     )
 
-    # conversions and restructuring
+    # In-place conversions to avoid allocating new arrays
     if cumulative:
-        df = _cumulative_to_incremental(df)
+        for i in range(qlateral.shape[0] - 1, 0, -1):
+            qlateral[i] -= qlateral[i - 1]
     if force_positive_runoff:
-        df = df.clip(lower=0)
-    time_diff = np.diff(df.index)
-    if not np.all(time_diff == df.index[1] - df.index[0]) and force_uniform_timesteps:
-        timestep = (df.index[1] - df.index[0]).astype('timedelta64[s]').astype(int)
+        np.clip(qlateral, 0, None, out=qlateral)
+
+    time_diff = np.diff(time_index)
+    if not np.all(time_diff == time_index[1] - time_index[0]) and force_uniform_timesteps:
+        timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's'))
         logger.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
+        df = pd.DataFrame(qlateral, index=time_index, columns=river_ids_ordered)
         df = (
             _incremental_to_cumulative(df)
-            .resample(rule=f'{timestep}S')
+            .resample(rule=f'{timestep}s')
             .interpolate(method='linear')
         )
         df = _cumulative_to_incremental(df)
-    df = df.fillna(0)
+        time_index = df.index.values
+        qlateral = df.to_numpy(dtype=np.float64)
+        del df
 
-    depth_values = df.to_numpy(dtype=np.float32, copy=False)
+    np.nan_to_num(qlateral, copy=False, nan=0.0)
+    qlateral = qlateral.astype(np.float32)
 
     if as_volumes:
-        qlateral_values = depth_values * catchment_area[np.newaxis, :].astype(np.float32)
+        qlateral *= catchment_area[np.newaxis, :].astype(np.float32)
         units = 'm3'
         long_name = 'Incremental qlateral volumes'
     else:
-        qlateral_values = depth_values
         units = 'm'
         long_name = 'Incremental qlateral depths'
 
-    start_date = df.index[0].strftime('%Y%m%d%H')
-    end_date = df.index[-1].strftime('%Y%m%d%H')
-    timestep = int((df.index[1] - df.index[0]).total_seconds()) if df.shape[0] > 1 else 0
+    start_date = pd.Timestamp(time_index[0]).strftime('%Y%m%d%H')
+    end_date = pd.Timestamp(time_index[-1]).strftime('%Y%m%d%H')
+    timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's')) if len(time_index) > 1 else 0
     return xr.Dataset(
         {
             'qlateral': xr.DataArray(
-                qlateral_values,
+                qlateral,
                 dims=('time', 'river_id'),
                 attrs={'long_name': long_name, 'units': units},
             ),
         },
         coords={
             'river_id': xr.DataArray(
-                df.columns.to_numpy(dtype=np.int64, copy=False),
+                river_ids_ordered.astype(np.int64, copy=False),
                 dims=('river_id',),
                 attrs={'long_name': 'unique ID number for each river'},
             ),
             'time': xr.DataArray(
-                df.index.values,
+                time_index,
                 dims=('time',),
                 attrs={
                     'long_name': 'time',
