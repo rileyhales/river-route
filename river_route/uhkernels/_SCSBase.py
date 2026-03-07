@@ -12,11 +12,10 @@ class _SCSBase(ABC):
     """
     Shared base for SCS unit hydrograph kernels.
 
-    Subclasses define ``_scalar_t`` and ``_scalar_q`` class
-    attributes representing the dimensionless UH shape.  The base class
-    integrates the table, scales to physical units, and builds the kernel.
+    Subclasses define ``_scalar_t`` and ``_scalar_q`` class attributes representing the dimensionless UH shape.
+    The base class integrates the table, scales to physical units, and builds the kernel.
 
-    Note that tr is the duration of runoff generation since the runoff is uniformly occurring in a given time step.
+    See the Math Derivations page in the documentation for the SCS parameterization equations.
     """
 
     _scalar_t: FloatArray

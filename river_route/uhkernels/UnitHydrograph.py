@@ -14,14 +14,10 @@ class UnitHydrograph:
     """
     Stateful runoff transformer driven by a precomputed kernel loaded from file.
 
-    The kernel has shape (n_kernel_steps, n_basins):
-    - Each column is the discretized unit hydrograph for one basin (R = 1 m runoff depth)
-    - Each row value is the average flow (m²/s) over the corresponding time step
-    - The kernel integrates to basin area over time: sum(kernel[:, j] * dt) == area[j]
-
     Two convolution modes are provided:
-    - ``convolve`` — full timeseries convolution for a vector or 2D array of runoff timeseries
-    - ``convolve_incrementally`` — incremental convolution for one timestep of runoff from a 1D vector of runoff
+
+    - ``convolve`` — full timeseries FFT convolution for a 2D array of runoff timeseries
+    - ``convolve_incrementally`` — incremental convolution for one timestep of runoff from a 1D vector
 
     Both modes maintain internal state so that carryover between successive calls is handled automatically.
 
@@ -32,6 +28,7 @@ class UnitHydrograph:
     Notes
     -----
     All times should be given in seconds; areas in m².
+    See the Math Derivations page in the documentation for kernel structure and convolution details.
     """
 
     kernel: FloatArray  # (n_kernel_steps, n_basins)

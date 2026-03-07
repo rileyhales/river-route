@@ -21,6 +21,8 @@ nav:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-variables.md
+      - Math Derivations: references/math.md
+      - Forward Substitution: references/forward-substitution.md
       - Test Data: references/test-data.md
   - Tutorials:
       - Basics: tutorial/basics.md
@@ -34,10 +36,15 @@ plugins:
   - mkdocstrings
   - include-markdown:
       comments: false
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 markdown_extensions:
   - admonition
   - pymdownx.snippets
   - pymdownx.details
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

@@ -22,19 +22,12 @@ __all__ = ['Muskingum', ]
 
 class Muskingum:
     """
-    Solves Muskingum routing using a matrix form for simultaneous solution on all rivers. Channel routing only.
+    Muskingum channel routing using a matrix formulation solved by forward substitution.
     Inflow to each river segment is the sum of discharge from upstream segments.
+    No lateral inflow — channel routing only.
 
-    Q_t+1 = (c1 * I_t+1) + (c2 * I_t) + (c3 * Q_t)
-    c1 = (dt/k - 2x) / (dt/k + 2(1-x))
-    c2 = (dt/k + 2x) / (dt/k + 2(1-x))
-    c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
-
-    In matrix form, the router needs to solve the equation:
-    (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t
-
-    The LHS matrix (I - c1 * A) is unit lower triangular (rows are topologically sorted).
-    It is solved via numba JIT-compiled forward substitution operating on the CSC sparse structure.
+    See the Math Derivations and Forward Substitution pages in the documentation for the
+    full equations and algorithm details.
     """
     cfg: Configs
     logger: logging.Logger

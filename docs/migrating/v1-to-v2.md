@@ -36,8 +36,7 @@ The following config keys have been renamed. Update your YAML/JSON config files 
 | `weight_table_file`       | `grid_weights_file`        |
 | `var_catchment_volume`    | _(removed)_                |
 
-The `connectivity_file` key has been removed entirely — see
-[Routing Parameters](#routing-parameters) below.
+The `connectivity_file` key has been removed entirely — see [Routing Parameters](#routing-parameters) below.
 
 ---
 
@@ -52,12 +51,12 @@ The `connectivity_file` key has been removed entirely — see
 
 **v2** merges these into a single `params_file` with columns:
 
-| Column                | Type    | Description                                          |
-|-----------------------|---------|------------------------------------------------------|
-| `river_id`            | int64   | Unique segment ID                                    |
-| `downstream_river_id` | int64   | Downstream segment ID; `-1` (or negative) at outlets |
-| `k`                   | float64 | Muskingum K — wave travel time (seconds)             |
-| `x`                   | float64 | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)       |
+| Column                | Type    | Description                                    |
+|-----------------------|---------|------------------------------------------------|
+| `river_id`            | int64   | Unique segment ID                              |
+| `downstream_river_id` | int64   | Downstream segment ID; `-1` at outlets         |
+| `k`                   | float64 | Muskingum K — wave travel time (seconds)       |
+| `x`                   | float64 | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5) |
 
 !!! warning
     Rows **must be topologically sorted** (upstream before downstream).

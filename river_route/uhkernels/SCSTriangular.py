@@ -8,10 +8,8 @@ __all__ = ['SCSTriangular', ]
 class SCSTriangular(_SCSBase):
     """
     SCS triangular dimensionless unit hydrograph transformer.
-    Standard NRCS (SCS) dimensionless unit hydrograph table.
+
     Source: NRCS National Engineering Handbook (NEH) Part 630, Chapter 16, Table 16-1.
-    Abscissa: t/tp (dimensionless time)
-    Ordinate: q/qp (dimensionless discharge)
 
     Parameters
     ----------
@@ -21,16 +19,7 @@ class SCSTriangular(_SCSBase):
 
     Notes
     -----
-    The triangular UH is parameterized as follows:
-
-        tl = 0.6 * tc               (lag time)
-        tp = tl + tr / 2            (time to peak)
-        tb = 2.67 * tp              (base time)
-        qp = 2 * area / tb          (peak flow, m²/s)
-
-    The kernel column for each basin is the average flow (m²/s) of the unit
-    hydrograph over each tr interval, obtained by integrating the piecewise-linear
-    UH analytically. Volume is conserved exactly: sum(kernel[:, j] * tr) == area[j].
+    See the Math Derivations page in the documentation for the parameterization equations.
     """
     _scalar_t = np.array([0.0, 1.0, 2.67])
     _scalar_q = np.array([0.0, 1.0, 0.0])

@@ -12,28 +12,16 @@ class UnitMuskingum(TransformMuskingum):
     """
     Muskingum channel routing with unit hydrograph lateral inflow. Lateral inflow at each segment is determined by
     convolving runoff depths (m) with a precomputed unit hydrograph kernel. Discharge is the superposition of overland
-    flow by unit hydrograph and channel routing which are merged together at each time step.
+    flow by unit hydrograph and channel routing merged at each time step.
 
-    c1 = (dt/k - 2x) / (dt/k + 2(1-x))
-    c2 = (dt/k + 2x) / (dt/k + 2(1-x))
-    c3 = (2(1-x) - dt/k) / (dt/k + 2(1-x))
-    Ql_t = unit hydrograph convolution output at time t (m³/s)
+    Notation used in the code and solvers:
+    - q_full = q_channel + q_lateral
+    - q_channel is the routed flow from Muskingum routing
+    - q_lateral is the unit hydrograph convolved runoff transformation
+    - _hw marks headwater segments (UH convolution only, excluded from matrix solve)
+    - _inner marks non-headwater segments needing both convolution and routing
 
-    In matrix form, the router needs to solve the equations:
-    (I - c1 * A) @ Q_channel_t+1 = c1 * (A @ Ql_t+1) + c2 * (A @ Q_full_t) + c3 * Q_channel_t
-    Q_full_t+1 = Q_channel_t+1 + Ql_t+1
-
-    Notes on notation used in the code and solvers:
-    q_full = qchannel + qlateral
-    qchannel is the routed flow from muskingum routing
-    qlateral is the unit hydrograph convolved runoff transformation
-    _hw marks the headwater segments where only UH convolution matters
-    _inner means all the non-headwater segments needing convolution and routing
-
-    Headwater streams (no upstream connections) are excluded from the matrix solve.
-    Their discharge is entirely the UH convolution output. Their outflow enters the
-    reduced system as a known RHS contribution, cutting the sparse linear solve size
-    roughly in half.
+    See the Math Derivations page in the documentation for the full equations.
     """
     _ROUTER_REQUIRED_CONFIGS = ('uh_kernel_file',)
     _uh: UnitHydrograph | None = None

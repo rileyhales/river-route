@@ -8,10 +8,8 @@ __all__ = ['SCSCurvilinear', ]
 class SCSCurvilinear(_SCSBase):
     """
     SCS curvilinear dimensionless unit hydrograph transformer.
-    Standard NRCS (SCS) dimensionless unit hydrograph table.
+
     Source: NRCS National Engineering Handbook (NEH) Part 630, Chapter 16, Table 16-1.
-    Abscissa: t/tp (dimensionless time)
-    Ordinate: q/qp (dimensionless discharge)
 
     Parameters
     ----------
@@ -21,16 +19,7 @@ class SCSCurvilinear(_SCSBase):
 
     Notes
     -----
-    Parameterization (same relationships as SCSTriangular)::
-
-        tl = 0.6 * tc               (lag time)
-        tp = tl + tr / 2            (time to peak)
-        tb = 5 * tp                 (base time: t/tp table ends at 5.0)
-        qp = area / (I_dim * tp)    (peak flow, m²/s; I_dim ≈ 1.333 from table integral)
-
-    The kernel column for each basin is the average flow (m²/s) of the unit
-    hydrograph over each tr interval, obtained by integrating the piecewise-linear
-    UH analytically. Volume is conserved exactly: sum(kernel[:, j] * tr) == area[j].
+    See the Math Derivations page in the documentation for the parameterization equations.
     """
     _scalar_t = np.array([
         0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
