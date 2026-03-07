@@ -43,7 +43,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         kernel_file = _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir)
         discharge_file = os.path.join(tmpdir, 'q_uh.nc')
         final_state_file = os.path.join(tmpdir, 'final_state.parquet')
-        transformer_state_file = os.path.join(tmpdir, 'transformer_state.parquet')
+        uh_state_file = os.path.join(tmpdir, 'uh_state.parquet')
 
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
@@ -51,7 +51,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
             qlateral_files=[runoff_file],
             discharge_files=[discharge_file],
             channel_state_final_file=final_state_file,
-            transformer_state_final_file=transformer_state_file,
+            uh_state_final_file=uh_state_file,
             log=False,
             progress_bar=False,
         ).route()
@@ -62,17 +62,17 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
             assert np.all(ds['Q'].values >= 0), 'Negative discharge found'
 
         assert os.path.exists(final_state_file)
-        assert os.path.exists(transformer_state_file)
+        assert os.path.exists(uh_state_file)
 
         # State saved transposed: (n_rivers, n_kernel_steps)
-        state_df = pd.read_parquet(transformer_state_file)
+        state_df = pd.read_parquet(uh_state_file)
         assert state_df.shape == (n_rivers, n_kernel_steps), \
-            f'Transformer state shape {state_df.shape} != expected ({n_rivers}, {n_kernel_steps})'
+            f'UH state shape {state_df.shape} != expected ({n_rivers}, {n_kernel_steps})'
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
+def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
     """Route 2 files at once vs file1 -> save state -> file2; file2 outputs must match."""
     params = pd.read_parquet(vpu.rr2_params_file)
     river_ids = params['river_id'].values
@@ -108,17 +108,17 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
             log=False, progress_bar=False,
         ).route()
 
-        # Route file 1 and save both channel + transformer state
+        # Route file 1 and save both channel + UH state
         q_f1 = os.path.join(tmpdir, 'q_f1.nc')
         channel_state = os.path.join(tmpdir, 'channel_state.parquet')
-        transformer_state = os.path.join(tmpdir, 'transformer_state.parquet')
+        uh_state = os.path.join(tmpdir, 'uh_state.parquet')
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             transformer_kernel_file=kernel_file,
             qlateral_files=[runoff_files[0]],
             discharge_files=[q_f1],
             channel_state_final_file=channel_state,
-            transformer_state_final_file=transformer_state,
+            uh_state_final_file=uh_state,
             log=False, progress_bar=False,
         ).route()
 
@@ -130,7 +130,7 @@ def test_unit_muskingum_transformer_state_roundtrip(vpu: RFSv2ConfigsData):
             qlateral_files=[runoff_files[1]],
             discharge_files=[q_f2],
             channel_state_init_file=channel_state,
-            transformer_state_init_file=transformer_state,
+            uh_state_init_file=uh_state,
             log=False, progress_bar=False,
         ).route()
 

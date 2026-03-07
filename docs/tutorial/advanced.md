@@ -37,8 +37,8 @@ graph TD
     Z --> AA[log timing]
 ```
 
-**Muskingum** reads time parameters directly from the config and runs a single routing pass for a
-fixed number of output steps. **TransformMuskingum** (used by `RapidMuskingum` and `UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's
+**Muskingum** reads time parameters directly from the config and runs a single routing pass for a fixed number of output steps. 
+**TransformMuskingum** (used by `RapidMuskingum` and `UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's
 date array, and optionally resamples output to a coarser discharge timestep.
 
 ## Finding Inputs and Config Files at Runtime
@@ -82,8 +82,8 @@ m = (
 
 ## Customizing Outputs
 
-You can override the default function used by `river-route` when writing routed flows to disk.
-By default, routed discharges are written to netCDF.
+You can override the default function used by `river-route` when writing routed flows to disk. The default function writes 
+discharge to netCDF.
 
 A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
@@ -118,32 +118,6 @@ def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_
     rr
     .RapidMuskingum('../../examples/config.yaml')
     .set_write_discharges(custom_write_discharges)
-    .route()
-)
-```
-
-```python title="Write Routed Flows to SQLite"
-import pandas as pd
-import sqlite3
-import xarray as xr
-
-import river_route as rr
-
-
-def write_discharges_to_sqlite(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
-    conn = sqlite3.connect(discharge_file)
-    df.to_sql('routed_flows', conn, if_exists='replace')
-    conn.close()
-    return
-
-
-(
-    rr
-    .RapidMuskingum('config.yaml')
-    .set_write_discharges(write_discharges_to_sqlite)
     .route()
 )
 ```

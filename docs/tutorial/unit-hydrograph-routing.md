@@ -37,7 +37,6 @@ params_file: '/path/to/params.parquet'
 qlateral_files: '/path/to/depths.nc'
 discharge_dir: '/path/to/output/'
 transformer_kernel_file: 'kernel.npz'
-dt_routing: 3600
 ```
 
 ```python
@@ -57,8 +56,7 @@ params_file: 'params.parquet'
 qlateral_files: 'depths_period1.nc'
 discharge_dir: 'output/'
 transformer_kernel_file: 'kernel.npz'
-transformer_state_final_file: 'state.parquet'
-dt_routing: 3600
+uh_state_final_file: 'state.parquet'
 ```
 
 ```yaml
@@ -67,8 +65,7 @@ params_file: 'params.parquet'
 qlateral_files: 'depths_period2.nc'
 discharge_dir: 'output/'
 transformer_kernel_file: 'kernel.npz'
-transformer_state_init_file: 'state.parquet'
-dt_routing: 3600
+uh_state_init_file: 'state.parquet'
 ```
 
 The state file has the same shape as the kernel `(n_basins, n_time_steps)` and records how much of

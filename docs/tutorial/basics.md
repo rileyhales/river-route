@@ -42,14 +42,6 @@ The routing parameters parquet must contain at minimum these columns:
 
 Rows must be in **topological order**: all upstream segments before their downstream neighbors.
 
-```python
-import pandas as pd
-
-df = pd.read_parquet('params.parquet')
-print(df.columns.tolist())
-# ['river_id', 'downstream_river_id', 'k', 'x', ...]
-```
-
 See [Generating Config Files](prepare-watersheds.md) for guidance on building this file from GIS data.
 
 ## Config File
@@ -61,7 +53,6 @@ override values from the config file.
 params_file: '/path/to/params.parquet'
 qlateral_files: '/path/to/catchment_runoff.nc'
 discharge_dir: '/path/to/output/'
-dt_routing: 3600
 ```
 
 ## First Routing Run
@@ -81,29 +72,8 @@ import river_route as rr
     rr
     .RapidMuskingum(
         params_file='params.parquet',
-        qlateral_files='catchment_runoff.nc',
-        discharge_dir='output/',
-        dt_routing=3600,
-    )
-    .route()
-)
-```
-
-## Routing Multiple Files Sequentially
-
-Pass lists of input and output files to route them in sequence, carrying the channel state forward
-between files:
-
-```python
-import river_route as rr
-
-(
-    rr
-    .RapidMuskingum(
-        params_file='params.parquet',
-        qlateral_files=['catchment_runoff_jan.nc', 'catchment_runoff_feb.nc', 'catchment_runoff_mar.nc'],
-        discharge_dir='output/',
-        dt_routing=3600,
+        qlateral_files=['qlateral.nc', ],
+        discharge_dir='./output/',
     )
     .route()
 )
@@ -119,7 +89,6 @@ qlateral_files: 'catchment_runoff.nc'
 discharge_dir: 'output/'
 channel_state_init_file: 'state.parquet'         # optional: initial channel state
 channel_state_final_file: 'new_state.parquet'    # optional: save final state for next run
-dt_routing: 3600
 ```
 
 The state file is a parquet with a single column `Q` and one row per river segment, in the same order

@@ -24,8 +24,7 @@ nav:
       - Test Data: references/test-data.md
   - Tutorials:
       - Basics: tutorial/basics.md
-      - Preparing Watersheds: tutorial/prepare-watersheds.md
-      - Channel Routing with Unit Hydrographs: tutorial/unit-hydrograph-routing.md
+      - Unit Hydrographs with Routing: tutorial/unit-hydrograph-routing.md
       - Routing Runoff Ensemble: tutorial/routing-ensembles.md
       - Advanced Uses: tutorial/advanced.md
   - Migration Guides:

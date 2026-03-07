@@ -8,7 +8,7 @@ import shapely.geometry
 import shapely.ops
 import xarray as xr
 
-from .__metadata__ import __version__
+from ._metadata import __version__
 from .types import PathInput
 
 __all__ = [
@@ -16,7 +16,7 @@ __all__ = [
     'voronoi_diagram_from_regular_xy',
     'compute_voronoi_catchment_intersects',
     'grid_weights',
-    'grid_to_qlateral',
+    'runoff_to_qlateral',
 ]
 
 logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ def _get_conversion_factor(unit: str) -> int | float:
         raise ValueError(f"Unknown units: {unit}")
 
 
-def grid_to_qlateral(
+def runoff_to_qlateral(
         runoff_data: PathInput | list[PathInput],
         grid_weights_file: PathInput,
         *,

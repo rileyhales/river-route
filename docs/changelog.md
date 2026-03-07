@@ -4,8 +4,6 @@
 
 ### [v2.0.0](https://github.com/rileyhales/river-route/tree/v2.0.0) — Unreleased
 
-Major architectural overhaul. See the [Migration Guide](migrating/v1-to-v2.md) for upgrade instructions.
-
 - Replaced `Muskingum` class with 3 separate classes `Muskingum`, `RapidMuskingum`, and `UnitMuskingum`.
 - New class `Muskingum` is channel routing only with no runoff-transformation.
 - New class `RapidMuskingum` is a reimplementation of the previous Muskingum class with routing and runoff transformation.
@@ -20,6 +18,10 @@ Major architectural overhaul. See the [Migration Guide](migrating/v1-to-v2.md) f
 - Renamed numerous config keys (see migration guide).
 - Removed RAPID conversion utilities.
 - Added new documentation tutorials for channel routing, unit hydrograph routing, watershed preparation, and UH kernel generation.
+- Routing now uses numba JIT-compiled forward substitution for solving the Muskingum linear system. Numba is a required dependency.
+- Removed scipy sparse linear solver (`scipy.sparse.linalg.factorized`) fallback from all routers.
+- Headwater streams are excluded from the matrix solve in `UnitMuskingum`, reducing the system size roughly in half.
+- Progress tracking uses tqdm at the file iteration level for `RapidMuskingum` and `UnitMuskingum`.
 - Increased minimum Python version to 3.12.
 
 ---

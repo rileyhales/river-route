@@ -1,7 +1,7 @@
 import numpy as np
 
-from ._numba_kernels import unit_substeps
 from .TransformMuskingum import TransformMuskingum
+from ._numba_kernels import unit_substeps
 from ..types import FloatArray
 from ..uhkernels import UnitHydrograph
 
@@ -42,10 +42,10 @@ class UnitMuskingum(TransformMuskingum):
     def _hook_before_route(self) -> None:
         if self._uh is None:
             self.logger.debug('Loading UH kernel')
-            self._uh = UnitHydrograph(self.cfg.transformer_kernel_file)
-            if self.cfg.transformer_state_init_file:
+            self._uh = UnitHydrograph(self.cfg.uh_kernel_file)
+            if self.cfg.uh_state_init_file:
                 self.logger.debug('Reading convolution state from parquet')
-                self._uh.set_state(self.cfg.transformer_state_init_file)
+                self._uh.set_state(self.cfg.uh_state_init_file)
 
         if not hasattr(self, 'hw_idx'):
             self._setup_headwater_split()
@@ -120,6 +120,6 @@ class UnitMuskingum(TransformMuskingum):
 
     def _write_final_state(self) -> None:
         super()._write_final_state()
-        if self.cfg.transformer_state_final_file and self._uh is not None:
+        if self.cfg.uh_state_final_file and self._uh is not None:
             self.logger.debug('Writing final convolution state to parquet')
-            self._uh.write_state(self.cfg.transformer_state_final_file)
+            self._uh.write_state(self.cfg.uh_state_final_file)

@@ -5,7 +5,7 @@ import xarray as xr
 from tqdm import tqdm
 
 from .Muskingum import Muskingum
-from ..runoff import grid_to_qlateral
+from ..runoff import runoff_to_qlateral
 from ..types import DatetimeArray, FloatArray, QlateralGeneratorSignature
 
 __all__ = ['TransformMuskingum', ]
@@ -39,11 +39,11 @@ class TransformMuskingum(Muskingum, ABC):
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
                 self.logger.info('-' * 60)
                 self.logger.debug(f'Calculating qlateral: {runoff_file}')
-                ds = grid_to_qlateral(runoff_file, grid_weights_file=self.cfg.grid_weights_file,
-                                      var_runoff=self.cfg.var_grid_runoff, var_x=self.cfg.var_x, var_y=self.cfg.var_y,
-                                      var_t=self.cfg.var_t, var_river_id=self.cfg.var_river_id,
-                                      cumulative=self.cfg.grid_accumulation_type == 'cumulative',
-                                      as_volumes=self._as_volumes)
+                ds = runoff_to_qlateral(runoff_file, grid_weights_file=self.cfg.grid_weights_file,
+                                        var_runoff=self.cfg.var_grid_runoff, var_x=self.cfg.var_x, var_y=self.cfg.var_y,
+                                        var_t=self.cfg.var_t, var_river_id=self.cfg.var_river_id,
+                                        cumulative=self.cfg.grid_accumulation_type == 'cumulative',
+                                        as_volumes=self._as_volumes)
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
                     ds['qlateral'].values.astype(np.float64, copy=False),

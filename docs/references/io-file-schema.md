@@ -9,9 +9,7 @@ available on AWS S3 at [s3://geoglows-v2/routing-test-data.zip/](https://geoglow
 params_file: '/path/to/params.parquet'
 ```
 
-The routing parameters file is a parquet file. It has 1 row per river in the watershed. The index is ignored.
-Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
-
+The routing parameters file is a parquet file. It has 1 row per river in the watershed.
 Required for all routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`):
 
 | Column                | Data Type | Description                                                |
@@ -26,10 +24,8 @@ These routing parameters typically come from preprocessing and calibration workf
 1. topology (`river_id`, `downstream_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
 
-`UnitMuskingum` does not require additional columns in `params_file`. Catchment-specific parameters
-(e.g. `tc`, `area_sqm` for the SCS unit hydrograph) are consumed when building the transformer kernel in
-Python and are not read by the router itself. Generally, use physically derived first guesses then
-calibrate against observed discharge where available.
+!!! warning "Topological Ordering Warning"
+    Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
 
 ## Catchment Runoff Files
 
@@ -113,21 +109,21 @@ The parquet state file must contain 1 column in river order:
 |--------|-----------------------|
 | `Q`    | River discharge state |
 
-## UnitMuskingum Transformer State Files (Optional)
+## UnitMuskingum UH State Files (Optional)
 
 ```yaml
 transformer_kernel_file: '/path/to/kernel.npz'
-transformer_state_init_file: '/path/to/state.parquet'
-transformer_state_final_file: '/path/to/final_state.parquet'
+uh_state_init_file: '/path/to/state.parquet'
+uh_state_final_file: '/path/to/final_state.parquet'
 ```
 
-`UnitMuskingum` reads a pre-computed convolution kernel and can optionally warm-start the transformer
+`UnitMuskingum` reads a pre-computed convolution kernel and can optionally warm-start the UH
 state from a previous run. The kernel is a scipy sparse npz file and the state files are parquet,
 both with shape `(n_basins, n_time_steps)`, one row per basin.
 
 - `transformer_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Required for `UnitMuskingum`. Note
   that the kernel depends on `tc`, `area`, **and the routing timestep**.
-- `transformer_state_init_file`: warm-start the transformer's rolling state buffer from a prior run.
+- `uh_state_init_file`: warm-start the UH rolling state buffer from a prior run.
   Note, the **state depends on the routing timestep**.
-- `transformer_state_final_file`: path to write the final transformer state after routing completes,
-  for use as `transformer_state_init_file` in a subsequent run.
+- `uh_state_final_file`: path to write the final UH state after routing completes,
+  for use as `uh_state_init_file` in a subsequent run.

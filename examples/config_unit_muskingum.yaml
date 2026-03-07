@@ -3,26 +3,30 @@
 # required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x
 transformer_kernel_file: ''      # scipy sparse npz: shape (n_basins, n_timesteps)
+
+# where to save the outputs
+# option 1: a directory where the output files will be named based on the input file routed
 discharge_dir: ''                # directory for output netCDF files (named after input files)
-# discharge_files:               # optional: explicit output paths instead of discharge_dir
-#   - ''
+# option 2: explicit output paths instead of discharge_dir
+discharge_files:                 # optional: explicit output paths instead of discharge_dir
+  - ''
 
 # runoff input — choose one of two choices for RapidMuskingum, UnitMuskingum
 # option 1: pre-aggregated per-catchment depths (m)
 qlateral_files:                  # netCDF: dims (time, river_id); var: qlateral
   - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
-# grid_runoff_files:
-#   - ''
-# grid_weights_file: ''          # required with grid_runoff_files
+grid_runoff_files:
+  - ''
+grid_weights_file: ''            # required with grid_runoff_files
 
 # channel state — optional
 channel_state_init_file: ''      # parquet: column Q; omit to default to zero
 channel_state_final_file: ''     # omit to skip writing
 
-# transformer state — optional; for warm-starting across runs
-transformer_state_init_file: ''  # parquet: shape (n_basins, n_timesteps)
-transformer_state_final_file: '' # omit to skip writing
+# UH state — optional; for warm-starting across runs
+uh_state_init_file: ''  # parquet: shape (n_basins, n_timesteps)
+uh_state_final_file: '' # omit to skip writing
 
 # time — optional; auto-detected from input file if omitted
 dt_routing: 0                    # seconds; routing sub-step (defaults to dt_runoff)
@@ -36,8 +40,8 @@ runoff_processing_mode: 'sequential'   # sequential | ensemble
 
 # logging
 log: true
-progress_bar: false
-log_level: 'INFO'                # DEBUG | INFO | WARNING | ERROR | CRITICAL
+progress_bar: true
+log_level: 'PROGRESS'            # DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL
 log_stream: 'stdout'             # stdout | /path/to/logfile.log
 log_format: '%(levelname)s - %(asctime)s - %(message)s'
 

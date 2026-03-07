@@ -31,6 +31,9 @@ class Muskingum:
 
     In matrix form, the router needs to solve the equation:
     (I - c1 * A) @ Q_t+1 = c2 * (A @ Q_t) + c3 * Q_t
+
+    The LHS matrix (I - c1 * A) is unit lower triangular (rows are topologically sorted).
+    It is solved via numba JIT-compiled forward substitution operating on the CSC sparse structure.
     """
     cfg: Configs
     logger: logging.Logger

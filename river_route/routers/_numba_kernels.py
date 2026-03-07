@@ -1,13 +1,5 @@
 """
-Numba-accelerated routing kernels.
-
-The adjacency matrix is strictly lower triangular (topologically sorted),
-so LHS = I - diags(c1) @ A is unit lower triangular. This replaces the
-general-purpose SuperLU solve with O(nnz) forward substitution.
-
-The off-diagonal CSC arrays share the same indptr/indices as A (since A
-is binary, diags(c1)@A has the identical sparsity pattern). Data values
-for the forward solve are -c1[row] at each nonzero position.
+Numba-accelerated routing kernels using the forward substitution algorithm for unit lower triangular systems.
 """
 import numba
 import numpy as np

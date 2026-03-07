@@ -1,7 +1,7 @@
 # River-Route
 
-The `river-route` Python package routes runoff volumes and discharge through river networks using vectorized,
-sparse-matrix solvers. It is designed for large networks of rivers and catchments.
+The `river-route` Python package routes runoff volumes and discharge through river networks using
+numba-accelerated solvers. It is designed for large networks of rivers and catchments.
 
 ## Routers
 
@@ -17,7 +17,7 @@ You have these options for how to do hydrological routing
 
 | Router           | Description                                                                                                                    |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `RapidMuskingum` | Runoff is treated as a point source at the catchment inlet which all enters the inlet during the interval the runoff occurs.   | 
+| `RapidMuskingum` | Runoff is treated as a point source in the catchment which all enters the channel during the interval the runoff occurs.       | 
 | `UnitMuskingum`  | Runoff transformed via convolution with user provided unit hydrographs at each catchment then routed in the downstream segment |
 
 ## Start Here

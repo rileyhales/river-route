@@ -2,7 +2,7 @@ from . import metrics
 from . import runoff
 from . import tools
 from . import uhkernels
-from .__metadata__ import __version__, __author__, __url__
+from ._metadata import __version__, __author__, __url__
 from .routers import Configs
 from .routers import Muskingum
 from .routers import RapidMuskingum

@@ -2,9 +2,12 @@
 
 # required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x
-discharge_dir: ''                # directory for output netCDF (writes discharge.nc)
-# discharge_files:               # optional: explicit output path instead of discharge_dir
-#   - ''
+# where to save the outputs
+# option 1: a directory where the output files will be named based on the input file routed
+discharge_dir: ''                # directory for output netCDF files (named after input files)
+# option 2: explicit output paths instead of discharge_dir
+discharge_files:                 # optional: explicit output paths instead of discharge_dir
+  - ''
 dt_routing: 0                    # seconds; routing sub-step
 dt_total: 0                      # seconds; total simulation duration
 channel_state_init_file: ''      # parquet: column Q
@@ -16,8 +19,8 @@ start_datetime: '1970-01-01'     # ISO date for output timestamps
 
 # logging
 log: true
-progress_bar: false
-log_level: 'INFO'                # DEBUG | INFO | WARNING | ERROR | CRITICAL
+progress_bar: true
+log_level: 'PROGRESS'            # DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL
 log_stream: 'stdout'             # stdout | /path/to/logfile.log
 log_format: '%(levelname)s - %(asctime)s - %(message)s'
 

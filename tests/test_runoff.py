@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 
 from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
-from river_route.runoff import grid_weights, grid_to_qlateral
+from river_route.runoff import grid_weights, runoff_to_qlateral
 
 
 def test_grid_weights(vpu: RFSv2ConfigsData):
@@ -58,8 +58,8 @@ def test_grid_to_qlateral(vpu: RFSv2ConfigsData):
     if not ERA5_FILES:
         pytest.skip('Missing ERA5 files')
 
-    ds = grid_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
-                          var_x='longitude', var_y='latitude', var_t='valid_time', as_volumes=True)
+    ds = runoff_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
+                            var_x='longitude', var_y='latitude', var_t='valid_time', as_volumes=True)
     assert 'qlateral' in ds
     assert 'time' in ds.dims
     assert 'river_id' in ds.dims
@@ -94,8 +94,8 @@ def test_grid_to_qlateral_cumulative_input(vpu: RFSv2ConfigsData):
             var_runoff='ro', var_x='longitude', var_y='latitude', var_t='valid_time',
         )
 
-        ds_inc = grid_to_qlateral(str(incremental_file), cumulative=False, **kwargs)
-        ds_cum = grid_to_qlateral(cumulative_file, cumulative=True, **kwargs)
+        ds_inc = runoff_to_qlateral(str(incremental_file), cumulative=False, **kwargs)
+        ds_cum = runoff_to_qlateral(cumulative_file, cumulative=True, **kwargs)
 
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation

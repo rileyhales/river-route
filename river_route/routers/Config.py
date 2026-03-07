@@ -1,7 +1,7 @@
 import os
 import types
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, get_args, get_origin, get_type_hints, Self
+from typing import ClassVar, Literal, get_args, get_origin, get_type_hints, Self
 
 import numpy as np
 import pandas as pd
@@ -43,9 +43,9 @@ class Configs:
     grid_weights_file: PathInput | None = None
     grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
     runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
-    transformer_kernel_file: PathInput | None = None
-    transformer_state_init_file: PathInput | None = None
-    transformer_state_final_file: PathInput | None = None
+    uh_kernel_file: PathInput | None = None
+    uh_state_init_file: PathInput | None = None
+    uh_state_final_file: PathInput | None = None
 
     # Misc behavior that users may want to override
     log: bool = True
@@ -63,7 +63,7 @@ class Configs:
     # special subset of auto-detected PathLists where the directory needs to exist, not the file
     _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({
         'channel_state_final_file',
-        'transformer_state_final_file',
+        'uh_state_final_file',
     })
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({
