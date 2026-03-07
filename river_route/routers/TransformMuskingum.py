@@ -118,7 +118,6 @@ class TransformMuskingum(Muskingum, ABC):
             self._set_network_and_time_dependent_vectors(dates)
             self.logger.debug('Starting routing computation')
             q_t, q_array = self._router(qlateral)
-            q_array[q_array < 0] = 0
             if self.cfg.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t
@@ -140,7 +139,6 @@ class TransformMuskingum(Muskingum, ABC):
                 dates = dates[::self.num_runoff_steps_per_discharge]
 
             self.logger.debug('Writing Discharge Array to File')
-            np.round(q_array, decimals=2, out=q_array)
             q_array = q_array.astype(np.float32, copy=False)
             self._write_discharges(dates, q_array, discharge_file, runoff_file)
 

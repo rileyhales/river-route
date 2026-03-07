@@ -254,7 +254,6 @@ class Muskingum:
 
         # write outputs
         self.logger.debug('Writing Discharge Array to File')
-        np.round(discharge_array, decimals=2, out=discharge_array)
         discharge_array = discharge_array.astype(np.float32, copy=False)
         self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])
         self.logger.info('-' * 60)
@@ -285,8 +284,6 @@ class Muskingum:
             discharge_array,
             num_output_steps, num_routing_per_output,
         )
-
-        discharge_array[discharge_array < 0] = 0
 
         self.logger.debug('Updating Channel State')
         self.channel_state = q_t

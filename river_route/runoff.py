@@ -328,11 +328,12 @@ def runoff_to_qlateral(
         qlateral = df.to_numpy(dtype=np.float64)
         del df
 
-    np.nan_to_num(qlateral, copy=False, nan=0.0)
-    qlateral = qlateral.astype(np.float32)
+    mask = np.isnan(qlateral)
+    if mask.any():
+        qlateral[mask] = 0.0
 
     if as_volumes:
-        qlateral *= catchment_area[np.newaxis, :].astype(np.float32)
+        qlateral *= catchment_area[np.newaxis, :]
         units = 'm3'
         long_name = 'Incremental qlateral volumes'
     else:
