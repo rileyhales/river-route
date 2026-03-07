@@ -2,6 +2,10 @@
 set -euxo pipefail
 # Downloads test data for the river-route test suite.
 
+#Download everything option
+#s5cmd sync "s3://geoglows-v2/routing-configs/*" "tests/data/routing-configs/"
+#s5cmd sync "s3://geoglows-v2/hydrography/*" "tests/data/hydrography/"
+
 # the zip contains the directories:
 # era5 - containing 12 example months of era5 data
 # discharge
@@ -26,7 +30,6 @@ unzip -qo routing-test-data.zip -d tests/data
 rm -f routing-test-data.zip
 
 # first see what the list of vpu=* directories are contained in tests/data/discharge
-VPUS=$(find tests/data/discharge -type d -name "vpu=*")
 
 # for each vpu that test data is provided for, download the hydrography and routing config inputs
 for VPU in $VPUS; do

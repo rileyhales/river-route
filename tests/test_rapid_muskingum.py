@@ -1,4 +1,3 @@
-"""Tests for RapidMuskingum routing — ERA5 grid-to-discharge integration tests."""
 import os
 import shutil
 import tempfile

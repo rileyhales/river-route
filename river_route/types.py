@@ -1,4 +1,4 @@
-from collections.abc import Generator, Callable
+from collections.abc import Generator
 from pathlib import Path
 from typing import Protocol
 
@@ -24,8 +24,6 @@ class WriteDischargesFn(Protocol):
     ) -> None: ...
 
 
-FactorizedSolveFn = Callable[[FloatArray], FloatArray]
-
 __all__ = [
     'PathInput',
     'PathTypes',
@@ -35,5 +33,4 @@ __all__ = [
     'DatetimeArray',
     'QlateralGeneratorSignature',
     'WriteDischargesFn',
-    'FactorizedSolveFn',
 ]

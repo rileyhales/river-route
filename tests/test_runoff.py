@@ -1,4 +1,3 @@
-"""Tests for river_route.runoff — grid coordinate extraction, voronoi diagrams, weight tables, qlateral aggregation."""
 import os
 import shutil
 import tempfile
@@ -10,10 +9,7 @@ import pytest
 import xarray as xr
 
 from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
-from river_route.runoff import (
-    grid_weights,
-    grid_to_qlateral,
-)
+from river_route.runoff import grid_weights, grid_to_qlateral
 
 
 def test_grid_weights(vpu: RFSv2ConfigsData):

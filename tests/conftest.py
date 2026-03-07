@@ -125,7 +125,7 @@ class RFSv2ConfigsData:
 def find_test_units() -> list[RFSv2ConfigsData]:
     """find the vpus of routing configs, then prepare them for river-route version 2 format tests"""
     # vpus = sorted([os.path.basename(glob(str(CONFIGS_DIR / 'vpu=*'))))
-    vpus = [os.path.basename(path) for path in glob(str(CONFIGS_DIR / 'vpu=*'))]
+    vpus = [os.path.basename(path) for path in glob(str(DISCHARGE_DIR / 'vpu=*'))]
     testable_sets = []
     for vpu in sorted(vpus):
         testable_sets.append(

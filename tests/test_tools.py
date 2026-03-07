@@ -1,5 +1,5 @@
-"""Tests for river_route.tools — adjacency_matrix, connectivity_to_digraph, subset_configs_to_river."""
 import os
+import shutil
 import tempfile
 
 import networkx as nx
@@ -7,14 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 import scipy.sparse as sp
+import xarray as xr
 
 from conftest import RFSv2ConfigsData
 from river_route.tools import adjacency_matrix, connectivity_to_digraph, subset_configs_to_river
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# adjacency_matrix
-# ═════════════════════════════════════════════════════════════════════════════
 
 def _networkx_adjacency_matrix(params: pd.DataFrame) -> sp.csc_matrix:
     graph = nx.DiGraph()
@@ -63,10 +60,6 @@ def test_adjacency_matrix_rejects_unknown_downstream():
         adjacency_matrix(river_ids, downstream_ids)
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# connectivity_to_digraph
-# ═════════════════════════════════════════════════════════════════════════════
-
 def test_connectivity_to_digraph(vpu: RFSv2ConfigsData):
     params = pd.read_parquet(vpu.rr2_params_file)
     graph = connectivity_to_digraph(params['river_id'].values, params['downstream_river_id'].values)
@@ -83,10 +76,6 @@ def test_connectivity_to_digraph_simple():
     assert graph.has_edge(3, 1)
     assert graph.has_edge(1, -1)
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# subset_configs_to_river
-# ═════════════════════════════════════════════════════════════════════════════
 
 def test_subset_configs_to_river(vpu: RFSv2ConfigsData):
     """Subset to a known river; verify the target becomes the outlet and upstream rivers are included."""
@@ -106,7 +95,6 @@ def test_subset_configs_to_river(vpu: RFSv2ConfigsData):
         # All subset rivers should exist in the original
         assert set(sub['river_id']).issubset(set(params['river_id']))
     finally:
-        import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -122,11 +110,9 @@ def test_subset_configs_to_river_with_weights(vpu: RFSv2ConfigsData):
         subset_configs_to_river(target, str(vpu.rr2_params_file), out_params,
                                 weights=str(vpu.grid_weights_file), out_weights=out_weights)
 
-        import xarray as xr
         sub = pd.read_parquet(out_params)
         with xr.open_dataset(out_weights) as ds:
             weight_river_ids = set(ds['river_id'].values.tolist())
         assert weight_river_ids.issubset(set(sub['river_id'].values.tolist()))
     finally:
-        import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)

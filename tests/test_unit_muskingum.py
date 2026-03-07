@@ -1,4 +1,3 @@
-"""Tests for UnitMuskingum routing — sparse UH convolution + Muskingum."""
 import os
 import shutil
 import tempfile

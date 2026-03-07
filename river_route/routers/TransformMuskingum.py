@@ -22,7 +22,6 @@ class TransformMuskingum(Muskingum, ABC):
 
     # Time options
     num_runoff_steps: int
-    num_routing_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
 
@@ -100,7 +99,6 @@ class TransformMuskingum(Muskingum, ABC):
         self.num_runoff_steps = int(self.dt_total / self.dt_runoff)
         self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
-        self.num_routing_steps = int(self.dt_total / self.dt_routing)
 
         self._set_muskingum_coefficients(self.dt_routing)
         self.c4 = self.c1 + self.c2

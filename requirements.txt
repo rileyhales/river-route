@@ -2,6 +2,7 @@ fastparquet
 geopandas
 netCDF4
 networkx
+numba
 numpy
 pandas
 PyYAML

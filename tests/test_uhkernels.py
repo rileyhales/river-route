@@ -1,18 +1,12 @@
-"""Tests for river_route.uhkernels — SCS kernel builders and UnitHydrograph convolution."""
 import os
 import shutil
 import tempfile
 
 import numpy as np
-import pandas as pd
 import pytest
 import scipy.sparse
 
 from river_route.uhkernels import SCSTriangular, SCSCurvilinear, UnitHydrograph
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SCS Kernel Builders — shared tests for both triangular and curvilinear
-# ═════════════════════════════════════════════════════════════════════════════
 
 KERNEL_CLASSES = [SCSTriangular, SCSCurvilinear]
 
@@ -47,10 +41,6 @@ def test_kernel_shape(kernel_cls):
     assert uh.kernel.shape[0] >= 1
     return
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# UnitHydrograph — convolution correctness
-# ═════════════════════════════════════════════════════════════════════════════
 
 def _make_kernel_file(kernel: np.ndarray, tmpdir: str) -> str:
     """Save a kernel array as sparse npz and return the path."""

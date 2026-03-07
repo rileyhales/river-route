@@ -9,13 +9,12 @@ import netCDF4 as nc
 import numpy as np
 import pandas as pd
 import yaml
-from scipy.sparse import csc_matrix, diags, eye
-from scipy.sparse.linalg import factorized
 
-from ._numba_kernels import HAS_NUMBA, muskingum_route
 from .Config import Configs
+from ._numba_kernels import muskingum_route
+from ..logging import PROGRESS
 from ..tools import adjacency_matrix
-from ..types import IntArray, FloatArray, PathInput, FactorizedSolveFn, WriteDischargesFn, DatetimeArray
+from ..types import IntArray, FloatArray, PathInput, WriteDischargesFn, DatetimeArray
 
 __all__ = ['Muskingum', ]
 
@@ -40,9 +39,8 @@ class Muskingum:
     _ROUTER_REQUIRED_CONFIGS = ('channel_state_init_file', 'dt_routing', 'dt_total')
 
     # Network dependent matrices and vectors from routing parameters file
-    A: csc_matrix  # n x n - adjacency matrix
+    A: object  # n x n - adjacency matrix (scipy csc_matrix)
     river_ids: IntArray  # n x 1 - river ID for each segment
-    downstream_river_ids: IntArray  # n x 1 - downstream river ID for each segment
     k: FloatArray  # n x 1 - K values for each segment
     x: FloatArray  # n x 1 - X values for each segment
 
@@ -50,7 +48,6 @@ class Muskingum:
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
-    lhs_factorized: FactorizedSolveFn  # callable factorized left hand side matrix for direct => f(lhs)
 
     # State variables
     channel_state: FloatArray
@@ -65,39 +62,37 @@ class Muskingum:
     # methods that are overridable via dependency injection
     _write_discharges: WriteDischargesFn
 
+    # indices and data for numba solvers
+    _csc_indptr: IntArray
+    _csc_indices: IntArray
+    _lhs_off_data: FloatArray
+
     def __init__(self, configs: PathInput | Configs | None = None, **kwargs: Any) -> None:
-        # combine config inputs and pass to Configs dataclass
-        if isinstance(configs, Configs):
-            self.cfg = configs
-        else:
-            raw: dict[str, Any] = {}
-            if configs is not None and configs != '':
-                if str(configs).endswith('.json'):
-                    with open(configs, 'r') as f:
-                        raw = json.load(f)
-                elif str(configs).endswith(('.yml', '.yaml')):
-                    with open(configs, 'r') as f:
-                        raw = yaml.load(f, Loader=yaml.FullLoader)
-                else:
-                    raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
-            raw.update(kwargs)
-            raw.pop('_router', None)
-            self.cfg = Configs(**raw)
+        # parse and createe
+        raw: dict[str, Any] = {}
+        if configs is not None and configs != '':
+            if str(configs).endswith('.json'):
+                with open(configs, 'r') as f:
+                    raw = json.load(f)
+            elif str(configs).endswith(('.yml', '.yaml')):
+                with open(configs, 'r') as f:
+                    raw = yaml.load(f, Loader=yaml.FullLoader)
+            else:
+                raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
+        raw.update(kwargs)
+        raw.pop('_router', None)
+        self.cfg = Configs(**raw)
 
         # configure logging - progress bar and info/debug logs are mutually exclusive
         self.logger = logging.getLogger(f'river_route.{id(self):x}')
         self.logger.disabled = not self.cfg.log
-        self.logger.setLevel(logging.WARNING if self.cfg.progress_bar else self.cfg.log_level)
+        self.logger.setLevel(self.cfg.log_level)
         if self.cfg.log_stream == 'stdout':
             self.logger.addHandler(logging.StreamHandler(sys.stdout))
         else:
             self.logger.addHandler(logging.FileHandler(self.cfg.log_stream))
         self.logger.handlers[0].setFormatter(logging.Formatter(self.cfg.log_format))
         self.logger.debug('Logger initialized')
-
-        # if a configs instance was passed, the kwargs were ignored. log a warning
-        if isinstance(configs, Configs) and kwargs:
-            self.logger.warning('Configs instance passed to Muskingum, kwargs were ignored!')
         return
 
     def __repr__(self) -> str:
@@ -162,18 +157,18 @@ class Muskingum:
             raise ValueError('params_file contains duplicate river IDs.')
 
         self.river_ids = df[self.cfg.var_river_id].to_numpy(dtype=np.int64, copy=False)
-        self.downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
+        downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
         self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
         self.x = df['x'].to_numpy(dtype=np.float64, copy=False)
 
         river_id_set = set(self.river_ids.tolist())
-        downstream_ids = {d for d in self.downstream_river_ids.tolist() if d > 0}
+        downstream_ids = {d for d in downstream_river_ids.tolist() if d > 0}
         unknown_downstream_ids = sorted(downstream_ids - river_id_set)
         if unknown_downstream_ids:
             raise ValueError(
                 f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
-        self.A = adjacency_matrix(self.river_ids, self.downstream_river_ids)
-        self.logger.info(f'Network: {self.A.shape[0]} river segments')
+        self.A = adjacency_matrix(self.river_ids, downstream_river_ids)
+        self.logger.log(PROGRESS, f'Network: {self.A.shape[0]} river segments')
         return
 
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
@@ -191,20 +186,12 @@ class Muskingum:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
+        # LHS = I - diags(c1) @ A is unit lower triangular.
+        # Off-diagonal entries share A's sparsity: data = -c1[row] per edge.
         A_csc = self.A.tocsc()
-        if HAS_NUMBA:
-            # LHS = I - diags(c1) @ A is unit lower triangular.
-            # Off-diagonal entries share A's sparsity: data = -c1[row] per edge.
-            self.logger.debug('Stored CSC arrays for numba triangular solve')
-            self._csc_indptr = A_csc.indptr
-            self._csc_indices = A_csc.indices
-            self._lhs_off_data = np.ascontiguousarray(-self.c1[A_csc.indices])
-        else:
-            lhs = eye(self.A.shape[0]) - (diags(self.c1) @ self.A)
-            lhs = lhs.tocsc()
-            self.logger.debug('Factorizing LHS matrix')
-            self.lhs_factorized = factorized(lhs)
-            self.logger.debug('LHS matrix factorized')
+        self._csc_indptr = A_csc.indptr
+        self._csc_indices = A_csc.indices
+        self._lhs_off_data = np.ascontiguousarray(-self.c1[A_csc.indices])
         return
 
     ################################################
@@ -221,14 +208,13 @@ class Muskingum:
             Self: the class instance with updated channel_state and output files written to disk
         """
         # start timer
-        self.logger.info('Beginning routing')
+        self.logger.log(PROGRESS, 'Beginning routing')
         t1 = datetime.datetime.now()
         # validate configuration options
         self._validate_configs()
         self.logger.debug(self)
         # set arrays for routing
         self._set_network_dependent_vectors()
-        self.logger.info(f'Using {"numba" if HAS_NUMBA else "scipy"} solver')
         self._read_initial_state()
         # init hook
         self._hook_before_route()
@@ -239,7 +225,7 @@ class Muskingum:
         self._hook_after_route()
         # log total time
         t2 = datetime.datetime.now()
-        self.logger.info(f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+        self.logger.log(PROGRESS, f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return self
 
     def _execute_routing(self) -> None:
@@ -295,29 +281,12 @@ class Muskingum:
         discharge_array = np.zeros((num_output_steps, n), dtype=np.float64)
         q_t = q_init.astype(np.float64, copy=True)
 
-        if muskingum_route is not None:
-            muskingum_route(
-                self._csc_indptr, self._csc_indices, self._lhs_off_data,
-                self.c2, self.c3, q_t,
-                discharge_array,
-                num_output_steps, num_routing_per_output,
-            )
-        else:
-            rhs = np.zeros(n, dtype=np.float64)
-            buffer = np.zeros(n, dtype=np.float64)
-            interval_sum = np.zeros(n, dtype=np.float64)
-            output_iter = range(num_output_steps)
-
-            for output_step in output_iter:
-                interval_sum.fill(0.0)
-                for _ in range(num_routing_per_output):
-                    buffer[:] = self.A @ q_t
-                    np.multiply(self.c2, buffer, out=rhs)
-                    np.multiply(self.c3, q_t, out=buffer)
-                    np.add(rhs, buffer, out=rhs)
-                    q_t[:] = self.lhs_factorized(rhs)
-                    interval_sum += q_t
-                discharge_array[output_step, :] = interval_sum / num_routing_per_output
+        muskingum_route(
+            self._csc_indptr, self._csc_indices, self._lhs_off_data,
+            self.c2, self.c3, q_t,
+            discharge_array,
+            num_output_steps, num_routing_per_output,
+        )
 
         discharge_array[discharge_array < 0] = 0
 
