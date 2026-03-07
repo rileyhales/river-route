@@ -9,6 +9,7 @@ import netCDF4 as nc
 import numpy as np
 import pandas as pd
 import yaml
+from scipy.sparse import csc_matrix
 
 from .Config import Configs
 from ._numba_kernels import muskingum_route
@@ -42,7 +43,7 @@ class Muskingum:
     _ROUTER_REQUIRED_CONFIGS = ('channel_state_init_file', 'dt_routing', 'dt_total')
 
     # Network dependent matrices and vectors from routing parameters file
-    A: object  # n x n - adjacency matrix (scipy csc_matrix)
+    A: csc_matrix  # n x n - adjacency matrix (scipy csc_matrix)
     river_ids: IntArray  # n x 1 - river ID for each segment
     k: FloatArray  # n x 1 - K values for each segment
     x: FloatArray  # n x 1 - X values for each segment
@@ -174,6 +175,7 @@ class Muskingum:
         self.logger.log(PROGRESS, f'Network: {self.A.shape[0]} river segments')
         return
 
+    # noinspection PyPep8Naming
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
         self.logger.debug('Calculating Muskingum coefficients')
         dt_div_k = dt_routing / self.k

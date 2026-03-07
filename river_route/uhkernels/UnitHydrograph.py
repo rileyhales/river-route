@@ -96,7 +96,7 @@ class UnitHydrograph:
         t = lateral.shape[0]
         n_ks = self.kernel.shape[0]
 
-        # fast fourier transform to convolve along time axis for all basins at once
+        # fast fourier transform to convolve along the time axis for all basins at once
         buf = fftconvolve(lateral, self.kernel, axes=0, mode='full')  # (t + n_ks - 1, n_basins)
 
         # Inject carryover state from previous call

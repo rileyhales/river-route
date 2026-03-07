@@ -42,8 +42,6 @@ The routing parameters parquet must contain at minimum these columns:
 
 Rows must be in **topological order**: all upstream segments before their downstream neighbors.
 
-See [Generating Config Files](prepare-watersheds.md) for guidance on building this file from GIS data.
-
 ## Config File
 
 Config values can be passed as a YAML/JSON file, as keyword arguments, or both. Keyword arguments

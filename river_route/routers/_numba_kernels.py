@@ -70,6 +70,7 @@ def rapid_substeps(
             interval_sum[i] += q_t[i]
 
 
+# noinspection PyPep8Naming
 @numba.njit(cache=True, fastmath=True)
 def unit_substeps(
         csc_indptr, csc_indices, lhs_off_data,

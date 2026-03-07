@@ -74,6 +74,7 @@ class UnitMuskingum(TransformMuskingum):
         self._inner_csc_indices = self.A_inner.indices
         self._inner_lhs_off_data = np.ascontiguousarray(-self._c1_inner[self.A_inner.indices])
 
+    # noinspection PyPep8Naming
     def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         """Route with UH lateral superimposed on Muskingum channel routing."""
         self.logger.debug('Precomputing UH convolution for full timeseries')

@@ -60,8 +60,7 @@ The `connectivity_file` key has been removed entirely — see
 | `x`                   | float64 | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)       |
 
 !!! warning
-    Rows **must be topologically sorted** (upstream before downstream). v2 validates this and raises 
-    a `ValueError` if the ordering is wrong. See [Preparing Watersheds](../tutorial/prepare-watersheds.md) for how to sort your data.
+    Rows **must be topologically sorted** (upstream before downstream).
 
 ### Grid Weights
 
@@ -104,8 +103,7 @@ python examples/migrate_v1_to_v2.py routing-params routing_params.parquet connec
 This handles legacy column renames (`ds_river_id` → `downstream_river_id`) automatically.
 
 !!! note
-    The merged file must still be **topologically sorted**. If your v1 files were not sorted, you
-    will need to sort them before using them with v2. See [Preparing Watersheds](../tutorial/prepare-watersheds.md) for a topological sort example.
+    The merged file must still be **topologically sorted**.
 
 ### Convert Grid Weights
 
@@ -142,6 +140,5 @@ The migration script handles file format conversions, but you will also need to:
 
 1. **Rename config keys** in your YAML/JSON files (see [Config Key Renames](#config-key-renames)).
 2. **Update your Python code** to import and use the new router classes (see [Router Class Changes](#router-class-changes)).
-3. **Update any calls to `tools.py` functions** that changed signatures (see [API Changes](#api-changes-in-toolspy)).
-4. **Topologically sort your routing parameters** if they are not already sorted.
-5. **Install numba** if it is not already in your environment.
+3. **Topologically sort your routing parameters** if they are not already sorted.
+4. **Install numba** if it is not already in your environment.
