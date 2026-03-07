@@ -30,6 +30,7 @@ unzip -qo routing-test-data.zip -d tests/data
 rm -f routing-test-data.zip
 
 # first see what the list of vpu=* directories are contained in tests/data/discharge
+VPUS=$(find tests/data/discharge -mindepth 1 -maxdepth 1 -type d)
 
 # for each vpu that test data is provided for, download the hydrography and routing config inputs
 for VPU in $VPUS; do

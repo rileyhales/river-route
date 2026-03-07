@@ -38,8 +38,9 @@ import river_route as rr
 )
 ```
 
-Run the tests by downloading test data and using Pytest to run all the tests
+Run the tests by downloading test data and then running Pytest:
 
 ```bash
+./tests/download_test_data.sh
 pytest tests/ -v -s 
 ```

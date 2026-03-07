@@ -5,8 +5,9 @@ from glob import glob
 from pathlib import Path
 
 import pandas as pd
-import river_route as rr
 import xarray as xr
+
+import river_route as rr
 
 TESTS_DIR = Path(__file__).resolve().parent
 DATA_DIR = TESTS_DIR / 'data'
@@ -41,7 +42,8 @@ class RFSv2ConfigsData:
         self.discharge_files = list(sorted(glob(str(self.discharge_dir / 'discharge*.nc'))))
         self.qlateral_files = list(sorted(glob(str(self.qlateral_dir / 'qlateral_*.nc'))))
 
-        # convert the rfs v2 configs to river-route v2 formats
+    def prepare(self) -> None:
+        """Convert rfs v2 configs to river-route v2 formats. Call after valid() confirms files exist."""
         pdf = pd.read_parquet(self.rr1_params_file)
         cdf = pd.read_parquet(self.rr1_connectivity_file)
         (
@@ -51,7 +53,6 @@ class RFSv2ConfigsData:
             [['river_id', 'downstream_river_id', 'k', 'x']]
             .to_parquet(self.rr2_params_file, index=False)
         )
-        # create a triangular scs kernel to test uh routing with
         grid_weights = xr.open_dataset(self.grid_weights_file).to_dataframe()
         kfactor = 5
         tc = (pdf['k'] * kfactor).values
@@ -61,7 +62,6 @@ class RFSv2ConfigsData:
             area=area,
             tr=3600,
         ).save(self.configs_dir / f'kernel.scs_triangular.kfactor={kfactor}.tr=3600.npz')
-        return
 
     @property
     def rr2_params_file(self) -> Path:
@@ -124,7 +124,6 @@ class RFSv2ConfigsData:
 
 def find_test_units() -> list[RFSv2ConfigsData]:
     """find the vpus of routing configs, then prepare them for river-route version 2 format tests"""
-    # vpus = sorted([os.path.basename(glob(str(CONFIGS_DIR / 'vpu=*'))))
     vpus = [os.path.basename(path) for path in glob(str(DISCHARGE_DIR / 'vpu=*'))]
     testable_sets = []
     for vpu in sorted(vpus):
@@ -138,6 +137,8 @@ def find_test_units() -> list[RFSv2ConfigsData]:
             )
         )
     testable_sets = [vpu for vpu in testable_sets if vpu.valid()]
+    for vpu in testable_sets:
+        vpu.prepare()
     return testable_sets
 
 

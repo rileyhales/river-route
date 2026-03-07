@@ -104,7 +104,7 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
         (
             df
             .to_xarray()
-            .set_attrs({
+            .assign_attrs({
                 'description': 'proportions of runoff cells that intersect catchments for use with river',
                 'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
                 'catchments_gdf_crs': catchments_gdf.crs.to_string(),
@@ -179,7 +179,7 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
             df
             [[var_river_id, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']]
             .to_xarray()
-            .set_attrs({
+            .assign_attrs({
                 'description': 'proportions of runoff cells that intersect river catchments',
                 'grid_path': str(grid_path),
                 'catchments_path': str(catchments_path),

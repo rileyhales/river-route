@@ -12,7 +12,7 @@ from conftest import RFSv2ConfigsData
 
 def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
     """Route from a synthetic initial state with no lateral inflow; verify decay and final state."""
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     n_rivers = len(params)
 
     tmpdir = tempfile.mkdtemp()
@@ -52,7 +52,7 @@ def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
 
 def test_muskingum_zero_initial_state(vpu: RFSv2ConfigsData):
     """Routing with zero initial state and no lateral inflow should produce all-zero discharge."""
-    params = pd.read_parquet(vpu.rr1_params_file)
+    params = pd.read_parquet(vpu.rr2_params_file)
     n_rivers = len(params)
 
     tmpdir = tempfile.mkdtemp()

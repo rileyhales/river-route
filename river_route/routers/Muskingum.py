@@ -65,7 +65,7 @@ class Muskingum:
     _lhs_off_data: FloatArray
 
     def __init__(self, configs: PathInput | Configs | None = None, **kwargs: Any) -> None:
-        # parse and createe
+        # parse and create configs
         raw: dict[str, Any] = {}
         if configs is not None and configs != '':
             if str(configs).endswith('.json'):

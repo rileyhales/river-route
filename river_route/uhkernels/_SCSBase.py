@@ -62,7 +62,7 @@ class _SCSBase(ABC):
         n_steps = np.ceil(self.tb / self.tr).astype(int)
         max_steps = int(n_steps.max())
 
-        i_row = np.arange(max_steps + 1, dtype=np.float64)[:, np.newaxis]
+        i_row = np.arange(max_steps + 1, dtype=np.int64)[:, np.newaxis]
         t_edges = np.minimum(i_row * self.tr, self.tb)  # (max_steps+1, n_basins)
 
         t_over_tp = t_edges / self.tp

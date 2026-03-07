@@ -47,7 +47,7 @@ All routing classes require the following 2 configuration options:
 | `grid_runoff_files`        | Gridded runoff depths                   |              |                _Option 2_                 |                _Option 2_                 |
 | `grid_weights_file`        | Converts depth grids to lateral inflow  |              |                _Option 2_                 |                _Option 2_                 |
 | **unit hydrograph**        |                                         |              |                                           |                                           |
-| `transformer_kernel_file`  | Pre-computed convolution kernel         |              |                                           |               **Required**                |
+| `uh_kernel_file`           | Pre-computed convolution kernel         |              |                                           |               **Required**                |
 | `uh_state_init_file`       | Parquet with initial UH state           |              |                                           |                 optional                  |
 | `uh_state_final_file`      | Path to save final UH state             |              |                                           |                 optional                  |
 | **time**                   |                                         |              |                                           |                                           |
