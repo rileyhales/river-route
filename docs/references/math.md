@@ -82,8 +82,7 @@ $$
 
 UnitMuskingum combines Muskingum channel routing with unit hydrograph lateral inflow. Discharge
 at each segment is the superposition of channel-routed flow and overland flow transformed
-through a unit hydrograph convolution. Let $Q_l$ denote the UH convolution output (see
-[below](#unit-hydrograph-convolution)).
+through a unit hydrograph convolution. Let $Q_l$ denote the [UH convolution](#unit-hydrograph-convolution)).
 
 The channel-routed component $Q_\text{ch}$ is solved separately from $Q_l$:
 

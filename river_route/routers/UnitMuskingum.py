@@ -35,30 +35,27 @@ class UnitMuskingum(TransformMuskingum):
                 self.logger.debug('Reading convolution state from parquet')
                 self._uh.set_state(self.cfg.uh_state_init_file)
 
+        # prepare to split arrays for headwater vs inner segments
         if not hasattr(self, 'hw_idx'):
-            self._setup_headwater_split()
+            incoming = np.asarray(self.A.sum(axis=1)).flatten()
+            hw_mask = incoming == 0
+            self.hw_idx = np.where(hw_mask)[0]
+            self.inner_idx = np.where(~hw_mask)[0]
+            self.A_inner = self.A[np.ix_(self.inner_idx, self.inner_idx)].tocsc()
+            self.A_hw_to_inner = self.A[np.ix_(self.inner_idx, self.hw_idx)].tocsc()
 
-    def _setup_headwater_split(self) -> None:
-        """Identify headwater streams and build reduced matrices for the inner (non-headwater) system."""
-        incoming = np.asarray(self.A.sum(axis=1)).flatten()
-        hw_mask = incoming == 0
-        self.hw_idx = np.where(hw_mask)[0]
-        self.inner_idx = np.where(~hw_mask)[0]
-        self.A_inner = self.A[np.ix_(self.inner_idx, self.inner_idx)].tocsc()
-        self.A_hw_to_inner = self.A[np.ix_(self.inner_idx, self.hw_idx)].tocsc()
+            # Store CSC arrays for numba kernel
+            self._a_inner_indptr = self.A_inner.indptr
+            self._a_inner_indices = self.A_inner.indices
+            self._a_inner_data = np.ascontiguousarray(self.A_inner.data.astype(np.float64, copy=False))
+            self._a_hw_indptr = self.A_hw_to_inner.indptr
+            self._a_hw_indices = self.A_hw_to_inner.indices
+            self._a_hw_data = np.ascontiguousarray(self.A_hw_to_inner.data.astype(np.float64, copy=False))
 
-        # Store CSC arrays for numba kernel
-        self._a_inner_indptr = self.A_inner.indptr
-        self._a_inner_indices = self.A_inner.indices
-        self._a_inner_data = np.ascontiguousarray(self.A_inner.data.astype(np.float64, copy=False))
-        self._a_hw_indptr = self.A_hw_to_inner.indptr
-        self._a_hw_indices = self.A_hw_to_inner.indices
-        self._a_hw_data = np.ascontiguousarray(self.A_hw_to_inner.data.astype(np.float64, copy=False))
-
-        self.logger.info(
-            f'Headwater split: {len(self.hw_idx)} headwater, {len(self.inner_idx)} inner '
-            f'({len(self.hw_idx) / self.A.shape[0] * 100:.0f}% excluded from solve)'
-        )
+            self.logger.info(
+                f'Headwater split: {len(self.hw_idx)} headwater, {len(self.inner_idx)} inner '
+                f'({len(self.hw_idx) / self.A.shape[0] * 100:.0f}% excluded from solve)'
+            )
 
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
         super()._set_muskingum_coefficients(dt_routing)

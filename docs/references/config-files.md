@@ -32,29 +32,29 @@ All routing classes require the following 2 configuration options:
 
 ## Required Config Keys
 
-| Config key                 | Description                            |  Muskingum   |              RapidMuskingum               |               UnitMuskingum               |
-|----------------------------|----------------------------------------|:------------:|:-----------------------------------------:|:-----------------------------------------:|
-| **core**                   |                                        |              |                                           |                                           |
-| `params_file`              | Routing parameters parquet.            | **Required** |               **Required**                |               **Required**                |
-| **state**                  |                                        |              |                                           |                                           |
-| `channel_state_init_file`  | Parquet with initial channel state     | **Required** |          optional - default to 0          |          optional - default to 0          |
-| `channel_state_final_file` | Path to save final channel state       |   optional   |                 optional                  |                 optional                  |
-| **output**                 |                                        |              |                                           |                                           |
-| `discharge_dir`            | Directory for output discharge files   |  _Option 1_  |                _Option 1_                 |                _Option 1_                 |
-| `discharge_files`          | Explicit output paths                  |  _Option 2_  |                _Option 2_                 |                _Option 2_                 |
-| **input data**             |                                        |              |                                           |                                           |
-| `qlateral_files`           | Per-catchment runoff time series       |              |                _Option 1_                 |                _Option 1_                 |
-| `grid_runoff_files`        | Gridded runoff depths                  |              |                _Option 2_                 |                _Option 2_                 |
-| `grid_weights_file`        | Converts depth grids to lateral inflow |              |                _Option 2_                 |                _Option 2_                 |
-| **unit hydrograph**        |                                        |              |                                           |                                           |
-| `uh_kernel_file`           | Pre-computed convolution kernel        |              |                                           |               **Required**                |
-| `uh_state_init_file`       | Parquet with initial UH state          |              |                                           |                 optional                  |
-| `uh_state_final_file`      | Path to save final UH state            |              |                                           |                 optional                  |
-| **time**                   |                                        |              |                                           |                                           |
-| `dt_total`                 | Total simulation duration in seconds   | **Required** | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `dt_discharge`             | Output timestep (s)                    |   optional   | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `dt_runoff`                | Runoff data timestep (s)               |              | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
-| `dt_routing`               | Routing computational timestep (s)     | **Required** | optional - [time docs](time-variables.md) | optional - [time docs](time-variables.md) |
+| Config key                 | Description                        |  Muskingum   |             RapidMuskingum              |              UnitMuskingum              |
+|----------------------------|------------------------------------|:------------:|:---------------------------------------:|:---------------------------------------:|
+| **core**                   |                                    |              |                                         |                                         |
+| `params_file`              | Routing parameters parquet.        | **Required** |              **Required**               |              **Required**               |
+| **state**                  |                                    |              |                                         |                                         |
+| `channel_state_init_file`  | Parquet with initial channel state | **Required** |         optional - default to 0         |         optional - default to 0         |
+| `channel_state_final_file` | Path to save final channel state   |   optional   |                optional                 |                optional                 |
+| **output**                 |                                    |              |                                         |                                         |
+| `discharge_dir`            | Directory for output  files        |  _Option 1_  |               _Option 1_                |               _Option 1_                |
+| `discharge_files`          | Explicit output paths              |  _Option 2_  |               _Option 2_                |               _Option 2_                |
+| **input data**             |                                    |              |                                         |                                         |
+| `qlateral_files`           | Per-catchment runoff time series   |              |               _Option 1_                |               _Option 1_                |
+| `grid_runoff_files`        | Gridded runoff depths              |              |               _Option 2_                |               _Option 2_                |
+| `grid_weights_file`        | Converts depth grids to qlateral   |              |               _Option 2_                |               _Option 2_                |
+| **unit hydrograph**        |                                    |              |                                         |                                         |
+| `uh_kernel_file`           | Pre-computed convolution kernel    |              |                                         |              **Required**               |
+| `uh_state_init_file`       | Parquet with initial UH state      |              |                                         |                optional                 |
+| `uh_state_final_file`      | Path to save final UH state        |              |                                         |                optional                 |
+| **time**                   |                                    |              |                                         |                                         |
+| `dt_total`                 | Total simulation duration (s)      | **Required** | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+| `dt_discharge`             | Output timestep (s)                |   optional   | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+| `dt_runoff`                | Runoff data timestep (s)           |              | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+| `dt_routing`               | Routing computational timestep (s) | **Required** | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
 
 ## Optional Configs with Defaults
 
