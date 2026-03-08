@@ -6,7 +6,6 @@ from typing import ClassVar, Literal, get_args, get_origin, get_type_hints, Self
 import numpy as np
 import pandas as pd
 import xarray as xr
-
 from river_route.types import PathInput, PathList, PathTypes
 
 __all__ = ['Configs', ]
@@ -18,7 +17,12 @@ _MISSING = object()  # used to distinguish between missing and None
 @dataclass
 class Configs:
     """
-    Accepts and validates configuration options for routing and runoff transform simulations
+    Accepts and validates configuration options. The class will validates in the following ways:
+
+    1. Keys that are required are set.
+    2. Values that must be from a specific list of options are valid.
+    3. Paths or directories exist which are necessary
+    4. File paths are converted to absolute paths.
     """
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
@@ -92,12 +96,12 @@ class Configs:
         # turn off progress bar if logging was turned off but progress was left at default on
         self.progress_bar = bool(self.log) and bool(self.progress_bar)
         # normalize paths given as strings to lists. make paths absolute.
-        self.coerce_path_list_fields()
-        self.absolutize_paths()
+        self._coerce_path_list_fields()
+        self._absolutize_paths()
         # derive discharge_files from discharge_dir + input files when not explicitly provided
         self._resolve_discharge_dir()
-        self.verify_input_files_exist()
-        self.verify_output_directories_exist()
+        self._verify_input_files_exist()
+        self._verify_output_directories_exist()
         # make sure required fields are set
         for key in self._ALWAYS_REQUIRED:
             if getattr(self, key) in (None, '', []):
@@ -105,7 +109,7 @@ class Configs:
         return
 
     # --- path normalization and verification ---
-    def coerce_path_list_fields(self) -> None:
+    def _coerce_path_list_fields(self) -> None:
         """Normalize any list-of-paths field given as a single string to [str]."""
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key)
@@ -113,7 +117,7 @@ class Configs:
                 setattr(self, key, [str(val)])
         return
 
-    def absolutize_paths(self) -> None:
+    def _absolutize_paths(self) -> None:
         """Convert all relative path fields to absolute paths in-place."""
         for key in self._SINGLE_PATH_FIELDS:
             val = getattr(self, key, None)
@@ -125,7 +129,7 @@ class Configs:
                 setattr(self, key, [os.path.abspath(p) for p in val])
         return
 
-    def verify_input_files_exist(self) -> None:
+    def _verify_input_files_exist(self) -> None:
         """Raise FileNotFoundError for any set input path that does not exist."""
         input_single = self._SINGLE_PATH_FIELDS - self._OUTPUT_FILES - self._OUTPUT_DIRS
         input_list = self._LIST_PATH_FIELDS - self._OUTPUT_FILE_LISTS
@@ -159,7 +163,7 @@ class Configs:
             self.discharge_files = [os.path.join(d, 'discharge.nc')]
         return
 
-    def verify_output_directories_exist(self) -> None:
+    def _verify_output_directories_exist(self) -> None:
         """Raise NotADirectoryError for any output path whose parent directory does not exist."""
         paths: list[str] = []
         for key in self._OUTPUT_FILES:

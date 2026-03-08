@@ -5,42 +5,88 @@
 [![GitHub repo size](https://img.shields.io/github/repo-size/rileyhales/river-route)](https://github.com/rileyhales/river-route)
 ![License](https://img.shields.io/github/license/rileyhales/river-route)
 
-`river-route` is a Python package for routing catchment runoff volumes through a river network. It provides three
-routers: `Muskingum`, `RapidMuskingum`, and `UnitMuskingum`. Routing calculations use numba JIT-compiled
-solvers with numpy and scipy sparse matrices for fast, compiled-speed performance.
+`river-route` is a Python package for routing runoff and discharge through large river
+networks. It uses numba-compiled kernels and sparse matrix operations for efficient
+Muskingum-family routing at watershed scale.
 
-Please visit https://river-route.hales.app for documentation
+## Router Options
+
+| Router | Use case |
+|---|---|
+| `Muskingum` | Channel routing only (no lateral runoff input). |
+| `RapidMuskingum` | Route runoff directly to channels at each timestep. |
+| `UnitMuskingum` | Transform runoff with a unit hydrograph before channel routing. |
+
+## Installation
 
 ```bash
-# Install from PyPI
 pip install river-route
 ```
 
+For local development:
+
 ```bash
-# Install from source
 git clone https://github.com/rileyhales/river-route.git
 cd river-route
-# Install dependencies using conda
-conda env create -f environment.yml
+conda env create -f environment.yaml
 conda activate rr
-# Install package in editable mode
-python -m pip install -e .
+python -m pip install -e ".[all]"
 ```
+
+## Quick Start
 
 ```python
 import river_route as rr
 
-# Muskingum: channel routing only without lateral inflows. Requires initial discharge state and explicit time parameters.
 (
     rr
-    .Muskingum('examples/config_muskingum.yaml')
+    .RapidMuskingum("examples/config_rapid_muskingum.yaml")
     .route()
 )
 ```
 
-Run the tests by downloading test data and then running Pytest:
+Configuration can be provided by:
+
+1. A YAML/JSON config file path.
+2. Keyword arguments.
+3. Both (kwargs override file values).
+
+Core required inputs are:
+
+- `params_file` (network topology and Muskingum parameters)
+- One runoff source (`qlateral_files` or `grid_runoff_files` + `grid_weights_file`) for transform routers
+- `discharge_dir` (or explicit `discharge_files`)
+
+## CLI
+
+```bash
+rr --help
+rr RapidMuskingum examples/config_rapid_muskingum.yaml
+rr UnitMuskingum examples/config_unit_muskingum.yaml
+```
+
+## Documentation
+
+- Hosted docs: https://river-route.hales.app
+- Tutorials: [`docs/tutorial/`](docs/tutorial/)
+- References: [`docs/references/`](docs/references/)
+- Migration guide: [`docs/migrating/v1-to-v2.md`](docs/migrating/v1-to-v2.md)
+
+Build docs locally:
+
+```bash
+mkdocs serve
+```
+
+## Testing
+
+```bash
+pytest tests -v
+```
+
+Integration tests use external sample data:
 
 ```bash
 ./tests/download_test_data.sh
-pytest tests/ -v -s 
+pytest tests -v -s
 ```

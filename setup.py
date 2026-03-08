@@ -11,7 +11,7 @@ REQUIRES_PYTHON = '>=3.12.0'
 with open('README.md') as f:
     long_description = f.read()
 
-with open(f'./{NAME}/__metadata__.py') as f:
+with open(f'./{NAME}/_metadata.py') as f:
     version_pattern = r'__version__ = [\'"](\d+\.\d+\.\d+)[\'"]'
     VERSION = re.search(version_pattern, f.read()).group(1)
     print(f'Version: {VERSION}')

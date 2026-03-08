@@ -15,6 +15,7 @@ class UnitMuskingum(TransformMuskingum):
     flow by unit hydrograph and channel routing merged at each time step.
 
     Notation used in the code and solvers:
+
     - q_full = q_channel + q_lateral
     - q_channel is the routed flow from Muskingum routing
     - q_lateral is the unit hydrograph convolved runoff transformation

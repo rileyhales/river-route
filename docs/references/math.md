@@ -1,30 +1,18 @@
 # Mathematical Derivations
 
-This page collects the mathematical foundations behind the routing algorithms and unit hydrograph
-transformers in river-route. For implementation details see the [API Documentation](../api.md).
+This page collects the mathematical foundations behind the routing algorithms and unit hydrograph transformers in river-route.
 
 ---
 
 ## Muskingum Routing
 
-### Storage Equation
-
-The Muskingum method models channel storage $S$ as a linear function of inflow $I$ and outflow $Q$:
-
-$$
-S = k \bigl[ x\, I + (1 - x)\, Q \bigr]
-$$
-
-where $k$ is the storage time constant (seconds) and $x$ is a weighting factor ($0 \le x \le 0.5$).
-
-Combining this with the continuity equation $\dfrac{dS}{dt} = I - Q$ and discretizing over a
-time step $\Delta t$ gives the classic Muskingum recursion:
+The Muskingum method models the storage $S$ in a river segment as a linear combination of inflow $I$ and outflow $Q$:
 
 $$
 Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t
 $$
 
-### Routing Coefficients
+Where the coefficients $c_1$, $c_2$, $c_3$ are given by:
 
 $$
 c_1 = \frac{\Delta t / k - 2x}{\Delta t / k + 2(1-x)}
@@ -33,11 +21,6 @@ c_2 = \frac{\Delta t / k + 2x}{\Delta t / k + 2(1-x)}
 \qquad
 c_3 = \frac{2(1-x) - \Delta t / k}{\Delta t / k + 2(1-x)}
 $$
-
-These coefficients satisfy $c_1 + c_2 + c_3 = 1$ for any valid $k$, $x$, $\Delta t$, which
-guarantees mass conservation in the channel routing.
-
----
 
 ## Matrix Formulation
 
@@ -62,9 +45,9 @@ diagonal, nonzero entries only below the diagonal) because $A$ is strictly lower
 This structure allows the system to be solved by
 [forward substitution](forward-substitution.md) without any factorization.
 
-### RapidMuskingum — Direct Lateral Inflow
+### Muskingum Cunge Routing and the RAPID assumption
 
-RapidMuskingum adds a lateral inflow term $Q_l$ directly to each segment. The lateral flow is
+The RapidMuskingum adds a lateral inflow term $Q_l$ directly to each segment. The lateral flow is
 the runoff volume divided by the runoff time step, meaning all runoff enters the channel in the
 interval it is generated (no overland flow delay).
 
@@ -82,25 +65,25 @@ $$
 
 UnitMuskingum combines Muskingum channel routing with unit hydrograph lateral inflow. Discharge
 at each segment is the superposition of channel-routed flow and overland flow transformed
-through a unit hydrograph convolution. Let $Q_l$ denote the [UH convolution](#unit-hydrograph-convolution)).
+through a unit hydrograph convolution. Let $Q_l$ denote the [UH convolution](#unit-hydrograph-convolution).
 
 The channel-routed component $Q_\text{ch}$ is solved separately from $Q_l$:
 
 $$
 \bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{\text{ch},t+1}
-  = c_1\, \bigl(A\, Q_{l,t+1}\bigr)
-  + c_2\, \bigl(A\, Q_{\text{full},t}\bigr)
-  + c_3\, Q_{\text{ch},t}
+= c_1\, \bigl(A\, Q_{l,t+1}\bigr)
++ c_2\, \bigl(A\, Q_{\text{full},t}\bigr)
++ c_3\, Q_{\text{ch},t}
 $$
 
 $$
 Q_{\text{full},t+1} = Q_{\text{ch},t+1} + Q_{l,t+1}
 $$
 
-**Headwater optimization.** Headwater segments (no upstream connections) have no channel inflow,
-so their discharge is entirely the UH convolution output. These segments are excluded from the
-matrix solve, and their outflow enters the reduced system as a known right-hand-side contribution.
-This typically cuts the sparse linear solve size roughly in half.
+Headwater segments (no upstream connections) have no channel inflow, so their discharge is entirely 
+the UH convolution output. These segments are excluded from the matrix solve, and their outflow enters 
+the reduced system as a known right-hand-side contribution. This typically cuts the sparse linear 
+solve size roughly in half.
 
 ---
 

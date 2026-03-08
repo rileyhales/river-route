@@ -1,28 +1,27 @@
 ## Routing Runoff Ensembles
 
-Ensemble simulations are usually 1) multiple simulations, 2) from the same starting state, 3) covering the same time period, and 4) using the same
-model parameters. The runoff projections that are the members of the ensemble are described as iterations, realizations, formulations, or
-perturbations. Routing an ensemble of runoffs has one significant difference compared to routing an individual runoff or a series of runoffs. The
-difference is how the initial and final states are handled. For an individual runoff, the initial state is the same as the final state of the previous
-routing step. In an ensemble simulation, you have many methods to combine the ensemble into a new next state. There are 2 methods for routing an ensemble of
-runoffs in river-route.
+Ensemble routing means running multiple runoff members over the same period using the same
+routing parameters and initial conditions. The main difference from sequential single-member
+routing is state handling:
+
+- In sequential routing, each run initializes from the previous run's final state.
+- In ensemble routing, all members generally start from the same initial state, then member
+  final states are combined into a new initialization state by your chosen method.
+
+There are two common ways to run ensembles in `river-route`.
 
 Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
 
-1. In a loop or in concurrent/parallel jobs, route each member using same initial conditions and routing parameters for each job. Use the member number
-   to make output file names unique and more readily searchable and sortable. Provide all configurations as normal without special considerations. In
-   this situation, you create a new `rr.RapidMuskingum` instance for each member which each read configs and parameter files. However, you can process each
-   member simultaneously which may be faster.
-2. Provide a list of input and output files and specify `runoff_processing_mode=ensemble` in your configs. This will route each member in the order given by the
-   input list, one at a time. Each member will be initialized from the same final state and use the same routing parameters. The final state is still
-   from the last routing step but is the average of the final step across all members, not just the first. In this situation, you create a single
-   instance of `rr.RapidMuskingum`, read configs and parameter files only one time, but the members are processed sequentially which could be slow.
+1. Run each member in a separate job (loop, multiprocessing, cluster workers). This is easiest
+   to parallelize and gives full control over member-specific output paths.
+2. Provide a list of input and output files and set `runoff_processing_mode=ensemble`. Members
+   are routed sequentially from the same initial channel state, and the router sets the next
+   `channel_state` to the mean of member final states.
 
 ## Routing ensemble members simultaneously
 
-Ensemble members are independent of each other and start from the same conditions so they can be computed simultaneously to possibly save time and
-more fully utilize computer capacity. There are many methods for concurrency or parallel processing in Python. This is only one example of how to
-implement it using `multiprocessing`. You will need to write some custom logic to:
+Ensemble members are independent of each other and can be routed simultaneously to reduce wall
+time. The example below uses `multiprocessing`. In production, you will usually add logic to:
 
 1. Set the config variables and routing parameter files
 2. Find all the catchment runoff files, 1 for each member
@@ -56,16 +55,19 @@ if __name__ == '__main__':
 
 ## Customizing initial and final state files
 
-Ensembles are often used for forecast simulations. Forecast lead times are typically several days or weeks long but new forecasts are generated one
-or more times a day. In this case, each day that your route data, you want to initialize at +24 hours from the previous forecast's initial time
-instead of the final time step. To get a final state at a specific time step instead of the final step, you should not provide a `final_channel_state_file`
-value. Instead, write a custom output function which write the routed discharge to disc and also selects values at a specific time step to write to a
-final state file while the values are still in memory. This is the most efficient method since you avoid needing to load and filter the outputs in a
-separate process. Your custom function will need to know the datetime of the next simulation or the number of timesteps after initialization which
-corresponds to your next model run's start time. For more information about this, see the
-[advanced concepts section on custom outputs](advanced.md#customizing-outputs).
+Ensembles are common in forecasting, where you may need the next initialization state at a fixed
+lead time (for example, +24 h) instead of the final routed timestep. In that case, do not rely on
+`channel_state_final_file` alone. Instead, write a custom output function that:
 
-After you have written these custom outputs to disc for each member, you can combine them into a single final state. You could calculate an average
+1. writes routed discharge outputs, and
+2. extracts the specific timestep you want for the next initialization state while data are in memory.
+
+This avoids a second read/filter pass over output files. Your custom function needs to know either
+the target datetime or the timestep offset corresponding to the next forecast cycle. For more
+information, see the [advanced concepts section](advanced.md#customizing-outputs).
+
+After writing these member-specific init files to disk, combine them into a single final state.
+You could calculate an average
 or median of the member's final states, assimilate gauge data with a Kalman filter, or use some other algorithm or machine learning to aggregate the
 individual members' final states.
 

@@ -1,6 +1,6 @@
 # Forward Substitution for River Routing
 
-This page explains the forward substitution algorithm that river-route uses to solve the
+This page explains the forward substitution algorithm that river-route uses to solve the Matrix
 Muskingum routing equations at each time step. For the full mathematical derivation of the
 routing equations, see the [Math Derivations](math.md) page.
 

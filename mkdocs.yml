@@ -15,8 +15,11 @@ theme:
 nav:
   - Home: index.md
   - License: terms.md
-  - API Documentation: api.md
   - Changelog: changelog.md
+  - API Docs:
+      - Router Classes: api/routers.md
+      - Unit Hydrographs: api/unit-hydrographs.md
+      - Tools: api/tools.md
   - References:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md

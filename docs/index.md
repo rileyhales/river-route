@@ -1,83 +1,62 @@
 # River-Route
 
-The `river-route` Python package routes runoff volumes and discharge through river networks using
-numba-accelerated solvers. It is designed for large networks of rivers and catchments.
+`river-route` routes runoff and discharge through large river networks using numba-accelerated Muskingum-family solvers.
 
-## Routers
+## Choose a Router
 
-You have these options for how to do hydrological routing
+| Router           | Description                                                      |
+|------------------|------------------------------------------------------------------|
+| `Muskingum`      | Channel routing only (no lateral inflow).                        |
+| `RapidMuskingum` | Routes lateral runoff directly to channels each runoff interval. |
+| `UnitMuskingum`  | Convolves runoff with a unit hydrograph, then routes in-channel. |
 
-### Channel routing only
+## Quick Start
 
-| Router      | Description                                               |
-|-------------|-----------------------------------------------------------|
-| `Muskingum` | Matrix muskingum channel routing with no lateral inflows. |
-
-### Channel routing with runoff lateral inflows
-
-| Router           | Description                                                                                                                    |
-|------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `RapidMuskingum` | Runoff is treated as a point source in the catchment which all enters the channel during the interval the runoff occurs.       | 
-| `UnitMuskingum`  | Runoff transformed via convolution with user provided unit hydrographs at each catchment then routed in the downstream segment |
-
-## Start Here
-
-1. [Muskingum Channel Routing](tutorial/basics.md)
-2. [Channel Routing with Runoff Transformation](tutorial/unit-hydrograph-routing.md)
-3. [Routing Ensembles](tutorial/routing-ensembles.md)
-4. [Advanced Uses](tutorial/advanced.md)
-
-```commandline
+```bash
 pip install river-route
 ```
 
 ```python
 import river_route as rr
 
-# Most common: route runoff volumes through the network
 (
     rr
-    .RapidMuskingum('/path/to/config.yaml')
+    .RapidMuskingum("/path/to/config.yaml")
     .route()
 )
 ```
 
-## Usage Examples
+Config can be passed as:
 
-Configuration options are passed as a config file path, keyword arguments, or both. Keyword arguments
-override any value in the config file.
+1. A YAML/JSON file path.
+2. Keyword arguments.
+3. Both (keyword arguments override config file values).
 
 ```python
 import river_route as rr
 
-# Option 1 - Config file only
-(
-    rr
-    .RapidMuskingum('/path/to/config.yaml')
-    .route()
-)
-
-# Option 2 - Keyword arguments only
-(
-    rr
-    .RapidMuskingum(**{
-        'params_file': '/path/to/routing_params.parquet',
-        'qlateral_files': '/path/to/catchment_runoff.nc',
-        'discharge_dir': '/path/to/output/',
-    })
-    .route()
-)
-
-# Option 3 - Config file with keyword argument overrides
 (
     rr
     .RapidMuskingum(
-        '/path/to/config.yaml',
-        **{
-            'qlateral_files': '/path/to/catchment_runoff.nc',
-            'discharge_dir': '/path/to/output/',
-        }
+        "/path/to/config.yaml",
+        qlateral_files=["/path/to/catchment_runoff.nc"],
+        discharge_dir="/path/to/output/",
     )
     .route()
 )
 ```
+
+## Start Here
+
+1. [Basics](tutorial/basics.md)
+2. [Unit Hydrographs with Routing](tutorial/unit-hydrograph-routing.md)
+3. [Routing Ensembles](tutorial/routing-ensembles.md)
+4. [Advanced Uses](tutorial/advanced.md)
+
+## Core References
+
+1. [Configuration File](references/config-files.md)
+2. [Input/Output File Schemas](references/io-file-schema.md)
+3. [Time Variables](references/time-options.md)
+4. [Math Derivations](references/math.md)
+5. [Forward Substitution](references/forward-substitution.md)
