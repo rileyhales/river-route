@@ -24,6 +24,7 @@ nav:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-options.md
+      - No Parallelism: references/parallelism.md
       - Math Derivations: references/math.md
       - Forward Substitution: references/forward-substitution.md
       - Test Data: references/test-data.md
