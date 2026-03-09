@@ -9,7 +9,11 @@ adds router-specific keys.
 All routing classes require the following 2 configuration options:
 
 - `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
-- `discharge_dir` - directory where [routed discharge](io-file-schema.md#routed-discharge) output files are written (netCDF, named after input files)
+- One of two options for specifying where the [routed discharge](io-file-schema.md#routed-discharge) output is written
+    - `discharge_dir` - a string path to a directory where outputs are saved based on the names of the inputs
+    - `discharge_files` - list of explicit paths for each output file, one per input file required.
+
+---
 
 `Muskingum` (channel routing only, no lateral inflows) also requires:
 
@@ -30,7 +34,7 @@ All routing classes require the following 2 configuration options:
     - `qlateral_files`, or
     - `grid_runoff_files` plus `grid_weights_file`
 
-## Required Config Keys
+## Required config keys for each router
 
 | Config key                 | Description                      |  Muskingum   |             RapidMuskingum              |              UnitMuskingum              |
 |----------------------------|----------------------------------|:------------:|:---------------------------------------:|:---------------------------------------:|
@@ -57,7 +61,7 @@ All routing classes require the following 2 configuration options:
 | `dt_runoff`                | Runoff data timestep             |              | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
 | `dt_routing`               | Routing computational timestep   | **Required** | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
 
-## Optional Configs with Defaults
+## Optional configs with defaults
 
 | Config Key               | Description                                        | Default                                       |
 |--------------------------|----------------------------------------------------|-----------------------------------------------|

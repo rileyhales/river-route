@@ -18,41 +18,6 @@ Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the b
    are routed sequentially from the same initial channel state, and the router sets the next
    `channel_state` to the mean of member final states.
 
-## Routing ensemble members simultaneously
-
-Ensemble members are independent of each other and can be routed simultaneously to reduce wall
-time. The example below uses `multiprocessing`. In production, you will usually add logic to:
-
-1. Set the config variables and routing parameter files
-2. Find all the catchment runoff files, 1 for each member
-3. Determine unique output names for each so you don't overwrite or corrupt files
-4. Submit each input/output file pair to a parallel processing framework
-
-```python title="Parallel Routing Jobs for Ensemble Members"
-from multiprocessing import Pool
-
-import river_route as rr
-
-params_file = 'routing_parameters.parquet'
-runoff_files = ['catchment_runoff_member_1.nc',
-                'catchment_runoff_member_2.nc', ]
-output_files = ['discharges_member_1.nc',
-                'discharges_member_2.nc', ]
-
-
-def route(input_file: str, output_file: str) -> None:
-    rr.RapidMuskingum(
-        params_file=params_file,
-        qlateral_files=[input_file, ],
-        discharge_files=[output_file, ],
-    ).route()
-
-
-if __name__ == '__main__':
-    with Pool() as pool:
-        pool.starmap(route, zip(runoff_files, output_files))
-```
-
 ## Customizing initial and final state files
 
 Ensembles are common in forecasting, where you may need the next initialization state at a fixed

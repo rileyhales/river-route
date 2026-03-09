@@ -1,11 +1,7 @@
 ## Migrating from v1 to v2
 
-river-route v2 is a major release with breaking changes to the public API, config keys, and input file
-formats. This guide covers everything you need to update.
-
 !!! tip
-    Helper functions for file format conversions are provided in `examples/migrate_v1_to_v2.py`.
-    See [Using the Migration Helpers](#using-the-migration-helpers) for details.
+    For code examples to convert v1 inputs to v2 inputs, check `examples/migrate_v1_to_v2.py`.
 
 ---
 
@@ -21,9 +17,9 @@ The `Muskingum` class has been renamed and is now supplemented with routing opti
 
 ---
 
-## Config Key Renames
+## Config Key Changes
 
-The following config keys have been renamed. Update your YAML/JSON config files accordingly:
+The following config keys have been renamed or removed.
 
 | v1 Key                    | v2 Key                     |
 |---------------------------|----------------------------|
@@ -35,8 +31,7 @@ The following config keys have been renamed. Update your YAML/JSON config files 
 | `runoff_depths_files`     | `grid_runoff_files`        |
 | `weight_table_file`       | `grid_weights_file`        |
 | `var_catchment_volume`    | _(removed)_                |
-
-The `connectivity_file` key has been removed entirely — see [Routing Parameters](#routing-parameters) below.
+| `connectivity_file`       | _(removed)_                |
 
 ---
 
@@ -67,83 +62,12 @@ The `connectivity_file` key has been removed entirely — see [Routing Parameter
 
 **v2** uses a NetCDF file with the following variables on an `index` dimension:
 
-| Variable     | dtype   | Description                                         |
-|--------------|---------|-----------------------------------------------------|
-| `river_id`   | int64   | Catchment ID                                        |
-| `x_index`    | int64   | Column index into the runoff grid                   |
-| `y_index`    | int64   | Row index into the runoff grid                      |
-| `x`          | float64 | Longitude of grid cell center                       |
-| `y`          | float64 | Latitude of grid cell center                        |
-| `area_sqm`   | float64 | Intersection area in square meters                  |
-| `proportion` | float64 | Fraction of catchment area (sums to 1 per river_id) |
-
-The `proportion` column is new in v2 and is required.
-
-### State Files
-
-**v1** state files had two columns: `Q` and `R`.
-
-**v2** state files have a single column: `Q`. The `R` state variable has been removed.
-
----
-
-## Using the Migration Helpers
-
-`examples/migrate_v1_to_v2.py` provides three functions for file format conversions:
-
-### Merge Routing Parameters
-
-Combine your v1 routing params and connectivity files into a single parquet:
-
-```python
-from examples.migrate_v1_to_v2 import merge_routing_params
-
-merge_routing_params('routing_params.parquet', 'connectivity.parquet', 'params_v2.parquet')
-```
-
-This handles legacy column renames (`ds_river_id` → `downstream_river_id`) automatically.
-
-!!! note
-    The merged file must still be **topologically sorted**.
-
-### Convert Grid Weights
-
-Convert a v1 CSV grid weights file to a v2 NetCDF file:
-
-```python
-from examples.migrate_v1_to_v2 import convert_grid_weights
-
-convert_grid_weights('weight_table.csv', 'grid_weights.nc')
-```
-
-If the CSV has an `area_sqm` column but no `proportion` column, the function computes proportions
-automatically.
-
-### Convert State Files
-
-Strip the `R` column from a v1 state file:
-
-```python
-from examples.migrate_v1_to_v2 import convert_state_file
-
-convert_state_file('initial_state.parquet', 'channel_state.parquet')
-```
-
----
-
-## Forward Substitution using Numba
-
-In v2, the routing solution is solved using the forward substitution method with numba JIT-compiled functions for
-significant speed gains. The scipy sparse linear solver (`scipy.sparse.linalg.factorized`) default was removed. 
-Numba is now a required dependency and, as such, you should install with conda.
-
----
-
-## Manual Steps
-
-The migration helpers handle file format conversions, but you will also need to:
-
-1. **Rename config keys** in your YAML/JSON files (see [Config Key Renames](#config-key-renames)).
-2. **Update your Python code** to import and use the new router classes (see [Router Class Changes](#router-class-changes)).
-3. **Topologically sort your routing parameters** if they are not already sorted.
-4. **Install numba** if it is not already in your environment.
+| Variable     | dtype   | Description                                                 |
+|--------------|---------|-------------------------------------------------------------|
+| `river_id`   | int64   | Catchment ID                                                |
+| `x_index`    | int64   | Column index into the runoff grid                           |
+| `y_index`    | int64   | Row index into the runoff grid                              |
+| `x`          | float64 | X (usually longitude) value of grid cell center             |
+| `y`          | float64 | Y (usually latitude) value of grid cell center              |
+| `area_sqm`   | float64 | Cell/polygon intersection area in square meters             |
+| `proportion` | float64 | **New** Fraction of catchment area (sums to 1 per river_id) |

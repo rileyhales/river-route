@@ -24,10 +24,8 @@ nav:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
       - Time Variables: references/time-options.md
-      - No Parallelism: references/parallelism.md
       - Math Derivations: references/math.md
-      - Forward Substitution: references/forward-substitution.md
-      - Test Data: references/test-data.md
+      - No Parallelism: references/parallelism.md
   - Tutorials:
       - Basics: tutorial/basics.md
       - Unit Hydrographs with Routing: tutorial/unit-hydrograph-routing.md
@@ -43,9 +41,10 @@ plugins:
 extra_javascript:
   - https://unpkg.com/katex@0/dist/katex.min.js
   - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
-  - javascripts/katex.js
+  - static/js/katex.js
 extra_css:
   - https://unpkg.com/katex@0/dist/katex.min.css
+  - static/css/custom.css
 markdown_extensions:
   - admonition
   - pymdownx.snippets

@@ -23,6 +23,7 @@
 - Headwater streams are excluded from the matrix solve in `UnitMuskingum`, reducing the system size roughly in half.
 - Progress tracking uses tqdm at the file iteration level for `RapidMuskingum` and `UnitMuskingum`.
 - Increased minimum Python version to 3.12.
+- Add dependency on `numba` for JIT compilation.
 
 ---
 
