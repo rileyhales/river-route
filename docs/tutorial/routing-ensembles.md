@@ -33,8 +33,8 @@ information, see the [advanced concepts section](advanced.md#customizing-outputs
 
 After writing these member-specific init files to disk, combine them into a single final state.
 You could calculate an average
-or median of the member's final states, assimilate gauge data with a Kalman filter, or use some other algorithm or machine learning to aggregate the
-individual members' final states.
+or median of the member's final states, assimilate gauge data with a Kalman filter, or use some
+other algorithm or machine learning to aggregate the individual members' final states.
 
 ```python title="Custom Outputs for Ensemble Member Init Files"
 import glob

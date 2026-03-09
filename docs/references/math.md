@@ -186,7 +186,7 @@ $$
 ### Derivation
 
 UnitMuskingum combines Muskingum channel routing with unit hydrograph lateral inflow. The unit hydrograph shape is developed
-in a way that accounts for all the attenuation and travel time during the overland flow process. Thus we cannot directly
+in a way that accounts for all the attenuation and travel time during the overland flow process. Thus, we cannot directly
 add it to the equation using the $c_4$ term as in the Muskingum Cunge equation because additional attenuation and travel time
 will be applied. Instead, a unique method for solving uses the superposition principle where the unit hydrograph convolution
 discharge is superimposed on the routed discharge so the signal of the runoff transformation is preserved. In this form,
@@ -302,9 +302,12 @@ This is optimal — every edge is visited exactly once per time step.
 
 ## References
 
-- HEC-HMS Users Manual introduction to Muskingum Model (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model]
-- HEC-HMS Users Manual introduction to Muskingum Cunge Model (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model]
-- HEC-HMS Users Manual introduction to Unit Hydrographs (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts]
+- HEC-HMS Users Manual introduction to Muskingum Model 
+  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model]
+- HEC-HMS Users Manual introduction to Muskingum Cunge Model 
+  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model]
+- HEC-HMS Users Manual introduction to Unit Hydrographs 
+  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts]
 - David, C. H. (2011) River Network Routing on the NHDPlus Dataset *Journal of Hydrometeorology* [doi:10.1175/2011JHM1345.1](https://doi.org/10.1175/2011JHM1345.1)
 - NRCS (2010). *National Engineering Handbook*, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture. 
 - Wikipedia: [Triangular matrix — Forward substitution](https://en.wikipedia.org/wiki/Triangular_matrix#Forward_substitution).

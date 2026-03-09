@@ -37,9 +37,10 @@ graph TD
     Z --> AA[log timing]
 ```
 
-**Muskingum** reads time parameters directly from the config and runs a single routing pass for a fixed number of output steps. 
-**TransformMuskingum** (used by `RapidMuskingum` and `UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's
-date array, and optionally resamples output to a coarser discharge timestep.
+**Muskingum** reads time parameters directly from the config and runs a single routing pass for
+a fixed number of output steps. **TransformMuskingum** (used by `RapidMuskingum` and
+`UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's date
+array, and optionally resamples output to a coarser discharge timestep.
 
 ## Finding Inputs and Config Files at Runtime
 
@@ -82,15 +83,15 @@ m = (
 
 ## Customizing Outputs
 
-You can override the default function used by `river-route` when writing routed flows to disk. The default function writes 
-discharge to netCDF.
+You can override the default function used by `river-route` when writing routed flows to disk.
+The default function writes discharge to netCDF.
 
 A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
-You can override the `write_discharges` method directly in your code or use the `set_write_discharges` method. Your custom
-function must accept exactly 4 arguments:
+You can override the `write_discharges` method directly in your code or use the
+`set_write_discharges` method. Your custom function must accept exactly 4 arguments:
 
 1. `dates`: datetime array for rows in the discharge array.
 2. `discharge_array`: routed discharge array with shape `(time, river_id)`.

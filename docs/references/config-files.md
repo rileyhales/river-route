@@ -81,8 +81,8 @@ All routing classes require the following 2 configuration options:
 
 ## Example Configuration YAMLs
 
-The general template in YAML format lists all keys with comments. Template files for specific routers are available in the examples directory
-`config_muskingum.yaml`, `config_rapid_muskingum.yaml`, `config_unit_muskingum.yaml`.
+The general template in YAML format lists all keys with comments. Template files for specific
+routers are available in the examples directory `config_muskingum.yaml`, `config_rapid_muskingum.yaml`, `config_unit_muskingum.yaml`.
 
 ### General Config File
 

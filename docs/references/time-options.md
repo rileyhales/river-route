@@ -2,9 +2,12 @@
 
 Routing simulations have four different time steps, all given in seconds.
 
-- `dt_routing`: The routing computation step. This is the dt of the Muskingum equation and the only one you need to specify.
-- `dt_runoff`: Interval between runoff inputs. If you don't provide it, it will be identified when the runoff file is opened.
-- `dt_discharge`: interval over which to average discharge to write to disc. Must be greater than or equal to `dt_runoff`.
+- `dt_routing`: The routing computation step. This is the dt of the Muskingum equation and the
+  only one you need to specify.
+- `dt_runoff`: Interval between runoff inputs. If you don't provide it, it will be identified
+  when the runoff file is opened.
+- `dt_discharge`: interval over which to average discharge to write to disc. Must be greater
+  than or equal to `dt_runoff`.
 - `dt_total`: total simulation duration.
 
 The most important time step is `dt_routing`. All other time steps are derived from this and the runoff inputs.
@@ -13,7 +16,8 @@ The following rules apply:
 
 1. You must route each runoff increment at least 1 time so `dt_routing` must be less than or equal to `dt_runoff`.
 2. `dt_routing` must be an integer divisor of `dt_runoff` because runoff distributions won't be resampled.
-3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge outputs are averaged over runoff intervals.
+3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge outputs are
+   averaged over runoff intervals.
 4. `dt_total` is equal to `dt_runoff` multiplied by the number of runoff time steps. Recession routing is not available.
 
 ## Router Defaults

@@ -6,7 +6,8 @@
 
 - Replaced `Muskingum` class with 3 separate classes `Muskingum`, `RapidMuskingum`, and `UnitMuskingum`.
 - New class `Muskingum` is channel routing only with no runoff-transformation.
-- New class `RapidMuskingum` is a reimplementation of the previous Muskingum class with routing and runoff transformation.
+- New class `RapidMuskingum` is a reimplementation of the previous Muskingum class with routing
+  and runoff transformation.
 - New class `UnitMuskingum` is a new implementation of unit hydrograph runoff transformation and channel routing.
 - Introduced `Configs` dataclass replacing the untyped config dictionary to centralize and validate configs.
 - Merged `connectivity_file` into `params_file` (single-file network definition).
@@ -17,13 +18,14 @@
 - Expanded `runoff.py` functions for Voronoi diagrams and grid weight computations.
 - Renamed numerous config keys (see migration guide).
 - Removed RAPID conversion utilities.
-- Added new documentation tutorials for channel routing, unit hydrograph routing, watershed preparation, and UH kernel generation.
-- Routing now uses numba JIT-compiled forward substitution for solving the Muskingum linear system. Numba is a required dependency.
-- Removed scipy sparse linear solver (`scipy.sparse.linalg.factorized`) fallback from all routers.
+- Added new documentation tutorials for channel routing, unit hydrograph routing, watershed
+  preparation, and UH kernel generation.
+- Routing now uses numba JIT-compiled forward substitution for solving the Muskingum linear
+  system, replacing the scipy sparse linear solver.
 - Headwater streams are excluded from the matrix solve in `UnitMuskingum`, reducing the system size roughly in half.
 - Progress tracking uses tqdm at the file iteration level for `RapidMuskingum` and `UnitMuskingum`.
 - Increased minimum Python version to 3.12.
-- Add dependency on `numba` for JIT compilation.
+- Added dependency on `numba`.
 
 ---
 

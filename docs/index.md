@@ -59,4 +59,4 @@ import river_route as rr
 2. [Input/Output File Schemas](references/io-file-schema.md)
 3. [Time Variables](references/time-options.md)
 4. [Math Derivations](references/math.md)
-5. [Forward Substitution](references/forward-substitution.md)
+5. [Parallelism](references/parallelism.md)

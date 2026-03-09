@@ -11,11 +11,11 @@ Muskingum-family routing at watershed scale.
 
 ## Router Options
 
-| Router | Use case |
-|---|---|
-| `Muskingum` | Channel routing only (no lateral runoff input). |
-| `RapidMuskingum` | Route runoff directly to channels at each timestep. |
-| `UnitMuskingum` | Transform runoff with a unit hydrograph before channel routing. |
+| Router           | Use case                                                        |
+|------------------|-----------------------------------------------------------------|
+| `Muskingum`      | Channel routing only (no lateral runoff input).                 |
+| `RapidMuskingum` | Route runoff directly to channels at each timestep.             |
+| `UnitMuskingum`  | Transform runoff with a unit hydrograph before channel routing. |
 
 ## Installation
 
@@ -68,8 +68,6 @@ rr UnitMuskingum examples/config_unit_muskingum.yaml
 ## Documentation
 
 - Hosted docs: https://river-route.hales.app
-- Tutorials: [`docs/tutorial/`](docs/tutorial/)
-- References: [`docs/references/`](docs/references/)
 - Migration guide: [`docs/migrating/v1-to-v2.md`](docs/migrating/v1-to-v2.md)
 
 Build docs locally:

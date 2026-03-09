@@ -279,7 +279,7 @@ def runoff_to_qlateral(
         )
         time_index = ds[var_t].to_numpy()
 
-    # Build sparse weight matrix W: (n_rivers, n_unique_points)
+    # Build sparse weight matrix weights: (n_rivers, n_unique_points)
     point_idx = (
         weight_df[['x_index', 'y_index']]
         .merge(unique_indexes, on=['x_index', 'y_index'], how='left')
@@ -289,13 +289,13 @@ def runoff_to_qlateral(
     river_id_to_row = pd.Series(np.arange(len(river_ids_ordered)), index=river_ids_ordered)
     river_idx = river_id_to_row.loc[weight_df[var_river_id].values].values
 
-    W = scipy.sparse.csr_matrix(
+    weights = scipy.sparse.csr_matrix(
         (weight_df['proportion'].values * conversion_factor, (river_idx, point_idx)),
         shape=(len(river_ids_ordered), len(unique_indexes)),
     )
 
     # Area-weighted aggregation via sparse matrix multiply, then free the grid data
-    qlateral = np.asarray(W @ runoff_raw.T).T  # (time, n_rivers)
+    qlateral = np.asarray(weights @ runoff_raw.T).T  # (time, n_rivers)
     del runoff_raw
 
     catchment_area = (
