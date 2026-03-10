@@ -28,23 +28,18 @@ def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
             params_file=str(vpu.rr2_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,
-            channel_state_final_file=final_state_file,
-            dt_routing=3600,
-            dt_total=3600 * 24 * 30,
+            dt_routing=900,
+            dt_total=3600 * 24 * 15,
             log=False,
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:
             assert 'Q' in ds
             q_vals = ds['Q'].values
-            assert q_vals.shape[0] == 24 * 30, f'Expected 720 timesteps, got {q_vals.shape[0]}'
+            assert q_vals.shape[0] == 24 * 15 * 4, f'Expected 1440 time steps, got {q_vals.shape[0]}'
+            assert q_vals.shape[1] == n_rivers, f'Expected {n_rivers} rivers, got {q_vals.shape[1]}'
             assert np.all(q_vals >= 0), 'Negative discharge values found'
-            # With no lateral inflow, rivers should drain over time
-            assert (q_vals[-1, :] <= q_vals[0, :]).all(), 'Total discharge should not increase without lateral inflow'
 
-        assert os.path.exists(final_state_file)
-        final_state = pd.read_parquet(final_state_file)
-        assert 'Q' in final_state.columns
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     return

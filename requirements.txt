@@ -1,13 +1,12 @@
-fastparquet
+dask
 geopandas
-netCDF4
+netcdf4
 networkx
 numba
 numpy
 pandas
-PyYAML
+pyyaml
 scipy
 shapely
 tqdm
 xarray
-zarr

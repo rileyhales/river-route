@@ -3,7 +3,6 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.12
-  - fastparquet
   - geopandas
   - netcdf4
   - networkx
@@ -15,10 +14,14 @@ dependencies:
   - shapely
   - tqdm
   - xarray
-  - zarr
+  # enable optional backends/features in xarray
+  - dask
+  # for tests
+  - pytest
   # in development
   - pandas-stubs
   - scipy-stubs
+  - setuptools
   # for documentation
   - mkdocs<2
   - mkdocs-material
