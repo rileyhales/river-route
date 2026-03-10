@@ -1,1 +1,9 @@
 *.egg-info
+.idea/
+*.zip
+*.tar.gz
+tests/data/
+site
+.cache
+__pycache__/
+.DS_Store

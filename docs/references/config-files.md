@@ -1,59 +1,109 @@
 ## Configuration File
 
-`river-route` computations are controlled by several variables. You can pass these variables as keyword arguments to the
-corresponding functions or provide a path to a configuration file. Supported file formats for config files are YAML or
-JSON. Config files specify the following parameters:
-
-1. Paths to input and output files
-2. Options to control how the routing is performed
-3. Options to control the numerical solver and tolerances
-4. Information about the structure of the input and output files if non-standard
-5. Logging parameters
+`river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
+The three routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`) share a set of base config keys and each
+adds router-specific keys.
 
 ## Minimum Required Inputs
 
-Every `river-route` process needs at least the following 4 variables
+All routing classes require the following 2 configuration options:
 
-- `routing_params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
-- `connectivity_file` - path to the river network [connectivity file](io-file-schema.md#connectivity-file) (parquet)
-- `catchment_volumes_file` - path to the prepared [catchment volumes file](io-file-schema.md#catchment-volumes-or-runoff-depths) (netCDF)
-- `outflow_file` - path where the [routed flows](io-file-schema.md#routed-discharge) output file will be saved (netCDF)
+- `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
+- One of two options for specifying where the [routed discharge](io-file-schema.md#routed-discharge) output is written
+    - `discharge_dir` - a string path to a directory where outputs are saved based on the names of the inputs
+    - `discharge_files` - list of explicit paths for each output file, one per input file required.
 
-## Example YAML File
+---
 
-An example yaml file is given below with the default values prepopulated where possible.
+`Muskingum` (channel routing only, no lateral inflows) also requires:
 
-```yaml title="Config File Example"
+- `channel_state_init_file` - parquet state file to initialize discharge
+- `dt_routing` - routing timestep in seconds
+- `dt_total` - total simulation duration in seconds
+
+`RapidMuskingum` also requires:
+
+- one water input source:
+    - `qlateral_files`, or
+    - `grid_runoff_files` plus `grid_weights_file`
+
+`UnitMuskingum` also requires:
+
+- `uh_kernel_file` - pre-computed scipy sparse npz kernel
+- one water input source:
+    - `qlateral_files`, or
+    - `grid_runoff_files` plus `grid_weights_file`
+
+## Required config keys for each router
+
+| Config key                 | Description                      |  Muskingum   |             RapidMuskingum              |              UnitMuskingum              |
+|----------------------------|----------------------------------|:------------:|:---------------------------------------:|:---------------------------------------:|
+| **core**                   |                                  |              |                                         |                                         |
+| `params_file`              | Routing parameters parquet.      | **Required** |              **Required**               |              **Required**               |
+| **state**                  |                                  |              |                                         |                                         |
+| `channel_state_init_file`  | Path to initial channel state    | **Required** |         optional - default to 0         |         optional - default to 0         |
+| `channel_state_final_file` | Path to save final channel state |   optional   |                optional                 |                optional                 |
+| **output**                 |                                  |              |                                         |                                         |
+| `discharge_dir`            | Directory for output  files      |  _Option 1_  |               _Option 1_                |               _Option 1_                |
+| `discharge_files`          | Explicit output paths            |  _Option 2_  |               _Option 2_                |               _Option 2_                |
+| **input data**             |                                  |              |                                         |                                         |
+| `qlateral_files`           | Per-catchment runoff time series |              |               _Option 1_                |               _Option 1_                |
+| `grid_runoff_files`        | Gridded runoff depths            |              |               _Option 2_                |               _Option 2_                |
+| `grid_weights_file`        | Converts depth grids to qlateral |              |               _Option 2_                |               _Option 2_                |
+| **unit hydrograph**        |                                  |              |                                         |                                         |
+| `uh_kernel_file`           | Pre-computed convolution kernel  |              |                                         |              **Required**               |
+| `uh_state_init_file`       | Parquet with initial UH state    |              |                                         |                optional                 |
+| `uh_state_final_file`      | Path to save final UH state      |              |                                         |                optional                 |
+| **time**                   |                                  |              |                                         |                                         |
+| `start_datetime`           | Simulation start date            |   optional   |                                         |                                         |
+| `dt_total`                 | Total simulation duration        | **Required** | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+| `dt_discharge`             | Output timestep                  |   optional   | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+| `dt_runoff`                | Runoff data timestep             |              | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+| `dt_routing`               | Routing computational timestep   | **Required** | optional - [time docs](time-options.md) | optional - [time docs](time-options.md) |
+
+## Optional configs with defaults
+
+| Config Key               | Description                                        | Default                                       |
+|--------------------------|----------------------------------------------------|-----------------------------------------------|
+| `log`                    | Enable or disable logging                          | `True`                                        |
+| `progress_bar`           | Show tqdm progress bar                             | `True`                                        |
+| `log_level`              | Logger level, defaults to between INFO and WARNING | `'PROGRESS'`                                  |
+| `log_stream`             | `'stdout'` or a file path                          | `'stdout'`                                    |
+| `log_format`             | Python logging format string                       | `'%(levelname)s - %(asctime)s - %(message)s'` |
+| `var_river_id`           | River ID dimension name in files                   | `'river_id'`                                  |
+| `var_discharge`          | Discharge variable name in output                  | `'Q'`                                         |
+| `var_grid_runoff`        | Runoff variable name in `grid_runoff_files`        | `'ro'`                                        |
+| `var_x`                  | X-dimension name in depth grids                    | `'x'`                                         |
+| `var_y`                  | Y-dimension name in depth grids                    | `'y'`                                         |
+| `var_t`                  | Time dimension name in depth grids                 | `'time'`                                      |
+| `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`   | `'incremental'`                               |
+| `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs   | `'sequential'`                                |
+
+## Example Configuration YAMLs
+
+The general template in YAML format lists all keys with comments. Template files for specific
+routers are available in the examples directory `config_muskingum.yaml`, `config_rapid_muskingum.yaml`, `config_unit_muskingum.yaml`.
+
+### General Config File
+
+```yaml title="config.yaml"
 {% include-markdown "../../examples/config.yaml" %}
 ```
 
-## Config Options Table
+### Muskingum Config File
 
-The following table is a complete list of all configuration options and their purpose.
+```yaml title="config_muskingum.yaml"
+{% include-markdown "../../examples/config_muskingum.yaml" %}
+```
 
-| Parameter Name         | Required | Type      | Group               | Description                                                            |                                                                                
-|------------------------|----------|-----------|---------------------|------------------------------------------------------------------------|
-| routing_params_file    | True     | File Path | Required Input      | Path to the routing parameters parquet file.                           |                                                
-| connectivity_file      | True     | File Path | Required Input      | Path to the network connectivity parquet file.                         |                                              
-| catchment_volumes_file | True     | File Path | Required Input      | Path to the netCDF with catchment volume values to be routed.          |
-| runoff_depths_files    | True     | File Path | Required Input      | List of paths to netCDF files with runoff depths to be routed.         |
-| weight_table_file      | True     | File Path | Required Input      | Path to the weight table file.                                         |
-| outflow_file           | True     | File Path | Required Input      | Path where the outflows netCDF file should be saved.                   |
-| input_type             | False    | String    | Compute Options     | Specify if runoff files are "sequential" time steps or an "ensemble"   |
-| runoff_type            | False    | String    | Compute Options     | Specify if runoff files are "incremental" or "cumulative"              |
-| dt_routing             | True     | Integer   | Compute Options     | Time interval in seconds between routing computations.                 |                              
-| dt_outflows            | False    | Integer   | Compute Options     | Time interval in seconds between writing flows to disc.                |
-| solver_atol            | False    | Float     | Compute Options     | Absolute tolerance for the solver.                                     |
-| initial_state_file     | False    | File Path | Initialization Data | Path to the initial state file.                                        |                                                     
-| final_state_file       | False    | File Path | Initialization Data | Path where the final state file should be saved.                       |                                    
-| log                    | False    | Boolean   | Logging Options     | Whether to enable logging.                                             |                                       
-| progress_bar           | False    | Boolean   | Logging Options     | Whether to display a progress bar when routing                         |
-| log_level              | False    | String    | Logging Options     | The logging level to print: DEBUG, INFO, CRITICAL, WARNING             |
-| log_stream             | False    | String    | Logging Options     | The destination for log messages: 'stdout', 'stderr', or a file path.  |
-| var_x                  | False    | String    | File Management     | Name of the variable in all files that contains the x coordinates.     |
-| var_y                  | False    | String    | File Management     | Name of the variable in all files that contains the y coordinates.     |
-| var_t                  | False    | String    | File Management     | Name of the variable in all files that contains the time values.       |
-| var_runoff_depths      | False    | String    | File Management     | Name of the variable in files containing runoff depths                 |
-| var_catchment_volumes  | False    | String    | File Management     | Name of the variable in the catchment volumes file containing volumes. |
-| var_river_id           | False    | String    | File Management     | Name of the variable in all files that contains the river IDs.         |
-| var_outflow            | False    | String    | File Management     | Name of the variable in the outflows file that contains the outflows.  |
+### Rapid Muskingum Config File
+
+```yaml title="config_rapid_muskingum.yaml"
+{% include-markdown "../../examples/config_rapid_muskingum.yaml" %}
+```
+
+### Unit Muskingum Config File
+
+```yaml title="config_unit_muskingum.yaml"
+{% include-markdown "../../examples/config_unit_muskingum.yaml" %}
+```

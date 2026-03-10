@@ -1,19 +1,30 @@
 name: rr
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - python>=3.12
-  - dask
-  - fastparquet
-  - matplotlib
-  - natsort
+  - geopandas
   - netcdf4
   - networkx
+  - numba
   - numpy
   - pandas
   - pyyaml
   - scipy
+  - shapely
   - tqdm
   - xarray
-  - zarr
+  # enable optional backends/features in xarray
+  - dask
+  # for tests
+  - pytest
+  # in development
+  - pandas-stubs
+  - scipy-stubs
+  - setuptools
+  # for documentation
+  - mkdocs<2
+  - mkdocs-material
+  - mkdocstrings
+  - mkdocstrings-python
+  - mkdocs-include-markdown-plugin

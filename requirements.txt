@@ -1,13 +1,12 @@
 dask
-fastparquet
-matplotlib
-natsort
+geopandas
 netcdf4
 networkx
+numba
 numpy
 pandas
 pyyaml
 scipy
+shapely
 tqdm
 xarray
-zarr

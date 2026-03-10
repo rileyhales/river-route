@@ -1,6 +1,6 @@
 site_name: River Route
 site_url: https://river-route.code.hales.app
-copyright: Copyright &copy; 2023-2025 Dr Riley Hales. All rights reserved.
+copyright: Copyright &copy; 2023-2026 Dr Riley Hales. All rights reserved.
 theme:
   name: material
   palette:
@@ -14,25 +14,43 @@ theme:
     - toc.follow
 nav:
   - Home: index.md
-  - API Documentation: api.md
+  - License: terms.md
+  - Changelog: changelog.md
+  - API Docs:
+      - Router Classes: api/routers.md
+      - Unit Hydrographs: api/unit-hydrographs.md
+      - Tools: api/tools.md
   - References:
       - The Config File: references/config-files.md
       - File Schemas: references/io-file-schema.md
-      - Time Variables: references/time-variables.md
+      - Time Variables: references/time-options.md
+      - Math Derivations: references/math.md
+      - No Parallelism: references/parallelism.md
   - Tutorials:
-      - Basic Walkthrough: tutorial/basic-tutorial.md
-      - Routing Ensembles: tutorial/routing-ensembles.md
-      - Advanced Concepts: tutorial/advanced-tutorial.md
-  - License: terms.md
+      - Basics: tutorial/basics.md
+      - Unit Hydrographs with Routing: tutorial/unit-hydrograph-routing.md
+      - Routing Runoff Ensemble: tutorial/routing-ensembles.md
+      - Advanced Uses: tutorial/advanced.md
+  - Migration Guides:
+      - v1 to v2: migrating/v1-to-v2.md
 plugins:
   - search
   - mkdocstrings
   - include-markdown:
       comments: false
+extra_javascript:
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+  - static/js/katex.js
+extra_css:
+  - https://unpkg.com/katex@0/dist/katex.min.css
+  - static/css/custom.css
 markdown_extensions:
   - admonition
   - pymdownx.snippets
   - pymdownx.details
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

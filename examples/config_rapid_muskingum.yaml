@@ -1,9 +1,7 @@
-# river-route configuration template
-# Routers: Muskingum | RapidMuskingum | UnitMuskingum
+# RapidMuskingum config template — direct runoff-to-channel routing
 
-# required — all routers
+# required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x
-
 # where to save the outputs
 # option 1: a directory where the output files will be named based on the input file routed
 discharge_dir: ''                # directory for output netCDF files (named after input files)
@@ -11,43 +9,37 @@ discharge_dir: ''                # directory for output netCDF files (named afte
 discharge_files:                 # optional: explicit output paths instead of discharge_dir
   - ''
 
-# runoff input — RapidMuskingum, UnitMuskingum (choose one option)
-# option 1: pre-aggregated per-catchment lateral inflows
-# qlateral_files:                 # netCDF: dims (time, river_id); var: qlateral
-#  - ''
+# runoff input — choose one of two choices
+# option 1: pre-aggregated per-catchment volumes (m³)
+qlateral_files:                  # netCDF: dims (time, river_id); var: qlateral
+  - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 # grid_runoff_files:
 #   - ''
 # grid_weights_file: ''          # required with grid_runoff_files
 
-# unit hydrograph — UnitMuskingum only
-# uh_kernel_file: ''    # scipy sparse npz: shape (n_basins, n_timesteps)
-# uh_state_init_file: ''
-# uh_state_final_file: ''
-
-# channel state — optional, all routers
+# channel state — optional
 channel_state_init_file: ''      # parquet: column Q; omit to default to zero
 channel_state_final_file: ''     # omit to skip writing
 
-# time — required for Muskingum; auto-detected for RapidMuskingum, UnitMuskingum
+# time — optional; auto-detected from input file if omitted
 dt_routing: 0                    # seconds; routing sub-step (defaults to dt_runoff)
 dt_total: 0                      # seconds; total duration (defaults to full input)
 dt_discharge: 0                  # seconds; output timestep (defaults to dt_runoff)
-dt_runoff: 0                     # seconds; auto-detected from input file if omitted
 start_datetime: '1970-01-01'     # ISO date for output timestamps
 
-# compute options — optional
-runoff_processing_mode: 'sequential'   # sequential | ensemble
+# compute options
 grid_accumulation_type: 'incremental' # incremental | cumulative
+runoff_processing_mode: 'sequential'   # sequential | ensemble
 
-# logging — optional
+# logging
 log: true
 progress_bar: true
 log_level: 'PROGRESS'            # DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL
 log_stream: 'stdout'             # stdout | /path/to/logfile.log
 log_format: '%(levelname)s - %(asctime)s - %(message)s'
 
-# variable names — optional; override if your files use different names
+# variable names
 var_river_id: 'river_id'
 var_discharge: 'Q'
 var_grid_runoff: 'ro'

@@ -1,13 +1,24 @@
-import river_route.runoff
-import river_route.tools
-import river_route.metrics
-from river_route._Muskingum import Muskingum
-
-from .__metadata__ import __version__, __author__, __url__
+from . import metrics
+from . import runoff
+from . import tools
+from . import uhkernels
+from ._metadata import __version__, __author__, __url__
+from .routers import Configs
+from .routers import Muskingum
+from .routers import RapidMuskingum
+from .routers import UnitMuskingum
 
 __all__ = [
+    # router classes
+    'Configs',
     'Muskingum',
+    'RapidMuskingum',
+    'UnitMuskingum',
 
+    # uhkernel creating classes
+    'uhkernels',
+
+    # modules
     'runoff',
     'tools',
     'metrics',
