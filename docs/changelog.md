@@ -2,6 +2,10 @@
 
 ---
 
+### [v2.0.1](https://github.com/rileyhales/river-route/tree/v2.0.1) — 2026-03-10
+
+- Adds pyarrow to dependencies which is included by conda installs as a pandas dependency but not in pip.
+
 ### [v2.0.0](https://github.com/rileyhales/river-route/tree/v2.0.0) — 2026-03-09
 
 - Replaced `Muskingum` class with 3 separate classes `Muskingum`, `RapidMuskingum`, and `UnitMuskingum`.
