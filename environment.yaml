@@ -16,6 +16,7 @@ dependencies:
   - xarray
   # enable optional backends/features in xarray
   - dask
+  - pyarrow
   # for tests
   - pytest
   # in development

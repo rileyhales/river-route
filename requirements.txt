@@ -1,4 +1,3 @@
-dask
 geopandas
 netcdf4
 networkx
@@ -10,3 +9,6 @@ scipy
 shapely
 tqdm
 xarray
+# optional dependencies that pip doesn't automatically include
+dask
+pyarrow
