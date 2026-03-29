@@ -48,10 +48,10 @@ class UnitMuskingum(TransformMuskingum):
             # Store CSC arrays for numba kernel
             self._a_inner_indptr = self.A_inner.indptr
             self._a_inner_indices = self.A_inner.indices
-            self._a_inner_data = np.ascontiguousarray(self.A_inner.data.astype(np.float64, copy=False))
+            self._a_inner_data = np.ascontiguousarray(self.A_inner.data.astype(np.float32, copy=False))
             self._a_hw_indptr = self.A_hw_to_inner.indptr
             self._a_hw_indices = self.A_hw_to_inner.indices
-            self._a_hw_data = np.ascontiguousarray(self.A_hw_to_inner.data.astype(np.float64, copy=False))
+            self._a_hw_data = np.ascontiguousarray(self.A_hw_to_inner.data.astype(np.float32, copy=False))
 
             self.logger.info(
                 f'Headwater split: {len(self.hw_idx)} headwater, {len(self.inner_idx)} inner '
@@ -72,10 +72,10 @@ class UnitMuskingum(TransformMuskingum):
     def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
         """Route with UH lateral superimposed on Muskingum channel routing."""
         self.logger.debug('Precomputing UH convolution for full timeseries')
-        convolved_lateral = np.ascontiguousarray(self._uh.convolve(qlateral), dtype=np.float64)
+        convolved_lateral = np.ascontiguousarray(self._uh.convolve(qlateral), dtype=np.float32)
 
-        discharge_array = np.zeros((self.num_runoff_steps, self.river_ids.shape[0]), dtype=np.float64)
-        q_ch_inner = self.channel_state[self.inner_idx].astype(np.float64, copy=True)
+        discharge_array = np.zeros((self.num_runoff_steps, self.river_ids.shape[0]), dtype=np.float32)
+        q_ch_inner = self.channel_state[self.inner_idx].astype(np.float32, copy=True)
         q_full_inner = q_ch_inner.copy()
 
         self.logger.debug('Performing routing computation iterations')
@@ -92,7 +92,7 @@ class UnitMuskingum(TransformMuskingum):
         )
 
         # Recombine final state
-        q_final = np.empty(self.river_ids.shape[0], dtype=np.float64)
+        q_final = np.empty(self.river_ids.shape[0], dtype=np.float32)
         q_final[self.hw_idx] = convolved_lateral[-1][self.hw_idx]
         q_final[self.inner_idx] = q_full_inner
         return q_final, discharge_array

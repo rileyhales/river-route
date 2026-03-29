@@ -35,13 +35,13 @@ class UnitHydrograph:
     state: FloatArray  # (n_kernel_steps, n_basins)
 
     def __init__(self, kernel_file: PathInput) -> None:
-        self.kernel = scipy.sparse.load_npz(kernel_file).toarray().astype(np.float64, copy=False)
+        self.kernel = scipy.sparse.load_npz(kernel_file).toarray().astype(np.float32, copy=False)
         if self.kernel.ndim != 2:
             raise ValueError('kernel must be a 2D array')
         self.reset_state()
 
     def reset_state(self) -> None:
-        self.state = np.zeros_like(self.kernel, dtype=np.float64)
+        self.state = np.zeros_like(self.kernel, dtype=np.float32)
         return
 
     def set_state(self, path: PathInput) -> Self:
@@ -50,7 +50,7 @@ class UnitHydrograph:
 
         The file should have shape (n_basins, n_kernel_steps) — basins as rows.
         """
-        _state = pd.read_parquet(path).T.to_numpy(dtype=np.float64, copy=True)
+        _state = pd.read_parquet(path).T.to_numpy(dtype=np.float32, copy=True)
         if _state.shape != self.kernel.shape:
             raise ValueError(f'state shape {_state.shape} does not match kernel shape {self.kernel.shape}')
         self.state = np.ascontiguousarray(_state)

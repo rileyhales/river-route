@@ -120,10 +120,10 @@ class Muskingum:
         state_file = self.cfg.channel_state_init_file
         if not state_file:
             self.logger.warning('channel_state_init_file not provided. Defaulting to zero initial conditions')
-            self.channel_state = np.zeros(self.A.shape[0], dtype=np.float64)
+            self.channel_state = np.zeros(self.A.shape[0], dtype=np.float32)
             return
         self.logger.debug('Reading Initial State from Parquet')
-        self.channel_state = pd.read_parquet(state_file).values.flatten().astype(np.float64, copy=False)
+        self.channel_state = pd.read_parquet(state_file).values.flatten().astype(np.float32, copy=False)
         return
 
     def _write_final_state(self) -> None:
@@ -155,8 +155,8 @@ class Muskingum:
 
         self.river_ids = df[self.cfg.var_river_id].to_numpy(dtype=np.int64, copy=False)
         downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
-        self.k = df['k'].to_numpy(dtype=np.float64, copy=False)
-        self.x = df['x'].to_numpy(dtype=np.float64, copy=False)
+        self.k = df['k'].to_numpy(dtype=np.float32, copy=False)
+        self.x = df['x'].to_numpy(dtype=np.float32, copy=False)
 
         river_id_set = set(self.river_ids.tolist())
         downstream_ids = {d for d in downstream_river_ids.tolist() if d > 0}
@@ -275,8 +275,8 @@ class Muskingum:
             )
 
         n = self.A.shape[0]
-        discharge_array = np.zeros((num_output_steps, n), dtype=np.float64)
-        q_t = q_init.astype(np.float64, copy=True)
+        discharge_array = np.zeros((num_output_steps, n), dtype=np.float32)
+        q_t = q_init.astype(np.float32, copy=True)
 
         muskingum_route(
             self._csc_indptr, self._csc_indices, self._lhs_off_data,

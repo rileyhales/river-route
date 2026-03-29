@@ -14,8 +14,8 @@ def muskingum_route(
 ):
     """Full Muskingum channel-only routing loop."""
     n = len(q_t)
-    rhs = np.empty(n, dtype=np.float64)
-    interval_sum = np.empty(n, dtype=np.float64)
+    rhs = np.empty(n, dtype=np.float32)
+    interval_sum = np.empty(n, dtype=np.float32)
     inv_nrpo = 1.0 / num_routing_per_output
 
     for output_step in range(num_output_steps):
@@ -55,8 +55,8 @@ def rapid_route(
 ):
     """Full RapidMuskingum routing loop with lateral inflow."""
     n = len(q_t)
-    rhs = np.empty(n, dtype=np.float64)
-    interval_sum = np.empty(n, dtype=np.float64)
+    rhs = np.empty(n, dtype=np.float32)
+    interval_sum = np.empty(n, dtype=np.float32)
     inv_substeps = 1.0 / num_substeps
     num_runoff_steps = qlateral.shape[0]
 
@@ -103,13 +103,13 @@ def unit_route(
     num_runoff_steps = convolved_lateral.shape[0]
     inv_substeps = 1.0 / num_substeps
 
-    rhs = np.empty(n_inner, dtype=np.float64)
-    interval_sum = np.empty(n_inner, dtype=np.float64)
-    ql_hw = np.empty(n_hw, dtype=np.float64)
-    ql_inner = np.empty(n_inner, dtype=np.float64)
-    a_inner_result = np.empty(n_inner, dtype=np.float64)
-    a_hw_result = np.empty(n_inner, dtype=np.float64)
-    c1_A_ql = np.empty(n_inner, dtype=np.float64)
+    rhs = np.empty(n_inner, dtype=np.float32)
+    interval_sum = np.empty(n_inner, dtype=np.float32)
+    ql_hw = np.empty(n_hw, dtype=np.float32)
+    ql_inner = np.empty(n_inner, dtype=np.float32)
+    a_inner_result = np.empty(n_inner, dtype=np.float32)
+    a_hw_result = np.empty(n_inner, dtype=np.float32)
+    c1_A_ql = np.empty(n_inner, dtype=np.float32)
 
     for t in range(num_runoff_steps):
         # Extract headwater and inner lateral inflows

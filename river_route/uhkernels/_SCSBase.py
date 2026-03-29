@@ -36,8 +36,8 @@ class _SCSBase(ABC):
     def __init__(self, *, tc: FloatArray, area: FloatArray, tr: float, ) -> None:
         if float(tr) <= 0:
             raise ValueError('tr must be > 0')
-        tc = np.asarray(tc, dtype=np.float64)
-        area = np.asarray(area, dtype=np.float64)
+        tc = np.asarray(tc, dtype=np.float32)
+        area = np.asarray(area, dtype=np.float32)
         if tc.ndim != 1:
             raise ValueError('tc must be a 1D float array')
         if area.ndim != 1:

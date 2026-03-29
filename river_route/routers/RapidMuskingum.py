@@ -20,8 +20,8 @@ class RapidMuskingum(TransformMuskingum):
         """Execute the core routing math for one runoff file and return the discharge array."""
         self.logger.debug('Getting initial state arrays')
         n = self.A.shape[0]
-        discharge_array = np.zeros((self.num_runoff_steps, n), dtype=np.float64)
-        q_t = self.channel_state.astype(np.float64, copy=True)
+        discharge_array = np.zeros((self.num_runoff_steps, n), dtype=np.float32)
+        q_t = self.channel_state.astype(np.float32, copy=True)
         c4_dt = self.c4 / self.dt_runoff
 
         rapid_route(

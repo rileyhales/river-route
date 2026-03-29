@@ -325,7 +325,7 @@ def runoff_to_qlateral(
         )
         df = _cumulative_to_incremental(df)
         time_index = df.index.values
-        qlateral = df.to_numpy(dtype=np.float64)
+        qlateral = df.to_numpy(dtype=np.float32)
         del df
 
     mask = np.isnan(qlateral)
