@@ -2,7 +2,9 @@
 
 ---
 
-### [v2.1.0](https://github.com/rileyhales/river-route/tree/v2.1.0) — 2026-04-11
+### v2.1.0 — 2026-04-11
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v2.1.0) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/2.1/)
 
 - Routing state, parameters (`k`, `x`), channel state, and all numba kernel scratch buffers now use `float32` instead of `float64`. Reduces memory half, speeds up the inner routing loop.
 - Fused the sparse matrix-vector multiply and forward-substitution into a single loop for modest speed gain.
@@ -10,11 +12,15 @@
 
 ---
 
-### [v2.0.1](https://github.com/rileyhales/river-route/tree/v2.0.1) — 2026-03-10
+### v2.0.1 — 2026-03-10
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v2.0.1) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/2.0/)
 
 - Adds pyarrow to dependencies which is included by conda installs as a pandas dependency but not in pip.
 
-### [v2.0.0](https://github.com/rileyhales/river-route/tree/v2.0.0) — 2026-03-09
+### v2.0.0 — 2026-03-09
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v2.0.0) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/2.0/)
 
 - Replaced `Muskingum` class with 3 separate classes `Muskingum`, `RapidMuskingum`, and `UnitMuskingum`.
 - New class `Muskingum` is channel routing only with no runoff-transformation.
@@ -39,46 +45,66 @@
 
 ---
 
-### [v1.3.0](https://github.com/rileyhales/river-route/tree/v1.3.0) — 2025-08-06
+### v1.3.0 — 2025-08-06
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.3.0) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.3/)
 
 - Added support for routing runoff ensembles.
 
-### [v1.2.3](https://github.com/rileyhales/river-route/tree/v1.2.3) — 2025-05-01
+### v1.2.3 — 2025-05-01
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.2.3) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.2/)
 
 - Removed volume calculation keyword argument.
 
-### [v1.2.2](https://github.com/rileyhales/river-route/tree/v1.2.2) — 2025-04-23
+### v1.2.2 — 2025-04-23
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.2.2) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.2/)
 
 - Fixed catchment volume calculation to use the correct area column.
 
-### [v1.2.1](https://github.com/rileyhales/river-route/tree/v1.2.1) — 2025-03-14
+### v1.2.1 — 2025-03-14
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.2.1) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.2/)
 
 - Fixed bug where the time variable name argument was not applied correctly.
 
-### [v1.2.0](https://github.com/rileyhales/river-route/tree/v1.2.0) — 2025-02-27
+### v1.2.0 — 2025-02-27
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.2.0) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.2/)
 
 - Improved efficiency of catchment volume computations.
 
-### [v1.1.0](https://github.com/rileyhales/river-route/tree/v1.1.0) — 2025-01-21
+### v1.1.0 — 2025-01-21
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.1.0) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.1/)
 
 - Switched to a direct solver for the Muskingum linear system.
 
-### [v1.0.3](https://github.com/rileyhales/river-route/tree/v1.0.3) — 2025-01-17
+### v1.0.3 — 2025-01-17
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.0.3) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.0/)
 
 - Renamed `_MuskingumCunge` to `_Muskingum`.
 - Added `metrics.py` module.
 - Refactored `runoff.py`.
 - Various bug fixes and documentation updates.
 
-### [v1.0.2](https://github.com/rileyhales/river-route/tree/v1.0.2) — 2024-09-24
+### v1.0.2 — 2024-09-24
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.0.2) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.0/)
 
 - Guaranteed consistent sort order for adjacency matrix construction.
 
-### [v1.0.1](https://github.com/rileyhales/river-route/tree/v1.0.1) — 2024-08-19
+### v1.0.1 — 2024-08-19
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.0.1) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.0/)
 
 - Fixed `input_type` config value not being set correctly.
 
-### [v1.0.0](https://github.com/rileyhales/river-route/tree/v1.0.0) — 2024-08-17
+### v1.0.0 — 2024-08-17
+
+[:octicons-mark-github-16: View Release](https://github.com/rileyhales/river-route/tree/v1.0.0) · [:octicons-book-16: View Docs](https://river-route.code.hales.app/1.0/)
 
 - Initial stable release.
 - Code cleanup and documentation restructuring.
