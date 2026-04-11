@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://rr.hales.app/1.0/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/api/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/terms/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/references/config-files/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/references/io-file-schema/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/references/time-variables/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/tutorial/advanced-tutorial/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+    <url>
+         <loc>https://rr.hales.app/1.0/tutorial/basic-tutorial/</loc>
+         <lastmod>2026-04-11</lastmod>
+    </url>
+</urlset>
