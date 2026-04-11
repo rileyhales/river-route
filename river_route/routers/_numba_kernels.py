@@ -16,7 +16,7 @@ def muskingum_route(
     n = len(q_t)
     rhs = np.empty(n, dtype=np.float32)
     interval_sum = np.empty(n, dtype=np.float32)
-    inv_nrpo = 1.0 / num_routing_per_output
+    inv_nrpo = np.float32(1.0 / num_routing_per_output)
 
     for output_step in range(num_output_steps):
         for i in range(n):
@@ -58,7 +58,7 @@ def rapid_route(
     n = len(q_t)
     rhs = np.empty(n, dtype=np.float32)
     interval_sum = np.empty(n, dtype=np.float32)
-    inv_substeps = 1.0 / num_substeps
+    inv_substeps = np.float32(1.0 / num_substeps)
     num_runoff_steps = qlateral.shape[0]
 
     for t in range(num_runoff_steps):
@@ -107,7 +107,7 @@ def unit_route(
     n_inner = len(inner_idx)
     n_hw = len(hw_idx)
     num_runoff_steps = convolved_lateral.shape[0]
-    inv_substeps = 1.0 / num_substeps
+    inv_substeps = np.float32(1.0 / num_substeps)
 
     rhs = np.empty(n_inner, dtype=np.float32)
     interval_sum = np.empty(n_inner, dtype=np.float32)
