@@ -911,10 +911,7 @@
 <div class="highlight"><pre><span></span><code><span class="nt">routing_params_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;/path/to/params.parquet&#39;</span>
 </code></pre></div>
 <p>The routing parameters file is a parquet file. It has 3 columns and 1 row per river in the watershed. The index is
-ignored. If you use nonlinear routing, you can provide more columns with k and x values to use at different thresholds
-of Q. Nonlinear routing columns should be named k_1, x_1, q_1, followed by k_2, x_2, q_2, for as many thresholds as you
-chose. You may provide as many columns as you wish as long as you also provide a thresholds file. The rows (rivers)
-<strong><em>must be sorted in topological order</em></strong> from upstream to downstream.</p>
+ignored. The rows (rivers) <strong><em>must be sorted in topological order</em></strong> from upstream to downstream.</p>
 <table>
 <thead>
 <tr>
@@ -932,27 +929,12 @@ chose. You may provide as many columns as you wish as long as you also provide a
 <tr>
 <td>k</td>
 <td>float</td>
-<td>the k parameter of the MuskingumCunge Cunge routing equation length / velocity</td>
+<td>the k parameter of the Muskingum routing equation length / velocity</td>
 </tr>
 <tr>
 <td>x</td>
 <td>float</td>
-<td>the x parameter of the MuskingumCunge Cunge routing equation. x : [0, 0.5]</td>
-</tr>
-<tr>
-<td>k_1</td>
-<td>float</td>
-<td>Optional, the k parameter of the MuskingumCunge Cunge routing equation at Q_1</td>
-</tr>
-<tr>
-<td>x_1</td>
-<td>float</td>
-<td>Optional, the x parameter of the MuskingumCunge Cunge routing equation at Q_1</td>
-</tr>
-<tr>
-<td>q_1</td>
-<td>float</td>
-<td>Optional, the minimum value of Q at which to start using use k_1 and x_1</td>
+<td>the x parameter of the Muskingum routing equation. x : [0, 0.5]</td>
 </tr>
 </tbody>
 </table>
@@ -1077,7 +1059,7 @@ overlaps with the catchment boundary and should be in units of meters squared.</
 <div class="highlight"><pre><span></span><code><span class="nt">initial_state_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;/path/to/initial.parquet&#39;</span>
 <span class="nt">final_state_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;/path/to/final.parquet&#39;</span>
 </code></pre></div>
-<p>State information are stored in parquet files. Muskingum Cunge routing solves for river discharge at time t+1 as a
+<p>State information are stored in parquet files. Muskingum routing solves for river discharge at time t+1 as a
 function of inflow volumes at time t and time t+1, and the discharge at time t. </p>
 
 

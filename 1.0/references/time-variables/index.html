@@ -438,6 +438,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#right-and-left-aligned-time-series" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Right and Left Aligned Time Series
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -639,6 +650,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#right-and-left-aligned-time-series" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Right and Left Aligned Time Series
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -752,6 +774,14 @@ dt_total == dt_runoff * number_of_time_steps
   be automatically constructed.</li>
 <li>The length of the routing computations must be equal to the length of the runoff data.</li>
 </ul>
+<h2 id="right-and-left-aligned-time-series">Right and Left Aligned Time Series</h2>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Runoff data may be given by right- or left-aligned dates and intervals. For example, hourly runoff data may say 5pm and the runoff number may 
+represent the runoff that occurred from 4pm to 5pm (right-aligned) or from 5pm to 6pm (left-aligned). The routing calculations are performed and 
+interpretations are most naturally computed with right-aligned dates but can be valid with left-aligned dates. Beware which alignment of your 
+data or you might inadvertently average or shift data off by 1 interval/step.</p>
+</div>
 <h2 id="limitations">Limitations</h2>
 <ol>
 <li>You must route each interval of runoff data at least 1 time before the next interval of runoff data. You should

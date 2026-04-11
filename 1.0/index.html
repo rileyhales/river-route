@@ -701,22 +701,22 @@
 
 
 <h1 id="river-route">River-Route</h1>
-<p>The <code>river-route</code> Python package is a tool for routing catchment runoff volumes on vector stream networks using the Matrix Muskingum Cunge Method.
-It implements Matrix Muskingum Cunge routing. Inspired by the first linear routing implementation published by 
+<p>The <code>river-route</code> Python package is a tool for routing catchment runoff volumes on vector stream networks using the Matrix Muskingum Method.
+It implements Matrix Muskingum routing. Inspired by the first implementation published by
 <a href="https://doi.org/10.1175/2011JHM1345.1">Cedric David in 2011</a> which was corrected and improved by Riley Hales in 2023.</p>
 <h2 id="quick-start">Quick Start</h2>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
+</div>
 <p><code>river-route</code> requires prepared watershed and runoff datasets. Refer to the <a href="tutorial/basic-tutorial/">Tutorial</a>
 and <a href="tutorial/advanced-tutorial/">Advanced Tips</a>.</p>
-</div>
 <div class="highlight"><pre><span></span><code>pip install river-route
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">river_route</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">rr</span>
 
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="s1">&#39;/path/to/config.yaml&#39;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="s1">&#39;/path/to/config.yaml&#39;</span><span class="p">)</span>
     <span class="o">.</span><span class="n">route</span><span class="p">()</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -746,7 +746,7 @@ graph LR
         a[Calculate LHS] --&gt; b
         b[Read Volumes Array] --&gt; c
         c[Iterate On Routing Intervals] --&gt; d
-        d[Solving Matrix\nMuskingum Cunge] --&gt; e
+        d[Solving Matrix\nMuskingum] --&gt; e
         e[Enforce Positive Flows] --&gt; f &amp; c
         f[Write Outflows to Disk] --&gt; g
         g[Cache Final State]
@@ -763,7 +763,7 @@ graph LR
     Required-Inputs &amp; Compute-Options &amp; Initialization &amp; Logging-Options ==&gt; Computations
     Computations ==&gt; Main-Output &amp; Cachable-Files</code></pre>
 <h2 id="usage-example">Usage Example</h2>
-<p>You can pass the configuration options to the <code>rr.MuskingumCunge</code> class init by specifying a path to a config file, use
+<p>You can pass the configuration options to the <code>rr.Muskingum</code> class init by specifying a path to a config file, use
 keyword arguments, or use both a config file path and keyword arguments to supplement or override values from the config
 file.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">river_route</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">rr</span>
@@ -771,14 +771,14 @@ file.</p>
 <span class="c1"># Option 1 - Give all arguments via a configuration file</span>
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="s1">&#39;/path/to/config.yaml&#39;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="s1">&#39;/path/to/config.yaml&#39;</span><span class="p">)</span>
     <span class="o">.</span><span class="n">route</span><span class="p">()</span>
 <span class="p">)</span>
 
 <span class="c1"># Option 2 - Give all arguments via keyword arguments</span>
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="o">**</span><span class="p">{</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="o">**</span><span class="p">{</span>
         <span class="s1">&#39;routing_params_file&#39;</span><span class="p">:</span> <span class="s1">&#39;/path/to/routing_params.parquet&#39;</span><span class="p">,</span>
         <span class="s1">&#39;connectivity_file&#39;</span><span class="p">:</span> <span class="s1">&#39;/path/to/connectivity.parquet&#39;</span><span class="p">,</span>
         <span class="s1">&#39;catchment_volumes_file&#39;</span><span class="p">:</span> <span class="s1">&#39;/path/to/volumes.nc&#39;</span><span class="p">,</span>
@@ -790,7 +790,7 @@ file.</p>
 <span class="c1"># Option 3 - Use both a configuration file and keyword arguments</span>
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span>
         <span class="s1">&#39;/path/to/config.yaml&#39;</span><span class="p">,</span>
         <span class="o">**</span><span class="p">{</span>
             <span class="s1">&#39;routing_params_file&#39;</span><span class="p">:</span> <span class="s1">&#39;/path/to/routing_params.parquet&#39;</span><span class="p">,</span>

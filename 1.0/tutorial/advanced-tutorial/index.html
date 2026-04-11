@@ -722,7 +722,7 @@ routing. This is useful when you have a large number of routing runs to perform 
 Depending on your preference, you may want to generate many config files in advance or store them for repeatability and 
 future use.</p>
 <p>The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments 
-to the <code>MuskingumCunge</code> class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
+to the <code>Muskingum</code> class. You could alternatively write the inputs to a YAML or JSON file and use that config file 
 instead.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">glob</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
@@ -744,7 +744,7 @@ instead.</p>
 
 <span class="n">m</span> <span class="o">=</span> <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="o">**</span><span class="p">{</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="o">**</span><span class="p">{</span>
         <span class="s1">&#39;routing_params_file&#39;</span><span class="p">:</span> <span class="n">params_file</span><span class="p">,</span>
         <span class="s1">&#39;connectivity_file&#39;</span><span class="p">:</span> <span class="n">connectivity_file</span><span class="p">,</span>
         <span class="s1">&#39;catchment_volumes_file&#39;</span><span class="p">:</span> <span class="n">volume_files</span><span class="p">,</span>
@@ -754,7 +754,7 @@ instead.</p>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="customizing-output-file-type-and-structure">Customizing Output File Type and Structure</h2>
-<p>You can override the default function used by <code>river-route</code> when writing routed flows to disc. The MuskingumCunge class
+<p>You can override the default function used by <code>river-route</code> when writing routed flows to disc. The Muskingum class
 formats the discharge data into a Pandas DataFrame and then calls the <code>write_outflows</code> method. By default, this function
 writes the dataframe to a netCDF file.</p>
 <p>A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
@@ -780,7 +780,7 @@ function should accept exactly 3 keyword arguments:</p>
 
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="s1">&#39;../../examples/config.yaml&#39;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="s1">&#39;../../examples/config.yaml&#39;</span><span class="p">)</span>
     <span class="o">.</span><span class="n">set_write_outflows</span><span class="p">(</span><span class="n">custom_write_outflows</span><span class="p">)</span>
     <span class="o">.</span><span class="n">route</span><span class="p">()</span>
 <span class="p">)</span>
@@ -800,7 +800,7 @@ function should accept exactly 3 keyword arguments:</p>
 
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="s1">&#39;config.yaml&#39;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="s1">&#39;config.yaml&#39;</span><span class="p">)</span>
     <span class="o">.</span><span class="n">set_write_outflows</span><span class="p">(</span><span class="n">write_outflows_to_sqlite</span><span class="p">)</span>
     <span class="o">.</span><span class="n">route</span><span class="p">()</span>
 <span class="p">)</span>
@@ -823,7 +823,7 @@ function should accept exactly 3 keyword arguments:</p>
 
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="s1">&#39;config.yaml&#39;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="s1">&#39;config.yaml&#39;</span><span class="p">)</span>
     <span class="o">.</span><span class="n">set_write_outflows</span><span class="p">(</span><span class="n">append_to_existing_file</span><span class="p">)</span>
     <span class="o">.</span><span class="n">route</span><span class="p">()</span>
 <span class="p">)</span>
@@ -842,7 +842,7 @@ function should accept exactly 3 keyword arguments:</p>
 
 <span class="p">(</span>
     <span class="n">rr</span>
-    <span class="o">.</span><span class="n">MuskingumCunge</span><span class="p">(</span><span class="s1">&#39;config.yaml&#39;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">Muskingum</span><span class="p">(</span><span class="s1">&#39;config.yaml&#39;</span><span class="p">)</span>
     <span class="o">.</span><span class="n">set_write_outflows</span><span class="p">(</span><span class="n">save_partial_results</span><span class="p">)</span>
     <span class="o">.</span><span class="n">route</span><span class="p">()</span>
 <span class="p">)</span>

@@ -781,7 +781,7 @@ JSON. Config files specify the following parameters:</p>
 </ul>
 <h2 id="example-yaml-file">Example YAML File</h2>
 <p>An example yaml file is given below with the default values prepopulated where possible.</p>
-<div class="highlight"><span class="filename">Config File Example river-route v0.15.0</span><pre><span></span><code><span class="c1"># Required Watershed Files - (Required)</span>
+<div class="highlight"><span class="filename">Config File Example river-route v1.0.3</span><pre><span></span><code><span class="c1"># Required Watershed Files - (Required)</span>
 <span class="nt">routing_params_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
 <span class="nt">connectivity_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
 <span class="c1"># Volume Inputs - (Water Input - Option 1)</span>
@@ -795,7 +795,6 @@ JSON. Config files specify the following parameters:</p>
 <span class="nt">initial_state_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
 <span class="nt">final_state_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
 <span class="c1"># Compute Options - (Optional)</span>
-<span class="nt">routing</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;linear&#39;</span><span class="w">            </span><span class="c1"># &quot;linear&quot; or &quot;nonlinear&quot;</span>
 <span class="nt">input_type</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;sequential&#39;</span><span class="w">     </span><span class="c1"># &quot;sequential&quot; or &quot;ensemble&quot;</span>
 <span class="nt">runoff_type</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;incremental&#39;</span><span class="w">   </span><span class="c1"># &quot;incremental&quot; or &quot;cumulative&quot;</span>
 <span class="nt">dt_routing</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                </span><span class="c1"># defaults to time step of volume inputs</span>
@@ -869,13 +868,6 @@ JSON. Config files specify the following parameters:</p>
 <td>File Path</td>
 <td>Required Input</td>
 <td>Path where the outflows netCDF file should be saved.</td>
-</tr>
-<tr>
-<td>routing</td>
-<td>False</td>
-<td>String</td>
-<td>Compute Options</td>
-<td>The routing method to use: "linear" or "nonlinear".</td>
 </tr>
 <tr>
 <td>input_type</td>
