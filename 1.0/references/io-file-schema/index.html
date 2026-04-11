@@ -959,10 +959,10 @@ chose. You may provide as many columns as you wish as long as you also provide a
 <h3 id="connectivity-file">Connectivity File</h3>
 <div class="highlight"><pre><span></span><code><span class="nt">connectivity_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;/path/to/connectivity.parquet&#39;</span>
 </code></pre></div>
-<p>The connectivity files is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file
+<p>The connectivity file is a csv with 2 columns and 1 row per river in the watershed. The index is ignored. This file
 controls the topology of the rivers in the watershed. Each river segment must have at least 1 downstream segment. If the
-river is an outlet then it should have a downstream ID of -1.</p>
-<p>To specify the connectivity of braided rivers, a single river ID may have multiple rows with difference IDs given as the
+river is an outlet then the downstream ID should be -1.</p>
+<p>To specify the connectivity of braided rivers, a single river ID may have multiple rows with different IDs given as the
 downstream segment. In this case, use the 3rd column to specify the percentage (decimal in the range (0, 1)) of
 discharge from the river segment that flows to the downstream segment given on that row. All rivers that are not braided
 should have a weight of 1.0. The weights column of rivers that are braided should sum to exactly 1.0 or else water will
@@ -998,7 +998,7 @@ be deleted or magically inserted into the rivers.</p>
 uniform time step for all rivers with no missing values. There are 2 likely ways that you can get this information.</p>
 <ol>
 <li>Generate it directly using a hydrological model.</li>
-<li>Generate runoff depth grids and use GIS &amp; zonal statistics to covert to catchment volumes.</li>
+<li>Generate runoff depth grids and use zonal statistics to calculate catchment scale volumes.</li>
 </ol>
 <div class="admonition warning">
 <p class="admonition-title">Runoff Depths Warning</p>
@@ -1011,13 +1011,12 @@ not correctly perform the conversions in all cases.</p>
 <div class="highlight"><pre><span></span><code><span class="nt">catchment_volumes_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;/path/to/volumes.nc&#39;</span>
 </code></pre></div>
 <p>Catchment volumes are given in a netCDF file.</p>
-<p>The file should have 2 dimensions: time and river_id. The times can be given in any unit with a recognizable units
-string. The river_id dimension should have exactly the same IDs <em>AND</em> be sorted in the same order given in the river_id
-column of the routing parameters file.</p>
+<p>The file should have 2 dimensions: time and river_id. The times can be given in any recognizable unit string. The river_id 
+dimension should have exactly the same IDs <em>AND</em> be sorted in the same order given in the river_id column of the routing parameters file.</p>
 <p>The file should have 1 runoff volumes variables named "volume" which is an array of shape (time, river_id) of dtype
 float.</p>
 <div class="admonition note">
-<p class="admonition-title">Caclulating Catchment Volumes</p>
+<p class="admonition-title">Calculating Catchment Volumes</p>
 <p><code>river-route</code> is not a land surface modeling tool. It does have an example function illustrating how to perform 
 the calculations. It will not handle all file formats, land surface and/or hydrology models, etc. Refer to the 
 example case for guidance on formatting these files.</p>
