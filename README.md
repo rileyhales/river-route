@@ -23,14 +23,11 @@ Muskingum-family routing at watershed scale.
 pip install river-route
 ```
 
-For local development:
-
 ```bash
 git clone https://github.com/rileyhales/river-route.git
 cd river-route
-conda env create -f environment.yaml
-conda activate rr
-python -m pip install -e ".[all]"
+# create/activate an environment e.g. conda create -n rr python=3.14 && conda activate rr
+python -m pip install -e .
 ```
 
 ## Quick Start
