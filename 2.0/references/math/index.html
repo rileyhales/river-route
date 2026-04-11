@@ -1,0 +1,1714 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://river-route.code.hales.app/2.0/references/math/">
+      
+      
+        <link rel="prev" href="../time-options/">
+      
+      
+        <link rel="next" href="../parallelism/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
+    
+    
+      
+        <title>Math Derivations - River Route</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="https://unpkg.com/katex@0/dist/katex.min.css">
+    
+      <link rel="stylesheet" href="../../static/css/custom.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="light-blue" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mathematical-derivations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="River Route" class="md-header__button md-logo" aria-label="River Route" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            River Route
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Math Derivations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="River Route" class="md-nav__button md-logo" aria-label="River Route" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    River Route
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Docs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/routers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router Classes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/unit-hydrographs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    References
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Config File
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../io-file-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../time-options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Time Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Derivations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Derivations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#muskingum-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Muskingum Routing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matrix-formulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix Formulation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Matrix Formulation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topological-sorting-and-network-adjacency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topological sorting and network adjacency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adjacency-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adjacency matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derivation-of-matrix-muskingum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derivation of Matrix Muskingum
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Derivation of Matrix Muskingum">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#muskingum-cunge-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Muskingum Cunge Routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unitmuskingum-unit-hydrograph-lateral-inflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UnitMuskingum — Unit Hydrograph Lateral Inflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="UnitMuskingum — Unit Hydrograph Lateral Inflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#derivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derivation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reduced-inner-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reduced Inner System
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kernel-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit-hydrograph-convolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Hydrograph Convolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#forward-substitution-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forward Substitution Algorithm
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/unit-hydrograph-routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs with Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/routing-ensembles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing Runoff Ensemble
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Uses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Migration Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrating/v1-to-v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1 to v2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#muskingum-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Muskingum Routing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matrix-formulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix Formulation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Matrix Formulation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topological-sorting-and-network-adjacency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topological sorting and network adjacency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adjacency-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adjacency matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derivation-of-matrix-muskingum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derivation of Matrix Muskingum
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Derivation of Matrix Muskingum">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#muskingum-cunge-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Muskingum Cunge Routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unitmuskingum-unit-hydrograph-lateral-inflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UnitMuskingum — Unit Hydrograph Lateral Inflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="UnitMuskingum — Unit Hydrograph Lateral Inflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#derivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derivation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reduced-inner-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reduced Inner System
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kernel-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit-hydrograph-convolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Hydrograph Convolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#forward-substitution-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forward Substitution Algorithm
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../config-files/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    References
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="mathematical-derivations">Mathematical Derivations</h1>
+<p>Derivations of the Muskingum routing equation and alternative methods for the most efficient methods for solving the linear system.</p>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>Some key insights applying linear algebra and graph theory to river networks and the Muskingum equation are:</p>
+<ol>
+<li>River networks are directed acyclic graphs (DAGs).</li>
+<li>River segments can be topologically sorted so that upstream always comes before downstream.</li>
+<li>Topological ordering makes the adjacency matrix <span class="arithmatex">\(A\)</span> strictly lower triangular.</li>
+<li>River network adjacency matrices are extremely sparse with exactly one nonzero entry per column (except for outlets).</li>
+<li>The Muskingum equation LHS <span class="arithmatex">\(\mathbf{I} - c_1 A\)</span> is unit lower triangular. The identity contributes ones on the
+   diagonal; <span class="arithmatex">\(c_1 A\)</span> contributes entries only below.</li>
+<li>Unit lower triangular systems are best solved with forward substitution.</li>
+</ol>
+<h2 id="muskingum-routing">Muskingum Routing</h2>
+<p>The Muskingum equation relates the outflow <span class="arithmatex">\(Q_{t+1}\)</span> to the inflow at the next step <span class="arithmatex">\(I_{t+1}\)</span>, inflow at the current step <span class="arithmatex">\(I_{t}\)</span>,
+and the current discharge <span class="arithmatex">\(Q_t\)</span>. Equivalent forms also use the notations <span class="arithmatex">\(Q_{t}\)</span> and <span class="arithmatex">\(Q_{t-1}\)</span>. For a primer on the
+derivation of the Muskingum equation as a relationship of storage, inflow, and outflow, try the HEC-HMS manual pages on the
+<a href="https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model">Muskingum Model</a> and the
+<a href="https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model">Muskingum-Cunge Model</a>.</p>
+<div class="arithmatex">\[
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t
+\]</div>
+<p>Where the coefficients <span class="arithmatex">\(c_1\)</span>, <span class="arithmatex">\(c_2\)</span>, <span class="arithmatex">\(c_3\)</span> are given by:</p>
+<div class="arithmatex">\[
+c_1 = \frac{\Delta t / k - 2x}{\Delta t / k + 2(1-x)}
+\qquad
+c_2 = \frac{\Delta t / k + 2x}{\Delta t / k + 2(1-x)}
+\qquad
+c_3 = \frac{2(1-x) - \Delta t / k}{\Delta t / k + 2(1-x)}
+\]</div>
+<p>Note that:</p>
+<ul>
+<li>Mass is conserved.</li>
+<li><span class="arithmatex">\(c_1 + c_2 + c_3 = 1\)</span></li>
+<li>The <span class="arithmatex">\(k\)</span> parameters can be shown to be the flood wave travel time along the channel in seconds</li>
+<li>The <span class="arithmatex">\(x\)</span> parameter is a dimensionless "attenuation" factor between 0 (max attenuation) and 0.5 (no attenuation).</li>
+<li>Every time step depends on the step before. The solution must be found sequentially rather than parallelized across time steps.</li>
+</ul>
+<h2 id="matrix-formulation">Matrix Formulation</h2>
+<h3 id="topological-sorting-and-network-adjacency">Topological sorting and network adjacency</h3>
+<p>Rivers are often described as "networks" or "systems". When being modeled, river networks have a few properties that are useful
+to take advantage of for mathematically more efficient algorithms.</p>
+<ol>
+<li>They are "directed" -- meaning water only flows in one direction from upstream to downstream.</li>
+<li>They are "acyclic" -- meaning there are no loops because water cannot flow upstream.</li>
+<li>They are "dendritic" -- meaning they branch out when going upstream and merge when going downstream (ignoring braided rivers and deltas, for instance).</li>
+</ol>
+<p>Rivers can be topologically sorted. Rather than sorting them from high to low by an attribute or an ID, topologically sorting means
+sorting them in the order they are connected in the network. That is, from "upstream to downstream". The further upstream a river is
+the earlier it should appear in the sorted list. A useful tool for conceptualizing and diagramming this is the Strahler stream order.
+The Strahler order assigns the number 1 to the most upstream, or headwater, segments. When two segments of the same order merge, the
+downstream segment is assigned an order 1 higher. If two different order merge, the downstream segment is assigned the higher of the
+two inlet orders. Streams that are a headwater area have no upstream segments.</p>
+<div style="text-align: center;">
+
+<pre class="mermaid"><code>graph TD
+    R1@{ shape: sm-circ } --&gt;|" #1 · Order 1 "| R5@{ shape: sm-circ }
+    R2@{ shape: sm-circ } --&gt;|" #2 · Order 1 "|R5
+    R3@{ shape: sm-circ } --&gt;|" #3 · Order 1 "|R6@{ shape: sm-circ }
+    R4@{ shape: sm-circ } --&gt;|" #4 · Order 1 "|R6
+    R5 --&gt;|" #5 · Order 2 "|R7@{ shape: sm-circ }
+    R6 --&gt;|" #6 · Order 2 "|R7
+    R8@{ shape: sm-circ } --&gt;|" #8 · Order 1 "|R9@{ shape: sm-circ }
+    R7 --&gt;|" #7 · Order 3 "|R9</code></pre>
+
+<figcaption><em>Figure 1: A topologically sorted river network labeled with Strahler stream orders.</em></figcaption>
+</div>
+
+<p>In the diagram above, rivers 1 through 4 and 8 are headwaters with no upstream dependencies. Rivers 5 and 6 each receive two headwater
+tributaries and are indexed after their upstream sources. River 7 merges two second-order streams and river 9, the outlet, appears last.
+Another way to describe rivers that are topologically sorted is that they are sorted in order of independence. Segments at the top of
+the list depend on no rivers and rivers further down the list depend on a greater number of upstream segments to get their inflow.
+River 5's inflow depends on what is discharged from rivers 1 and 2. A river's discharge cannot be computed until all of upstream
+contributors are known.</p>
+<p>Some river datasets will have multiple segments in a row which have the same river order. In those cases, you could sort rivers of
+the same order by increasing cumulative drainage area or another attribute that increases as you go downstream. There are multiple
+valid ways to sort rivers which are all topologically sorted. It is not unique. The only requirement is that upstream segments
+appear before downstream segments in the sorted list.</p>
+<h3 id="adjacency-matrix">Adjacency matrix</h3>
+<p>An adjacency matrix <span class="arithmatex">\(A\)</span> encodes the connectivity of the river network into a square matrix of size <span class="arithmatex">\(n_\text{segments} \times n_\text{segments}\)</span>.
+The entry <span class="arithmatex">\(A_{ij}\)</span> is 1 if segment <span class="arithmatex">\(j\)</span> flows into segment <span class="arithmatex">\(i\)</span>, and 0 otherwise. Because of the topological sorting, <span class="arithmatex">\(A\)</span> is strictly lower
+triangular (all zeros on the diagonal and above). In each row, the 1 indicates that the river in that column is directly upstream. Conversely,
+in each column, a 1 indicates that the river is directly downstream. Every column should have exactly 1 nonzero entry except for outlets which
+have no values. Rows with no values are headwater segments. <span class="arithmatex">\(A^T\)</span> is also common and has an inverse interpretation of rows and columns.</p>
+<div class="matrix-grid">
+<table>
+  <caption><em>Table 1: Adjacency matrix for the river network in Figure 1. Entry A<sub>ij</sub> = 1 indicates segment j flows into segment i.</em></caption>
+  <tr><th></th><th>R1</th><th>R2</th><th>R3</th><th>R4</th><th>R5</th><th>R6</th><th>R7</th><th>R8</th><th>R9</th></tr>
+  <tr><th>R1</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R2</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R3</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R4</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R5</th><td>1</td><td>1</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R6</th><td></td><td></td><td>1</td><td>1</td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R7</th><td></td><td></td><td></td><td></td><td>1</td><td>1</td><td></td><td></td><td></td></tr>
+  <tr><th>R8</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><th>R9</th><td></td><td></td><td></td><td></td><td></td><td></td><td>1</td><td>1</td><td></td></tr>
+</table>
+</div>
+
+<p>When you matrix-multiply <span class="arithmatex">\(A\)</span> (shape <span class="arithmatex">\((n_\text{segments}, n_\text{segments})\)</span>) by a column vector of discharges <span class="arithmatex">\(Q_t\)</span> (shape <span class="arithmatex">\((n_\text{segments}, 1)\)</span>),
+the result is a column vector of inflows <span class="arithmatex">\(I_t\)</span> with shape <span class="arithmatex">\((n_\text{segments}, 1)\)</span>. The zero entries of <span class="arithmatex">\(A\)</span> drop the rows of <span class="arithmatex">\(Q_t\)</span> that are not directly
+upstream. The upstream segments are summed for the total inflow.</p>
+<div class="arithmatex">\[
+I_t = A\, Q_t
+\]</div>
+<p>Because the rivers are listed in a topological order, <span class="arithmatex">\(A\)</span> is strictly lower triangular and the diagonal is zero. <span class="arithmatex">\(A\)</span> is extremely sparse so computationally
+it's more efficient to store it in a sparse format and do math only on the non-zero elements.</p>
+<h2 id="derivation-of-matrix-muskingum">Derivation of Matrix Muskingum</h2>
+<p>Using the Adjacency matrix and the definition that <span class="arithmatex">\(I_t\)</span> is the sum of upstream discharges, we can replace all <span class="arithmatex">\(I\)</span> with <span class="arithmatex">\(A\, Q\)</span>.</p>
+<p>Muskingum equation:</p>
+<div class="arithmatex">\[
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t
+\]</div>
+<p>Substitute all <span class="arithmatex">\(I\)</span> terms with <span class="arithmatex">\(A\, Q\)</span>:</p>
+<div class="arithmatex">\[
+Q_{t+1} = c_1\, \bigl(A\, Q_{t+1}\bigr) + c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
+\]</div>
+<p>Move all <span class="arithmatex">\(Q_{t+1}\)</span> terms to the left-hand side:</p>
+<div class="arithmatex">\[
+Q_{t+1} - c_1\, \bigl(A\, Q_{t+1}\bigr) = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
+\]</div>
+<p>Factor out <span class="arithmatex">\(Q_{t+1}\)</span> by right side matrix multiplication:</p>
+<div class="arithmatex">\[
+\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
+\]</div>
+<p>Notes:</p>
+<ul>
+<li>The LHS is the same for every time step (only depends on <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(c_1\)</span>).</li>
+<li>The RHS changes every sequential time step because it depends on the previous discharge.</li>
+<li><span class="arithmatex">\(c_2\)</span> and <span class="arithmatex">\(c_3\)</span> can be expressed as 1D vectors of length <span class="arithmatex">\(n_\text{segments}\)</span> for vector multiplication.</li>
+<li><span class="arithmatex">\(c_1\)</span> is an <span class="arithmatex">\(NxN\)</span> diagonal matrix so it can be subtracted from <span class="arithmatex">\(I\)</span> after multiplication with A.</li>
+</ul>
+<h3 id="muskingum-cunge-routing">Muskingum Cunge Routing</h3>
+<p>The Muskingum Cunge equation adds the term <span class="arithmatex">\(c_4\)</span> to weight adding a lateral inflow term <span class="arithmatex">\(Q_l\)</span> to
+each segment. In the RAPID assumption, lateral flow is the runoff volume divided by the runoff
+time step, meaning all runoff enters the channel and exits the basin in the interval it is generated.
+No overland flow time or attenuation occurs.</p>
+<div class="arithmatex">\[
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}
+\]</div>
+<p>where <span class="arithmatex">\(c_4 = c_1 + c_2\)</span>. In matrix form:</p>
+<div class="arithmatex">\[
+\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t + c_4\, Q_{l,t}
+\]</div>
+<h2 id="unitmuskingum-unit-hydrograph-lateral-inflow">UnitMuskingum — Unit Hydrograph Lateral Inflow</h2>
+<h3 id="derivation">Derivation</h3>
+<p>UnitMuskingum combines Muskingum channel routing with unit hydrograph lateral inflow. The unit hydrograph shape is developed
+in a way that accounts for all the attenuation and travel time during the overland flow process. Thus, we cannot directly
+add it to the equation using the <span class="arithmatex">\(c_4\)</span> term as in the Muskingum Cunge equation because additional attenuation and travel time
+will be applied. Instead, a unique method for solving uses the superposition principle where the unit hydrograph convolution
+discharge is superimposed on the routed discharge so the signal of the runoff transformation is preserved. In this form,
+<span class="arithmatex">\(Q_l\)</span> represents the discharge generated from a unit hydrograph convolution during the current timestep, <span class="arithmatex">\(t\)</span>.</p>
+<p>Establish the relationship between total, routed, and lateral flow.</p>
+<div class="arithmatex">\[
+Q_{\text{total},t+1} = Q_{\text{channel},t+1} + Q_{\text{lateral},t+1}
+\]</div>
+<div class="arithmatex">\[
+I_{\text{total},t+1} = I_{\text{channel},t+1} + I_{\text{lateral},t+1}
+\]</div>
+<p>Annotate the Matrix Muskingum equation with a subscript "ch" or "total".</p>
+<div class="arithmatex">\[
+Q_{\text{channel},t+1} = c_1\, I_{\text{total},t+1} + c_2\, I_{\text{total},t} + c_3\, Q_{\text{channel},t}
+\]</div>
+<p>Substitute the relationship <span class="arithmatex">\(I_t = A\, Q_t\)</span></p>
+<div class="arithmatex">\[
+Q_{\text{channel},t+1} = c_1\, \bigl(A\, Q_{\text{channel},t+1} + A\, Q_{\text{lateral},t+1}\bigr) + c_2\, \bigl(A\, Q_{\text{total},t}\bigr) + c_3\, Q_{\text{channel},t}
+\]</div>
+<p>Move all <span class="arithmatex">\(Q_{\text{channel},t+1}\)</span> terms to the left-hand side:</p>
+<div class="arithmatex">\[
+Q_{\text{channel},t+1} - c_1\, \bigl(A\, Q_{\text{channel},t+1}\bigr) = c_1\, \bigl(A\, Q_{\text{lateral},t+1}\bigr) + c_2\, \bigl(A\, Q_{\text{total},t}\bigr) + c_3\, Q_{\text{channel},t}
+\]</div>
+<p>Factor out <span class="arithmatex">\(Q_{\text{channel},t+1}\)</span> by right side matrix multiplication:</p>
+<div class="arithmatex">\[
+\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{\text{channel},t+1} = c_1\, \bigl(A\, Q_{\text{lateral},t+1}\bigr) + c_2\, \bigl(A\, Q_{\text{total},t}\bigr) + c_3\, Q_{\text{channel},t}
+\]</div>
+<p>Calculate the superposition of the channel and lateral flow:</p>
+<div class="arithmatex">\[
+Q_{\text{total},t+1} = Q_{\text{channel},t+1} + Q_{\text{lateral},t+1}
+\]</div>
+<h3 id="reduced-inner-system">Reduced Inner System</h3>
+<p>The headwater segments have no upstream dependencies and their discharge is the unit hydrograph convolution output. 
+They can be excluded from the matrix solve and their outflow enters the system as a known right-hand-side contribution during the superposition step.</p>
+<h3 id="kernel-structure">Kernel Structure</h3>
+<p>A unit hydrograph kernel has shape <span class="arithmatex">\((n_\text{steps},\; n_\text{basins})\)</span>. It is a 2D array of each basin's unit hydrograph, discretized to the routing time step, and concatenated into 1 array.</p>
+<ul>
+<li>Each column is the discretized unit hydrograph for one basin assuming a unit runoff depth (<span class="arithmatex">\(R = 1\,\text{m}\)</span>).</li>
+<li>Each row value is the average flow (<span class="arithmatex">\(\text{m}^2/\text{s}\)</span>) over the corresponding time step.</li>
+<li>Volume conservation requires: <span class="arithmatex">\(\displaystyle\sum_{i} K_{i,j} \cdot \Delta t = A_j\)</span> where <span class="arithmatex">\(A_j\)</span> is the basin area (<span class="arithmatex">\(\text{m}^2\)</span>).</li>
+</ul>
+<h3 id="unit-hydrograph-convolution">Unit Hydrograph Convolution</h3>
+<p>Given a timeseries of runoff depths <span class="arithmatex">\(r_t\)</span> (meters per time step), the lateral inflow at time <span class="arithmatex">\(t\)</span>
+is found by convolving the runoff with the kernel:</p>
+<div class="arithmatex">\[
+Q_{l,t} = \sum_{\tau=0}^{n_\text{steps}-1} K_\tau \cdot r_{t-\tau}
+\]</div>
+<p>river-route implements this as a fourier transform over the full timeseries using <code>scipy.signal.fftconvolve</code>.</p>
+<h2 id="forward-substitution-algorithm">Forward Substitution Algorithm</h2>
+<p>Because of the careful preparation of the routing matrices, the linear system can be solved for directly with a single forward 
+substitution pass without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency 
+gain in terms of the complexity of the algorithm as well as how efficiently it can be implemented and compiled in code. </p>
+<p>For a unit lower triangular system <span class="arithmatex">\(L\, x = b\)</span> of size <span class="arithmatex">\(n\)</span>:</p>
+<div class="arithmatex">\[
+x_i = b_i - \sum_{j &lt; i} L_{ij}\, x_j \qquad \text{for } i = 1, 2, \ldots, n
+\]</div>
+<p>Because <span class="arithmatex">\(L_{ii} = 1\)</span>, no division is needed. Each unknown <span class="arithmatex">\(x_i\)</span> depends only on previously
+solved values <span class="arithmatex">\(x_1, \ldots, x_{i-1}\)</span>, so the system is solved sequentially from the first
+row to the last. Specifically, <code>river-route</code> uses a compressed sparse column (CSC) format and a
+column-oriented forward substitution. Instead of computing one row at a time, it processes
+one column at a time: once <span class="arithmatex">\(x_j\)</span> is known, its contribution is subtracted from all rows below.</p>
+<p><div class="highlight"><pre><span></span><code>for j = 1, 2, ..., n:
+    x[j] = b[j]                          # diagonal is 1, so x[j] = b[j] directly
+    for each row i where L[i,j] != 0:    # only the nonzero entries below the diagonal
+        b[i] -= L[i,j] * x[j]            # subtract the now-known contribution
+</code></pre></div>
+<em>Listing 1: Column-oriented forward substitution pseudocode for a unit lower triangular system.</em></p>
+<p>This maps directly to the CSC storage where <code>indptr</code> and <code>indices</code> give fast column-wise access
+to nonzero entries. In the implementation (<code>_numba_kernels.py</code>), the loop looks like:</p>
+<p><div class="highlight"><pre><span></span><code><span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">q</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="o">=</span> <span class="n">rhs</span><span class="p">[</span><span class="n">col</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">csc_indptr</span><span class="p">[</span><span class="n">col</span><span class="p">],</span> <span class="n">csc_indptr</span><span class="p">[</span><span class="n">col</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]):</span>
+        <span class="n">rhs</span><span class="p">[</span><span class="n">csc_indices</span><span class="p">[</span><span class="n">j</span><span class="p">]]</span> <span class="o">-=</span> <span class="n">lhs_off_data</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">q</span><span class="p">[</span><span class="n">col</span><span class="p">]</span>
+</code></pre></div>
+CSC forward substitution implementation from <code>_numba_kernels.py</code></p>
+<ul>
+<li><strong>Time:</strong> <span class="arithmatex">\(O(n + m)\)</span> where <span class="arithmatex">\(n\)</span> is the number of river segments and <span class="arithmatex">\(m\)</span> is the number of edges
+  (upstream-downstream connections). For tree-structured river networks, <span class="arithmatex">\(m = n - 1\)</span>.</li>
+<li><strong>Space:</strong> Only the sparse matrix entries are stored. No fill-in occurs because no
+  factorization is performed.</li>
+</ul>
+<p>This is optimal — every edge is visited exactly once per time step.</p>
+<h2 id="references">References</h2>
+<ul>
+<li>HEC-HMS Users Manual introduction to Muskingum Model 
+  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model]</li>
+<li>HEC-HMS Users Manual introduction to Muskingum Cunge Model 
+  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model]</li>
+<li>HEC-HMS Users Manual introduction to Unit Hydrographs 
+  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts]</li>
+<li>David, C. H. (2011) River Network Routing on the NHDPlus Dataset <em>Journal of Hydrometeorology</em> <a href="https://doi.org/10.1175/2011JHM1345.1">doi:10.1175/2011JHM1345.1</a></li>
+<li>NRCS (2010). <em>National Engineering Handbook</em>, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture. </li>
+<li>Wikipedia: <a href="https://en.wikipedia.org/wiki/Triangular_matrix#Forward_substitution">Triangular matrix — Forward substitution</a>.</li>
+<li>Wikipedia: <a href="https://en.wikipedia.org/wiki/Topological_sorting">Topological sorting</a>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../time-options/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Time Variables">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Time Variables
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../parallelism/" class="md-footer__link md-footer__link--next" aria-label="Next: No Parallelism">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                No Parallelism
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2023-2026 Dr Riley Hales. All rights reserved.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.code.select", "navigation.expand", "navigation.path", "navigation.footer", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/katex.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/contrib/auto-render.min.js"></script>
+      
+        <script src="../../static/js/katex.js"></script>
+      
+    
+  </body>
+</html>

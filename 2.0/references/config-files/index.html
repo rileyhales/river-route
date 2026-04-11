@@ -1,0 +1,1813 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://river-route.code.hales.app/2.0/references/config-files/">
+      
+      
+        <link rel="prev" href="../../api/tools/">
+      
+      
+        <link rel="next" href="../io-file-schema/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
+    
+    
+      
+        <title>The Config File - River Route</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="https://unpkg.com/katex@0/dist/katex.min.css">
+    
+      <link rel="stylesheet" href="../../static/css/custom.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="light-blue" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration-file" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="River Route" class="md-header__button md-logo" aria-label="River Route" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            River Route
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The Config File
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="River Route" class="md-nav__button md-logo" aria-label="River Route" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    River Route
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Docs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/routers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router Classes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/unit-hydrographs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    References
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Config File
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Config File
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration File
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#minimum-required-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimum Required Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#required-config-keys-for-each-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required config keys for each router
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optional-configs-with-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional configs with defaults
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-configuration-yamls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example Configuration YAMLs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example Configuration YAMLs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#general-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#muskingum-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Muskingum Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rapid-muskingum-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rapid Muskingum Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit-muskingum-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Muskingum Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../io-file-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../time-options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Time Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Derivations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/unit-hydrograph-routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs with Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/routing-ensembles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing Runoff Ensemble
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Uses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Migration Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrating/v1-to-v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1 to v2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration File
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#minimum-required-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimum Required Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#required-config-keys-for-each-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required config keys for each router
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optional-configs-with-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional configs with defaults
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-configuration-yamls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example Configuration YAMLs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example Configuration YAMLs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#general-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#muskingum-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Muskingum Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rapid-muskingum-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rapid Muskingum Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit-muskingum-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Muskingum Config File
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    References
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+  <h1>The Config File</h1>
+
+<h2 id="configuration-file">Configuration File</h2>
+<p><code>river-route</code> computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
+The three routers (<code>Muskingum</code>, <code>RapidMuskingum</code>, <code>UnitMuskingum</code>) share a set of base config keys and each
+adds router-specific keys.</p>
+<h2 id="minimum-required-inputs">Minimum Required Inputs</h2>
+<p>All routing classes require the following 2 configuration options:</p>
+<ul>
+<li><code>params_file</code> - path to the <a href="../io-file-schema/#routing-parameters">routing parameters file</a> (parquet)</li>
+<li>One of two options for specifying where the <a href="../io-file-schema/#routed-discharge">routed discharge</a> output is written<ul>
+<li><code>discharge_dir</code> - a string path to a directory where outputs are saved based on the names of the inputs</li>
+<li><code>discharge_files</code> - list of explicit paths for each output file, one per input file required.</li>
+</ul>
+</li>
+</ul>
+<hr />
+<p><code>Muskingum</code> (channel routing only, no lateral inflows) also requires:</p>
+<ul>
+<li><code>channel_state_init_file</code> - parquet state file to initialize discharge</li>
+<li><code>dt_routing</code> - routing timestep in seconds</li>
+<li><code>dt_total</code> - total simulation duration in seconds</li>
+</ul>
+<p><code>RapidMuskingum</code> also requires:</p>
+<ul>
+<li>one water input source:<ul>
+<li><code>qlateral_files</code>, or</li>
+<li><code>grid_runoff_files</code> plus <code>grid_weights_file</code></li>
+</ul>
+</li>
+</ul>
+<p><code>UnitMuskingum</code> also requires:</p>
+<ul>
+<li><code>uh_kernel_file</code> - pre-computed scipy sparse npz kernel</li>
+<li>one water input source:<ul>
+<li><code>qlateral_files</code>, or</li>
+<li><code>grid_runoff_files</code> plus <code>grid_weights_file</code></li>
+</ul>
+</li>
+</ul>
+<h2 id="required-config-keys-for-each-router">Required config keys for each router</h2>
+<table>
+<thead>
+<tr>
+<th>Config key</th>
+<th>Description</th>
+<th style="text-align: center;">Muskingum</th>
+<th style="text-align: center;">RapidMuskingum</th>
+<th style="text-align: center;">UnitMuskingum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>core</strong></td>
+<td></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>params_file</code></td>
+<td>Routing parameters parquet.</td>
+<td style="text-align: center;"><strong>Required</strong></td>
+<td style="text-align: center;"><strong>Required</strong></td>
+<td style="text-align: center;"><strong>Required</strong></td>
+</tr>
+<tr>
+<td><strong>state</strong></td>
+<td></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>channel_state_init_file</code></td>
+<td>Path to initial channel state</td>
+<td style="text-align: center;"><strong>Required</strong></td>
+<td style="text-align: center;">optional - default to 0</td>
+<td style="text-align: center;">optional - default to 0</td>
+</tr>
+<tr>
+<td><code>channel_state_final_file</code></td>
+<td>Path to save final channel state</td>
+<td style="text-align: center;">optional</td>
+<td style="text-align: center;">optional</td>
+<td style="text-align: center;">optional</td>
+</tr>
+<tr>
+<td><strong>output</strong></td>
+<td></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>discharge_dir</code></td>
+<td>Directory for output  files</td>
+<td style="text-align: center;"><em>Option 1</em></td>
+<td style="text-align: center;"><em>Option 1</em></td>
+<td style="text-align: center;"><em>Option 1</em></td>
+</tr>
+<tr>
+<td><code>discharge_files</code></td>
+<td>Explicit output paths</td>
+<td style="text-align: center;"><em>Option 2</em></td>
+<td style="text-align: center;"><em>Option 2</em></td>
+<td style="text-align: center;"><em>Option 2</em></td>
+</tr>
+<tr>
+<td><strong>input data</strong></td>
+<td></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>qlateral_files</code></td>
+<td>Per-catchment runoff time series</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"><em>Option 1</em></td>
+<td style="text-align: center;"><em>Option 1</em></td>
+</tr>
+<tr>
+<td><code>grid_runoff_files</code></td>
+<td>Gridded runoff depths</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"><em>Option 2</em></td>
+<td style="text-align: center;"><em>Option 2</em></td>
+</tr>
+<tr>
+<td><code>grid_weights_file</code></td>
+<td>Converts depth grids to qlateral</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"><em>Option 2</em></td>
+<td style="text-align: center;"><em>Option 2</em></td>
+</tr>
+<tr>
+<td><strong>unit hydrograph</strong></td>
+<td></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>uh_kernel_file</code></td>
+<td>Pre-computed convolution kernel</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"><strong>Required</strong></td>
+</tr>
+<tr>
+<td><code>uh_state_init_file</code></td>
+<td>Parquet with initial UH state</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;">optional</td>
+</tr>
+<tr>
+<td><code>uh_state_final_file</code></td>
+<td>Path to save final UH state</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;">optional</td>
+</tr>
+<tr>
+<td><strong>time</strong></td>
+<td></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>start_datetime</code></td>
+<td>Simulation start date</td>
+<td style="text-align: center;">optional</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><code>dt_total</code></td>
+<td>Total simulation duration</td>
+<td style="text-align: center;"><strong>Required</strong></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+</tr>
+<tr>
+<td><code>dt_discharge</code></td>
+<td>Output timestep</td>
+<td style="text-align: center;">optional</td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+</tr>
+<tr>
+<td><code>dt_runoff</code></td>
+<td>Runoff data timestep</td>
+<td style="text-align: center;"></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+</tr>
+<tr>
+<td><code>dt_routing</code></td>
+<td>Routing computational timestep</td>
+<td style="text-align: center;"><strong>Required</strong></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+<td style="text-align: center;">optional - <a href="../time-options/">time docs</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="optional-configs-with-defaults">Optional configs with defaults</h2>
+<table>
+<thead>
+<tr>
+<th>Config Key</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>log</code></td>
+<td>Enable or disable logging</td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><code>progress_bar</code></td>
+<td>Show tqdm progress bar</td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><code>log_level</code></td>
+<td>Logger level, defaults to between INFO and WARNING</td>
+<td><code>'PROGRESS'</code></td>
+</tr>
+<tr>
+<td><code>log_stream</code></td>
+<td><code>'stdout'</code> or a file path</td>
+<td><code>'stdout'</code></td>
+</tr>
+<tr>
+<td><code>log_format</code></td>
+<td>Python logging format string</td>
+<td><code>'%(levelname)s - %(asctime)s - %(message)s'</code></td>
+</tr>
+<tr>
+<td><code>var_river_id</code></td>
+<td>River ID dimension name in files</td>
+<td><code>'river_id'</code></td>
+</tr>
+<tr>
+<td><code>var_discharge</code></td>
+<td>Discharge variable name in output</td>
+<td><code>'Q'</code></td>
+</tr>
+<tr>
+<td><code>var_grid_runoff</code></td>
+<td>Runoff variable name in <code>grid_runoff_files</code></td>
+<td><code>'ro'</code></td>
+</tr>
+<tr>
+<td><code>var_x</code></td>
+<td>X-dimension name in depth grids</td>
+<td><code>'x'</code></td>
+</tr>
+<tr>
+<td><code>var_y</code></td>
+<td>Y-dimension name in depth grids</td>
+<td><code>'y'</code></td>
+</tr>
+<tr>
+<td><code>var_t</code></td>
+<td>Time dimension name in depth grids</td>
+<td><code>'time'</code></td>
+</tr>
+<tr>
+<td><code>grid_accumulation_type</code></td>
+<td>Is runoff grid <code>'incremental'</code> or <code>'cumulative'</code></td>
+<td><code>'incremental'</code></td>
+</tr>
+<tr>
+<td><code>runoff_processing_mode</code></td>
+<td>Are runoff <code>'sequential'</code> or <code>'ensemble'</code> inputs</td>
+<td><code>'sequential'</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="example-configuration-yamls">Example Configuration YAMLs</h2>
+<p>The general template in YAML format lists all keys with comments. Template files for specific
+routers are available in the examples directory <code>config_muskingum.yaml</code>, <code>config_rapid_muskingum.yaml</code>, <code>config_unit_muskingum.yaml</code>.</p>
+<h3 id="general-config-file">General Config File</h3>
+<div class="highlight"><span class="filename">config.yaml</span><pre><span></span><code><span class="c1"># river-route configuration template</span>
+<span class="c1"># Routers: Muskingum | RapidMuskingum | UnitMuskingum</span>
+
+<span class="c1"># required — all routers</span>
+<span class="nt">params_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                  </span><span class="c1"># parquet: river_id, downstream_river_id, k, x</span>
+
+<span class="c1"># where to save the outputs</span>
+<span class="c1"># option 1: a directory where the output files will be named based on the input file routed</span>
+<span class="nt">discharge_dir</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                </span><span class="c1"># directory for output netCDF files (named after input files)</span>
+<span class="c1"># option 2: explicit output paths instead of discharge_dir</span>
+<span class="nt">discharge_files</span><span class="p">:</span><span class="w">                 </span><span class="c1"># optional: explicit output paths instead of discharge_dir</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+
+<span class="c1"># runoff input — RapidMuskingum, UnitMuskingum (choose one option)</span>
+<span class="c1"># option 1: pre-aggregated per-catchment lateral inflows</span>
+<span class="c1"># qlateral_files:                 # netCDF: dims (time, river_id); var: qlateral</span>
+<span class="c1">#  - &#39;&#39;</span>
+<span class="c1"># option 2: gridded depths remapped to catchments (comment out option 1 to use)</span>
+<span class="c1"># grid_runoff_files:</span>
+<span class="c1">#   - &#39;&#39;</span>
+<span class="c1"># grid_weights_file: &#39;&#39;          # required with grid_runoff_files</span>
+
+<span class="c1"># unit hydrograph — UnitMuskingum only</span>
+<span class="c1"># uh_kernel_file: &#39;&#39;    # scipy sparse npz: shape (n_basins, n_timesteps)</span>
+<span class="c1"># uh_state_init_file: &#39;&#39;</span>
+<span class="c1"># uh_state_final_file: &#39;&#39;</span>
+
+<span class="c1"># channel state — optional, all routers</span>
+<span class="nt">channel_state_init_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">      </span><span class="c1"># parquet: column Q; omit to default to zero</span>
+<span class="nt">channel_state_final_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">     </span><span class="c1"># omit to skip writing</span>
+
+<span class="c1"># time — required for Muskingum; auto-detected for RapidMuskingum, UnitMuskingum</span>
+<span class="nt">dt_routing</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                    </span><span class="c1"># seconds; routing sub-step (defaults to dt_runoff)</span>
+<span class="nt">dt_total</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                      </span><span class="c1"># seconds; total duration (defaults to full input)</span>
+<span class="nt">dt_discharge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                  </span><span class="c1"># seconds; output timestep (defaults to dt_runoff)</span>
+<span class="nt">dt_runoff</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                     </span><span class="c1"># seconds; auto-detected from input file if omitted</span>
+<span class="nt">start_datetime</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1970-01-01&#39;</span><span class="w">     </span><span class="c1"># ISO date for output timestamps</span>
+
+<span class="c1"># compute options — optional</span>
+<span class="nt">runoff_processing_mode</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;sequential&#39;</span><span class="w">   </span><span class="c1"># sequential | ensemble</span>
+<span class="nt">grid_accumulation_type</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;incremental&#39;</span><span class="w"> </span><span class="c1"># incremental | cumulative</span>
+
+<span class="c1"># logging — optional</span>
+<span class="nt">log</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">progress_bar</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">log_level</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;PROGRESS&#39;</span><span class="w">            </span><span class="c1"># DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL</span>
+<span class="nt">log_stream</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;stdout&#39;</span><span class="w">             </span><span class="c1"># stdout | /path/to/logfile.log</span>
+<span class="nt">log_format</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;%(levelname)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(asctime)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(message)s&#39;</span>
+
+<span class="c1"># variable names — optional; override if your files use different names</span>
+<span class="nt">var_river_id</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;river_id&#39;</span>
+<span class="nt">var_discharge</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;Q&#39;</span>
+<span class="nt">var_grid_runoff</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;ro&#39;</span>
+<span class="nt">var_x</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;x&#39;</span>
+<span class="nt">var_y</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;y&#39;</span>
+<span class="nt">var_t</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;time&#39;</span>
+</code></pre></div>
+<h3 id="muskingum-config-file">Muskingum Config File</h3>
+<div class="highlight"><span class="filename">config_muskingum.yaml</span><pre><span></span><code><span class="c1"># Muskingum config template — channel routing only, no lateral inflow</span>
+
+<span class="c1"># required</span>
+<span class="nt">params_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                  </span><span class="c1"># parquet: river_id, downstream_river_id, k, x</span>
+<span class="c1"># where to save the outputs</span>
+<span class="c1"># option 1: a directory where the output files will be named based on the input file routed</span>
+<span class="nt">discharge_dir</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                </span><span class="c1"># directory for output netCDF files (named after input files)</span>
+<span class="c1"># option 2: explicit output paths instead of discharge_dir</span>
+<span class="nt">discharge_files</span><span class="p">:</span><span class="w">                 </span><span class="c1"># optional: explicit output paths instead of discharge_dir</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+<span class="nt">dt_routing</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                    </span><span class="c1"># seconds; routing sub-step</span>
+<span class="nt">dt_total</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                      </span><span class="c1"># seconds; total simulation duration</span>
+<span class="nt">channel_state_init_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">      </span><span class="c1"># parquet: column Q</span>
+
+<span class="c1"># optional</span>
+<span class="nt">channel_state_final_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">     </span><span class="c1"># omit to skip writing</span>
+<span class="nt">dt_discharge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                  </span><span class="c1"># seconds; output timestep (defaults to dt_routing)</span>
+<span class="nt">start_datetime</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1970-01-01&#39;</span><span class="w">     </span><span class="c1"># ISO date for output timestamps</span>
+
+<span class="c1"># logging</span>
+<span class="nt">log</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">progress_bar</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">log_level</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;PROGRESS&#39;</span><span class="w">            </span><span class="c1"># DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL</span>
+<span class="nt">log_stream</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;stdout&#39;</span><span class="w">             </span><span class="c1"># stdout | /path/to/logfile.log</span>
+<span class="nt">log_format</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;%(levelname)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(asctime)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(message)s&#39;</span>
+
+<span class="c1"># variable names</span>
+<span class="nt">var_river_id</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;river_id&#39;</span>
+<span class="nt">var_discharge</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;Q&#39;</span>
+<span class="nt">var_t</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;time&#39;</span>
+</code></pre></div>
+<h3 id="rapid-muskingum-config-file">Rapid Muskingum Config File</h3>
+<div class="highlight"><span class="filename">config_rapid_muskingum.yaml</span><pre><span></span><code><span class="c1"># RapidMuskingum config template — direct runoff-to-channel routing</span>
+
+<span class="c1"># required</span>
+<span class="nt">params_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                  </span><span class="c1"># parquet: river_id, downstream_river_id, k, x</span>
+<span class="c1"># where to save the outputs</span>
+<span class="c1"># option 1: a directory where the output files will be named based on the input file routed</span>
+<span class="nt">discharge_dir</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                </span><span class="c1"># directory for output netCDF files (named after input files)</span>
+<span class="c1"># option 2: explicit output paths instead of discharge_dir</span>
+<span class="nt">discharge_files</span><span class="p">:</span><span class="w">                 </span><span class="c1"># optional: explicit output paths instead of discharge_dir</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+
+<span class="c1"># runoff input — choose one of two choices</span>
+<span class="c1"># option 1: pre-aggregated per-catchment volumes (m³)</span>
+<span class="nt">qlateral_files</span><span class="p">:</span><span class="w">                  </span><span class="c1"># netCDF: dims (time, river_id); var: qlateral</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+<span class="c1"># option 2: gridded depths remapped to catchments (comment out option 1 to use)</span>
+<span class="c1"># grid_runoff_files:</span>
+<span class="c1">#   - &#39;&#39;</span>
+<span class="c1"># grid_weights_file: &#39;&#39;          # required with grid_runoff_files</span>
+
+<span class="c1"># channel state — optional</span>
+<span class="nt">channel_state_init_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">      </span><span class="c1"># parquet: column Q; omit to default to zero</span>
+<span class="nt">channel_state_final_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">     </span><span class="c1"># omit to skip writing</span>
+
+<span class="c1"># time — optional; auto-detected from input file if omitted</span>
+<span class="nt">dt_routing</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                    </span><span class="c1"># seconds; routing sub-step (defaults to dt_runoff)</span>
+<span class="nt">dt_total</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                      </span><span class="c1"># seconds; total duration (defaults to full input)</span>
+<span class="nt">dt_discharge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                  </span><span class="c1"># seconds; output timestep (defaults to dt_runoff)</span>
+<span class="nt">start_datetime</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1970-01-01&#39;</span><span class="w">     </span><span class="c1"># ISO date for output timestamps</span>
+
+<span class="c1"># compute options</span>
+<span class="nt">grid_accumulation_type</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;incremental&#39;</span><span class="w"> </span><span class="c1"># incremental | cumulative</span>
+<span class="nt">runoff_processing_mode</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;sequential&#39;</span><span class="w">   </span><span class="c1"># sequential | ensemble</span>
+
+<span class="c1"># logging</span>
+<span class="nt">log</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">progress_bar</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">log_level</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;PROGRESS&#39;</span><span class="w">            </span><span class="c1"># DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL</span>
+<span class="nt">log_stream</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;stdout&#39;</span><span class="w">             </span><span class="c1"># stdout | /path/to/logfile.log</span>
+<span class="nt">log_format</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;%(levelname)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(asctime)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(message)s&#39;</span>
+
+<span class="c1"># variable names</span>
+<span class="nt">var_river_id</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;river_id&#39;</span>
+<span class="nt">var_discharge</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;Q&#39;</span>
+<span class="nt">var_grid_runoff</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;ro&#39;</span>
+<span class="nt">var_x</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;x&#39;</span>
+<span class="nt">var_y</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;y&#39;</span>
+<span class="nt">var_t</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;time&#39;</span>
+</code></pre></div>
+<h3 id="unit-muskingum-config-file">Unit Muskingum Config File</h3>
+<div class="highlight"><span class="filename">config_unit_muskingum.yaml</span><pre><span></span><code><span class="c1"># UnitMuskingum config template — unit hydrograph transform then Muskingum routing</span>
+
+<span class="c1"># required</span>
+<span class="nt">params_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                  </span><span class="c1"># parquet: river_id, downstream_river_id, k, x</span>
+<span class="nt">uh_kernel_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">      </span><span class="c1"># scipy sparse npz: shape (n_basins, n_timesteps)</span>
+
+<span class="c1"># where to save the outputs</span>
+<span class="c1"># option 1: a directory where the output files will be named based on the input file routed</span>
+<span class="nt">discharge_dir</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">                </span><span class="c1"># directory for output netCDF files (named after input files)</span>
+<span class="c1"># option 2: explicit output paths instead of discharge_dir</span>
+<span class="nt">discharge_files</span><span class="p">:</span><span class="w">                 </span><span class="c1"># optional: explicit output paths instead of discharge_dir</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+
+<span class="c1"># runoff input — choose one of two choices for RapidMuskingum, UnitMuskingum</span>
+<span class="c1"># option 1: pre-aggregated per-catchment depths (m)</span>
+<span class="nt">qlateral_files</span><span class="p">:</span><span class="w">                  </span><span class="c1"># netCDF: dims (time, river_id); var: qlateral</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+<span class="c1"># option 2: gridded depths remapped to catchments (comment out option 1 to use)</span>
+<span class="nt">grid_runoff_files</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;&#39;</span>
+<span class="nt">grid_weights_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">            </span><span class="c1"># required with grid_runoff_files</span>
+
+<span class="c1"># channel state — optional</span>
+<span class="nt">channel_state_init_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">      </span><span class="c1"># parquet: column Q; omit to default to zero</span>
+<span class="nt">channel_state_final_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">     </span><span class="c1"># omit to skip writing</span>
+
+<span class="c1"># UH state — optional; for warm-starting across runs</span>
+<span class="nt">uh_state_init_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">           </span><span class="c1"># parquet: shape (n_basins, n_timesteps)</span>
+<span class="nt">uh_state_final_file</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span><span class="w">          </span><span class="c1"># omit to skip writing</span>
+
+<span class="c1"># time — optional; auto-detected from input file if omitted</span>
+<span class="nt">dt_routing</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                    </span><span class="c1"># seconds; routing sub-step (defaults to dt_runoff)</span>
+<span class="nt">dt_total</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                      </span><span class="c1"># seconds; total duration (defaults to full input)</span>
+<span class="nt">dt_discharge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                  </span><span class="c1"># seconds; output timestep (defaults to dt_runoff)</span>
+<span class="nt">start_datetime</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1970-01-01&#39;</span><span class="w">     </span><span class="c1"># ISO date for output timestamps</span>
+
+<span class="c1"># compute options</span>
+<span class="nt">grid_accumulation_type</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;incremental&#39;</span><span class="w"> </span><span class="c1"># incremental | cumulative</span>
+<span class="nt">runoff_processing_mode</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;sequential&#39;</span><span class="w">   </span><span class="c1"># sequential | ensemble</span>
+
+<span class="c1"># logging</span>
+<span class="nt">log</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">progress_bar</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="nt">log_level</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;PROGRESS&#39;</span><span class="w">            </span><span class="c1"># DEBUG | INFO | PROGRESS | WARNING | ERROR | CRITICAL</span>
+<span class="nt">log_stream</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;stdout&#39;</span><span class="w">             </span><span class="c1"># stdout | /path/to/logfile.log</span>
+<span class="nt">log_format</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;%(levelname)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(asctime)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(message)s&#39;</span>
+
+<span class="c1"># variable names</span>
+<span class="nt">var_river_id</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;river_id&#39;</span>
+<span class="nt">var_discharge</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;Q&#39;</span>
+<span class="nt">var_grid_runoff</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;ro&#39;</span>
+<span class="nt">var_x</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;x&#39;</span>
+<span class="nt">var_y</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;y&#39;</span>
+<span class="nt">var_t</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;time&#39;</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../api/tools/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Tools">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Tools
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../io-file-schema/" class="md-footer__link md-footer__link--next" aria-label="Next: File Schemas">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                File Schemas
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2023-2026 Dr Riley Hales. All rights reserved.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.code.select", "navigation.expand", "navigation.path", "navigation.footer", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/katex.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/contrib/auto-render.min.js"></script>
+      
+        <script src="../../static/js/katex.js"></script>
+      
+    
+  </body>
+</html>

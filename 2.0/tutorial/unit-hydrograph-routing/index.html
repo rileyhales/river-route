@@ -1,0 +1,1428 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://river-route.code.hales.app/2.0/tutorial/unit-hydrograph-routing/">
+      
+      
+        <link rel="prev" href="../basics/">
+      
+      
+        <link rel="next" href="../routing-ensembles/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
+    
+    
+      
+        <title>Unit Hydrographs with Routing - River Route</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="https://unpkg.com/katex@0/dist/katex.min.css">
+    
+      <link rel="stylesheet" href="../../static/css/custom.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="light-blue" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#unit-hydrograph-routing-with-unitmuskingum" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="River Route" class="md-header__button md-logo" aria-label="River Route" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            River Route
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Unit Hydrographs with Routing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="River Route" class="md-nav__button md-logo" aria-label="River Route" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    River Route
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Docs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/routers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router Classes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/unit-hydrographs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    References
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references/config-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Config File
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references/io-file-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references/time-options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Time Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references/math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Derivations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references/parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs with Routing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unit Hydrographs with Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unit-hydrograph-routing-with-unitmuskingum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Hydrograph Routing with UnitMuskingum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building-a-kernel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building a Kernel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Building a Kernel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kernel-file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel file format
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the Router
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warm-starting-the-convolution-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warm-Starting the Convolution State
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headwater-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headwater Optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing-ensembles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing Runoff Ensemble
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Uses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Migration Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrating/v1-to-v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1 to v2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unit-hydrograph-routing-with-unitmuskingum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Hydrograph Routing with UnitMuskingum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building-a-kernel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building a Kernel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Building a Kernel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kernel-file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel file format
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the Router
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warm-starting-the-convolution-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warm-Starting the Convolution State
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headwater-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headwater Optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../basics/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+  <h1>Unit Hydrographs with Routing</h1>
+
+<h2 id="unit-hydrograph-routing-with-unitmuskingum">Unit Hydrograph Routing with UnitMuskingum</h2>
+<p><code>UnitMuskingum</code> convolves runoff depths with a precomputed unit hydrograph (UH) kernel before routing
+through the Muskingum channel equations. Instead of placing runoff directly at the channel inlet each
+timestep (as <code>RapidMuskingum</code> does), the UH spreads overland flow through time, producing a more
+realistic lateral inflow hydrograph. The convolved lateral inflow is then routed between river segments
+using the Muskingum method.</p>
+<p>See the <a href="../../references/math/">Math Derivations</a> page for the full equations.</p>
+<h2 id="building-a-kernel">Building a Kernel</h2>
+<p>river-route provides two SCS (NRCS) dimensionless unit hydrograph builders that generate kernels from
+basin properties:</p>
+<ul>
+<li><strong><code>SCSTriangular</code></strong> — piecewise-linear triangular UH (NEH 630, Ch. 16)</li>
+<li><strong><code>SCSCurvilinear</code></strong> — tabulated curvilinear UH with 33 ordinates (NEH 630, Ch. 16)</li>
+</ul>
+<p>Both require three inputs:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tc</code></td>
+<td>1D array (float)</td>
+<td>Time of concentration per basin, in seconds</td>
+</tr>
+<tr>
+<td><code>area</code></td>
+<td>1D array (float)</td>
+<td>Basin (catchment) area per basin, in m²</td>
+</tr>
+<tr>
+<td><code>tr</code></td>
+<td>float</td>
+<td>Duration of the unit rainfall pulse, in seconds</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">xarray</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">xr</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">river_route</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">rr</span>
+
+<span class="c1"># Load basin properties — tc and area must be in the same order as the routing params</span>
+<span class="n">params</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s1">&#39;params.parquet&#39;</span><span class="p">)</span>
+<span class="n">weights</span> <span class="o">=</span> <span class="n">xr</span><span class="o">.</span><span class="n">open_dataset</span><span class="p">(</span><span class="s1">&#39;grid_weights.nc&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">()</span>
+
+<span class="n">tc</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;k&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span> <span class="o">*</span> <span class="mi">5</span>          <span class="c1"># example: scale Muskingum k to estimate tc</span>
+<span class="n">area</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">weights</span>
+    <span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s1">&#39;river_id&#39;</span><span class="p">)[</span><span class="s1">&#39;area_sqm&#39;</span><span class="p">]</span>
+    <span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">reindex</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;river_id&#39;</span><span class="p">])</span>
+    <span class="o">.</span><span class="n">values</span>
+<span class="p">)</span>
+
+<span class="c1"># Build and save the kernel — tr must match the timestep of your runoff data</span>
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">rr</span><span class="o">.</span><span class="n">uhkernels</span><span class="o">.</span><span class="n">SCSTriangular</span><span class="p">(</span><span class="n">tc</span><span class="o">=</span><span class="n">tc</span><span class="p">,</span> <span class="n">area</span><span class="o">=</span><span class="n">area</span><span class="p">,</span> <span class="n">tr</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
+<span class="n">kernel</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s1">&#39;kernel.npz&#39;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">tr must match dt_runoff</p>
+<p>The kernel's <code>tr</code> parameter <strong>must equal the timestep of the runoff data</strong> used during routing.
+Volume conservation requires <code>sum(kernel[:, j]) * tr == area[j]</code> for each basin. If <code>tr</code> does
+not match the actual runoff timestep, cumulative discharged volumes will be scaled by
+<code>dt_runoff / tr</code> — for example, a kernel built with <code>tr=3600</code> used with 3-hourly data will
+produce volumes 3× too large.</p>
+</div>
+<h3 id="kernel-file-format">Kernel file format</h3>
+<p>The kernel is saved as a scipy sparse npz file with shape <code>(n_kernel_steps, n_basins)</code>:</p>
+<ul>
+<li>Each <strong>column</strong> is the discretized unit hydrograph for one basin</li>
+<li>Each value is the average flow rate per unit depth of runoff (m²/s) over one <code>tr</code> interval</li>
+<li>Volume conservation: <code>sum(kernel[:, j]) * tr == area[j]</code></li>
+</ul>
+<p>You can also build a kernel manually and save it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">scipy.sparse</span>
+
+<span class="n">n_steps</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="n">n_basins</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_steps</span><span class="p">,</span> <span class="n">n_basins</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+<span class="c1"># ... populate each column with your unit hydrograph ordinates ...</span>
+
+<span class="n">scipy</span><span class="o">.</span><span class="n">sparse</span><span class="o">.</span><span class="n">save_npz</span><span class="p">(</span><span class="s1">&#39;kernel.npz&#39;</span><span class="p">,</span> <span class="n">scipy</span><span class="o">.</span><span class="n">sparse</span><span class="o">.</span><span class="n">csr_matrix</span><span class="p">(</span><span class="n">kernel</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="running-the-router">Running the Router</h2>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">river_route</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">rr</span>
+
+<span class="p">(</span>
+    <span class="n">rr</span>
+    <span class="o">.</span><span class="n">UnitMuskingum</span><span class="p">(</span>
+        <span class="n">params_file</span><span class="o">=</span><span class="s1">&#39;params.parquet&#39;</span><span class="p">,</span>
+        <span class="n">uh_kernel_file</span><span class="o">=</span><span class="s1">&#39;kernel.npz&#39;</span><span class="p">,</span>
+        <span class="n">qlateral_files</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;depths.nc&#39;</span><span class="p">],</span>
+        <span class="n">discharge_dir</span><span class="o">=</span><span class="s1">&#39;output/&#39;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="o">.</span><span class="n">route</span><span class="p">()</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The <code>qlateral_files</code> for <code>UnitMuskingum</code> contain <strong>runoff depths in meters</strong> (not volumes). The
+<code>river_id</code> dimension must match the routing parameters file in both values and order. See the
+<a href="../../references/io-file-schema/">File Schemas</a> reference for the full specification.</p>
+<p>Alternatively, you can route directly from gridded runoff using a weight table:</p>
+<div class="highlight"><pre><span></span><code><span class="p">(</span>
+    <span class="n">rr</span>
+    <span class="o">.</span><span class="n">UnitMuskingum</span><span class="p">(</span>
+        <span class="n">params_file</span><span class="o">=</span><span class="s1">&#39;params.parquet&#39;</span><span class="p">,</span>
+        <span class="n">uh_kernel_file</span><span class="o">=</span><span class="s1">&#39;kernel.npz&#39;</span><span class="p">,</span>
+        <span class="n">grid_runoff_files</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;era5_runoff.nc&#39;</span><span class="p">],</span>
+        <span class="n">grid_weights_file</span><span class="o">=</span><span class="s1">&#39;grid_weights.nc&#39;</span><span class="p">,</span>
+        <span class="n">discharge_dir</span><span class="o">=</span><span class="s1">&#39;output/&#39;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="o">.</span><span class="n">route</span><span class="p">()</span>
+<span class="p">)</span>
+</code></pre></div>
+<h2 id="warm-starting-the-convolution-state">Warm-Starting the Convolution State</h2>
+<p>The UH convolution produces a tail that extends beyond the current simulation window. To get
+continuous results across sequential input files, save and restore the convolution state:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># First run — save the final UH and channel state</span>
+<span class="p">(</span>
+    <span class="n">rr</span>
+    <span class="o">.</span><span class="n">UnitMuskingum</span><span class="p">(</span>
+        <span class="n">params_file</span><span class="o">=</span><span class="s1">&#39;params.parquet&#39;</span><span class="p">,</span>
+        <span class="n">uh_kernel_file</span><span class="o">=</span><span class="s1">&#39;kernel.npz&#39;</span><span class="p">,</span>
+        <span class="n">qlateral_files</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;depths_period1.nc&#39;</span><span class="p">],</span>
+        <span class="n">discharge_dir</span><span class="o">=</span><span class="s1">&#39;output/&#39;</span><span class="p">,</span>
+        <span class="n">channel_state_final_file</span><span class="o">=</span><span class="s1">&#39;channel_state.parquet&#39;</span><span class="p">,</span>
+        <span class="n">uh_state_final_file</span><span class="o">=</span><span class="s1">&#39;uh_state.parquet&#39;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="o">.</span><span class="n">route</span><span class="p">()</span>
+<span class="p">)</span>
+
+<span class="c1"># Second run — warm-start from saved state</span>
+<span class="p">(</span>
+    <span class="n">rr</span>
+    <span class="o">.</span><span class="n">UnitMuskingum</span><span class="p">(</span>
+        <span class="n">params_file</span><span class="o">=</span><span class="s1">&#39;params.parquet&#39;</span><span class="p">,</span>
+        <span class="n">uh_kernel_file</span><span class="o">=</span><span class="s1">&#39;kernel.npz&#39;</span><span class="p">,</span>
+        <span class="n">qlateral_files</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;depths_period2.nc&#39;</span><span class="p">],</span>
+        <span class="n">discharge_dir</span><span class="o">=</span><span class="s1">&#39;output/&#39;</span><span class="p">,</span>
+        <span class="n">channel_state_init_file</span><span class="o">=</span><span class="s1">&#39;channel_state.parquet&#39;</span><span class="p">,</span>
+        <span class="n">uh_state_init_file</span><span class="o">=</span><span class="s1">&#39;uh_state.parquet&#39;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="o">.</span><span class="n">route</span><span class="p">()</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The UH state file is a parquet with shape <code>(n_basins, n_kernel_steps)</code> — one row per basin. It
+records how much of each basin's recent runoff has not yet been discharged into the channel.</p>
+<div class="admonition note">
+<p class="admonition-title">Volume in the state buffer</p>
+<p>At the end of a simulation, the UH state buffer may hold non-trivial volume that has not yet
+appeared in the discharge output. If you are checking cumulative volume conservation, account
+for the volume remaining in both the UH state and the channel state.</p>
+</div>
+<h2 id="headwater-optimization">Headwater Optimization</h2>
+<p><code>UnitMuskingum</code> automatically identifies headwater segments (those with no upstream connections) and
+excludes them from the Muskingum matrix solve. Headwater discharge is set directly to the UH
+convolution output. This typically cuts the linear solve size roughly in half with no loss of accuracy.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../basics/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Basics">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Basics
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../routing-ensembles/" class="md-footer__link md-footer__link--next" aria-label="Next: Routing Runoff Ensemble">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Routing Runoff Ensemble
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2023-2026 Dr Riley Hales. All rights reserved.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.code.select", "navigation.expand", "navigation.path", "navigation.footer", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/katex.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/contrib/auto-render.min.js"></script>
+      
+        <script src="../../static/js/katex.js"></script>
+      
+    
+  </body>
+</html>
