@@ -3,30 +3,22 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'river_route/**'
-      - '.github/workflows/docs.yaml'
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: docs-deploy
+  group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -38,20 +30,22 @@ jobs:
           pip install -r docs/requirements.txt
           pip install .
 
-      - name: Configure git for mike
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Build site
+        run: mkdocs build --strict --site-dir site
 
-      - name: Deploy dev docs from main
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: mike deploy --push --update-aliases dev
+      - name: Write CNAME for custom domain
+        run: echo 'river-route.code.hales.app' > site/CNAME
 
-      - name: Deploy release docs
-        if: github.event_name == 'release'
-        run: |
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
-          MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1,2)"
-          mike deploy --push --update-aliases "$MAJOR_MINOR" latest
-          mike set-default --push latest
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
