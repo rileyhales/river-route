@@ -6,7 +6,7 @@ from typing import ClassVar, Literal, get_args, get_origin, get_type_hints, Self
 import numpy as np
 import pandas as pd
 import xarray as xr
-from river_route.types import PathInput, PathList, PathTypes
+from river_route.types import PathInput, PathList
 
 __all__ = ['Configs', ]
 
@@ -113,7 +113,7 @@ class Configs:
         """Normalize any list-of-paths field given as a single string to [str]."""
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key)
-            if isinstance(val, PathTypes) and val:
+            if isinstance(val, PathInput) and val:
                 setattr(self, key, [str(val)])
         return
 

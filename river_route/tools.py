@@ -105,5 +105,5 @@ def adjacency_matrix(river_ids: np.ndarray, downstream_ids: np.ndarray) -> scipy
         row_indices.append(downstream_idx)
         col_indices.append(upstream_idx)
 
-    data = np.ones(len(row_indices), dtype=np.float64)
+    data = np.ones(len(row_indices), dtype=np.float32)
     return scipy.sparse.csc_matrix((data, (row_indices, col_indices)), shape=(river_ids.shape[0], river_ids.shape[0]))

@@ -5,13 +5,12 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-PathInput = str | Path
-PathTypes = (str, Path)  # for isinstance checks rather than type hinting
-PathList = list[PathInput]
-FloatArray = NDArray[np.float64]
-IntArray = NDArray[np.int64]
-DatetimeArray = NDArray[np.datetime64]
-QlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
+PathInput = str | Path  # used at runtime for validation so it can't be a lazy type alias
+type PathList = list[PathInput]
+type FloatArray = NDArray[np.float32]
+type IntArray = NDArray[np.int64]
+type DatetimeArray = NDArray[np.datetime64]
+type QlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
 
 
 class WriteDischargesFn(Protocol):
@@ -26,7 +25,6 @@ class WriteDischargesFn(Protocol):
 
 __all__ = [
     'PathInput',
-    'PathTypes',
     'PathList',
     'FloatArray',
     'IntArray',

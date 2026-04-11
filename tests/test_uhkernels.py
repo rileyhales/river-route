@@ -72,7 +72,7 @@ def test_convolve_vs_convolve_incrementally():
         for t in range(n_steps):
             result_inc[t] = uh_inc.convolve_incrementally(lateral[t])
 
-        np.testing.assert_allclose(result_full, result_inc, rtol=1e-12)
+        np.testing.assert_allclose(result_full, result_inc, rtol=1e-5)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     return
@@ -91,9 +91,9 @@ def test_convolve_impulse_response():
         uh = UnitHydrograph(path)
         result = uh.convolve(lateral)
         # First n_ks rows should equal the kernel values
-        np.testing.assert_allclose(result[:3], kernel, rtol=1e-12)
+        np.testing.assert_allclose(result[:3], kernel, rtol=1e-5)
         # Remaining rows should be zero
-        np.testing.assert_allclose(result[3:], 0.0, atol=1e-15)
+        np.testing.assert_allclose(result[3:], 0.0, atol=1e-6)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     return

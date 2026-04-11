@@ -14,33 +14,34 @@ def muskingum_route(
 ):
     """Full Muskingum channel-only routing loop."""
     n = len(q_t)
-    rhs = np.empty(n, dtype=np.float64)
-    interval_sum = np.empty(n, dtype=np.float64)
-    inv_nrpo = 1.0 / num_routing_per_output
+    rhs = np.empty(n, dtype=np.float32)
+    interval_sum = np.empty(n, dtype=np.float32)
+    inv_nrpo = np.float32(1.0 / num_routing_per_output)
 
     for output_step in range(num_output_steps):
         for i in range(n):
             interval_sum[i] = 0.0
 
         for _ in range(num_routing_per_output):
-            # RHS = c2 * (A @ q_t) + c3 * q_t
+            # RHS = c3 * Q(t)
             for i in range(n):
                 rhs[i] = c3[i] * q_t[i]
-            for col in range(n):
-                q_val = q_t[col]
-                for j in range(csc_indptr[col], csc_indptr[col + 1]):
-                    row = csc_indices[j]
-                    rhs[row] += c2[row] * q_val
 
-            # Forward solve: unit lower triangular
+            # Fused SpMV and forward solve: (I - c1*A) @ Q(t+1) = c2*(A @ Q(t)) + c3*Q(t)
+            # SpMV scatter: rhs += c2 * (A @ Q(t))
+            # Forward solve: Q(t+1) = rhs after back-substitution of (I - c1*A)
             for col in range(n):
+                q_old = q_t[col]
                 q_t[col] = rhs[col]
                 for j in range(csc_indptr[col], csc_indptr[col + 1]):
-                    rhs[csc_indices[j]] -= lhs_off_data[j] * q_t[col]
+                    row = csc_indices[j]
+                    rhs[row] += c2[row] * q_old - lhs_off_data[j] * q_t[col]
 
+            # Accumulate substep results for interval averaging
             for i in range(n):
                 interval_sum[i] += q_t[i]
 
+        # Average over substeps, clamp negative values
         for i in range(n):
             val = interval_sum[i] * inv_nrpo
             discharge_array[output_step, i] = val if val > 0.0 else 0.0
@@ -55,9 +56,9 @@ def rapid_route(
 ):
     """Full RapidMuskingum routing loop with lateral inflow."""
     n = len(q_t)
-    rhs = np.empty(n, dtype=np.float64)
-    interval_sum = np.empty(n, dtype=np.float64)
-    inv_substeps = 1.0 / num_substeps
+    rhs = np.empty(n, dtype=np.float32)
+    interval_sum = np.empty(n, dtype=np.float32)
+    inv_substeps = np.float32(1.0 / num_substeps)
     num_runoff_steps = qlateral.shape[0]
 
     for t in range(num_runoff_steps):
@@ -65,20 +66,25 @@ def rapid_route(
             interval_sum[i] = 0.0
 
         for _ in range(num_substeps):
+            # RHS = c3 * Q(t) + c4/dt * qlateral(t)
             for i in range(n):
                 rhs[i] = c3[i] * q_t[i] + c4_dt[i] * qlateral[t, i]
+
+            # Fused SpMV and forward solve: (I - c1*A) @ Q(t+1) = c2*(A @ Q(t)) + c3*Q(t) + c4/dt*ql(t)
+            # SpMV scatter: rhs += c2 * (A @ Q(t))
+            # Forward solve: Q(t+1) = rhs after back-substitution of (I - c1*A)
             for col in range(n):
-                q_val = q_t[col]
-                for j in range(csc_indptr[col], csc_indptr[col + 1]):
-                    row = csc_indices[j]
-                    rhs[row] += c2[row] * q_val
-            for col in range(n):
+                q_old = q_t[col]
                 q_t[col] = rhs[col]
                 for j in range(csc_indptr[col], csc_indptr[col + 1]):
-                    rhs[csc_indices[j]] -= lhs_off_data[j] * q_t[col]
+                    row = csc_indices[j]
+                    rhs[row] += c2[row] * q_old - lhs_off_data[j] * q_t[col]
+
+            # Accumulate substep results for interval averaging
             for i in range(n):
                 interval_sum[i] += q_t[i]
 
+        # Average over substeps, clamp negative values
         for i in range(n):
             val = interval_sum[i] * inv_substeps
             discharge_array[t, i] = val if val > 0.0 else 0.0
@@ -101,28 +107,28 @@ def unit_route(
     n_inner = len(inner_idx)
     n_hw = len(hw_idx)
     num_runoff_steps = convolved_lateral.shape[0]
-    inv_substeps = 1.0 / num_substeps
+    inv_substeps = np.float32(1.0 / num_substeps)
 
-    rhs = np.empty(n_inner, dtype=np.float64)
-    interval_sum = np.empty(n_inner, dtype=np.float64)
-    ql_hw = np.empty(n_hw, dtype=np.float64)
-    ql_inner = np.empty(n_inner, dtype=np.float64)
-    a_inner_result = np.empty(n_inner, dtype=np.float64)
-    a_hw_result = np.empty(n_inner, dtype=np.float64)
-    c1_A_ql = np.empty(n_inner, dtype=np.float64)
+    rhs = np.empty(n_inner, dtype=np.float32)
+    interval_sum = np.empty(n_inner, dtype=np.float32)
+    ql_hw = np.empty(n_hw, dtype=np.float32)
+    ql_inner = np.empty(n_inner, dtype=np.float32)
+    a_inner_result = np.empty(n_inner, dtype=np.float32)
+    a_hw_result = np.empty(n_inner, dtype=np.float32)
+    c1_A_ql = np.empty(n_inner, dtype=np.float32)
 
     for t in range(num_runoff_steps):
-        # Extract headwater and inner lateral inflows
+        # Extract headwater and inner lateral inflows from convolved runoff
         for i in range(n_hw):
             ql_hw[i] = convolved_lateral[t, hw_idx[i]]
         for i in range(n_inner):
             ql_inner[i] = convolved_lateral[t, inner_idx[i]]
 
-        # Headwater discharge = lateral inflow directly
+        # Headwater segments: Q = ql (no channel routing, UH convolution only)
         for i in range(n_hw):
             discharge_array[t, hw_idx[i]] = ql_hw[i]
 
-        # SpMV: a_inner_result = A_inner @ ql_inner
+        # SpMV: A_inner @ ql_inner (inner-to-inner lateral flow contributions)
         for i in range(n_inner):
             a_inner_result[i] = 0.0
         for col in range(n_inner):
@@ -130,7 +136,7 @@ def unit_route(
             for j in range(a_inner_indptr[col], a_inner_indptr[col + 1]):
                 a_inner_result[a_inner_indices[j]] += a_inner_data[j] * val
 
-        # SpMV: a_hw_result = A_hw_to_inner @ ql_hw
+        # SpMV: A_hw_to_inner @ ql_hw (headwater-to-inner lateral flow contributions)
         for i in range(n_inner):
             a_hw_result[i] = 0.0
         for col in range(n_hw):
@@ -138,7 +144,7 @@ def unit_route(
             for j in range(a_hw_indptr[col], a_hw_indptr[col + 1]):
                 a_hw_result[a_hw_indices[j]] += a_hw_data[j] * val
 
-        # c1_A_ql = c1_inner * (A_inner @ ql_inner + A_hw_to_inner @ ql_hw)
+        # c1 * A @ ql = c1 * (A_inner @ ql_inner + A_hw_to_inner @ ql_hw)
         for i in range(n_inner):
             c1_A_ql[i] = c1_inner[i] * (a_inner_result[i] + a_hw_result[i])
 
@@ -146,26 +152,26 @@ def unit_route(
             interval_sum[i] = 0.0
 
         for _ in range(num_substeps):
-            # RHS = c1*A*ql + c2*(hw_contrib + A_inner @ q_full) + c3*q_ch
+            # RHS = c1*A*ql + c2*(A_hw_to_inner @ ql_hw) + c3*Q_ch(t)
             for i in range(n_inner):
                 rhs[i] = c1_A_ql[i] + c2_inner[i] * a_hw_result[i] + c3_inner[i] * q_ch[i]
-            for col in range(n_inner):
-                q_val = q_full[col]
-                for j in range(lhs_indptr[col], lhs_indptr[col + 1]):
-                    row = lhs_indices[j]
-                    rhs[row] += c2_inner[row] * q_val
 
-            # Forward solve
+            # Fused SpMV and forward solve: (I - c1*A) @ Q_ch(t+1) = RHS + c2*(A_inner @ Q_full(t))
+            # SpMV scatter: rhs += c2 * (A_inner @ Q_full(t))
+            # Forward solve: Q_ch(t+1) = rhs after back-substitution of (I - c1*A)
             for col in range(n_inner):
+                q_old = q_full[col]
                 q_ch[col] = rhs[col]
                 for j in range(lhs_indptr[col], lhs_indptr[col + 1]):
-                    rhs[lhs_indices[j]] -= lhs_off_data[j] * q_ch[col]
+                    row = lhs_indices[j]
+                    rhs[row] += c2_inner[row] * q_old - lhs_off_data[j] * q_ch[col]
 
-            # Post-solve
+            # Q_full = Q_ch + ql, accumulate for interval averaging
             for i in range(n_inner):
                 q_full[i] = q_ch[i] + ql_inner[i]
                 interval_sum[i] += q_full[i]
 
+        # Average over substeps, clamp negative values
         for i in range(n_inner):
             val = interval_sum[i] * inv_substeps
             discharge_array[t, inner_idx[i]] = val if val > 0.0 else 0.0

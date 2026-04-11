@@ -2,6 +2,14 @@
 
 ---
 
+### [v2.1.0](https://github.com/rileyhales/river-route/tree/v2.1.0) — 2026-04-11
+
+- Routing state, parameters (`k`, `x`), channel state, and all numba kernel scratch buffers now use `float32` instead of `float64`. Reduces memory half, speeds up the inner routing loop.
+- Fused the sparse matrix-vector multiply and forward-substitution into a single loop for modest speed gain.
+- Better use of type aliases to reduce total number of annotations and improve readability.
+
+---
+
 ### [v2.0.1](https://github.com/rileyhales/river-route/tree/v2.0.1) — 2026-03-10
 
 - Adds pyarrow to dependencies which is included by conda installs as a pandas dependency but not in pip.

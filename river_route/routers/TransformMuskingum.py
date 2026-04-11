@@ -33,7 +33,7 @@ class TransformMuskingum(Muskingum, ABC):
                 self.logger.info('-' * 60)
                 with xr.open_dataset(lateral_file) as ds:
                     dates = ds['time'].values.astype('datetime64[s]')
-                    array = ds['qlateral'].values.astype(np.float64, copy=False)
+                    array = ds['qlateral'].values.astype(np.float32, copy=False)
                     yield dates, array, lateral_file, discharge_file
         elif self.cfg.grid_runoff_files and self.cfg.grid_weights_file:
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files):
@@ -46,7 +46,7 @@ class TransformMuskingum(Muskingum, ABC):
                                         as_volumes=self._as_volumes)
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
-                    ds['qlateral'].values.astype(np.float64, copy=False),
+                    ds['qlateral'].values.astype(np.float32, copy=False),
                     runoff_file, discharge_file
                 )
 
