@@ -1,6 +1,5 @@
 # River Route
 
-[![Documentation Status](https://readthedocs.org/projects/river-route/badge/?version=latest)](https://river-route.hales.app/en/latest/)
 [![PyPI version](https://badge.fury.io/py/river-route.svg)](https://pypi.org/project/river-route/)
 [![GitHub repo size](https://img.shields.io/github/repo-size/rileyhales/river-route)](https://github.com/rileyhales/river-route)
 ![License](https://img.shields.io/github/license/rileyhales/river-route)
@@ -23,10 +22,12 @@ Muskingum-family routing at watershed scale.
 pip install river-route
 ```
 
+Or from source:
+
 ```bash
+# create/activate an environment e.g. conda create -n rr python=3.12 && conda activate rr
 git clone https://github.com/rileyhales/river-route.git
 cd river-route
-# create/activate an environment e.g. conda create -n rr python=3.14 && conda activate rr
 python -m pip install -e .
 ```
 
@@ -62,24 +63,7 @@ rr RapidMuskingum examples/config_rapid_muskingum.yaml
 rr UnitMuskingum examples/config_unit_muskingum.yaml
 ```
 
-## Documentation
-
-- Hosted docs: https://river-route.hales.app
-- Migration guide: [`docs/migrating/v1-to-v2.md`](docs/migrating/v1-to-v2.md)
-
-Build docs locally:
-
-```bash
-mkdocs serve
-```
-
 ## Testing
-
-```bash
-pytest tests -v
-```
-
-Integration tests use external sample data:
 
 ```bash
 ./tests/download_test_data.sh

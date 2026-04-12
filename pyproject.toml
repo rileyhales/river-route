@@ -52,7 +52,6 @@ docs = [
     "mkdocstrings",
     "mkdocstrings-python",
     "mkdocs-include-markdown-plugin",
-    "mike>=2.1",
 ]
 
 [project.urls]

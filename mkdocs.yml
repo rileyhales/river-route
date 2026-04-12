@@ -12,10 +12,6 @@ theme:
     - navigation.path
     - navigation.footer
     - toc.follow
-extra:
-  version:
-    provider: mike
-    default: latest
 nav:
   - Home: index.md
   - License: terms.md
