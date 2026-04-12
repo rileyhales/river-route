@@ -50,8 +50,8 @@ The following config keys have been renamed or removed.
 |-----------------------|---------|------------------------------------------------|
 | `river_id`            | int64   | Unique segment ID                              |
 | `downstream_river_id` | int64   | Downstream segment ID; `-1` at outlets         |
-| `k`                   | float64 | Muskingum K — wave travel time (seconds)       |
-| `x`                   | float64 | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5) |
+| `k`                   | float32 | Muskingum K — wave travel time (seconds)       |
+| `x`                   | float32 | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5) |
 
 !!! warning
     Rows **must be topologically sorted** (upstream before downstream).
@@ -62,12 +62,12 @@ The following config keys have been renamed or removed.
 
 **v2** uses a NetCDF file with the following variables on an `index` dimension:
 
-| Variable     | dtype   | Description                                                 |
-|--------------|---------|-------------------------------------------------------------|
-| `river_id`   | int64   | Catchment ID                                                |
-| `x_index`    | int64   | Column index into the runoff grid                           |
-| `y_index`    | int64   | Row index into the runoff grid                              |
-| `x`          | float64 | X (usually longitude) value of grid cell center             |
-| `y`          | float64 | Y (usually latitude) value of grid cell center              |
-| `area_sqm`   | float64 | Cell/polygon intersection area in square meters             |
-| `proportion` | float64 | **New** Fraction of catchment area (sums to 1 per river_id) |
+| Variable     | dtype | Description                                                 |
+|--------------|-------|-------------------------------------------------------------|
+| `river_id`   | int   | Catchment ID                                                |
+| `x_index`    | int   | Column index into the runoff grid                           |
+| `y_index`    | int   | Row index into the runoff grid                              |
+| `x`          | float | X (usually longitude) value of grid cell center             |
+| `y`          | float | Y (usually latitude) value of grid cell center              |
+| `area_sqm`   | float | Cell/polygon intersection area in square meters             |
+| `proportion` | float | **New** Fraction of catchment area (sums to 1 per river_id) |

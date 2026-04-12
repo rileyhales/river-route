@@ -2,6 +2,9 @@
 
 Derivations of the Muskingum routing equation and alternative methods for the most efficient methods for solving the linear system.
 
+Note that the `river-route` implementation uses float32 precision for speed and efficiency since discharge and runoff measurements
+are not known to a level needing 64-bit precision during the computation.
+
 ---
 
 ## Summary

@@ -1,12 +1,10 @@
 # Parallelism in River Routing
 
-Parallelism is not free. Thread synchronization, memory duplication, process serialization, and
-competing for hardware bandwidth between jobs all come with costs. The effectiveness of any
-parallelism strategy is partially dependent on the compute job and the performance of the
-hardware being used. A strategy that helps on one machine or dataset size may not help on another.
-This page is a list of the parallelization strategies I have tried and my recommendations based on 
-using these methods to operate a global hydrological model and generate a 5 trillion data point 
-simulation product. I hope this is a very solid reference but won't always be true for every test.
+Many scientific computations jump to parallelism and GPU acceleration. There is, sometimes significant, 
+overhead to orchestrate multiple workers. The effectiveness depends on the strategy, size and complexity 
+of the job and the hardware being used. Not all strategies are worth using on all cases. This page is a 
+list of the parallelization strategies tested in `river-route` and my recommendations based on using these 
+methods to operate a global hydrological model and generate a 5 trillion data point simulation product.
 
 ## What cannot be parallelized?
 
@@ -16,8 +14,8 @@ depends on the discharge at time `t`.
 
 ## Asynchronous pipelines for file I/O and computations
 
-**Summary**: A single process can have up to 3 threads. 1 which reads inputs from disc, 1 which
-does computations, 1 which writes results to disc. All 3 can be operating at the same time.
+**Summary**: A single routing process can have up to 3 meaningful threads: 1 reads inputs from disc, 1
+does computations, 1 writes results to disc. All 3 can be operating at the same time.
 
 ```mermaid
 block-beta
@@ -34,13 +32,11 @@ different hardware. However, using this method means you probably won't be able 
 combination with another parallelization strategy because you more quickly consume memory and disc 
 I/O bandwidth with one job. In my experience, this speedup is at most a few percent
 
-**Conclusion*: This speeds up individual jobs bottlenecked by I/O but not by much given modern 
-hardware capabilities.
+**Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware capabilities.
 
 ## Multiprocessing or multithreading matrix solvers
 
-**Summary**: Use vector solvers that use efficient and possibly parallelized methods to solve
-array operations.
+**Summary**: Use vector solvers that use efficient and possibly parallelized methods to solve array operations.
 
 Forward substitution is inherently sequential: the value at row $i$ depends on all previously
 solved rows $1, \ldots, i-1$. There is no way to compute row $i$ before its upstream dependencies
@@ -51,28 +47,22 @@ However, the forward substitutions have been made about as minimal as possible, 
 formats, and JIT compilation. In my experience, this is preferable to multiprocessing methods even
 though it uses an inherently sequential forward substitution algorithm. This approach is the best
 method in my experience using it on a wide range of scales up to global computations of hourly
-resolution discharge on millions of rivers and producing a 5 trillion data point simulation
-product.
+resolution discharge on millions of rivers and producing a 5 trillion data point simulation. It 
+has the advantages that it:
 
-1. needs only mainstream scientific python dependencies simply installed on a variety of hardware
-   and Python versions
+1. needs only mainstream scientific python dependencies simply installed on a variety of hardware and Python versions
 2. is the most memory efficient option
-3. is the computationally fastest option because it does not iterate or do any matrix conditioning
-   or pivoting
+3. is the computationally fastest option because it does not iterate or do any matrix conditioning or pivoting
 4. is the direct solution so there is no error due to solver convergence tolerances.
 
-**Conclusion**: It's less efficient to parallelize than to carefully prepare your inputs and use
-better solvers.
+**Conclusion**: It's less efficient to parallelize than to carefully prepare your inputs and use better solvers.
 
 ## Complete watersheds in separate processes
 
-**Summary**: If your computations contains several independent watersheds, you can route them
-simultaneously in separate processes.
+**Summary**: If your computations contains several independent watersheds, you can route them simultaneously in separate processes.
 
-**Conclusion**: A single watershed is a self-contained unit with no dependencies on other
-watersheds. You can split computations into separate watersheds, or groups of watersheds that
-are processed concurrently in separate processes. This is additionally beneficial on larger
-size jobs.
+**Conclusion**: This is more beneficial as job sizes get larger. Watersheds have no dependencies on others. Separate watersheds and 
+process simultaneously or combine them into a single config file if compute times are small enough.
 
 ## Ensemble simulations in separate processes
 

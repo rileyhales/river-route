@@ -2,6 +2,13 @@
 
 ---
 
+### [v2.1.1](https://github.com/rileyhales/river-route/tree/v2.1.1) — 2026-04-11
+
+- Small documentation edits.
+- Update build system to hatchling and pyproject.toml
+
+---
+
 ### [v2.1.0](https://github.com/rileyhales/river-route/tree/v2.1.0) — 2026-04-11
 
 - Routing state, parameters (`k`, `x`), channel state, and all numba kernel scratch buffers now use `float32` instead of `float64`. Reduces memory half, speeds up the inner routing loop.

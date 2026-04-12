@@ -6,8 +6,7 @@
     margin: 0 auto !important;
     border-collapse: collapse !important;
 }
-.matrix-grid th,
-.matrix-grid td {
+.matrix-grid th, .matrix-grid td {
     width: 30px !important;
     min-width: 30px !important;
     max-width: 30px !important;
