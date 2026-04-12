@@ -4,8 +4,8 @@ Routing simulations have four different time steps, all given in seconds.
 
 - `dt_routing`: The routing computation step, dt in the Muskingum equation. **The only one you need to specify**.
 - `dt_runoff`: Interval between runoff inputs. If you don't provide it, it will be identified when the runoff file is opened.
-- `dt_discharge`: interval over which to average discharge to write to disc. Must be greater than or equal to `dt_runoff`.
-- `dt_total`: total simulation duration.
+- `dt_discharge`: Interval over which to average discharge to write to disc. Must be greater than or equal to `dt_runoff`.
+- `dt_total`: Total simulation duration.
 
 The most important time step is `dt_routing`. All other time steps are derived from this and the runoff inputs.
 
