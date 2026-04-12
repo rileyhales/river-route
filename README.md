@@ -65,6 +65,8 @@ rr UnitMuskingum examples/config_unit_muskingum.yaml
 
 ## Testing
 
+`pytest` is not a required dependency. You need to install `pytest` separately to run tests.
+
 ```bash
 ./tests/download_test_data.sh
 pytest tests -v -s

@@ -62,12 +62,12 @@ The following config keys have been renamed or removed.
 
 **v2** uses a NetCDF file with the following variables on an `index` dimension:
 
-| Variable     | dtype   | Description                                                 |
-|--------------|---------|-------------------------------------------------------------|
-| `river_id`   | int64   | Catchment ID                                                |
-| `x_index`    | int64   | Column index into the runoff grid                           |
-| `y_index`    | int64   | Row index into the runoff grid                              |
-| `x`          | float32 | X (usually longitude) value of grid cell center             |
-| `y`          | float32 | Y (usually latitude) value of grid cell center              |
-| `area_sqm`   | float32 | Cell/polygon intersection area in square meters             |
-| `proportion` | float32 | **New** Fraction of catchment area (sums to 1 per river_id) |
+| Variable     | dtype | Description                                                 |
+|--------------|-------|-------------------------------------------------------------|
+| `river_id`   | int   | Catchment ID                                                |
+| `x_index`    | int   | Column index into the runoff grid                           |
+| `y_index`    | int   | Row index into the runoff grid                              |
+| `x`          | float | X (usually longitude) value of grid cell center             |
+| `y`          | float | Y (usually latitude) value of grid cell center              |
+| `area_sqm`   | float | Cell/polygon intersection area in square meters             |
+| `proportion` | float | **New** Fraction of catchment area (sums to 1 per river_id) |
