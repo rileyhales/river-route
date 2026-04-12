@@ -1,9 +1,9 @@
 # Parallelism in River Routing
 
-Many scientific computations jump to parallelism and gpu acceleration immediately. Parallelism is not free. There is, sometimes
-significant, overhead to orchestrate multiple workers. The effectiveness depends on the strategy, size and complexity of the job 
-and the hardware being used. Not all strategies are worth using on all cases. This page is a list of the parallelization strategies 
-tested in `river-route` and my recommendations based on using these methods to operate a global hydrological model and generate a 
+Many scientific computations jump to parallelism and GPU acceleration immediately. Parallelism is not free. There is, sometimes
+significant, overhead to orchestrate multiple workers. The effectiveness depends on the strategy, size and complexity of the job
+and the hardware being used. Not all strategies are worth using on all cases. This page is a list of the parallelization strategies
+tested in `river-route` and my recommendations based on using these methods to operate a global hydrological model and generate a
 5 trillion data point simulation product.
 
 ## What cannot be parallelized?
