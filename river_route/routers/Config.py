@@ -155,9 +155,7 @@ class Configs:
         d = self.discharge_dir
         input_files = self.qlateral_files or self.grid_runoff_files or []
         if input_files:
-            self.discharge_files = [
-                os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files
-            ]
+            self.discharge_files = [os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files]
         else:
             # Muskingum (no lateral inflow files)
             self.discharge_files = [os.path.join(d, 'discharge.nc')]
@@ -175,7 +173,7 @@ class Configs:
         for path in paths:
             d = os.path.dirname(path)
             if not os.path.exists(d):
-                raise NotADirectoryError(f'Output directory not found for specified output path: {path}')
+                raise NotADirectoryError(f'Directory not found for specified output: {path}')
         for key in self._OUTPUT_DIRS:
             val = getattr(self, key, None)
             if val and not os.path.isdir(val):

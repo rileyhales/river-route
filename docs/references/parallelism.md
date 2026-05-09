@@ -14,8 +14,8 @@ depends on the discharge at time `t`.
 
 ## Asynchronous pipelines for file I/O and computations
 
-**Summary**: A single routing process can have up to 3 meaningful threads: 1 reads inputs from disc, 1
-does computations, 1 writes results to disc. All 3 can be operating at the same time.
+**Summary**: A single routing process can have up to 3 meaningful threads: 1 reads inputs from disk, 1
+does computations, 1 writes results to disk. All 3 can be operating at the same time.
 
 ```mermaid
 block-beta
@@ -29,8 +29,8 @@ block-beta
 If you have an unfavorable combination of slow I/O, slow CPU, and large computations, this solution 
 might help. Individual routing jobs get faster but by making threads for portions that depend on 
 different hardware. However, using this method means you probably won't be able to use it in 
-combination with another parallelization strategy because you more quickly consume memory and disc 
-I/O bandwidth with one job. In my experience, this speedup is at most a few percent
+combination with another parallelization strategy because you more quickly consume memory and disk 
+I/O bandwidth with one job. In my experience, this speedup is at most a few percent.
 
 **Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware capabilities.
 
