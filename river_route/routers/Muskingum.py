@@ -37,7 +37,6 @@ class Muskingum:
     river_ids: IntArray  # n x 1 - river ID for each segment
     downstream_river_ids: IntArray  # n x 1 - downstream river ID for each segment, -1 if no downstream segment
     compute_groups: IntArray  # n x 1 - segments with same ID can be computed concurrently (e.g. topological levels)
-    # todo the nonlinear muskingum router should store different tools here
     k: FloatArray  # n x 1 - K values for each segment  # todo possibly can be deleted later
     x: FloatArray  # n x 1 - X values for each segment  # todo possibly can be deleted later
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
@@ -150,11 +149,9 @@ class Muskingum:
             - x: n x 1 - X values for each segment (directly from params)
         To calculate the columns:
             - downstream_indices: n x 1 - index of downstream river, -1 if no downstream river
-            - upstream_indptr: n+1 x 1 - index pointer for start of upstream segments in upstream_indices
+            - upstream_indptr: n + 1 x 1 - index pointer for start of upstream segments in upstream_indices
             - upstream_indices: m x 1 - indices of upstream rivers, m is the total upstream connections in all rivers
             - compute_groups: n x 1 - segments with same ID can be computed concurrently (e.g. topological levels)
-            -
-
         """
         self.logger.debug('Calculating network dependent vectors')
         try:
@@ -174,10 +171,10 @@ class Muskingum:
         downstream_river_ids = np.ascontiguousarray(df['downstream_river_id'].to_numpy(copy=False), dtype=np.int64)
         self.k = np.ascontiguousarray(df['k'].to_numpy(copy=False), dtype=np.float32)
         self.x = np.ascontiguousarray(df['x'].to_numpy(copy=False), dtype=np.float32)
-        n = self.river_ids.shape[0]
 
+        n = self.river_ids.shape[0]
         river_id_set = set(self.river_ids.tolist())
-        downstream_ids = {d for d in self.downstream_river_ids.tolist() if d > 0}
+        downstream_ids = {d for d in downstream_river_ids.tolist() if d > 0}
         unknown_downstream_ids = sorted(downstream_ids - river_id_set)
         if unknown_downstream_ids:
             raise ValueError(f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids}')
@@ -187,7 +184,7 @@ class Muskingum:
         river_index = {int(river_id): idx for idx, river_id in enumerate(self.river_ids.tolist())}
         self.downstream_indices = np.full(n, -1, dtype=np.int32)
         counts = np.zeros(n, dtype=np.int32)
-        for upstream_idx, downstream_river_id in enumerate(self.downstream_river_ids.tolist()):
+        for upstream_idx, downstream_river_id in enumerate(downstream_river_ids.tolist()):
             if downstream_river_id < 0:
                 continue
             downstream_idx = river_index[int(downstream_river_id)]
@@ -202,7 +199,7 @@ class Muskingum:
 
         self.upstream_indices = np.empty(int(self.upstream_indptr[-1]), dtype=np.int32)
         write_pos = self.upstream_indptr[:-1].copy()
-        for upstream_idx, downstream_river_id in enumerate(self.downstream_river_ids.tolist()):
+        for upstream_idx, downstream_river_id in enumerate(downstream_river_ids.tolist()):
             if downstream_river_id < 0:
                 continue
             downstream_idx = river_index[int(downstream_river_id)]
@@ -219,16 +216,25 @@ class Muskingum:
         denominator = dt_div_k + (2 * (1 - self.x))
         _2x = 2 * self.x
         # when arrays are contiguous, they iterate much faster in numba kernels which sequentially iterate
-        self.c1 = np.array((dt_div_k - _2x) / denominator, dtype=np.float32)
-        self.c2 = np.array((dt_div_k + _2x) / denominator, dtype=np.float32)
-        self.c3 = np.array(((2 * (1 - self.x)) - dt_div_k) / denominator, dtype=np.float32)
-        self.c4 = np.array(self.c1 + self.c2, dtype=np.float32)
+        self.c1 = np.ascontiguousarray((dt_div_k - _2x) / denominator, dtype=np.float32)
+        self.c2 = np.ascontiguousarray((dt_div_k + _2x) / denominator, dtype=np.float32)
+        self.c3 = np.ascontiguousarray(((2 * (1 - self.x)) - dt_div_k) / denominator, dtype=np.float32)
+        self.c4 = np.ascontiguousarray(self.c1 + self.c2, dtype=np.float32)
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')
             self.logger.debug(f'c1: {self.c1}')
             self.logger.debug(f'c2: {self.c2}')
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
+
+        # todo: figure out how to check for invalid dt and parameters without needing to clamp later.
+        # # Courant-like check: dt_routing >= 2*K*X guarantees C1 >= 0 which means negative discharge is impossible
+        # n_violations = int(np.sum(self.c1 < 0))
+        # if n_violations:
+        #     worst = np.min(self.c1)
+        #     self.logger.warning(
+        #         f'Courant check: C1 < 0 in {n_violations} river segments, worst violation is {worst:.2f}.'
+        #     )
         # shuffling arrays to list coefficient of the downstream increases performance of kernel which can
         # read sequentially when solving each river, rather than essentially randomly throughout the array
         self.downstream_c1 = np.zeros(self.downstream_indices.shape[0], dtype=np.float32)
