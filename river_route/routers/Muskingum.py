@@ -9,12 +9,10 @@ import netCDF4 as nc
 import numpy as np
 import pandas as pd
 import yaml
-from scipy.sparse import csc_matrix
 
 from .Config import Configs
-from ._numba_kernels import muskingum_route
+from ._numba_kernels import linear_muskingum
 from ..logging import PROGRESS
-from ..tools import adjacency_matrix
 from ..types import IntArray, FloatArray, PathInput, WriteDischargesFn, DatetimeArray
 
 __all__ = ['Muskingum', ]
@@ -36,18 +34,26 @@ class Muskingum:
     _ROUTER_REQUIRED_CONFIGS = ('channel_state_init_file', 'dt_routing', 'dt_total')
 
     # Network dependent matrices and vectors from routing parameters file
-    A: csc_matrix  # n x n - adjacency matrix (scipy csc_matrix)
     river_ids: IntArray  # n x 1 - river ID for each segment
-    k: FloatArray  # n x 1 - K values for each segment
-    x: FloatArray  # n x 1 - X values for each segment
-
-    # Network and routing timestep dependent matrices and vectors
+    downstream_river_ids: IntArray  # n x 1 - downstream river ID for each segment, -1 if no downstream segment
+    compute_groups: IntArray  # n x 1 - segments with same ID can be computed concurrently (e.g. topological levels)
+    # todo the nonlinear muskingum router should store different tools here
+    k: FloatArray  # n x 1 - K values for each segment  # todo possibly can be deleted later
+    x: FloatArray  # n x 1 - X values for each segment  # todo possibly can be deleted later
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
     c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
+    c4: FloatArray  # n x 1 - C4 values for each segment => f(k, x, dt_routing) - used if lateral inflow provided
+
+    # derived indexing
+    downstream_indices: IntArray
+    downstream_c1: FloatArray
+    downstream_c2: FloatArray
+    upstream_indptr: IntArray
+    upstream_indices: IntArray
 
     # State variables
-    channel_state: FloatArray
+    channel_state: FloatArray  # routing depends only on a channel state vector
     _network_time_signature: tuple[Any, ...] | None = None  # check if time params change between computes
 
     # Time options
@@ -58,11 +64,6 @@ class Muskingum:
 
     # methods that are overridable via dependency injection
     _write_discharges: WriteDischargesFn
-
-    # indices and data for numba solvers
-    _csc_indptr: IntArray
-    _csc_indices: IntArray
-    _lhs_off_data: FloatArray
 
     def __init__(self, configs: PathInput | Configs | None = None, **kwargs: Any) -> None:
         # parse and create configs
@@ -120,7 +121,7 @@ class Muskingum:
         state_file = self.cfg.channel_state_init_file
         if not state_file:
             self.logger.warning('channel_state_init_file not provided. Defaulting to zero initial conditions')
-            self.channel_state = np.zeros(self.A.shape[0], dtype=np.float32)
+            self.channel_state = np.zeros(self.river_ids.shape[0], dtype=np.float32)
             return
         self.logger.debug('Reading Initial State from Parquet')
         self.channel_state = pd.read_parquet(state_file).values.flatten().astype(np.float32, copy=False)
@@ -139,6 +140,22 @@ class Muskingum:
     ################################################
 
     def _set_network_dependent_vectors(self) -> None:
+        """
+        Creates several arrays derived from the routing parameters file used for computations
+
+        Uses the columns:
+            - river_ids: n x 1 - river ID for each segment (directly from params)
+            - downstream_river_ids: n x 1 - downstream river ID for each segment (directly from params)
+            - k: n x 1 - K values for each segment (directly from params)
+            - x: n x 1 - X values for each segment (directly from params)
+        To calculate the columns:
+            - downstream_indices: n x 1 - index of downstream river, -1 if no downstream river
+            - upstream_indptr: n+1 x 1 - index pointer for start of upstream segments in upstream_indices
+            - upstream_indices: m x 1 - indices of upstream rivers, m is the total upstream connections in all rivers
+            - compute_groups: n x 1 - segments with same ID can be computed concurrently (e.g. topological levels)
+            -
+
+        """
         self.logger.debug('Calculating network dependent vectors')
         try:
             df = pd.read_parquet(
@@ -153,43 +170,72 @@ class Muskingum:
         if df[self.cfg.var_river_id].duplicated().any():
             raise ValueError('params_file contains duplicate river IDs.')
 
-        self.river_ids = df[self.cfg.var_river_id].to_numpy(dtype=np.int64, copy=False)
-        downstream_river_ids = df['downstream_river_id'].to_numpy(dtype=np.int64, copy=False)
-        self.k = df['k'].to_numpy(dtype=np.float32, copy=False)
-        self.x = df['x'].to_numpy(dtype=np.float32, copy=False)
+        self.river_ids = np.ascontiguousarray(df[self.cfg.var_river_id].to_numpy(copy=False), dtype=np.int64)
+        downstream_river_ids = np.ascontiguousarray(df['downstream_river_id'].to_numpy(copy=False), dtype=np.int64)
+        self.k = np.ascontiguousarray(df['k'].to_numpy(copy=False), dtype=np.float32)
+        self.x = np.ascontiguousarray(df['x'].to_numpy(copy=False), dtype=np.float32)
+        n = self.river_ids.shape[0]
 
         river_id_set = set(self.river_ids.tolist())
-        downstream_ids = {d for d in downstream_river_ids.tolist() if d > 0}
+        downstream_ids = {d for d in self.downstream_river_ids.tolist() if d > 0}
         unknown_downstream_ids = sorted(downstream_ids - river_id_set)
         if unknown_downstream_ids:
-            raise ValueError(
-                f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids[:10]}')
-        self.A = adjacency_matrix(self.river_ids, downstream_river_ids)
-        self.logger.log(PROGRESS, f'Network: {self.A.shape[0]} river segments')
+            raise ValueError(f'params_file has downstream IDs not in river_id column: {unknown_downstream_ids}')
+
+        # to avoid constant lookups and to allow carefully sorting arrays for better cpu-memory access patterns, make
+        # a 1D array giving the index of the downstream river in parameter arrays, -1 if none downstream
+        river_index = {int(river_id): idx for idx, river_id in enumerate(self.river_ids.tolist())}
+        self.downstream_indices = np.full(n, -1, dtype=np.int32)
+        counts = np.zeros(n, dtype=np.int32)
+        for upstream_idx, downstream_river_id in enumerate(self.downstream_river_ids.tolist()):
+            if downstream_river_id < 0:
+                continue
+            downstream_idx = river_index[int(downstream_river_id)]
+            if downstream_idx <= upstream_idx:
+                raise ValueError('params_file must be topologically sorted upstream to downstream')
+            self.downstream_indices[upstream_idx] = downstream_idx
+            counts[downstream_idx] += 1
+
+        self.upstream_indptr = np.empty(n + 1, dtype=np.int32)
+        self.upstream_indptr[0] = 0
+        np.cumsum(counts, out=self.upstream_indptr[1:])
+
+        self.upstream_indices = np.empty(int(self.upstream_indptr[-1]), dtype=np.int32)
+        write_pos = self.upstream_indptr[:-1].copy()
+        for upstream_idx, downstream_river_id in enumerate(self.downstream_river_ids.tolist()):
+            if downstream_river_id < 0:
+                continue
+            downstream_idx = river_index[int(downstream_river_id)]
+            pos = write_pos[downstream_idx]
+            self.upstream_indices[pos] = upstream_idx
+            write_pos[downstream_idx] += 1
+
+        self.logger.log(PROGRESS, f'Network: {self.river_ids.shape[0]} river segments')
         return
 
-    # noinspection PyPep8Naming
     def _set_muskingum_coefficients(self, dt_routing: float) -> None:
         self.logger.debug('Calculating Muskingum coefficients')
         dt_div_k = dt_routing / self.k
         denominator = dt_div_k + (2 * (1 - self.x))
         _2x = 2 * self.x
-        self.c1 = (dt_div_k - _2x) / denominator
-        self.c2 = (dt_div_k + _2x) / denominator
-        self.c3 = ((2 * (1 - self.x)) - dt_div_k) / denominator
+        # when arrays are contiguous, they iterate much faster in numba kernels which sequentially iterate
+        self.c1 = np.array((dt_div_k - _2x) / denominator, dtype=np.float32)
+        self.c2 = np.array((dt_div_k + _2x) / denominator, dtype=np.float32)
+        self.c3 = np.array(((2 * (1 - self.x)) - dt_div_k) / denominator, dtype=np.float32)
+        self.c4 = np.array(self.c1 + self.c2, dtype=np.float32)
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')
             self.logger.debug(f'c1: {self.c1}')
             self.logger.debug(f'c2: {self.c2}')
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
-
-        # LHS = I - diags(c1) @ A is unit lower triangular.
-        # Off-diagonal entries share A's sparsity: data = -c1[row] per edge.
-        A_csc = self.A.tocsc()
-        self._csc_indptr = A_csc.indptr
-        self._csc_indices = A_csc.indices
-        self._lhs_off_data = np.ascontiguousarray(-self.c1[A_csc.indices])
+        # shuffling arrays to list coefficient of the downstream increases performance of kernel which can
+        # read sequentially when solving each river, rather than essentially randomly throughout the array
+        self.downstream_c1 = np.zeros(self.downstream_indices.shape[0], dtype=np.float32)
+        self.downstream_c2 = np.zeros(self.downstream_indices.shape[0], dtype=np.float32)
+        valid = self.downstream_indices >= 0
+        self.downstream_c1[valid] = self.c1[self.downstream_indices[valid]]
+        self.downstream_c2[valid] = self.c2[self.downstream_indices[valid]]
         return
 
     ################################################
@@ -274,15 +320,14 @@ class Muskingum:
                 'non-zero initial state to produce meaningful results. Provide channel_state_init_file.'
             )
 
-        n = self.A.shape[0]
+        n = self.river_ids.shape[0]
         discharge_array = np.zeros((num_output_steps, n), dtype=np.float32)
         q_t = q_init.astype(np.float32, copy=True)
 
-        muskingum_route(
-            self._csc_indptr, self._csc_indices, self._lhs_off_data,
-            self.c2, self.c3, q_t,
-            discharge_array,
-            num_output_steps, num_routing_per_output,
+        linear_muskingum(
+            q_t, discharge_array, self.downstream_indices,
+            self.downstream_c1, self.downstream_c2, self.c3,
+            n, num_output_steps, num_routing_per_output,
         )
 
         self.logger.debug('Updating Channel State')

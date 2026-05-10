@@ -20,7 +20,7 @@ def test_rapid_muskingum_from_depths(vpu: RFSv2ConfigsData):
     try:
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -59,7 +59,7 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
         q_with_state = os.path.join(tmpdir, 'q_with.nc')
         q_without_state = os.path.join(tmpdir, 'q_without.nc')
 
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -69,7 +69,7 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
             **ERA5_KWARGS,
         ).route()
 
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -100,7 +100,7 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
     tmpdir = tempfile.mkdtemp()
     try:
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=ERA5_FILES[:2],
@@ -111,7 +111,7 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
 
         q_m1 = os.path.join(tmpdir, 'q_m1.nc')
         state_after_m1 = os.path.join(tmpdir, 'state_m1.parquet')
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -122,7 +122,7 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
         ).route()
 
         q_m2 = os.path.join(tmpdir, 'q_m2.nc')
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[1]],
@@ -149,7 +149,7 @@ def test_rapid_muskingum_from_qlateral(vpu: RFSv2ConfigsData):
     try:
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
-        rr.RapidMuskingum(
+        rr.MuskingumQlateral(
             params_file=str(vpu.rr2_params_file),
             qlateral_files=[vpu.qlateral_files[0]],
             discharge_files=[discharge_file],

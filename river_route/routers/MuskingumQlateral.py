@@ -1,19 +1,21 @@
-from abc import ABC, abstractmethod
-
 import numpy as np
 import xarray as xr
 from tqdm import tqdm
 
 from .Muskingum import Muskingum
+from ._numba_kernels import linear_muskingum_qlateral
 from ..runoff import runoff_to_qlateral
-from ..types import DatetimeArray, FloatArray, QlateralGeneratorSignature
+from ..types import FloatArray, DatetimeArray, QlateralGeneratorSignature
 
-__all__ = ['TransformMuskingum', ]
+__all__ = ['MuskingumQlateral', ]
 
 
-class TransformMuskingum(Muskingum, ABC):
+class MuskingumQlateral(Muskingum):
     """
-    Intermediate abstract router class adding routing methods that require pre-processing of the lateral inflow
+    Muskingum channel routing with direct lateral inflow. Lateral flow is the runoff volume divided by the runoff
+    timestep — all runoff enters the channel in the interval it is generated, ignoring overland flow delay.
+
+    See the Math Derivations page in the documentation for the full equations.
     """
     _ROUTER_REQUIRED_CONFIGS = ()
 
@@ -25,7 +27,11 @@ class TransformMuskingum(Muskingum, ABC):
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
 
-    _as_volumes: bool = False
+    _as_volumes: bool = True
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._validate_router_configs()
 
     def _qlateral_generator(self) -> QlateralGeneratorSignature:
         if self.cfg.qlateral_files:
@@ -101,7 +107,7 @@ class TransformMuskingum(Muskingum, ABC):
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
 
         self._set_muskingum_coefficients(self.dt_routing)
-        self.c4 = self.c1 + self.c2
+        self.c4_dt = np.ascontiguousarray(self.c4 / self.dt_runoff, dtype=np.float32)
         self._network_time_signature = signature
         return
 
@@ -132,7 +138,7 @@ class TransformMuskingum(Muskingum, ABC):
                     .reshape((
                         int(self.dt_total / self.dt_discharge),
                         int(self.dt_discharge / self.dt_runoff),
-                        self.A.shape[0],
+                        self.river_ids.shape[0],
                     ))
                     .mean(axis=1)
                 )
@@ -147,6 +153,18 @@ class TransformMuskingum(Muskingum, ABC):
         self.logger.info('-' * 60)
         return
 
-    @abstractmethod
     def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
-        ...
+        """Execute the core routing math for one runoff file and return the discharge array."""
+        self.logger.debug('Getting initial state arrays')
+        n = self.river_ids.shape[0]
+        discharge_array = np.zeros((self.num_runoff_steps, n), dtype=np.float32)
+        q_t = self.channel_state.astype(np.float32, copy=True)
+        qlateral = np.ascontiguousarray(qlateral, dtype=np.float32)
+
+        linear_muskingum_qlateral(
+            q_t, discharge_array, self.downstream_indices,
+            self.downstream_c1, self.downstream_c2, self.c3,
+            n, self.num_runoff_steps, self.num_routing_steps_per_runoff,
+            qlateral, self.c4_dt,
+        )
+        return q_t, discharge_array

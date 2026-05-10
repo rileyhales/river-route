@@ -1,12 +1,11 @@
 import argparse
 import sys
 
-from .routers import Muskingum, RapidMuskingum, UnitMuskingum
+from .routers import Muskingum, MuskingumQlateral
 
 ROUTERS = {
     'Muskingum': Muskingum,
-    'RapidMuskingum': RapidMuskingum,
-    'UnitMuskingum': UnitMuskingum,
+    'MuskingumQlateral': MuskingumQlateral,
 }
 
 
@@ -38,14 +37,17 @@ def main():
                        choices=list(ROUTERS.keys()),
                        help='Router class to use (Muskingum, RapidMuskingum, or UnitMuskingum)')
 
-    channel = subparsers.add_parser('Muskingum', help='Channel-only Muskingum routing (no lateral inflow)')
+    channel = subparsers.add_parser(
+        'Muskingum',
+        help='Channel-only Muskingum routing (no lateral inflow)'
+    )
     _add_config_arg(channel)
 
-    rapid = subparsers.add_parser('RapidMuskingum', help='RAPID-style Muskingum routing with lateral runoff')
+    rapid = subparsers.add_parser(
+        'MuskingumQlateral',
+        help='Muskingum routing with direct lateral inflow from qlateral files or gridded runoff'
+    )
     _add_config_arg(rapid)
-
-    unit = subparsers.add_parser('UnitMuskingum', help='Unit hydrograph transform then Muskingum routing')
-    _add_config_arg(unit)
 
     args = parser.parse_args()
 

@@ -5,15 +5,13 @@ from . import uhkernels
 from ._metadata import __version__, __author__, __url__
 from .routers import Configs
 from .routers import Muskingum
-from .routers import RapidMuskingum
-from .routers import UnitMuskingum
+from .routers import MuskingumQlateral
 
 __all__ = [
     # router classes
     'Configs',
     'Muskingum',
-    'RapidMuskingum',
-    'UnitMuskingum',
+    'MuskingumQlateral',
 
     # uhkernel creating classes
     'uhkernels',
