@@ -120,17 +120,20 @@ def linear_muskingum_qexternal(
                 downstream_idx = downstream_indices[i]
                 if downstream_idx >= 0:
                     rhs[downstream_idx] += (
-                            downstream_c2[i] * q_old + downstream_c1[i] * q_new +
-                            (downstream_c1[i] + downstream_c2[i]) * qext_i
+                        downstream_c2[i] * q_old
+                        + downstream_c1[i] * q_new
+                        + (downstream_c1[i] + downstream_c2[i]) * qext_i
                     )
         return
 
     interval_sum = np.empty(n_rivers, dtype=np.float32)
+    q_ext_t = np.empty(n_rivers, dtype=np.float32)
     inv_substeps = np.float32(1.0 / n_substeps)
 
     for t in range(n_steps):
         for i in range(n_rivers):
             interval_sum[i] = 0.0
+            q_ext_t[i] = qexternal[t, i]
 
         for _ in range(n_substeps):
             for i in range(n_rivers):
@@ -140,14 +143,14 @@ def linear_muskingum_qexternal(
                 q_old = q_t[i]
                 q_new = rhs[i]
                 q_t[i] = q_new
-                qext_i = qexternal[t, i]
+                qext_i = q_ext_t[i]
                 interval_sum[i] += q_new + qext_i
                 downstream_idx = downstream_indices[i]
                 if downstream_idx >= 0:
                     rhs[downstream_idx] += (
-                            downstream_c2[i] * q_old
-                            + downstream_c1[i] * q_new
-                            + (downstream_c1[i] + downstream_c2[i]) * qext_i
+                        downstream_c2[i] * q_old
+                        + downstream_c1[i] * q_new
+                        + (downstream_c1[i] + downstream_c2[i]) * qext_i
                     )
         for i in range(n_rivers):
             discharge_array[t, i] = interval_sum[i] * inv_substeps
