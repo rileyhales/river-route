@@ -1,11 +1,11 @@
 import argparse
 import sys
 
-from .routers import Muskingum, MuskingumQlateral
+from .routers import Muskingum, MuskingumVlateral
 
 ROUTERS = {
     'Muskingum': Muskingum,
-    'MuskingumQlateral': MuskingumQlateral,
+    'MuskingumQlateral': MuskingumVlateral,
 }
 
 

@@ -11,7 +11,7 @@ import pandas as pd
 import yaml
 
 from .Config import Configs
-from ._numba_kernels import linear_muskingum
+from ._numba_kernels import static_muskingum
 from ..logging import PROGRESS
 from ..types import IntArray, FloatArray, PathInput, WriteDischargesFn, DatetimeArray
 
@@ -312,12 +312,7 @@ class Muskingum:
         return
 
     def _router(self, num_output_steps: int, num_routing_per_output: int) -> FloatArray:
-        """
-        Route discharge without lateral inflow.
-
-        Muskingum channel routing equation:
-            (I - c1*A) @ Q(t+1) = c2*(A @ Q(t)) + c3*Q(t)
-        """
+        """Route discharge without lateral inflow"""
         self.logger.debug('Getting initial state arrays')
         q_init = self.channel_state
         if not np.any(q_init):
@@ -330,10 +325,16 @@ class Muskingum:
         discharge_array = np.zeros((num_output_steps, n), dtype=np.float32)
         q_t = q_init.astype(np.float32, copy=True)
 
-        linear_muskingum(
-            q_t, discharge_array, self.downstream_indices,
-            self.downstream_c1, self.downstream_c2, self.c3,
-            n, num_output_steps, num_routing_per_output,
+        static_muskingum(
+            q_t=q_t,
+            discharge_array=discharge_array,
+            downstream_indices=self.downstream_indices,
+            downstream_c1=self.downstream_c1,
+            downstream_c2=self.downstream_c2,
+            c3=self.c3,
+            n_rivers=n,
+            n_steps=num_output_steps,
+            n_substeps=num_routing_per_output
         )
 
         self.logger.debug('Updating Channel State')

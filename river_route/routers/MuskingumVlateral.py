@@ -3,14 +3,14 @@ import xarray as xr
 from tqdm import tqdm
 
 from .Muskingum import Muskingum
-from ._numba_kernels import linear_muskingum_qlateral
+from ._numba_kernels import static_muskingum_vlateral
 from ..runoff import runoff_to_qlateral
 from ..types import FloatArray, DatetimeArray, QlateralGeneratorSignature
 
-__all__ = ['MuskingumQlateral', ]
+__all__ = ['MuskingumVlateral', ]
 
 
-class MuskingumQlateral(Muskingum):
+class MuskingumVlateral(Muskingum):
     """
     Muskingum channel routing with direct lateral inflow. Lateral flow is the runoff volume divided by the runoff
     timestep — all runoff enters the channel in the interval it is generated, ignoring overland flow delay.
@@ -154,17 +154,24 @@ class MuskingumQlateral(Muskingum):
         return
 
     def _router(self, qlateral: FloatArray) -> tuple[FloatArray, FloatArray]:
-        """Execute the core routing math for one runoff file and return the discharge array."""
+        """Execute the core routing math for one runoff file and return the discharge array"""
         self.logger.debug('Getting initial state arrays')
         n = self.river_ids.shape[0]
         discharge_array = np.zeros((self.num_runoff_steps, n), dtype=np.float32)
         q_t = self.channel_state.astype(np.float32, copy=True)
         qlateral = np.ascontiguousarray(qlateral, dtype=np.float32)
 
-        linear_muskingum_qlateral(
-            q_t, discharge_array, self.downstream_indices,
-            self.downstream_c1, self.downstream_c2, self.c3,
-            n, self.num_runoff_steps, self.num_routing_steps_per_runoff,
-            qlateral, self.c4_dt,
+        static_muskingum_vlateral(
+            q_t=q_t,
+            discharge_array=discharge_array,
+            downstream_indices=self.downstream_indices,
+            downstream_c1=self.downstream_c1,
+            downstream_c2=self.downstream_c2,
+            c3=self.c3,
+            n_rivers=n,
+            n_steps=self.num_runoff_steps,
+            n_substeps=self.num_routing_steps_per_runoff,
+            qlateral=qlateral,
+            c4_dt=self.c4_dt
         )
         return q_t, discharge_array
