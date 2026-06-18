@@ -1,8 +1,6 @@
 # River Route
 
 [![PyPI version](https://badge.fury.io/py/river-route.svg)](https://pypi.org/project/river-route/)
-[![GitHub repo size](https://img.shields.io/github/repo-size/rileyhales/river-route)](https://github.com/rileyhales/river-route)
-![License](https://img.shields.io/github/license/rileyhales/river-route)
 
 `river-route` is a Python package for routing runoff and discharge through large river
 networks. It uses numba-compiled kernels and sparse matrix operations for efficient
@@ -22,13 +20,13 @@ Muskingum-family routing at watershed scale.
 pip install river-route
 ```
 
-Or from source:
+Or from source with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-# create/activate an environment e.g. conda create -n rr python=3.12 && conda activate rr
 git clone https://github.com/rileyhales/river-route.git
 cd river-route
-python -m pip install -e .
+uv sync                 # create the environment and install river-route
+uv sync --group dev     # ...or include the test and docs tooling
 ```
 
 ## Quick Start

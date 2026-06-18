@@ -8,6 +8,8 @@ from .routers import Muskingum
 from .routers import MuskingumVlateral
 from .routers import DynamicMuskingumVlateral
 
+from . import streams
+
 __all__ = [
     # router classes
     'Configs',

@@ -42,6 +42,22 @@ dependencies = [
     "pyarrow",
 ]
 
+[dependency-groups]
+test = [
+    "pytest",
+]
+docs = [
+    "mkdocs<2",
+    "mkdocs-material>=9.5",
+    "mkdocstrings",
+    "mkdocstrings-python",
+    "mkdocs-include-markdown-plugin",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "docs" },
+]
+
 [project.urls]
 Homepage = "https://github.com/rileyhales/river-route"
 Repository = "https://github.com/rileyhales/river-route"

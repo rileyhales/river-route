@@ -303,6 +303,42 @@ CSC forward substitution implementation from `_numba_kernels.py`
 
 This is optimal — every edge is visited exactly once per time step.
 
+## Numerical stability relationship between c1, c2, dt, k, x
+
+Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly 
+regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative 
+discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_2$ is negative. The coefficients 
+are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the 
+numerators are positive comparing dt (a subjective choice) to k and x (physically derived parameters):
+
+$$
+\begin{aligned}
+c_1 > 0 &\iff \Delta t > 2kx \\
+c_2 > 0 &\iff \Delta t > -2kx \\
+c_3 > 0 &\iff \Delta t < 2k(1-x)
+\end{aligned}
+$$
+
+Note that $c_2$ is always positive because $dt$, $k$, and $x$ are all positive.
+The remaining 2 inequalities can be combined to fine the range of valid $dt$ values:
+
+$$
+2kx < \Delta t < 2k(1-x)
+$$
+
+There are several noteworthy insights from these equations:
+
+- The width of the valid range is $2k(1-x) - 2kx = 2k(1-2x)$ which is positive for $x < 0.5$.
+- The lower bound of valid $dt$ values is 0 when $x = 0$ meaning maximum attenuation such as at a reservoir.
+- The upper bound of valid $dt$ values approaches 0 as $x$ approaches 0.5 meaning no attenuation.
+- The width of the valid range approaches 0 as $x$ approaches 0.5 meaning no attenuation.
+- The width of the valid range approaches $2k$ as $x$ approaches 0 meaning maximum attenuation such as at a reservoir.
+
+In the case of the river-route solver implementation which allows a single $dt$ for all rivers, numerical stability is easier when:
+
+- There is more attenuation (smaller x) making the valid range wider, approaching $2k$.
+- Rivers are longer (larger k) and reaches are subdivided to accommodate $dt$.
+
 ## References
 
 - HEC-HMS Users Manual introduction to Muskingum Model 

@@ -4,6 +4,7 @@ import numpy as np
 __all__ = [
     'static_muskingum',
     'static_muskingum_vlateral',
+    'static_stabilized_muskingum_vlateral',
     'static_muskingum_qexternal',
     'dynamic_muskingum_vlateral',
 ]
@@ -120,6 +121,83 @@ def static_muskingum_vlateral(
                     rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
         for i in range(n_rivers):
             discharge_array[t, i] = interval_sum[i] * inv_substeps
+    return
+
+
+@numba.njit(cache=True, fastmath=True)
+def static_stabilized_muskingum_vlateral(
+        *,
+        q,  # Array shape (n_reaches,) of per-reach discharge state, updated in-place (instantaneous end-of-step value)
+        substeps_per_reach,  # Array shape (n_reaches,) of temporal substeps to route+average each reach (>= 1)
+        discharge_array,  # Array shape (n_steps, n_rivers) to write discharge time series into (per original river)
+        parent_index,  # Array shape (n_reaches,) of the original river index a reach belongs to (output + vlateral)
+        downstream_index,  # Array shape (n_reaches,) of downstream reach indices, -1 for no downstream
+        c1,  # Array shape (n_reaches,) of c1 for reach r, built for dt = period / substeps_per_reach[r]
+        c2,  # Array shape (n_reaches,) of c2 for reach r
+        c3,  # Array shape (n_reaches,) of c3 for reach r, used in the forward substitution sweep
+        downstream_c1,  # Array shape (n_reaches,) of c1 of reach r's downstream reach, pre-gathered for sequential push
+        downstream_c2,  # Array shape (n_reaches,) of c2 of reach r's downstream reach, pre-gathered for sequential push
+        c4_dt,  # Array shape (n_reaches,) of (c4 / dt_runoff) * lateral_scale for reach r: lateral VOLUME -> rate forcing
+        qlateral,  # Array shape (n_steps, n_rivers) of lateral inflow time series for each original river
+        n_reaches,  # integer number of expanded reaches in the network
+        n_rivers,  # integer number of original rivers (columns of discharge_array / qlateral)
+        n_steps,  # integer number of time steps to route
+):
+    """
+    Unified stabilized Muskingum with lateral inflow over an EXPANDED network (see streams.expand_network). Both
+    stability levers are handled by one code path:
+
+        - Subdivision (too-long reaches) is already materialized: a split river is a contiguous chain of reaches,
+          each with c1/c2/c3 built from k/N. The chain routes through the forward-substitution sweep exactly like
+          any other reaches, so subdivided-reach state needs no special handling. Such reaches usually have
+          substeps_per_reach == 1, but a river needing BOTH levers carries its substep count on every sub-reach.
+        - Substepping (too-short reaches) is done per reach: a reach with substeps_per_reach == S routes S internal
+          Muskingum iterations at dt = period/S against a HELD period inflow forcing, and reports the average of the
+          S substep outflows. substeps_per_reach == 1 is the degenerate case whose average is the single
+          instantaneous value, reducing exactly to static_muskingum_vlateral.
+
+    Reach state ``q`` is the instantaneous end-of-step outflow (this is what couples to downstream, identical to the
+    original kernel). The REPORTED discharge is the per-reach substep average. discharge_array is written per
+    original river via parent_index; because each river's reaches are contiguous and its outlet is processed last,
+    the last write for a river is its outlet's value (instantaneous for subdivided rivers, averaged for substepped).
+
+    Caller responsibilities (kernel does no validation to stay a pure hot path; see streams.expand_network):
+        - c1, c2, c3, c4_dt are per reach and built for dt = period / substeps_per_reach[r].
+        - c4_dt already folds in the reach's lateral_scale (1 / subdivisions), so lateral volume is conserved.
+        - q has length n_reaches, seeded by broadcasting each river's initial discharge across its reaches.
+        - substeps_per_reach[r] >= 1.
+
+    Note: a substepped reach reports its substep MEAN but couples its instantaneous endpoint to downstream (held
+    across the downstream's substeps). Total routed volume is conserved; only the per-period shape differs.
+    """
+    rhs = np.empty(n_reaches, dtype=np.float32)
+
+    for t in range(n_steps):
+        # seed each reach's inflow forcing with its lateral inflow (held constant across its substeps)
+        for r in range(n_reaches):
+            rhs[r] = c4_dt[r] * qlateral[t, parent_index[r]]
+
+        for r in range(n_reaches):
+            s = substeps_per_reach[r]
+            c3r = c3[r]
+            q_old = q[r]
+            forcing = rhs[r]  # lateral + upstream inflow terms pushed in earlier this sweep; held for all substeps
+            if s == 1:
+                q_new = forcing + c3r * q_old
+                reported = q_new
+            else:
+                acc = np.float32(0.0)
+                q_s = q_old
+                for _ in range(s):
+                    q_s = forcing + c3r * q_s
+                    acc += q_s
+                q_new = q_s
+                reported = acc / np.float32(s)
+            q[r] = q_new
+            discharge_array[t, parent_index[r]] = reported  # outlet is processed last, so its value wins per river
+            downstream_idx = downstream_index[r]
+            if downstream_idx >= 0:
+                rhs[downstream_idx] += downstream_c2[r] * q_old + downstream_c1[r] * q_new
     return
 
 
