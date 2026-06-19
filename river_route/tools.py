@@ -68,7 +68,7 @@ def connectivity_to_digraph(river_ids: np.ndarray, downstream_ids: np.ndarray) -
         Directed graph with edges from each river_id to its downstream_river_id
     """
     graph = nx.DiGraph()
-    graph.add_edges_from(zip(river_ids, downstream_ids))
+    graph.add_edges_from(zip(river_ids, downstream_ids, strict=True))
     return graph
 
 

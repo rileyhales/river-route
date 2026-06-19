@@ -22,7 +22,6 @@ so close to 0.5 that no integer fits the window) and it is kept as a single reac
 
 eventually this module should merge with the present tools.py
 """
-from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -51,7 +50,7 @@ def river_connectivity_is_valid(df: pd.DataFrame) -> bool:
 
     # check that the rivers are topologically sorted from upstream to downstream
     river_id_to_index = {river_id: idx for idx, river_id in enumerate(df['river_id'])}
-    river_id_to_downstream_id = dict(zip(df['river_id'], df['downstream_river_id']))
+    river_id_to_downstream_id = dict(zip(df['river_id'], df['downstream_river_id'], strict=True))
     for river_id in df['river_id']:
         downstream_id = river_id_to_downstream_id[river_id]
         if downstream_id == -1:
@@ -66,7 +65,7 @@ def river_connectivity_is_valid(df: pd.DataFrame) -> bool:
     return True
 
 
-def required_subreaches(k: np.ndarray, x: np.ndarray, dt: float) -> Tuple[np.ndarray, np.ndarray]:
+def required_subreaches(k: np.ndarray, x: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray]:
     """
     For each river, compute the smallest number of equal sub-reaches that makes it Muskingum-stable for dt,
     using the closed-form valid window  ceil(2kx/dt) <= N <= floor(2k(1-x)/dt).
@@ -101,7 +100,7 @@ def _divisors(n: int) -> np.ndarray:
     return np.array(sorted(set(small + [n // d for d in small])), dtype=np.int64)
 
 
-def assign_stable_dt(k: np.ndarray, x: np.ndarray, period: int = 3600) -> Tuple[np.ndarray, np.ndarray]:
+def assign_stable_dt(k: np.ndarray, x: np.ndarray, period: int = 3600) -> tuple[np.ndarray, np.ndarray]:
     """
     For each river pick a routing time step dt that (a) evenly divides ``period`` and (b) keeps the river
     Muskingum-stable, i.e. 2*k*x <= dt <= 2*k*(1-x). The largest valid divisor is chosen so the river takes the
@@ -236,7 +235,7 @@ def stable_static_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -
 
     The two levers are orthogonal and both come straight from optimize_network_compute:
 
-        subdivisions (N): route the river as N equal sub-reaches in SERIES, each with k/N and vlateral/N and the
+        subdivisions (N): route the river as N equal sub-reaches in SERIES, each with k/N and qlateral/N and the
             same x (a spatial split for "too long" reaches). The reported flow is the instantaneous outflow of the
             final sub-reach. N == 1 means no split.
         substeps (S): sub-cycle the river S times at dt = period/S (a temporal refinement for "too short" reaches)
@@ -255,7 +254,7 @@ def stable_static_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -
 
     Returns:
         A copy of df with added columns:
-            subdivisions -- int, equal sub-reaches in series (spatial split); k and vlateral are divided by it
+            subdivisions -- int, equal sub-reaches in series (spatial split); k and qlateral are divided by it
             substeps     -- int, temporal substeps to route and average over
             stable        -- bool, False where no stable routing exists within cap (kept at N=S=1, an error)
     """
@@ -291,7 +290,7 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
         x              -- float32 (n,), per-reach x (unchanged within a river)
         lateral_scale  -- float32 (n,), per-reach lateral multiplier (1 / subdivisions)
         downstream_index -- int32 (n,), expanded downstream reach index, -1 at the network outlet
-        parent_index   -- int32 (n,), original river index a reach belongs to (for vlateral lookup / output grouping)
+        parent_index   -- int32 (n,), original river index a reach belongs to (for qlateral lookup / output grouping)
         reach_river_id -- int64 (n,), the original river id R each reach belongs to (first identity column)
         subreach_number -- int32 (n,), 0 at the outlet, 1..subdivisions-1 upstream (second identity column); the
                            deterministic (reach_river_id, subreach_number) pair identifies a reach for state I/O

@@ -1,8 +1,15 @@
-## Unit Hydrograph Routing with UnitMuskingum
+## Unit Hydrograph Routing
 
-`UnitMuskingum` convolves runoff depths with a precomputed unit hydrograph (UH) kernel before routing
+!!! warning "Planned — not yet available in v3"
+    Unit hydrograph **routing** is being migrated in a later phase of the v3 line and is **not yet
+    available**. Building UH kernels with `rr.uhkernels` (the first steps below) works today. The routing
+    examples that follow use the v2 `UnitMuskingum` API for reference only; the v3 `rr.Router` interface for
+    unit-hydrograph forcing will be defined and documented when the migration lands. See the
+    [v2 → v3 migration guide](../migrating/v2-to-v3.md).
+
+Unit hydrograph routing convolves runoff depths with a precomputed unit hydrograph (UH) kernel before routing
 through the Muskingum channel equations. Instead of placing runoff directly at the channel inlet each
-timestep (as `RapidMuskingum` does), the UH spreads overland flow through time, producing a more
+timestep (as `forcing: lateral` does), the UH spreads overland flow through time, producing a more
 realistic lateral inflow hydrograph. The convolved lateral inflow is then routed between river segments
 using the Muskingum method.
 
@@ -81,6 +88,7 @@ scipy.sparse.save_npz('kernel.npz', scipy.sparse.csr_matrix(kernel))
 ## Running the Router
 
 ```python
+# v2 API shown for reference — does NOT run in v3 (UnitMuskingum was removed)
 import river_route as rr
 
 (
@@ -102,6 +110,7 @@ The `qlateral_files` for `UnitMuskingum` contain **runoff depths in meters** (no
 Alternatively, you can route directly from gridded runoff using a weight table:
 
 ```python
+# v2 API shown for reference — does NOT run in v3 (UnitMuskingum was removed)
 (
     rr
     .UnitMuskingum(
@@ -121,6 +130,7 @@ The UH convolution produces a tail that extends beyond the current simulation wi
 continuous results across sequential input files, save and restore the convolution state:
 
 ```python
+# v2 API shown for reference — does NOT run in v3 (UnitMuskingum was removed)
 # First run — save the final UH and channel state
 (
     rr
@@ -150,8 +160,10 @@ continuous results across sequential input files, save and restore the convoluti
 )
 ```
 
-The UH state file is a parquet with shape `(n_basins, n_kernel_steps)` — one row per basin. It
-records how much of each basin's recent runoff has not yet been discharged into the channel.
+!!! warning "Planned — not yet available in v3"
+    When UH routing lands, the UH state file will be a parquet with shape `(n_basins, n_kernel_steps)` —
+    one row per basin — recording how much of each basin's recent runoff has not yet been discharged into
+    the channel. The v3 `rr.Router` does not read or write `uh_state` files today.
 
 !!! note "Volume in the state buffer"
     At the end of a simulation, the UH state buffer may hold non-trivial volume that has not yet
@@ -160,6 +172,7 @@ records how much of each basin's recent runoff has not yet been discharged into 
 
 ## Headwater Optimization
 
-`UnitMuskingum` automatically identifies headwater segments (those with no upstream connections) and
-excludes them from the Muskingum matrix solve. Headwater discharge is set directly to the UH
-convolution output. This typically cuts the linear solve size roughly in half with no loss of accuracy.
+!!! warning "Planned — not yet available in v3"
+    When UH routing lands, the router will identify headwater segments (those with no upstream
+    connections) and set their discharge directly to the UH convolution output, so they can be skipped
+    in the routing step. This optimization is not implemented in v3 today.

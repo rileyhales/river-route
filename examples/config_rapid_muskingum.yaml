@@ -1,4 +1,9 @@
-# RapidMuskingum config template — direct runoff-to-channel routing
+# Lateral runoff routing template (forcing: lateral) — direct runoff-to-channel (RAPID-style)
+
+# routing procedure selectors
+coeff: static                    # static (Muskingum K from k,x) | dynamic (K = alpha*Q^beta)
+forcing: lateral               # lateral runoff inflow to channels
+network: standard                # standard (one reach per river); expanded (subdivide unstable reaches) planned
 
 # required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x

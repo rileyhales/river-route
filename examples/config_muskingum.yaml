@@ -1,4 +1,9 @@
-# Muskingum config template — channel routing only, no lateral inflow
+# Channel-only routing template (forcing: channel) — no lateral inflow
+
+# routing procedure selectors
+coeff: static                    # static (constant Muskingum K from columns k, x) | dynamic
+forcing: channel                    # channel (no inflow) | lateral | external
+network: standard                # standard (one reach per river); expanded planned
 
 # required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x

@@ -2,6 +2,17 @@
 
 ---
 
+### [v3.0.0](https://github.com/rileyhales/river-route/tree/v3.0.0) — 2026-06-18
+
+- Consolidated all routing into a single config-driven `rr.Router`.
+- Routing procedure is now selected by config keys: `coeff` (`static` | `dynamic`), `forcing` (`channel` | `lateral` | `external`), and `network` (`standard`; `expanded` planned).
+- **Removed** the `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` classes (hard cut, no shims — see the v2 -> v3 migration guide).
+- Added a capability-keyed kernel registry to dispatch the routing kernel from the resolved selectors.
+- Simplified the CLI to a single command: `rr route config.yaml`.
+- External forcing, combined forcings, and unit-hydrograph routing are planned for a later v3 release.
+
+---
+
 ### [v2.1.1](https://github.com/rileyhales/river-route/tree/v2.1.1) — 2026-04-11
 
 - Small documentation edits.

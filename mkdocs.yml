@@ -17,7 +17,7 @@ nav:
   - License: terms.md
   - Changelog: changelog.md
   - API Docs:
-      - Router Classes: api/routers.md
+      - Router: api/routers.md
       - Unit Hydrographs: api/unit-hydrographs.md
       - Tools: api/tools.md
   - References:
@@ -28,11 +28,14 @@ nav:
       - No Parallelism: references/parallelism.md
   - Tutorials:
       - Basics: tutorial/basics.md
-      - Unit Hydrographs with Routing: tutorial/unit-hydrograph-routing.md
+      - Unit Hydrographs with Routing (planned): tutorial/unit-hydrograph-routing.md
       - Routing Runoff Ensemble: tutorial/routing-ensembles.md
       - Advanced Uses: tutorial/advanced.md
   - Migration Guides:
       - v1 to v2: migrating/v1-to-v2.md
+      - v2 to v3: migrating/v2-to-v3.md
+  - Developer:
+      - Internal Architecture: development/architecture.md
 plugins:
   - search
   - mkdocstrings

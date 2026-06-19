@@ -53,9 +53,14 @@ docs = [
     "mkdocstrings-python",
     "mkdocs-include-markdown-plugin",
 ]
+lint = [
+    "ruff",
+    "mypy",
+]
 dev = [
     { include-group = "test" },
     { include-group = "docs" },
+    { include-group = "lint" },
 ]
 
 [project.urls]
@@ -64,6 +69,16 @@ Repository = "https://github.com/rileyhales/river-route"
 
 [project.scripts]
 rr = "river_route._cli:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "NPY", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
 
 [tool.hatch.version]
 path = "river_route/_metadata.py"

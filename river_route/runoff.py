@@ -55,7 +55,7 @@ def voronoi_diagram_from_regular_xy(x: np.ndarray, y: np.ndarray, crs: int = 432
 
     logger.info('Creating Voronoi polygons')
     regions = shapely.ops.voronoi_diagram(
-        shapely.geometry.MultiPoint([shapely.geometry.Point(xi, yi) for xi, yi in zip(x_grid, y_grid)])
+        shapely.geometry.MultiPoint([shapely.geometry.Point(xi, yi) for xi, yi in zip(x_grid, y_grid, strict=True)])
     )
 
     logger.info('Adding attributes to voronoi polygons')

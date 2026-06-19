@@ -2,23 +2,22 @@ import numba
 import numpy as np
 
 __all__ = [
-    'static_muskingum',
-    'static_muskingum_vlateral',
-    'static_stabilized_muskingum_vlateral',
-    'static_muskingum_qexternal',
-    'dynamic_muskingum_vlateral',
+    'static_channel',
+    'static_qlateral',
+    'static_qlateral_expanded',
+    'dynamic_qlateral',
 ]
 
 
 @numba.njit(cache=True, fastmath=True)
-def static_muskingum(
+def static_channel(
         *,
-        q_t,  # Array shape (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array shape (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array shape (n_rivers,) of downstream river indices, -1 for no downstream
-        downstream_c1,  # Array shape (n_rivers,) of c1 downstream of river at index i
-        downstream_c2,  # Array shape (n_rivers,) of c2 downstream of river at index i
-        c3,  # Array shape (n_rivers,) of c3 for river at index i, used in forward substitution sweep
+        q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
+        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
+        downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
+        downstream_c1,  # Array (n_rivers,) of c1 downstream of river at index i
+        downstream_c2,  # Array (n_rivers,) of c2 downstream of river at index i
+        c3,  # Array (n_rivers,) of c3 for river at index i, used in forward substitution sweep
         n_rivers,  # integer number of rivers in the network
         n_steps,  # integer number of time steps to route
         n_substeps,  # integer number of routing substeps per runoff value
@@ -34,7 +33,8 @@ def static_muskingum(
                 q_old = q_t[i]
                 q_new = rhs[i]
                 q_t[i] = q_new
-                discharge_array[t, i] = q_new
+                # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
+                discharge_array[t, i] = q_new if q_new > 0.0 else np.float32(0.0)
                 downstream_idx = downstream_indices[i]
                 if downstream_idx >= 0:
                     rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
@@ -60,39 +60,40 @@ def static_muskingum(
                 if downstream_idx >= 0:
                     rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
         for i in range(n_rivers):
-            discharge_array[t, i] = interval_sum[i] * inv_substeps
+            val = interval_sum[i] * inv_substeps
+            # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
+            discharge_array[t, i] = val if val > 0.0 else np.float32(0.0)
     return
 
 
-# todo it ought to be faster to solve qlateral * c4dt. if not, update all naming and verbiage to vlateral because its
-#  not really q and that's confusing.
 @numba.njit(cache=True, fastmath=True)
-def static_muskingum_vlateral(
+def static_qlateral(
         *,
-        q_t,  # Array shape (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array shape (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array shape (n_rivers,) of downstream river indices, -1 for no downstream
-        downstream_c1,  # Array shape (n_rivers,) of c1 downstream of river at index i
-        downstream_c2,  # Array shape (n_rivers,) of c2 downstream of river at index i
-        c3,  # Array shape (n_rivers,) of c3 for river at index i, the order of the solution pass
+        q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
+        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
+        downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
+        downstream_c1,  # Array (n_rivers,) of c1 downstream of river at index i
+        downstream_c2,  # Array (n_rivers,) of c2 downstream of river at index i
+        c3,  # Array (n_rivers,) of c3 for river at index i, the order of the solution pass
         n_rivers,  # integer number of rivers in the network
         n_steps,  # integer number of time steps to route
         n_substeps,  # integer number of routing substeps per runoff value
-        qlateral,  # Array shape (n_steps, n_rivers) of lateral inflow time series for each river
-        c4_dt,  # Array shape (n_rivers,) of c4 * dt_routing for river at index i
+        vlateral,  # Array (n_steps, n_rivers) of lateral inflow time series for each river
+        c4_dt,  # Array (n_rivers,) of c4 * dt_routing for river at index i
 ):
     rhs = np.empty(n_rivers, dtype=np.float32)
 
     if n_substeps == 1:
         for t in range(n_steps):
             for i in range(n_rivers):
-                rhs[i] = c3[i] * q_t[i] + c4_dt[i] * qlateral[t, i]
+                rhs[i] = c3[i] * q_t[i] + c4_dt[i] * vlateral[t, i]
 
             for i in range(n_rivers):
                 q_old = q_t[i]
                 q_new = rhs[i]
                 q_t[i] = q_new
-                discharge_array[t, i] = q_new
+                # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
+                discharge_array[t, i] = q_new if q_new > 0.0 else np.float32(0.0)
                 downstream_idx = downstream_indices[i]
                 if downstream_idx >= 0:
                     rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
@@ -105,7 +106,7 @@ def static_muskingum_vlateral(
     for t in range(n_steps):
         for i in range(n_rivers):
             interval_sum[i] = 0.0
-            q_ext_t[i] = c4_dt[i] * qlateral[t, i]
+            q_ext_t[i] = c4_dt[i] * vlateral[t, i]
 
         for _ in range(n_substeps):
             for i in range(n_rivers):
@@ -120,27 +121,26 @@ def static_muskingum_vlateral(
                 if downstream_idx >= 0:
                     rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
         for i in range(n_rivers):
-            discharge_array[t, i] = interval_sum[i] * inv_substeps
+            val = interval_sum[i] * inv_substeps
+            # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
+            discharge_array[t, i] = val if val > 0.0 else np.float32(0.0)
     return
 
 
 @numba.njit(cache=True, fastmath=True)
-def static_stabilized_muskingum_vlateral(
+def static_qlateral_expanded(
         *,
-        q,  # Array shape (n_reaches,) of per-reach discharge state, updated in-place (instantaneous end-of-step value)
-        substeps_per_reach,  # Array shape (n_reaches,) of temporal substeps to route+average each reach (>= 1)
-        discharge_array,  # Array shape (n_steps, n_rivers) to write discharge time series into (per original river)
-        parent_index,  # Array shape (n_reaches,) of the original river index a reach belongs to (output + vlateral)
-        downstream_index,  # Array shape (n_reaches,) of downstream reach indices, -1 for no downstream
-        c1,  # Array shape (n_reaches,) of c1 for reach r, built for dt = period / substeps_per_reach[r]
-        c2,  # Array shape (n_reaches,) of c2 for reach r
-        c3,  # Array shape (n_reaches,) of c3 for reach r, used in the forward substitution sweep
-        downstream_c1,  # Array shape (n_reaches,) of c1 of reach r's downstream reach, pre-gathered for sequential push
-        downstream_c2,  # Array shape (n_reaches,) of c2 of reach r's downstream reach, pre-gathered for sequential push
-        c4_dt,  # Array shape (n_reaches,) of (c4 / dt_runoff) * lateral_scale for reach r: lateral VOLUME -> rate forcing
-        qlateral,  # Array shape (n_steps, n_rivers) of lateral inflow time series for each original river
+        q,  # Array (n_reaches,) of per-reach discharge state, updated in-place (instantaneous end-of-step value)
+        substeps_per_reach,  # Array (n_reaches,) of temporal substeps to route+average each reach (>= 1)
+        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into (per original river)
+        parent_index,  # Array (n_reaches,) of the original river index a reach belongs to (output + qlateral)
+        downstream_index,  # Array (n_reaches,) of downstream reach indices, -1 for no downstream
+        downstream_c1,  # Array (n_reaches,) of c1 of reach r's downstream reach, pre-gathered for sequential push
+        downstream_c2,  # Array (n_reaches,) of c2 of reach r's downstream reach, pre-gathered for sequential push
+        c3,  # Array (n_reaches,) of c3 for reach r, used in the forward substitution sweep
+        c4_dt,  # Array (n_reaches,) of (c4 / dt_runoff) * lateral_scale for reach r: lateral VOLUME -> rate forcing
+        qlateral,  # Array (n_steps, n_rivers) of lateral inflow time series for each original river
         n_reaches,  # integer number of expanded reaches in the network
-        n_rivers,  # integer number of original rivers (columns of discharge_array / qlateral)
         n_steps,  # integer number of time steps to route
 ):
     """
@@ -194,7 +194,9 @@ def static_stabilized_muskingum_vlateral(
                 q_new = q_s
                 reported = acc / np.float32(s)
             q[r] = q_new
-            discharge_array[t, parent_index[r]] = reported  # outlet is processed last, so its value wins per river
+            # outlet is processed last, so its (clamped) value wins per river
+            # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
+            discharge_array[t, parent_index[r]] = reported if reported > 0.0 else np.float32(0.0)
             downstream_idx = downstream_index[r]
             if downstream_idx >= 0:
                 rhs[downstream_idx] += downstream_c2[r] * q_old + downstream_c1[r] * q_new
@@ -202,87 +204,20 @@ def static_stabilized_muskingum_vlateral(
 
 
 @numba.njit(cache=True, fastmath=True)
-def static_muskingum_qexternal(
+def dynamic_qlateral(
         *,
-        q_t,  # Array shape (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array shape (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array shape (n_rivers,) of downstream river indices, -1 for no downstream
-        downstream_c1,  # Array shape (n_rivers,) of c1 downstream of river at index i
-        downstream_c2,  # Array shape (n_rivers,) of c2 downstream of river at index i
-        c3,  # Array shape (n_rivers,) of c3 for river at index i, the order of the solution pass
-        n_rivers,  # integer number of rivers in the network
-        n_steps,  # integer number of time steps to route
-        n_substeps,  # integer number of routing substeps per runoff value
-        qexternal,  # Array shape (n_steps, n_rivers) of external discharge time series for each river
-):
-    rhs = np.empty(n_rivers, dtype=np.float32)
-
-    if n_substeps == 1:
-        for t in range(n_steps):
-            for i in range(n_rivers):
-                rhs[i] = c3[i] * q_t[i]
-
-            for i in range(n_rivers):
-                q_old = q_t[i]
-                q_new = rhs[i]
-                q_t[i] = q_new
-                qext_i = qexternal[t, i]
-                discharge_array[t, i] = q_new + qext_i
-                downstream_idx = downstream_indices[i]
-                if downstream_idx >= 0:
-                    rhs[downstream_idx] += (
-                            downstream_c2[i] * q_old
-                            + downstream_c1[i] * q_new
-                            + (downstream_c1[i] + downstream_c2[i]) * qext_i
-                    )
-        return
-
-    interval_sum = np.empty(n_rivers, dtype=np.float32)
-    q_ext_t = np.empty(n_rivers, dtype=np.float32)
-    inv_substeps = np.float32(1.0 / n_substeps)
-
-    for t in range(n_steps):
-        for i in range(n_rivers):
-            interval_sum[i] = 0.0
-            q_ext_t[i] = qexternal[t, i]
-
-        for _ in range(n_substeps):
-            for i in range(n_rivers):
-                rhs[i] = c3[i] * q_t[i]
-
-            for i in range(n_rivers):
-                q_old = q_t[i]
-                q_new = rhs[i]
-                q_t[i] = q_new
-                qext_i = q_ext_t[i]
-                interval_sum[i] += q_new + qext_i
-                downstream_idx = downstream_indices[i]
-                if downstream_idx >= 0:
-                    rhs[downstream_idx] += (
-                            downstream_c2[i] * q_old
-                            + downstream_c1[i] * q_new
-                            + (downstream_c1[i] + downstream_c2[i]) * qext_i
-                    )
-        for i in range(n_rivers):
-            discharge_array[t, i] = interval_sum[i] * inv_substeps
-    return
-
-
-@numba.njit(cache=True, fastmath=True)
-def dynamic_muskingum_vlateral(
-        *,
-        q_t,  # Array shape (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array shape (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array shape (n_rivers,) of downstream river indices, -1 for no downstream
-        alpha,  # Array shape (n_rivers,) of alpha for river at index i, used to compute K_i
-        beta,  # Array shape (n_rivers,) of beta for river at index i, used to compute K_i
-        x,  # Array shape (n_rivers,) of x for river at index i, used to compute Muskingum coefficients
+        q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
+        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
+        downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
+        alpha,  # Array (n_rivers,) of alpha for river at index i, used to compute K_i
+        beta,  # Array (n_rivers,) of beta for river at index i, used to compute K_i
+        x,  # Array (n_rivers,) of x for river at index i, used to compute Muskingum coefficients
         dt_routing,  # integer routing timestep in seconds, used to compute Muskingum coefficients
-        dt_runoff,  # integer runoff timestep in seconds, used to scale vlateral to Q per routing substep
+        dt_runoff,  # integer runoff timestep in seconds, used to scale qlateral to Q per routing substep
         n_rivers,  # integer number of rivers in the network
         n_steps,  # integer number of time steps to route
         n_substeps,  # integer number of routing substeps per runoff value
-        vlateral,  # Array shape (n_steps, n_rivers) of lateral volume time series for each river
+        vlateral,  # Array (n_steps, n_rivers) of lateral volume time series for each river
 ):
     """
     Nonlinear Muskingum with lateral inflow. Each substep, K_i is recomputed
@@ -330,5 +265,7 @@ def dynamic_muskingum_vlateral(
                     rhs[downstream_idx] += c2[downstream_idx] * q_old + c1[downstream_idx] * q_new
 
         for i in range(n_rivers):
-            discharge_array[t, i] = interval_sum[i] * inv_substeps
+            val = interval_sum[i] * inv_substeps
+            # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
+            discharge_array[t, i] = val if val > 0.0 else np.float32(0.0)
     return

@@ -1,11 +1,12 @@
 import os
 import types
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, get_args, get_origin, get_type_hints, Self
+from typing import ClassVar, Literal, Self, get_args, get_origin, get_type_hints
 
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 from river_route.types import PathInput, PathList
 
 __all__ = ['Configs', ]
@@ -19,13 +20,18 @@ class Configs:
     """
     Accepts and validates configuration options. The class will validates in the following ways:
 
-    1. Keys that are required are set.
-    2. Values that must be from a specific list of options are valid.
-    3. Paths or directories exist which are necessary
+    1. Required keys are non-null and non-empty.
+    2. Values are from given enumerations if applicable
+    3. Required paths or directories must exist
     4. File paths are converted to absolute paths.
     """
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
+
+    # Routing procedure selectors — describe the procedure resolved to a kernel by routers._registry
+    coeff: Literal['static', 'dynamic'] = 'static'
+    forcing: Literal['channel', 'lateral', 'external'] = 'channel'
+    network: Literal['standard', 'expanded'] = 'standard'
 
     # Core Routing Files
     params_file: PathInput | None = None
@@ -180,6 +186,28 @@ class Configs:
                 raise NotADirectoryError(f'Output directory not found: {val}')
         return
 
+    def validate(self) -> Self:
+        """Validate that the configured options are mutually consistent for the chosen routing procedure. Cares
+        only about the existence and validity of options, not file contents (see deep_validate). Raise ValueError."""
+        if self.forcing == 'channel':
+            for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
+                if not getattr(self, key, None):
+                    raise ValueError(f'{key} is required for channel routing')
+            if len(self.discharge_files) != 1:
+                raise ValueError('Channel routing requires exactly one entry in discharge_files')
+            return self
+
+        qlateral = self.qlateral_files
+        grids = self.grid_runoff_files and self.grid_weights_file
+        if qlateral and grids:
+            raise ValueError('Provide qlateral_files or grid_runoff_files with grid_weights_file, not both')
+        if not qlateral and not grids:
+            raise ValueError('Provide qlateral_files or grid_runoff_files with grid_weights_file')
+        n_inputs = len(qlateral) + len(self.grid_runoff_files or [])
+        if len(self.discharge_files) != n_inputs:
+            raise ValueError('Number of resolved discharge output files must match number of input files')
+        return self
+
     def deep_validate(self) -> Self:
         """Perform deep validation of file contents and inter-file consistency. Raise ValueError if any issues found."""
         # params df should be parquet with columns river_id, downstream_river_id, k, x
@@ -295,12 +323,15 @@ def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
             continue
         origin = get_origin(hint)
         if origin is list:
+            args = get_args(hint)
+            if args and get_origin(args[0]) is Literal:
+                continue  # selector list (e.g. forcing), not a list of file paths
             lists.add(name)
         elif origin is types.UnionType:
             non_none = [a for a in get_args(hint) if a is not type(None)]
             if len(non_none) == 1 and get_origin(non_none[0]) is list:
                 lists.add(name)  # PathList | None
-            elif _PATH_INPUT_TYPES <= set(get_args(hint)):
+            elif set(get_args(hint)) >= _PATH_INPUT_TYPES:
                 single.add(name)  # PathInput or PathInput | None
     return frozenset(single), frozenset(lists)
 

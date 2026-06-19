@@ -10,7 +10,7 @@ params_file: '/path/to/params.parquet'
 ```
 
 The routing parameters file is a parquet file. It has 1 row per river in the watershed.
-Required for all routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`):
+Required for all routing:
 
 | Column                | Data Type | Description                                                |
 |-----------------------|-----------|------------------------------------------------------------|
@@ -52,7 +52,8 @@ qlateral_files:
 Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
 exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
 should have 1 data variable named `qlateral` which is an array of shape `(time, river_id)` of dtype float.
-`RapidMuskingum` expects volumes (m³) and `UnitMuskingum` expects depths (m).
+Lateral forcing (`forcing: lateral`) expects runoff volumes (m³). Depth-based (m) unit-hydrograph input is
+planned for a later v3 release and is not yet available.
 
 ### Gridded Runoff Depths
 
@@ -109,7 +110,11 @@ The parquet state file must contain 1 column in river order:
 |--------|-----------------------|
 | `Q`    | River discharge state |
 
-## UnitMuskingum UH State Files (Optional)
+## UH State Files (Optional)
+
+!!! note "Unit Hydrograph routing is planned"
+    Unit Hydrograph routing is planned for a later v3 release and is not yet available. The keys
+    documented in this section are not yet used.
 
 ```yaml
 uh_kernel_file: '/path/to/kernel.npz'
@@ -117,11 +122,11 @@ uh_state_init_file: '/path/to/state.parquet'
 uh_state_final_file: '/path/to/final_state.parquet'
 ```
 
-`UnitMuskingum` reads a pre-computed convolution kernel and can optionally warm-start the UH
+Unit Hydrograph routing reads a pre-computed convolution kernel and can optionally warm-start the UH
 state from a previous run. The kernel is a scipy sparse npz file and the state files are parquet,
 both with shape `(n_basins, n_time_steps)`, one row per basin.
 
-- `uh_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Required for `UnitMuskingum`. Note
+- `uh_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Note
   that the kernel depends on `tc`, `area`, **and the routing timestep**.
 - `uh_state_init_file`: warm-start the UH rolling state buffer from a prior run.
   Note, the **state depends on the routing timestep**.

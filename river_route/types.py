@@ -10,7 +10,7 @@ type PathList = list[PathInput]
 type FloatArray = NDArray[np.float32]
 type IntArray = NDArray[np.int64]
 type DatetimeArray = NDArray[np.datetime64]
-type QlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
+type VlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
 
 
 class WriteDischargesFn(Protocol):
@@ -29,6 +29,6 @@ __all__ = [
     'FloatArray',
     'IntArray',
     'DatetimeArray',
-    'QlateralGeneratorSignature',
+    'VlateralGeneratorSignature',
     'WriteDischargesFn',
 ]

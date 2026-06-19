@@ -1,27 +1,18 @@
-from . import metrics
-from . import runoff
-from . import tools
-from . import uhkernels
-from ._metadata import __version__, __author__, __url__
-from .routers import Configs
-from .routers import Muskingum
-from .routers import MuskingumVlateral
-from .routers import DynamicMuskingumVlateral
-
-from . import streams
+from . import metrics, runoff, streams, tools, uhkernels
+from ._metadata import __author__, __url__, __version__
+from .routers import Configs, Router
 
 __all__ = [
-    # router classes
+    # configuration + unified router
     'Configs',
-    'Muskingum',
-    'MuskingumVlateral',
-    'DynamicMuskingumVlateral',
+    'Router',
 
     # uhkernel creating classes
     'uhkernels',
 
     # modules
     'runoff',
+    'streams',
     'tools',
     'metrics',
 

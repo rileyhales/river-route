@@ -10,7 +10,8 @@ routing is state handling:
 
 There are two common ways to run ensembles in `river-route`.
 
-Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
+Ensemble routing is available whenever there is forcing (e.g. `forcing: lateral`); it is not
+meaningful for channel-only routing (`forcing: channel`). Set it with `runoff_processing_mode: ensemble`.
 
 1. Run each member in a separate job (loop, multiprocessing, cluster workers). This is easiest
    to parallelize and gives full control over member-specific output paths.
@@ -78,7 +79,7 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
 
 m = (
     rr
-    .RapidMuskingum('your_config_file.yaml')
+    .Router('your_config_file.yaml', forcing='lateral')
     .set_write_discharges(custom_output_writer)  # set the custom output writer function
     .route()
 )

@@ -14,12 +14,12 @@ The following rules apply:
 1. You must route each runoff increment at least 1 time so `dt_routing` must be less than or equal to `dt_runoff`.
 2. `dt_routing` must be an integer divisor of `dt_runoff` because runoff distributions won't be resampled.
 3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge outputs are averaged over runoff intervals.
-4. `dt_total` is equal to `dt_runoff` multiplied by the number of runoff time steps. Recession routing is not available.
+4. By default `dt_total` is `dt_runoff` multiplied by the runoff record length. If you set it explicitly, it must be an integer multiple of `dt_runoff` (and of `dt_discharge`). Recession routing is not available.
 
 ## Router Defaults
 
-- `Muskingum`: requires `dt_total` and `dt_routing`; `dt_discharge` defaults to `dt_routing`.
-- `RapidMuskingum` and `UnitMuskingum`:
+- Channel-only routing (`forcing: channel`): requires `dt_total` and `dt_routing`; `dt_discharge` defaults to `dt_routing`.
+- Routing with forcing (e.g. `forcing: lateral`):
     - `dt_runoff` defaults to the runoff-file timestep.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
@@ -27,17 +27,18 @@ The following rules apply:
 
 ## Required Relationships
 
-For transform routers (`RapidMuskingum`, `UnitMuskingum`):
+For routing with forcing (e.g. `forcing: lateral`):
 
 ```
 dt_total >= dt_discharge >= dt_runoff >= dt_routing
 dt_total % dt_discharge == 0
 dt_discharge % dt_runoff == 0
 dt_runoff % dt_routing == 0
-dt_total == dt_runoff * number_of_timesteps
 ```
 
-For channel-only `Muskingum`:
+If you do not supply `dt_total`, it defaults to `dt_runoff * number_of_timesteps`.
+
+For channel-only routing (`forcing: channel`):
 
 ```
 dt_total >= dt_discharge >= dt_routing

@@ -1,6 +1,7 @@
-from .Config import Configs
-from .Muskingum import Muskingum
-from .MuskingumVlateral import MuskingumVlateral
-from .DynamicMuskingumVlateral import DynamicMuskingumVlateral
+from ._Config import Configs
+from .Router import Router
 
-__all__ = ['Configs', 'Muskingum', 'MuskingumVlateral', 'DynamicMuskingumVlateral']
+__all__ = [
+    'Configs',
+    'Router',
+]

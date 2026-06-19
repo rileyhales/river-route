@@ -1,15 +1,15 @@
 # Parallelism in River Routing
 
-Many scientific computations jump to parallelism and GPU acceleration. There is, sometimes significant, 
-overhead to orchestrate multiple workers. The effectiveness depends on the strategy, size and complexity 
-of the job and the hardware being used. Not all strategies are worth using on all cases. This page is a 
-list of the parallelization strategies tested in `river-route` and my recommendations based on using these 
+Many scientific computations jump to parallelism and GPU acceleration. There is, sometimes significant,
+overhead to orchestrate multiple workers. The effectiveness depends on the strategy, size and complexity
+of the job and the hardware being used. Not all strategies are worth using on all cases. This page is a
+list of the parallelization strategies tested in `river-route` and my recommendations based on using these
 methods to operate a global hydrological model and generate a 5 trillion data point simulation product.
 
 ## What cannot be parallelized?
 
-The fundamental constraint to parallelism in river routing is that it is a time stepping process. 
-You must solve for discharge in time order without skipping steps. The discharge at time `t+1` 
+The fundamental constraint to parallelism in river routing is that it is a time stepping process.
+You must solve for discharge in time order without skipping steps. The discharge at time `t+1`
 depends on the discharge at time `t`.
 
 ## Asynchronous pipelines for file I/O and computations
@@ -26,10 +26,10 @@ block-beta
     w["Write"]:1 space:2 w1["t=1"] w2["t=2"] w3["t=3"] w4["t=4"]
 ```
 
-If you have an unfavorable combination of slow I/O, slow CPU, and large computations, this solution 
-might help. Individual routing jobs get faster but by making threads for portions that depend on 
-different hardware. However, using this method means you probably won't be able to use it in 
-combination with another parallelization strategy because you more quickly consume memory and disk 
+If you have an unfavorable combination of slow I/O, slow CPU, and large computations, this solution
+might help. Individual routing jobs get faster but by making threads for portions that depend on
+different hardware. However, using this method means you probably won't be able to use it in
+combination with another parallelization strategy because you more quickly consume memory and disk
 I/O bandwidth with one job. In my experience, this speedup is at most a few percent.
 
 **Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware capabilities.
@@ -47,7 +47,7 @@ However, the forward substitutions have been made about as minimal as possible, 
 formats, and JIT compilation. In my experience, this is preferable to multiprocessing methods even
 though it uses an inherently sequential forward substitution algorithm. This approach is the best
 method in my experience using it on a wide range of scales up to global computations of hourly
-resolution discharge on millions of rivers and producing a 5 trillion data point simulation. It 
+resolution discharge on millions of rivers and producing a 5 trillion data point simulation. It
 has the advantages that it:
 
 1. needs only mainstream scientific python dependencies simply installed on a variety of hardware and Python versions
@@ -61,12 +61,12 @@ has the advantages that it:
 
 **Summary**: If your computations contains several independent watersheds, you can route them simultaneously in separate processes.
 
-**Conclusion**: This is more beneficial as job sizes get larger. Watersheds have no dependencies on others. Separate watersheds and 
+**Conclusion**: This is more beneficial as job sizes get larger. Watersheds have no dependencies on others. Separate watersheds and
 process simultaneously or combine them into a single config file if compute times are small enough.
 
 ## Ensemble simulations in separate processes
 
-**Summary**: Simulations of many inputs, perhaps from an ensemble of runoff projections, share 
+**Summary**: Simulations of many inputs, perhaps from an ensemble of runoff projections, share
 only the initial state. Multiple members can be processed concurrently in separate processes.
 
 In production, you will usually add logic to:
@@ -89,7 +89,8 @@ output_files = ['discharges_member_1.nc',
 
 
 def route(input_file: str, output_file: str) -> None:
-    rr.RapidMuskingum(
+    rr.Router(
+        forcing='lateral',
         params_file=params_file,
         qlateral_files=[input_file, ],
         discharge_files=[output_file, ],

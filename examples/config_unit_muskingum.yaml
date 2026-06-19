@@ -1,4 +1,12 @@
-# UnitMuskingum config template — unit hydrograph transform then Muskingum routing
+# Unit hydrograph config template — unit hydrograph transform then Muskingum routing
+#
+# !!! warning
+#     Unit hydrograph routing is PLANNED for a later v3 release and is NOT yet
+#     available in v3. This template is a preview; selecting unit hydrograph
+#     forcing today raises NotImplementedError.
+#
+# When available, the procedure is selected with the v3 forcing idiom, e.g.:
+#   # forcing: ...   (unit hydrograph forcing is planned, not yet available)
 
 # required
 params_file: ''                  # parquet: river_id, downstream_river_id, k, x
@@ -18,7 +26,7 @@ qlateral_files:                  # netCDF: dims (time, river_id); var: qlateral
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 grid_runoff_files:
   - ''
-grid_weights_file: ''            # required with grid_runoff_files
+grid_weights_file: ''            # required with grid_runoff_files (lateral / unit hydrograph forcing)
 
 # channel state — optional
 channel_state_init_file: ''      # parquet: column Q; omit to default to zero
