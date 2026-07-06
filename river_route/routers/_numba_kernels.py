@@ -1,26 +1,21 @@
 import numba
 import numpy as np
 
-__all__ = [
-    'static_channel',
-    'static_qlateral',
-    'static_qlateral_expanded',
-    'dynamic_qlateral',
-]
+__all__ = ['static_channel', 'static_vlateral', 'static_vlateral_expanded', 'dynamic_vlateral']
 
 
 @numba.njit(cache=True, fastmath=True)
 def static_channel(
-        *,
-        q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
-        downstream_c1,  # Array (n_rivers,) of c1 downstream of river at index i
-        downstream_c2,  # Array (n_rivers,) of c2 downstream of river at index i
-        c3,  # Array (n_rivers,) of c3 for river at index i, used in forward substitution sweep
-        n_rivers,  # integer number of rivers in the network
-        n_steps,  # integer number of time steps to route
-        n_substeps,  # integer number of routing substeps per runoff value
+    *,
+    q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
+    discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
+    downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
+    downstream_c1,  # Array (n_rivers,) of c1 downstream of river at index i
+    downstream_c2,  # Array (n_rivers,) of c2 downstream of river at index i
+    c3,  # Array (n_rivers,) of c3 for river at index i, used in forward substitution sweep
+    n_rivers,  # integer number of rivers in the network
+    n_steps,  # integer number of time steps to route
+    n_substeps,  # integer number of routing substeps per runoff value
 ):
     rhs = np.empty(n_rivers, dtype=np.float32)
 
@@ -67,19 +62,19 @@ def static_channel(
 
 
 @numba.njit(cache=True, fastmath=True)
-def static_qlateral(
-        *,
-        q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
-        downstream_c1,  # Array (n_rivers,) of c1 downstream of river at index i
-        downstream_c2,  # Array (n_rivers,) of c2 downstream of river at index i
-        c3,  # Array (n_rivers,) of c3 for river at index i, the order of the solution pass
-        n_rivers,  # integer number of rivers in the network
-        n_steps,  # integer number of time steps to route
-        n_substeps,  # integer number of routing substeps per runoff value
-        vlateral,  # Array (n_steps, n_rivers) of lateral inflow time series for each river
-        c4_dt,  # Array (n_rivers,) of c4 * dt_routing for river at index i
+def static_vlateral(
+    *,
+    q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
+    discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
+    downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
+    downstream_c1,  # Array (n_rivers,) of c1 downstream of river at index i
+    downstream_c2,  # Array (n_rivers,) of c2 downstream of river at index i
+    c3,  # Array (n_rivers,) of c3 for river at index i, the order of the solution pass
+    n_rivers,  # integer number of rivers in the network
+    n_steps,  # integer number of time steps to route
+    n_substeps,  # integer number of routing substeps per runoff value
+    vlateral,  # Array (n_steps, n_rivers) of lateral inflow time series for each river
+    c4_dt,  # Array (n_rivers,) of c4 * dt_routing for river at index i
 ):
     rhs = np.empty(n_rivers, dtype=np.float32)
 
@@ -128,20 +123,20 @@ def static_qlateral(
 
 
 @numba.njit(cache=True, fastmath=True)
-def static_qlateral_expanded(
-        *,
-        q,  # Array (n_reaches,) of per-reach discharge state, updated in-place (instantaneous end-of-step value)
-        substeps_per_reach,  # Array (n_reaches,) of temporal substeps to route+average each reach (>= 1)
-        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into (per original river)
-        parent_index,  # Array (n_reaches,) of the original river index a reach belongs to (output + qlateral)
-        downstream_index,  # Array (n_reaches,) of downstream reach indices, -1 for no downstream
-        downstream_c1,  # Array (n_reaches,) of c1 of reach r's downstream reach, pre-gathered for sequential push
-        downstream_c2,  # Array (n_reaches,) of c2 of reach r's downstream reach, pre-gathered for sequential push
-        c3,  # Array (n_reaches,) of c3 for reach r, used in the forward substitution sweep
-        c4_dt,  # Array (n_reaches,) of (c4 / dt_runoff) * lateral_scale for reach r: lateral VOLUME -> rate forcing
-        qlateral,  # Array (n_steps, n_rivers) of lateral inflow time series for each original river
-        n_reaches,  # integer number of expanded reaches in the network
-        n_steps,  # integer number of time steps to route
+def static_vlateral_expanded(
+    *,
+    q,  # Array (n_reaches,) of per-reach discharge state, updated in-place (instantaneous end-of-step value)
+    substeps_per_reach,  # Array (n_reaches,) of temporal substeps to route+average each reach (>= 1)
+    discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into (per original river)
+    parent_index,  # Array (n_reaches,) of the original river index a reach belongs to (output + vlateral)
+    downstream_index,  # Array (n_reaches,) of downstream reach indices, -1 for no downstream
+    downstream_c1,  # Array (n_reaches,) of c1 of reach r's downstream reach, pre-gathered for sequential push
+    downstream_c2,  # Array (n_reaches,) of c2 of reach r's downstream reach, pre-gathered for sequential push
+    c3,  # Array (n_reaches,) of c3 for reach r, used in the forward substitution sweep
+    c4_dt,  # Array (n_reaches,) of (c4 / dt_runoff) * lateral_scale for reach r: lateral VOLUME -> rate forcing
+    vlateral,  # Array (n_steps, n_rivers) of lateral inflow time series for each original river
+    n_reaches,  # integer number of expanded reaches in the network
+    n_steps,  # integer number of time steps to route
 ):
     """
     Unified stabilized Muskingum with lateral inflow over an EXPANDED network (see streams.expand_network). Both
@@ -175,7 +170,7 @@ def static_qlateral_expanded(
     for t in range(n_steps):
         # seed each reach's inflow forcing with its lateral inflow (held constant across its substeps)
         for r in range(n_reaches):
-            rhs[r] = c4_dt[r] * qlateral[t, parent_index[r]]
+            rhs[r] = c4_dt[r] * vlateral[t, parent_index[r]]
 
         for r in range(n_reaches):
             s = substeps_per_reach[r]
@@ -204,20 +199,20 @@ def static_qlateral_expanded(
 
 
 @numba.njit(cache=True, fastmath=True)
-def dynamic_qlateral(
-        *,
-        q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
-        discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
-        downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
-        alpha,  # Array (n_rivers,) of alpha for river at index i, used to compute K_i
-        beta,  # Array (n_rivers,) of beta for river at index i, used to compute K_i
-        x,  # Array (n_rivers,) of x for river at index i, used to compute Muskingum coefficients
-        dt_routing,  # integer routing timestep in seconds, used to compute Muskingum coefficients
-        dt_runoff,  # integer runoff timestep in seconds, used to scale qlateral to Q per routing substep
-        n_rivers,  # integer number of rivers in the network
-        n_steps,  # integer number of time steps to route
-        n_substeps,  # integer number of routing substeps per runoff value
-        vlateral,  # Array (n_steps, n_rivers) of lateral volume time series for each river
+def dynamic_vlateral(
+    *,
+    q_t,  # Array (n_rivers,) of discharge at current time step, updated in-place
+    discharge_array,  # Array (n_steps, n_rivers) to write discharge time series into
+    downstream_indices,  # Array (n_rivers,) of downstream river indices, -1 for no downstream
+    alpha,  # Array (n_rivers,) of alpha for river at index i, used to compute K_i
+    beta,  # Array (n_rivers,) of beta for river at index i, used to compute K_i
+    x,  # Array (n_rivers,) of x for river at index i, used to compute Muskingum coefficients
+    dt_routing,  # integer routing timestep in seconds, used to compute Muskingum coefficients
+    dt_runoff,  # integer runoff timestep in seconds, used to scale vlateral to Q per routing substep
+    n_rivers,  # integer number of rivers in the network
+    n_steps,  # integer number of time steps to route
+    n_substeps,  # integer number of routing substeps per runoff value
+    vlateral,  # Array (n_steps, n_rivers) of lateral volume time series for each river
 ):
     """
     Nonlinear Muskingum with lateral inflow. Each substep, K_i is recomputed

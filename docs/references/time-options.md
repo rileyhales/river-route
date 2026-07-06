@@ -14,12 +14,13 @@ The following rules apply:
 1. You must route each runoff increment at least 1 time so `dt_routing` must be less than or equal to `dt_runoff`.
 2. `dt_routing` must be an integer divisor of `dt_runoff` because runoff distributions won't be resampled.
 3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge outputs are averaged over runoff intervals.
-4. By default `dt_total` is `dt_runoff` multiplied by the runoff record length. If you set it explicitly, it must be an integer multiple of `dt_runoff` (and of `dt_discharge`). Recession routing is not available.
+4. By default `dt_total` is `dt_runoff` multiplied by the runoff record length. If you set it explicitly, it must be an integer 
+   multiple of `dt_runoff` (and of `dt_discharge`). Recession routing is not available.
 
 ## Router Defaults
 
 - Channel-only routing (`forcing: channel`): requires `dt_total` and `dt_routing`; `dt_discharge` defaults to `dt_routing`.
-- Routing with forcing (e.g. `forcing: lateral`):
+- Routing with forcing (e.g. `forcing: vlateral`):
     - `dt_runoff` defaults to the runoff-file timestep.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
@@ -27,7 +28,7 @@ The following rules apply:
 
 ## Required Relationships
 
-For routing with forcing (e.g. `forcing: lateral`):
+For routing with forcing (e.g. `forcing: vlateral`):
 
 ```
 dt_total >= dt_discharge >= dt_runoff >= dt_routing
@@ -53,6 +54,6 @@ dt_discharge % dt_routing == 0
 3. To route longer than your runoff record, pad runoff with zeros upstream of routing.
 
 !!! warning "Left- vs right-aligned timestamps"
-    Runoff timestamps can represent interval starts (left-aligned) or interval ends (right-aligned).
-    Example: an hourly value labeled `17:00` may represent either `17:00-18:00` or `16:00-17:00`.
+    Runoff timestamps can be given as interval starts (left-aligned) or interval ends (right-aligned).
+    Example: an hourly value labeled `17:00` may represent either the hour `17:00-18:00` or `16:00-17:00`.
     Keep this convention consistent to avoid off-by-one timing errors.

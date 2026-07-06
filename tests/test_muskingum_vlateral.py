@@ -20,7 +20,7 @@ def test_rapid_muskingum_from_depths(vpu: RFSv2ConfigsData):
     try:
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -59,7 +59,7 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
         q_with_state = os.path.join(tmpdir, 'q_with.nc')
         q_without_state = os.path.join(tmpdir, 'q_without.nc')
 
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -69,7 +69,7 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
             **ERA5_KWARGS,
         ).route()
 
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -100,7 +100,7 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
     tmpdir = tempfile.mkdtemp()
     try:
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=ERA5_FILES[:2],
@@ -111,7 +111,7 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
 
         q_m1 = os.path.join(tmpdir, 'q_m1.nc')
         state_after_m1 = os.path.join(tmpdir, 'state_m1.parquet')
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[0]],
@@ -122,7 +122,7 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
         ).route()
 
         q_m2 = os.path.join(tmpdir, 'q_m2.nc')
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
             grid_weights_file=str(vpu.grid_weights_file),
             grid_runoff_files=[ERA5_FILES[1]],
@@ -143,15 +143,15 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_rapid_muskingum_from_qlateral(vpu: RFSv2ConfigsData):
-    """Route from pre-computed qlateral and compare against known discharge."""
+def test_rapid_muskingum_from_vlateral(vpu: RFSv2ConfigsData):
+    """Route from pre-computed vlateral and compare against known discharge."""
     tmpdir = tempfile.mkdtemp()
     try:
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
-        rr.Router(forcing='lateral', 
+        rr.Router(forcing='vlateral', 
             params_file=str(vpu.rr2_params_file),
-            qlateral_files=[vpu.qlateral_files[0]],
+            vlateral_files=[vpu.vlateral_files[0]],
             discharge_files=[discharge_file],
             log=False,
             progress_bar=False,
@@ -165,7 +165,7 @@ def test_rapid_muskingum_from_qlateral(vpu: RFSv2ConfigsData):
             np.testing.assert_allclose(
                 ds_new['Q'].values, ds_known['Q'].values,
                 rtol=1e-4, atol=0.01,
-                err_msg='Discharge from qlateral does not match known-good output',
+                err_msg='Discharge from vlateral does not match known-good output',
             )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -90,9 +90,9 @@ output_files = ['discharges_member_1.nc',
 
 def route(input_file: str, output_file: str) -> None:
     rr.Router(
-        forcing='lateral',
+        forcing='vlateral',
         params_file=params_file,
-        qlateral_files=[input_file, ],
+        vlateral_files=[input_file, ],
         discharge_files=[output_file, ],
     ).route()
 

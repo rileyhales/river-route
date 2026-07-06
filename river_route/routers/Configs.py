@@ -9,7 +9,7 @@ import xarray as xr
 
 from river_route.types import PathInput, PathList
 
-__all__ = ['Configs', ]
+__all__ = ['Configs']
 
 _PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
 _MISSING = object()  # used to distinguish between missing and None
@@ -25,12 +25,14 @@ class Configs:
     3. Required paths or directories must exist
     4. File paths are converted to absolute paths.
     """
+
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
 
-    # Routing procedure selectors — describe the procedure resolved to a kernel by routers._registry
+    # Routing procedure selectors — describe the procedure resolved to a kernel by routers._kernel_registry
     coeff: Literal['static', 'dynamic'] = 'static'
-    forcing: Literal['channel', 'lateral', 'external'] = 'channel'
+    forcing: Literal['channel', 'vlateral'] = 'channel'
+    transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
     network: Literal['standard', 'expanded'] = 'standard'
 
     # Core Routing Files
@@ -47,8 +49,8 @@ class Configs:
     dt_runoff: int = 0
     start_datetime: str = '1970-01-01'
 
-    # For qlateral / runoff transformation - used by TransformMuskingum subclasses
-    qlateral_files: PathList = field(default_factory=list)
+    # For vlateral / runoff transformation - used by TransformMuskingum subclasses
+    vlateral_files: PathList = field(default_factory=list)
     grid_runoff_files: PathList | None = field(default_factory=list)
     grid_weights_file: PathInput | None = None
     grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
@@ -71,17 +73,10 @@ class Configs:
     var_t: str = 'time'
 
     # special subset of auto-detected PathLists where the directory needs to exist, not the file
-    _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({
-        'channel_state_final_file',
-        'uh_state_final_file',
-    })
+    _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({'channel_state_final_file', 'uh_state_final_file'})
     # 2 options for specifying how the computed discharge files are saved
-    _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({
-        'discharge_dir',
-    })
-    _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({
-        'discharge_files',
-    })
+    _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
+    _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
 
     _ALWAYS_REQUIRED: ClassVar[tuple[str, ...]] = ('params_file',)
 
@@ -159,7 +154,7 @@ class Configs:
             raise ValueError('Provide discharge_dir or discharge_files, not both')
 
         d = self.discharge_dir
-        input_files = self.qlateral_files or self.grid_runoff_files or []
+        input_files = self.vlateral_files or self.grid_runoff_files or []
         if input_files:
             self.discharge_files = [os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files]
         else:
@@ -197,22 +192,24 @@ class Configs:
                 raise ValueError('Channel routing requires exactly one entry in discharge_files')
             return self
 
-        qlateral = self.qlateral_files
+        vlateral = self.vlateral_files
         grids = self.grid_runoff_files and self.grid_weights_file
-        if qlateral and grids:
-            raise ValueError('Provide qlateral_files or grid_runoff_files with grid_weights_file, not both')
-        if not qlateral and not grids:
-            raise ValueError('Provide qlateral_files or grid_runoff_files with grid_weights_file')
-        n_inputs = len(qlateral) + len(self.grid_runoff_files or [])
+        if vlateral and grids:
+            raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file, not both')
+        if not vlateral and not grids:
+            raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file')
+        n_inputs = len(vlateral) + len(self.grid_runoff_files or [])
         if len(self.discharge_files) != n_inputs:
             raise ValueError('Number of resolved discharge output files must match number of input files')
+        if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
+            raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
         return self
 
     def deep_validate(self) -> Self:
         """Perform deep validation of file contents and inter-file consistency. Raise ValueError if any issues found."""
-        # params df should be parquet with columns river_id, downstream_river_id, k, x
+        # params df should be parquet with columns river_id, next_river_id, k, x
         # river_id should be non-null, integer, and unique
-        # downstream_river_id should be non-null, integer, all -1 or positive, and exist in river_id (except for -1)
+        # next_river_id should be non-null, integer, all -1 or positive, and exist in river_id (except for -1)
         # k should be positive float
         # x should be positive float less than or equal to 0.5
         try:
@@ -221,8 +218,8 @@ class Configs:
             raise ValueError('Error reading params file. Must be valid parquet file') from e
         if 'river_id' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing river_id column')
-        if 'downstream_river_id' not in params_df.columns:
-            raise ValueError(f'{self.params_file} missing downstream_river_id column')
+        if 'next_river_id' not in params_df.columns:
+            raise ValueError(f'{self.params_file} missing next_river_id column')
         if 'k' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing k column')
         if 'x' not in params_df.columns:
@@ -233,24 +230,24 @@ class Configs:
             raise ValueError(f'{self.params_file} river_id column must be integer type')
         if not params_df['river_id'].is_unique:
             raise ValueError(f'{self.params_file} river_id column must be unique')
-        if np.any(params_df['downstream_river_id'].isnull()):
-            raise ValueError(f'{self.params_file} downstream_river_id column contains null values')
-        if not pd.api.types.is_integer_dtype(params_df['downstream_river_id']):
-            raise ValueError(f'{self.params_file} downstream_river_id column must be integer type')
-        if np.any(params_df['downstream_river_id'] < -1):
-            raise ValueError(f'{self.params_file} downstream_river_id column must be -1 or positive integers')
-        downstream_ids = set(params_df['downstream_river_id'].unique())
+        if np.any(params_df['next_river_id'].isnull()):
+            raise ValueError(f'{self.params_file} next_river_id column contains null values')
+        if not pd.api.types.is_integer_dtype(params_df['next_river_id']):
+            raise ValueError(f'{self.params_file} next_river_id column must be integer type')
+        if np.any(params_df['next_river_id'] < -1):
+            raise ValueError(f'{self.params_file} next_river_id column must be -1 or positive integers')
+        downstream_ids = set(params_df['next_river_id'].unique())
         river_ids = set(params_df['river_id'].unique())
         if not downstream_ids.issubset(river_ids.union({-1})):
-            raise ValueError(f'{self.params_file} downstream_river_id values must exist in river_id (except -1)')
+            raise ValueError(f'{self.params_file} next_river_id values must exist in river_id (except -1)')
         if np.any(params_df['k'] <= 0):
             raise ValueError(f'{self.params_file} k column must be positive')
         if np.any(params_df['x'] < 0) or np.any(params_df['x'] > 0.5):
             raise ValueError(f'{self.params_file} x column must be in the range [0, 0.5]')
 
-        # check topological sort: every downstream_river_id must appear later in the table than its upstream
+        # check topological sort: every next_river_id must appear later in the table than its upstream
         river_id_index = {int(rid): i for i, rid in enumerate(params_df['river_id'])}
-        for upstream_idx, ds_id in enumerate(params_df['downstream_river_id']):
+        for upstream_idx, ds_id in enumerate(params_df['next_river_id']):
             if int(ds_id) < 0:
                 continue
             if river_id_index[int(ds_id)] <= upstream_idx:
@@ -262,7 +259,7 @@ class Configs:
                 ds = xr.load_dataset(self.grid_weights_file)
             except Exception as e:
                 raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
-            expected_variables = ('river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion',)
+            expected_variables = ('river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion')
             for variable in expected_variables:
                 if variable not in ds:
                     raise ValueError(f'Grid weights file missing {variable} variable')

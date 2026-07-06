@@ -27,7 +27,7 @@ def subset_configs_to_river(
     """
     Subset routing parameters and weight tables to the target river and all rivers upstream of it.
 
-    The target river becomes the outlet (downstream_river_id set to -1) in the subset. If weight
+    The target river becomes the outlet (next_river_id set to -1) in the subset. If weight
     table paths are provided, the weight table is also filtered to only include matching rivers.
 
     Args:
@@ -39,12 +39,12 @@ def subset_configs_to_river(
     """
     pdf = pd.read_parquet(params)
 
-    graph = connectivity_to_digraph(pdf['river_id'].values, pdf['downstream_river_id'].values)
+    graph = connectivity_to_digraph(pdf['river_id'].values, pdf['next_river_id'].values)
     upstreams = list(nx.ancestors(graph, target_river))
     upstreams.append(target_river)
 
     subset = pdf[pdf['river_id'].isin(upstreams)].copy()
-    subset.loc[subset['river_id'] == target_river, 'downstream_river_id'] = -1
+    subset.loc[subset['river_id'] == target_river, 'next_river_id'] = -1
     subset.to_parquet(out_params)
 
     if weights is not None and out_weights is not None:
@@ -65,7 +65,7 @@ def connectivity_to_digraph(river_ids: np.ndarray, downstream_ids: np.ndarray) -
         downstream_ids: 1D array of downstream river ID integers (-1 for outlets)
 
     Returns:
-        Directed graph with edges from each river_id to its downstream_river_id
+        Directed graph with edges from each river_id to its next_river_id
     """
     graph = nx.DiGraph()
     graph.add_edges_from(zip(river_ids, downstream_ids, strict=True))
@@ -94,12 +94,12 @@ def adjacency_matrix(river_ids: np.ndarray, downstream_ids: np.ndarray) -> scipy
     river_index = {int(river_id): idx for idx, river_id in enumerate(river_ids.tolist())}
     row_indices: list[int] = []
     col_indices: list[int] = []
-    for upstream_idx, downstream_river_id in enumerate(downstream_ids.tolist()):
-        if downstream_river_id < 0:
+    for upstream_idx, next_river_id in enumerate(downstream_ids.tolist()):
+        if next_river_id < 0:
             continue
-        if downstream_river_id not in river_index:
-            raise ValueError(f'Unknown downstream_river_id: {downstream_river_id}')
-        downstream_idx = river_index[int(downstream_river_id)]
+        if next_river_id not in river_index:
+            raise ValueError(f'Unknown next_river_id: {next_river_id}')
+        downstream_idx = river_index[int(next_river_id)]
         if downstream_idx <= upstream_idx:
             raise ValueError('params_file must be topologically sorted upstream to downstream')
         row_indices.append(downstream_idx)

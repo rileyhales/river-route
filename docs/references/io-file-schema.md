@@ -1,7 +1,6 @@
 ## Watershed Description Files
 
-You can get example inputs from the GEOGLOWS River Forecast System available on AWS S3 at
-[s3://geoglows-v2/routing-test-data.zip/](https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip).
+You can get example inputs from the GEOGLOWS River Forecast System available on AWS S3 at [s3://geoglows-v2/routing-test-data.zip/](https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip).
 
 ### Routing Parameters
 
@@ -12,16 +11,16 @@ params_file: '/path/to/params.parquet'
 The routing parameters file is a parquet file. It has 1 row per river in the watershed.
 Required for all routing:
 
-| Column                | Data Type | Description                                                |
-|-----------------------|-----------|------------------------------------------------------------|
-| `river_id`            | integer   | Unique ID of a river segment                               |
-| `downstream_river_id` | integer   | ID of downstream river segment, or `-1` for outlet reaches |
-| `k`                   | float     | Muskingum `k` parameter (length / velocity)                |
-| `x`                   | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
+| Column          | Data Type | Description                                                |
+|-----------------|-----------|------------------------------------------------------------|
+| `river_id`      | integer   | Unique ID of a river segment                               |
+| `next_river_id` | integer   | ID of downstream river segment, or `-1` for outlet reaches |
+| `k`             | float     | Muskingum `k` parameter (length / velocity)                |
+| `x`             | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
 
 These routing parameters typically come from preprocessing and calibration workflows:
 
-1. topology (`river_id`, `downstream_river_id`) from vector network processing
+1. topology (`river_id`, `next_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
 
 !!! warning "Topological Ordering Warning"
@@ -31,7 +30,7 @@ These routing parameters typically come from preprocessing and calibration workf
 
 You need a time series of per-catchment runoff to be routed. There are 2 ways to provide it:
 
-1. Pre-aggregated catchment files (`qlateral_files`)
+1. Pre-aggregated catchment files (`vlateral_files`)
 2. Gridded runoff depths with a weight table (`grid_runoff_files` + `grid_weights_file`)
 
 !!! warning "Runoff Depths Warning"
@@ -42,7 +41,7 @@ You need a time series of per-catchment runoff to be routed. There are 2 ways to
 ### Pre-aggregated Catchment Files (recommended)
 
 ```yaml
-qlateral_files:
+vlateral_files:
   - '/path/to/catchment_runoff.nc'
 ```
 
@@ -51,9 +50,8 @@ qlateral_files:
 
 Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
 exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
-should have 1 data variable named `qlateral` which is an array of shape `(time, river_id)` of dtype float.
-Lateral forcing (`forcing: lateral`) expects runoff volumes (m³). Depth-based (m) unit-hydrograph input is
-planned for a later v3 release and is not yet available.
+should have 1 data variable named `vlateral` which is an array of shape `(time, river_id)` of dtype float.
+Lateral forcing (`forcing: vlateral`) expects runoff volumes (m³).
 
 ### Gridded Runoff Depths
 
@@ -109,26 +107,3 @@ The parquet state file must contain 1 column in river order:
 | Column | Description           |
 |--------|-----------------------|
 | `Q`    | River discharge state |
-
-## UH State Files (Optional)
-
-!!! note "Unit Hydrograph routing is planned"
-    Unit Hydrograph routing is planned for a later v3 release and is not yet available. The keys
-    documented in this section are not yet used.
-
-```yaml
-uh_kernel_file: '/path/to/kernel.npz'
-uh_state_init_file: '/path/to/state.parquet'
-uh_state_final_file: '/path/to/final_state.parquet'
-```
-
-Unit Hydrograph routing reads a pre-computed convolution kernel and can optionally warm-start the UH
-state from a previous run. The kernel is a scipy sparse npz file and the state files are parquet,
-both with shape `(n_basins, n_time_steps)`, one row per basin.
-
-- `uh_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Note
-  that the kernel depends on `tc`, `area`, **and the routing timestep**.
-- `uh_state_init_file`: warm-start the UH rolling state buffer from a prior run.
-  Note, the **state depends on the routing timestep**.
-- `uh_state_final_file`: path to write the final UH state after routing completes,
-  for use as `uh_state_init_file` in a subsequent run.

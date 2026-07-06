@@ -5,11 +5,14 @@
 ### [v3.0.0](https://github.com/rileyhales/river-route/tree/v3.0.0) — 2026-06-18
 
 - Consolidated all routing into a single config-driven `rr.Router`.
-- Routing procedure is now selected by config keys: `coeff` (`static` | `dynamic`), `forcing` (`channel` | `lateral` | `external`), and `network` (`standard`; `expanded` planned).
-- **Removed** the `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` classes (hard cut, no shims — see the v2 -> v3 migration guide).
+- Routing procedure is now selected by config keys rather than class names
+    - `coeff` (`static` | `dynamic`)
+    - `forcing` (`channel` | `vlateral`)
+    - `transform` (`uniform` | `unit_hydrograph`)
+    - `network` (`standard`| `expanded`).
+- **Removed** the `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` classes
 - Added a capability-keyed kernel registry to dispatch the routing kernel from the resolved selectors.
 - Simplified the CLI to a single command: `rr route config.yaml`.
-- External forcing, combined forcings, and unit-hydrograph routing are planned for a later v3 release.
 
 ---
 
@@ -22,7 +25,7 @@
 
 ### [v2.1.0](https://github.com/rileyhales/river-route/tree/v2.1.0) — 2026-04-11
 
-- Routing state, parameters (`k`, `x`), channel state, and all numba kernel scratch buffers now use `float32` instead of `float64`. Reduces memory half, speeds up the inner routing loop.
+- Routing state, parameters (`k`, `x`), channel state, and all numba kernel scratch buffers now use `float32` instead of `float64`. Reduces memory by half, speeds up the inner routing loop.
 - Fused the sparse matrix-vector multiply and forward-substitution into a single loop for modest speed gain.
 - Better use of type aliases to reduce total number of annotations and improve readability.
 

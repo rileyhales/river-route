@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 
 from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
-from river_route.runoff import grid_weights, runoff_to_qlateral
+from river_route.runoff import grid_weights, runoff_to_vlateral
 
 
 def test_grid_weights(vpu: RFSv2ConfigsData):
@@ -47,24 +47,24 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
     pd.testing.assert_frame_equal(generated, known, check_exact=False, check_dtype=False, rtol=1e-5)
 
 
-def test_grid_to_qlateral(vpu: RFSv2ConfigsData):
-    """Aggregate ERA5 gridded runoff to qlateral depths using the weight table."""
-    ds = runoff_to_qlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
+def test_grid_to_vlateral(vpu: RFSv2ConfigsData):
+    """Aggregate ERA5 gridded runoff to vlateral depths using the weight table."""
+    ds = runoff_to_vlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
                             var_x='longitude', var_y='latitude', var_t='valid_time', as_volumes=True)
-    assert 'qlateral' in ds
+    assert 'vlateral' in ds
     assert 'time' in ds.dims
     assert 'river_id' in ds.dims
 
-    # compare for exact match against known-good qlateral file for this month
-    known_file = vpu.qlateral_files[0]
+    # compare for exact match against known-good vlateral file for this month
+    known_file = vpu.vlateral_files[0]
     ds_known = xr.open_dataset(known_file)
     np.testing.assert_allclose(
-        ds['qlateral'].values, ds_known['qlateral'].values, atol=0.1,
-        err_msg='Aggregated qlateral does not match known-good output',
+        ds['vlateral'].values, ds_known['vlateral'].values, atol=0.1,
+        err_msg='Aggregated vlateral does not match known-good output',
     )
 
 
-def test_grid_to_qlateral_cumulative_input(vpu: RFSv2ConfigsData):
+def test_grid_to_vlateral_cumulative_input(vpu: RFSv2ConfigsData):
     """Cumulative runoff input should produce the same volumes as incremental input."""
     incremental_file = DATA_DIR / 'era5' / 'era5_194001.nc'
     if not incremental_file.exists():
@@ -85,15 +85,15 @@ def test_grid_to_qlateral_cumulative_input(vpu: RFSv2ConfigsData):
             var_runoff='ro', var_x='longitude', var_y='latitude', var_t='valid_time',
         )
 
-        ds_inc = runoff_to_qlateral(str(incremental_file), cumulative=False, **kwargs)
-        ds_cum = runoff_to_qlateral(cumulative_file, cumulative=True, **kwargs)
+        ds_inc = runoff_to_vlateral(str(incremental_file), cumulative=False, **kwargs)
+        ds_cum = runoff_to_vlateral(cumulative_file, cumulative=True, **kwargs)
 
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation
         np.testing.assert_allclose(
-            ds_inc['qlateral'].values, ds_cum['qlateral'].values,
+            ds_inc['vlateral'].values, ds_cum['vlateral'].values,
             rtol=0.02, atol=0.15,
-            err_msg='Cumulative input does not produce same qlateral as incremental',
+            err_msg='Cumulative input does not produce same vlateral as incremental',
         )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

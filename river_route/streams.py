@@ -1,5 +1,5 @@
 """
-Static analysis of a routing parameter table (river_id, downstream_river_id, k, x).
+Static analysis of a routing parameter table (river_id, next_river_id, k, x).
 
 The analysis answers three questions for a given routing time step dt:
 1. Is the network connectivity valid (unique ids, downstreams exist, topologically sorted, no cycles)?
@@ -38,19 +38,19 @@ def river_connectivity_is_valid(df: pd.DataFrame) -> bool:
         print(f'river_id column must be unique: {total_rows} rows, {unique_rivers} unique river ids')
         return False
 
-    downstreams = set(df['downstream_river_id'])
+    downstreams = set(df['next_river_id'])
     river_ids = set(df['river_id'])
     downstreams_not_in_rivers = downstreams - river_ids
     if downstreams_not_in_rivers != {-1}:  # only -1 doesn't need to be in river_ids
         print(
-            f'all downstream_river_id values must be in river_id column or -1. This might have been intentional or '
+            f'all next_river_id values must be in river_id column or -1. This might have been intentional or '
             f'may indicate a hole in the topology. Downstream ids not in river ids: {downstreams_not_in_rivers}'
         )
         return False
 
     # check that the rivers are topologically sorted from upstream to downstream
     river_id_to_index = {river_id: idx for idx, river_id in enumerate(df['river_id'])}
-    river_id_to_downstream_id = dict(zip(df['river_id'], df['downstream_river_id'], strict=True))
+    river_id_to_downstream_id = dict(zip(df['river_id'], df['next_river_id'], strict=True))
     for river_id in df['river_id']:
         downstream_id = river_id_to_downstream_id[river_id]
         if downstream_id == -1:
@@ -96,7 +96,7 @@ def required_subreaches(k: np.ndarray, x: np.ndarray, dt: float) -> tuple[np.nda
 
 def _divisors(n: int) -> np.ndarray:
     """All positive integer divisors of n, sorted ascending."""
-    small = [d for d in range(1, int(n ** 0.5) + 1) if n % d == 0]
+    small = [d for d in range(1, int(n**0.5) + 1) if n % d == 0]
     return np.array(sorted(set(small + [n // d for d in small])), dtype=np.int64)
 
 
@@ -149,7 +149,8 @@ def analyze_dt_assignment(df: pd.DataFrame, period: int = 3600) -> dict:
     substeps = np.where(resolvable, period // np.where(dt > 0, dt, 1), 0)
     dt_counts = (
         pd.Series(dt[resolvable]).value_counts().sort_index(ascending=False)
-        if resolvable.any() else pd.Series(dtype=np.int64)
+        if resolvable.any()
+        else pd.Series(dtype=np.int64)
     )
 
     summary = {
@@ -165,8 +166,7 @@ def analyze_dt_assignment(df: pd.DataFrame, period: int = 3600) -> dict:
 
     print(f'Per-river dt assignment for period={period}')
     print(f'  rivers in:           {summary["n_rivers"]:,}')
-    print(f'  resolvable:          {summary["n_resolvable"]:,} '
-          f'(dt range {summary["min_dt"]}..{summary["max_dt"]} s)')
+    print(f'  resolvable:          {summary["n_resolvable"]:,} (dt range {summary["min_dt"]}..{summary["max_dt"]} s)')
     print(f'  unresolvable:        {summary["n_unresolvable"]:,} (no divisor of {period} fits the window)')
     print(f'  total substeps/{period}s: {summary["total_substeps"]:,}')
     return summary
@@ -199,8 +199,8 @@ def optimize_network_compute(k: np.ndarray, x: np.ndarray, period: int = 3600, c
     if cap is not None:
         divisors = divisors[divisors <= cap]
 
-    INF = np.iinfo(np.int64).max
-    best_cost = np.full(k.shape, INF, dtype=np.int64)
+    inf = np.iinfo(np.int64).max
+    best_cost = np.full(k.shape, inf, dtype=np.int64)
     best_n = np.ones(k.shape, dtype=np.int64)
     best_s = np.ones(k.shape, dtype=np.int64)
     resolvable = np.zeros(k.shape, dtype=bool)
@@ -235,7 +235,7 @@ def stable_static_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -
 
     The two levers are orthogonal and both come straight from optimize_network_compute:
 
-        subdivisions (N): route the river as N equal sub-reaches in SERIES, each with k/N and qlateral/N and the
+        subdivisions (N): route the river as N equal sub-reaches in SERIES, each with k/N and vlateral/N and the
             same x (a spatial split for "too long" reaches). The reported flow is the instantaneous outflow of the
             final sub-reach. N == 1 means no split.
         substeps (S): sub-cycle the river S times at dt = period/S (a temporal refinement for "too short" reaches)
@@ -248,13 +248,13 @@ def stable_static_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -
     Rivers with no stable (N, S) within ``cap`` are left at N=S=1 and remain an error; see the ``stable`` column.
 
     Args:
-        df: parameter table with columns river_id, downstream_river_id, k, x (extra columns are preserved)
+        df: parameter table with columns river_id, next_river_id, k, x (extra columns are preserved)
         period: outer time step each per-river dt must divide (default 3600 s)
         cap: maximum subdivisions or substeps per river (default 10); see optimize_network_compute
 
     Returns:
         A copy of df with added columns:
-            subdivisions -- int, equal sub-reaches in series (spatial split); k and qlateral are divided by it
+            subdivisions -- int, equal sub-reaches in series (spatial split); k and vlateral are divided by it
             substeps     -- int, temporal substeps to route and average over
             stable        -- bool, False where no stable routing exists within cap (kept at N=S=1, an error)
     """
@@ -280,7 +280,7 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     feeds the inlet (head) of its original downstream river's block.
 
     Args:
-        df: parameter table with river_id, downstream_river_id, k, x. If subdivisions/substeps columns are not
+        df: parameter table with river_id, next_river_id, k, x. If subdivisions/substeps columns are not
             present they are computed via stable_static_network(df, period, cap).
 
     Returns a dict of arrays (n = expanded reach count, m = original river count):
@@ -290,7 +290,7 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
         x              -- float32 (n,), per-reach x (unchanged within a river)
         lateral_scale  -- float32 (n,), per-reach lateral multiplier (1 / subdivisions)
         downstream_index -- int32 (n,), expanded downstream reach index, -1 at the network outlet
-        parent_index   -- int32 (n,), original river index a reach belongs to (for qlateral lookup / output grouping)
+        parent_index   -- int32 (n,), original river index a reach belongs to (for vlateral lookup / output grouping)
         reach_river_id -- int64 (n,), the original river id R each reach belongs to (first identity column)
         subreach_number -- int32 (n,), 0 at the outlet, 1..subdivisions-1 upstream (second identity column); the
                            deterministic (reach_river_id, subreach_number) pair identifies a reach for state I/O
@@ -308,11 +308,10 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     n_subdiv = df['subdivisions'].to_numpy(dtype=np.int64)
     substeps = df['substeps'].to_numpy(dtype=np.int64)
     orig_id = df['river_id'].to_numpy(dtype=np.int64)
-    orig_down = df['downstream_river_id'].to_numpy(dtype=np.int64)
+    orig_down = df['next_river_id'].to_numpy(dtype=np.int64)
     k = df['k'].to_numpy(dtype=np.float64)
     x = df['x'].to_numpy(dtype=np.float64)
-    stable = (df['stable'].to_numpy() if 'stable' in df.columns
-              else np.ones(orig_id.shape[0], dtype=bool))
+    stable = df['stable'].to_numpy() if 'stable' in df.columns else np.ones(orig_id.shape[0], dtype=bool)
     n_orig = orig_id.shape[0]
 
     # the kernel cannot detect a malformed network, so enforce its preconditions here at the build boundary
@@ -351,19 +350,22 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     down_orig_index = np.full(n_orig, -1, dtype=np.int64)
     has_down = orig_down != -1
     mapped = id_to_index.reindex(orig_down[has_down]).to_numpy()
-    if np.isnan(mapped).any():  # a downstream_river_id absent from river_id is a topology hole, not a valid -1 outlet
-        raise ValueError('downstream_river_id values reference ids not present in river_id (topology hole); '
-                         'validate with river_connectivity_is_valid before expanding')
+    if np.isnan(mapped).any():  # a next_river_id absent from river_id is a topology hole, not a valid -1 outlet
+        raise ValueError(
+            'next_river_id values reference ids not present in river_id (topology hole); '
+            'validate with river_connectivity_is_valid before expanding'
+        )
     down_orig_index[has_down] = mapped.astype(np.int64)
-    outlet_downstream = np.where(down_orig_index >= 0,
-                                 group_start[np.clip(down_orig_index, 0, n_orig - 1)], -1)
+    outlet_downstream = np.where(down_orig_index >= 0, group_start[np.clip(down_orig_index, 0, n_orig - 1)], -1)
     downstream_index[is_outlet] = outlet_downstream  # outlets are emitted in original order
 
     # the kernel sweeps in array order and requires a topologically sorted DAG (each reach feeds a later one or -1);
     # an unsorted input would silently push flow into an already-finalized reach and lose mass
     if not np.all((downstream_index < 0) | (downstream_index > np.arange(total))):
-        raise ValueError('input rivers must be topologically sorted upstream-before-downstream '
-                         '(downstream_river_id must appear after river_id); run river_connectivity_is_valid')
+        raise ValueError(
+            'input rivers must be topologically sorted upstream-before-downstream '
+            '(next_river_id must appear after river_id); run river_connectivity_is_valid'
+        )
 
     return {
         'n_reaches': total,

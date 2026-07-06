@@ -73,6 +73,10 @@ rr = "river_route._cli:main"
 [tool.ruff]
 line-length = 120
 
+[tool.ruff.format]
+skip-magic-trailing-comma = true
+quote-style = "single"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "NPY", "SIM"]
 

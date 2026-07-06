@@ -15,7 +15,7 @@ DATA_DIR = TESTS_DIR / 'data'
 # provided by the zip downloaded from s3
 ERA5_DIR = DATA_DIR / 'era5'
 DISCHARGE_DIR = DATA_DIR / 'discharge'
-QLATERAL_DIR = DATA_DIR / 'qlateral'
+VLATERAL_DIR = DATA_DIR / 'vlateral'
 # obtained from s3 based on which vpus are given as having solutions
 CONFIGS_DIR = DATA_DIR / 'routing-configs'
 HYDROGRAPHY_DIR = DATA_DIR / 'hydrography'
@@ -31,16 +31,16 @@ class RFSv2ConfigsData:
     configs_dir: Path
     hydrography_dir: Path
     discharge_dir: Path
-    qlateral_dir: Path
+    vlateral_dir: Path
     discharge_files: list[str] = None  # populated in __post_init__
-    qlateral_files: list[str] = None  # populated in __post_init__
+    vlateral_files: list[str] = None  # populated in __post_init__
 
     def __str__(self) -> str:
         return f'vpu={self.number}'
 
     def __post_init__(self) -> None:
         self.discharge_files = list(sorted(glob(str(self.discharge_dir / 'discharge*.nc'))))
-        self.qlateral_files = list(sorted(glob(str(self.qlateral_dir / 'qlateral_*.nc'))))
+        self.vlateral_files = list(sorted(glob(str(self.vlateral_dir / 'vlateral_*.nc'))))
 
     def prepare(self) -> None:
         """Convert rfs v2 configs to river-route v2 formats. Call after valid() confirms files exist."""
@@ -49,8 +49,8 @@ class RFSv2ConfigsData:
         (
             pdf
             .merge(cdf, left_on='river_id', right_on='river_id', how='left')
-            .rename(columns={'ds_river_id': 'downstream_river_id'})
-            [['river_id', 'downstream_river_id', 'k', 'x']]
+            .rename(columns={'ds_river_id': 'next_river_id'})
+            [['river_id', 'next_river_id', 'k', 'x']]
             .to_parquet(self.rr2_params_file, index=False)
         )
         grid_weights = xr.open_dataset(self.grid_weights_file).to_dataframe()
@@ -89,7 +89,7 @@ class RFSv2ConfigsData:
 
     def valid(self) -> bool:
         """Check that all paths exist and file lists are non-empty."""
-        path_fields = ('configs_dir', 'discharge_dir', 'qlateral_dir', 'hydrography_dir')
+        path_fields = ('configs_dir', 'discharge_dir', 'vlateral_dir', 'hydrography_dir')
         for field in path_fields:
             value = getattr(self, field)
             if not value.exists():
@@ -99,8 +99,8 @@ class RFSv2ConfigsData:
         if not self.discharge_files:
             print(f'VPU {self.number}: no discharge files found in {self.discharge_dir}')
             return False
-        if not self.qlateral_files:
-            print(f'VPU {self.number}: no qlateral files found in {self.qlateral_dir}')
+        if not self.vlateral_files:
+            print(f'VPU {self.number}: no vlateral files found in {self.vlateral_dir}')
             return False
 
         if not self.rr1_params_file.exists():
@@ -132,7 +132,7 @@ def find_test_units() -> list[RFSv2ConfigsData]:
                 number=int(vpu.split('=')[1]),
                 configs_dir=CONFIGS_DIR / vpu,
                 discharge_dir=DISCHARGE_DIR / vpu,
-                qlateral_dir=QLATERAL_DIR / vpu,
+                vlateral_dir=VLATERAL_DIR / vpu,
                 hydrography_dir=HYDROGRAPHY_DIR / vpu,
             )
         )

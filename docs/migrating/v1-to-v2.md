@@ -10,7 +10,7 @@
 !!! note
     This is the historical v1 → v2 guide. In **v3** the `Muskingum`, `RapidMuskingum`, and
     `UnitMuskingum` classes below were removed in favor of a single unified `Router` selected by
-    config keys (`coeff`/`forcing`/`network`). See the [v2 → v3 migration guide](v2-to-v3.md).
+    config keys (`coeff`/`forcing`/`network`).
 
 The `Muskingum` class has been renamed and is now supplemented with routing options.
 

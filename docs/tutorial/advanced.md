@@ -15,7 +15,7 @@ graph TD
 
     E -->|lateral| K[loop: runoff input files generator]
     K --> L[set time params from dates]
-    L --> M[prepare qlateral]
+    L --> M[prepare vlateral]
     M --> N[set coefficients]
     N --> O[route with lateral inflow]
     O --> P{dt_discharge > dt_runoff?}
@@ -73,9 +73,9 @@ os.makedirs(outputs, exist_ok=True)
 
 m = (
     rr
-    .Router(forcing='lateral', **{
+    .Router(forcing='vlateral', **{
         'params_file': params_file,
-        'qlateral_files': runoff_files,
+        'vlateral_files': runoff_files,
         'discharge_dir': outputs,
     })
     .route()
@@ -100,8 +100,8 @@ so you can chain it onto the constructor. Your custom function must accept exact
 4. `runoff_file`: path to the runoff input used to produce this output.
 
 As an example, you might want to write output as Parquet instead. The snippets below focus on the
-writer override; for `.route()` to actually run, the config must select `forcing: lateral` and supply a
-water source (`qlateral_files`, or `grid_runoff_files` plus `grid_weights_file`).
+writer override; for `.route()` to actually run, the config must select `forcing: vlateral` and supply a
+water source (`vlateral_files`, or `grid_runoff_files` plus `grid_weights_file`).
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
@@ -120,7 +120,7 @@ def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .Router('../../examples/config.yaml', forcing='lateral')
+    .Router('../../examples/config.yaml', forcing='vlateral')
     .set_write_discharges(custom_write_discharges)
     .route()
 )
@@ -144,7 +144,7 @@ def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .Router('config.yaml', forcing='lateral')
+    .Router('config.yaml', forcing='vlateral')
     .set_write_discharges(append_to_existing_file)
     .route()
 )
@@ -169,7 +169,7 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
 
 (
     rr
-    .Router('config.yaml', forcing='lateral')
+    .Router('config.yaml', forcing='vlateral')
     .set_write_discharges(save_partial_results)
     .route()
 )

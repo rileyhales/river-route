@@ -16,14 +16,14 @@ __all__ = [
     'voronoi_diagram_from_regular_xy',
     'compute_voronoi_catchment_intersects',
     'grid_weights',
-    'runoff_to_qlateral',
+    'runoff_to_vlateral',
 ]
 
 logger = logging.getLogger(__name__)
 
 
 def cell_xy_from_regular_grid(
-        dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat',
+    dataset: PathInput, x_var: str = 'lon', y_var: str = 'lat'
 ) -> tuple[np.ndarray, np.ndarray]:
     """Get cell center x and y coordinates from a regular grid common dataset structure."""
     with xr.open_dataset(dataset) as ds:
@@ -67,9 +67,13 @@ def voronoi_diagram_from_regular_xy(x: np.ndarray, y: np.ndarray, crs: int = 432
     return voronoi_gdf.sort_values(by=['x', 'y']).reset_index(drop=True)
 
 
-def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchments_gdf: gpd.GeoDataFrame,
-                                         save_path: PathInput | None = None, attributes: dict | None = None,
-                                         river_id_variable: str = 'river_id') -> pd.DataFrame:
+def compute_voronoi_catchment_intersects(
+    voronoi_gdf: gpd.GeoDataFrame,
+    catchments_gdf: gpd.GeoDataFrame,
+    save_path: PathInput | None = None,
+    attributes: dict | None = None,
+    river_id_variable: str = 'river_id',
+) -> pd.DataFrame:
     """
     Create a table of intersections between Voronoi polygons and catchments.
     """
@@ -91,8 +95,7 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
         .reset_index(drop=True)
     )
     total_area = (
-        df
-        [[river_id_variable, 'area_sqm']]
+        df[[river_id_variable, 'area_sqm']]
         .groupby(river_id_variable)
         .sum()
         .rename(columns={'area_sqm': 'area_sqm_total'})
@@ -102,25 +105,33 @@ def compute_voronoi_catchment_intersects(voronoi_gdf: gpd.GeoDataFrame, catchmen
 
     if save_path:
         (
-            df
-            .to_xarray()
-            .assign_attrs({
-                'description': 'proportions of runoff cells that intersect catchments for use with river',
-                'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
-                'catchments_gdf_crs': catchments_gdf.crs.to_string(),
-                'river_route_version': __version__,
-                **(attributes or {}),
-            })
+            df.to_xarray()
+            .assign_attrs(
+                {
+                    'description': 'proportions of runoff cells that intersect catchments for use with river',
+                    'voronoi_gdf_crs': voronoi_gdf.crs.to_string(),
+                    'catchments_gdf_crs': catchments_gdf.crs.to_string(),
+                    'river_route_version': __version__,
+                    **(attributes or {}),
+                }
+            )
             .to_netcdf(save_path)
         )
     return df
 
 
-def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
-                 var_x: str = 'lon', var_y: str = 'lat', var_river_id: str = 'river_id', crs: int = 4326,
-                 save_voronoi_path: PathInput | None = None,
-                 save_weights_path: PathInput | None = None,
-                 routing_params_path: PathInput | None = None) -> pd.DataFrame:
+def grid_weights(
+    grid_path: PathInput,
+    catchments_path: PathInput,
+    *,
+    var_x: str = 'lon',
+    var_y: str = 'lat',
+    var_river_id: str = 'river_id',
+    crs: int = 4326,
+    save_voronoi_path: PathInput | None = None,
+    save_weights_path: PathInput | None = None,
+    routing_params_path: PathInput | None = None,
+) -> pd.DataFrame:
     """
     Compute the grid weights for a given grid and catchments.
 
@@ -150,23 +161,24 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
 
     voronoi_gdf = voronoi_diagram_from_regular_xy(x_geo, y, crs=crs)
 
-    # Map x_index back to original grid indices (for use by grid_to_qlateral)
+    # Map x_index back to original grid indices (for use by grid_to_vlateral)
     voronoi_gdf['x_index'] = sort_order[voronoi_gdf['x_index'].values]
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
     df = compute_voronoi_catchment_intersects(
-        voronoi_gdf, catchments_gdf, save_path=None,
+        voronoi_gdf,
+        catchments_gdf,
+        save_path=None,
         attributes=dict(grid_path=str(grid_path), catchments_path=str(catchments_path)),
-        river_id_variable=var_river_id
+        river_id_variable=var_river_id,
     )
 
     if routing_params_path is not None:
         ordered_ids = pd.read_parquet(routing_params_path)[var_river_id].to_numpy()
         id_to_order = {int(rid): i for i, rid in enumerate(ordered_ids)}
         df = (
-            df
-            .assign(_sort_key=df[var_river_id].map(id_to_order))
+            df.assign(_sort_key=df[var_river_id].map(id_to_order))
             .sort_values(['_sort_key', 'area_sqm'], ascending=[True, False])
             .drop(columns='_sort_key')
             .reset_index(drop=True)
@@ -176,15 +188,16 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
 
     if save_weights_path:
         (
-            df
-            [[var_river_id, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']]
+            df[[var_river_id, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']]
             .to_xarray()
-            .assign_attrs({
-                'description': 'proportions of runoff cells that intersect river catchments',
-                'grid_path': str(grid_path),
-                'catchments_path': str(catchments_path),
-                'river_route_version': __version__,
-            })
+            .assign_attrs(
+                {
+                    'description': 'proportions of runoff cells that intersect river catchments',
+                    'grid_path': str(grid_path),
+                    'catchments_path': str(catchments_path),
+                    'river_route_version': __version__,
+                }
+            )
             .to_netcdf(save_weights_path)
         )
 
@@ -192,11 +205,7 @@ def grid_weights(grid_path: PathInput, catchments_path: PathInput, *,
 
 
 def _cumulative_to_incremental(df) -> pd.DataFrame:
-    return pd.DataFrame(
-        np.vstack([df.values[0, :], np.diff(df.values, axis=0)]),
-        index=df.index,
-        columns=df.columns
-    )
+    return pd.DataFrame(np.vstack([df.values[0, :], np.diff(df.values, axis=0)]), index=df.index, columns=df.columns)
 
 
 def _incremental_to_cumulative(df) -> pd.DataFrame:
@@ -205,33 +214,33 @@ def _incremental_to_cumulative(df) -> pd.DataFrame:
 
 def _get_conversion_factor(unit: str) -> int | float:
     if unit is None:
-        logger.warning("No units attribute found. Assuming meters")
+        logger.warning('No units attribute found. Assuming meters')
         return 1
     if unit in ('m', 'meters', 'kg m-2'):
         return 1
     elif unit in ('mm', 'millimeters'):
-        return .001
+        return 0.001
     else:
-        raise ValueError(f"Unknown units: {unit}")
+        raise ValueError(f'Unknown units: {unit}')
 
 
-def runoff_to_qlateral(
-        runoff_data: PathInput | list[PathInput],
-        grid_weights_file: PathInput,
-        *,
-        var_runoff: str = 'ro',
-        var_x: str = 'lon',
-        var_y: str = 'lat',
-        var_t: str = 'time',
-        var_river_id: str = 'river_id',
-        runoff_depth_unit: str | None = None,
-        cumulative: bool = False,
-        force_positive_runoff: bool = False,
-        force_uniform_timesteps: bool = True,
-        as_volumes: bool = False,
+def runoff_to_vlateral(
+    runoff_data: PathInput | list[PathInput],
+    grid_weights_file: PathInput,
+    *,
+    var_runoff: str = 'ro',
+    var_x: str = 'lon',
+    var_y: str = 'lat',
+    var_t: str = 'time',
+    var_river_id: str = 'river_id',
+    runoff_depth_unit: str | None = None,
+    cumulative: bool = False,
+    force_positive_runoff: bool = False,
+    force_uniform_timesteps: bool = True,
+    as_volumes: bool = False,
 ) -> xr.Dataset:
     """
-    Aggregates gridded runoff depths to catchment level qlateral as depths or volumes.
+    Aggregates gridded runoff depths to catchment level vlateral as depths or volumes.
     The core computation is an area weighted average of the cell's runoff value.
 
     Args:
@@ -249,41 +258,35 @@ def runoff_to_qlateral(
         as_volumes (bool): if True, return volumes (m³) instead of depths (m)
 
     Returns:
-        xr.Dataset: qlateral with dimensions ``time`` and ``river_id``.
-            Contains a single variable ``qlateral`` in metres or m³.
+        xr.Dataset: vlateral with dimensions ``time`` and ``river_id``.
+            Contains a single variable ``vlateral`` in metres or m³.
     """
     with xr.open_dataset(grid_weights_file) as ds:
         weight_df = ds[[var_river_id, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
     unique_indexes = (
-        weight_df
-        [['x_index', 'y_index']]
-        .drop_duplicates()
-        .reset_index(drop=True)
-        .reset_index()
-        .astype(int)
+        weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
     )
-    unique_sorted_rivers = weight_df[[var_river_id, ]].drop_duplicates().sort_index()  # index already topo sorted
+    unique_sorted_rivers = weight_df[[var_river_id]].drop_duplicates().sort_index()  # index already topo sorted
 
     with xr.open_mfdataset(runoff_data) as ds:
         runoff_depth_unit = runoff_depth_unit or ds[var_runoff].attrs.get('units', 'm')
         conversion_factor = _get_conversion_factor(runoff_depth_unit)
         runoff_raw = (
-            ds
-            [var_runoff]
-            .isel({
-                var_x: xr.DataArray(unique_indexes['x_index'].values, dims="points"),
-                var_y: xr.DataArray(unique_indexes['y_index'].values, dims="points")
-            })
-            .transpose(var_t, "points")
+            ds[var_runoff]
+            .isel(
+                {
+                    var_x: xr.DataArray(unique_indexes['x_index'].values, dims='points'),
+                    var_y: xr.DataArray(unique_indexes['y_index'].values, dims='points'),
+                }
+            )
+            .transpose(var_t, 'points')
             .values
         )
         time_index = ds[var_t].to_numpy()
 
     # Build sparse weight matrix weights: (n_rivers, n_unique_points)
     point_idx = (
-        weight_df[['x_index', 'y_index']]
-        .merge(unique_indexes, on=['x_index', 'y_index'], how='left')
-        ['index'].values
+        weight_df[['x_index', 'y_index']].merge(unique_indexes, on=['x_index', 'y_index'], how='left')['index'].values
     )
     river_ids_ordered = unique_sorted_rivers[var_river_id].values
     river_id_to_row = pd.Series(np.arange(len(river_ids_ordered)), index=river_ids_ordered)
@@ -295,62 +298,46 @@ def runoff_to_qlateral(
     )
 
     # Area-weighted aggregation via sparse matrix multiply, then free the grid data
-    qlateral = np.asarray(weights @ runoff_raw.T).T  # (time, n_rivers)
+    vlateral = np.asarray(weights @ runoff_raw.T).T  # (time, n_rivers)
     del runoff_raw
 
     catchment_area = (
-        weight_df
-        .groupby(var_river_id)['area_sqm']
-        .sum()
-        .reindex(unique_sorted_rivers[var_river_id].values)
-        .to_numpy()
+        weight_df.groupby(var_river_id)['area_sqm'].sum().reindex(unique_sorted_rivers[var_river_id].values).to_numpy()
     )
 
     # In-place conversions to avoid allocating new arrays
     if cumulative:
-        for i in range(qlateral.shape[0] - 1, 0, -1):
-            qlateral[i] -= qlateral[i - 1]
+        for i in range(vlateral.shape[0] - 1, 0, -1):
+            vlateral[i] -= vlateral[i - 1]
     if force_positive_runoff:
-        np.clip(qlateral, 0, None, out=qlateral)
+        np.clip(vlateral, 0, None, out=vlateral)
 
     time_diff = np.diff(time_index)
     if not np.all(time_diff == time_index[1] - time_index[0]) and force_uniform_timesteps:
         timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's'))
         logger.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
-        df = pd.DataFrame(qlateral, index=time_index, columns=river_ids_ordered)
-        df = (
-            _incremental_to_cumulative(df)
-            .resample(rule=f'{timestep}s')
-            .interpolate(method='linear')
-        )
+        df = pd.DataFrame(vlateral, index=time_index, columns=river_ids_ordered)
+        df = _incremental_to_cumulative(df).resample(rule=f'{timestep}s').interpolate(method='linear')
         df = _cumulative_to_incremental(df)
         time_index = df.index.values
-        qlateral = df.to_numpy(dtype=np.float32)
+        vlateral = df.to_numpy(dtype=np.float32)
         del df
 
-    mask = np.isnan(qlateral)
+    mask = np.isnan(vlateral)
     if mask.any():
-        qlateral[mask] = 0.0
+        vlateral[mask] = 0.0
 
-    if as_volumes:
-        qlateral *= catchment_area[np.newaxis, :]
-        units = 'm3'
-        long_name = 'Incremental qlateral volumes'
-    else:
-        units = 'm'
-        long_name = 'Incremental qlateral depths'
-
+    units = 'm'
+    long_name = 'Incremental vlateral depths'
     start_date = pd.Timestamp(time_index[0]).strftime('%Y%m%d%H')
     end_date = pd.Timestamp(time_index[-1]).strftime('%Y%m%d%H')
     timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's')) if len(time_index) > 1 else 0
+    if as_volumes:
+        vlateral *= catchment_area[np.newaxis, :]
+        units = 'm3'
+        long_name = 'Incremental vlateral volumes'
     return xr.Dataset(
-        {
-            'qlateral': xr.DataArray(
-                qlateral,
-                dims=('time', 'river_id'),
-                attrs={'long_name': long_name, 'units': units},
-            ),
-        },
+        {'vlateral': xr.DataArray(vlateral, dims=('time', 'river_id'), attrs={'long_name': long_name, 'units': units})},
         coords={
             'river_id': xr.DataArray(
                 river_ids_ordered.astype(np.int64, copy=False),
@@ -360,19 +347,14 @@ def runoff_to_qlateral(
             'time': xr.DataArray(
                 time_index,
                 dims=('time',),
-                attrs={
-                    'long_name': 'time',
-                    'standard_name': 'time',
-                    'axis': 'T',
-                    'time_step': f'{timestep}',
-                },
+                attrs={'long_name': 'time', 'standard_name': 'time', 'axis': 'T', 'time_step': f'{timestep}'},
             ),
         },
         attrs={
-            'title': f'Incremental qlateral {long_name.split()[-1]}',
-            'description': f'Incremental qlateral ({units}) for each river',
+            'title': f'Incremental vlateral {long_name.split()[-1]}',
+            'description': f'Incremental vlateral ({units}) for each river',
             'source': f'river-route v{__version__}',
             'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
-            'suggested_file_name': f'qlateral_{start_date}_{end_date}.nc',
+            'suggested_file_name': f'vlateral_{start_date}_{end_date}.nc',
         },
     )

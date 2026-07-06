@@ -21,7 +21,7 @@ discharge_files:                 # optional: explicit output paths instead of di
 
 # runoff input — choose one of two choices for RapidMuskingum, UnitMuskingum
 # option 1: pre-aggregated per-catchment depths (m)
-qlateral_files:                  # netCDF: dims (time, river_id); var: qlateral
+vlateral_files:                  # netCDF: dims (time, river_id); var: vlateral
   - ''
 # option 2: gridded depths remapped to catchments (comment out option 1 to use)
 grid_runoff_files:

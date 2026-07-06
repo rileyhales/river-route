@@ -19,7 +19,6 @@ Some key insights applying linear algebra and graph theory to river networks and
    diagonal; $c_1 A$ contributes entries only below.
 6. Unit lower triangular systems are best solved with forward substitution.
 
-
 ## Muskingum Routing
 
 The Muskingum equation relates the outflow $Q_{t+1}$ to the inflow at the next step $I_{t+1}$, inflow at the current step $I_{t}$,
@@ -241,12 +240,14 @@ $$
 
 ### Reduced Inner System
 
-The headwater segments have no upstream dependencies and their discharge would be the unit hydrograph convolution output. 
-In the planned procedure they could be excluded from the matrix solve and their outflow would enter the system as a known right-hand-side contribution during the superposition step.
+The headwater segments have no upstream dependencies and their discharge would be the unit hydrograph convolution output. In the planned 
+procedure they could be excluded from the matrix solve and their outflow would enter the system as a known right-hand-side contribution 
+during the superposition step.
 
 ### Kernel Structure
 
-A unit hydrograph kernel has shape $(n_\text{steps},\; n_\text{basins})$. It is a 2D array of each basin's unit hydrograph, discretized to the routing time step, and concatenated into 1 array.
+A unit hydrograph kernel has shape $(n_\text{steps},\; n_\text{basins})$. It is a 2D array of each basin's unit hydrograph, discretized 
+to the routing time step, and concatenated into 1 array.
 
 - Each column is the discretized unit hydrograph for one basin assuming a unit runoff depth ($R = 1\,\text{m}$).
 - Each row value is the average flow ($\text{m}^2/\text{s}$) over the corresponding time step.
@@ -254,8 +255,7 @@ A unit hydrograph kernel has shape $(n_\text{steps},\; n_\text{basins})$. It is 
 
 ### Unit Hydrograph Convolution
 
-Given a timeseries of runoff depths $r_t$ (meters per time step), the lateral inflow at time $t$
-is found by convolving the runoff with the kernel:
+Given a timeseries of runoff depths $r_t$ (meters per time step), the lateral inflow at time $t$ is found by convolving the runoff with the kernel:
 
 $$
 Q_{l,t} = \sum_{\tau=0}^{n_\text{steps}-1} K_\tau \cdot r_{t-\tau}
@@ -266,9 +266,9 @@ That convolution helper currently exists only in `river_route/uhkernels/UnitHydr
 
 ## Forward Substitution Algorithm
 
-Because of the careful preparation of the routing matrices, the linear system can be solved for directly with a single forward 
-substitution pass without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency 
-gain in terms of the complexity of the algorithm as well as how efficiently it can be implemented and compiled in code. 
+Because of the careful preparation of the routing matrices, the linear system can be solved for directly with a single forward substitution 
+pass without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency gain in terms of the 
+complexity of the algorithm as well as how efficiently it can be implemented and compiled in code.
 
 For a unit lower triangular system $L\, x = b$ of size $n$:
 
@@ -289,6 +289,7 @@ for j = 1, 2, ..., n:
     for each row i where L[i,j] != 0:    # only the nonzero entries below the diagonal
         b[i] -= L[i,j] * x[j]            # subtract the now-known contribution
 ```
+
 *Listing 1: Conceptual column-oriented forward substitution pseudocode for a generic unit lower triangular system (not river-route's storage layout).*
 
 In the actual v3 kernels (`river_route/routers/_numba_kernels.py`, e.g. `static_channel`), there is no
@@ -306,6 +307,7 @@ for i in range(n_rivers):              # topological order: upstream before down
     if downstream_idx >= 0:             # outlets have no downstream (-1)
         rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
 ```
+
 *Listing 2: Push-based forward-substitution sweep over downstream indices, matching `static_channel` in `_numba_kernels.py`.*
 
 - **Time:** $O(n + m)$ where $n$ is the number of river segments and $m$ is the number of edges
@@ -317,10 +319,10 @@ This is optimal — every edge is visited exactly once per time step.
 
 ## Numerical stability relationship between c1, c2, dt, k, x
 
-Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly 
-regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative 
-discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_2$ is negative. The coefficients 
-are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the 
+Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly
+regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative
+discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_2$ is negative. The coefficients
+are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the
 numerators are positive comparing dt (a subjective choice) to k and x (physically derived parameters):
 
 $$
@@ -353,13 +355,13 @@ In the case of the river-route solver implementation which allows a single $dt$ 
 
 ## References
 
-- HEC-HMS Users Manual introduction to Muskingum Model 
+- HEC-HMS Users Manual introduction to Muskingum Model
   (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model]
-- HEC-HMS Users Manual introduction to Muskingum Cunge Model 
+- HEC-HMS Users Manual introduction to Muskingum Cunge Model
   (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model]
-- HEC-HMS Users Manual introduction to Unit Hydrographs 
+- HEC-HMS Users Manual introduction to Unit Hydrographs
   (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts]
 - David, C. H. (2011) River Network Routing on the NHDPlus Dataset *Journal of Hydrometeorology* [doi:10.1175/2011JHM1345.1](https://doi.org/10.1175/2011JHM1345.1)
-- NRCS (2010). *National Engineering Handbook*, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture. 
+- NRCS (2010). *National Engineering Handbook*, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture.
 - Wikipedia: [Triangular matrix — Forward substitution](https://en.wikipedia.org/wiki/Triangular_matrix#Forward_substitution).
 - Wikipedia: [Topological sorting](https://en.wikipedia.org/wiki/Topological_sorting).

@@ -5,13 +5,10 @@ class, and the kind of routing it performs is chosen with the `forcing` config s
 
 - **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
-- **`forcing: lateral`**: routes runoff volumes or depths directly into river channel inlets at each
+- **`forcing: vlateral`**: routes runoff volumes or depths directly into river channel inlets at each
   timestep. This is the most common starting point.
-- Unit-hydrograph forcing, which convolves each timestep of runoff with a unit hydrograph kernel before
-  adding it to the channel, is planned for a later v3 release and is not yet available in v3. See the
-  [Channel Routing with Runoff Transformation](unit-hydrograph-routing.md) tutorial.
 
-This tutorial uses lateral-runoff routing (`forcing: lateral`).
+This tutorial uses lateral-runoff routing (`forcing: vlateral`).
 
 ## Vocabulary
 
@@ -34,12 +31,12 @@ See the [File Schemas reference](../references/io-file-schema.md) for field name
 
 The routing parameters parquet must contain at minimum these columns:
 
-| Column                | Description                                                                |
-|-----------------------|----------------------------------------------------------------------------|
-| `river_id`            | Unique integer ID for each river segment                                   |
-| `downstream_river_id` | ID of the downstream segment (`-1` or `<0` at outlets)                     |
-| `k`                   | Muskingum K — travel time (seconds); typically channel length / wave speed |
-| `x`                   | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
+| Column          | Description                                                                |
+|-----------------|----------------------------------------------------------------------------|
+| `river_id`      | Unique integer ID for each river segment                                   |
+| `next_river_id` | ID of the downstream segment (`-1` or `<0` at outlets)                     |
+| `k`             | Muskingum K — travel time (seconds); typically channel length / wave speed |
+| `x`             | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
 
 Rows must be in **topological order**: all upstream segments before their downstream neighbors.
 
@@ -50,7 +47,7 @@ override values from the config file.
 
 ```yaml
 params_file: '/path/to/params.parquet'
-qlateral_files: '/path/to/catchment_runoff.nc'
+vlateral_files: '/path/to/catchment_runoff.nc'
 discharge_dir: '/path/to/output/'
 ```
 
@@ -59,7 +56,7 @@ discharge_dir: '/path/to/output/'
 ```python
 import river_route as rr
 
-rr.Router('config.yaml', forcing='lateral').route()
+rr.Router('config.yaml', forcing='vlateral').route()
 ```
 
 Or pass arguments directly without a config file:
@@ -71,9 +68,9 @@ import river_route as rr
     rr
     .Router(
         params_file='params.parquet',
-        qlateral_files=['qlateral.nc', ],
+        vlateral_files=['vlateral.nc', ],
         discharge_dir='./output/',
-        forcing='lateral',
+        forcing='vlateral',
     )
     .route()
 )
@@ -85,7 +82,7 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 
 ```yaml
 params_file: 'params.parquet'
-qlateral_files: 'catchment_runoff.nc'
+vlateral_files: 'catchment_runoff.nc'
 discharge_dir: 'output/'
 channel_state_init_file: 'state.parquet'         # optional: initial channel state
 channel_state_final_file: 'new_state.parquet'    # optional: save final state for next run

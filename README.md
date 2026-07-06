@@ -11,15 +11,11 @@ Muskingum-family routing at watershed scale.
 The public API is a single `Router` class. The routing procedure is described by three
 config selector keys:
 
-| Key       | Options                                                                      |
-|-----------|------------------------------------------------------------------------------|
+| Key       | Options                                                                                                                           |
+|-----------|-----------------------------------------------------------------------------------------------------------------------------------|
 | `coeff`   | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = alpha*Q^beta from `alpha`,`beta`,`x`). Default `static`. |
-| `forcing` | `channel` (channel routing only, the default), `lateral` (lateral runoff inflow), or `external` (planned). One value only. |
-| `network` | `standard` (one reach per river, the default). `expanded` (auto subdivide/substep unstable reaches) is planned, not yet available. |
-
-!!! note
-    Unit Hydrograph routing, the `external` forcing, and specifying multiple forcings are planned
-    for a later v3 release and are not yet available.
+| `forcing` | `channel` (channel routing only, the default) or `vlateral` (lateral runoff inflow). One value only.                              |
+| `network` | `standard` (one reach per river, the default).                                                                                    |
 
 ## Installation
 
@@ -41,10 +37,10 @@ uv sync --group dev     # ...or include the test and docs tooling
 ```python
 import river_route as rr
 
-rr.Router("examples/config_rapid_muskingum.yaml").route()
+rr.Router("./path/to/configs.yaml").route()
 
 # selectors can also be passed (or overridden) as keyword arguments
-rr.Router("examples/config.yaml", forcing="lateral").route()
+rr.Router("./path/to/configs.yaml", forcing="vlateral").route()
 ```
 
 Configuration can be provided by:
@@ -56,14 +52,14 @@ Configuration can be provided by:
 Core required inputs are:
 
 - `params_file` (network topology and Muskingum parameters)
-- One runoff source (`qlateral_files` or `grid_runoff_files` + `grid_weights_file`) when using `lateral` forcing
+- One runoff source (`vlateral_files` or `grid_runoff_files` + `grid_weights_file`) when using `vlateral` forcing
 - `discharge_dir` (or explicit `discharge_files`)
 
 ## CLI
 
 ```bash
 rr --help
-rr route examples/config_rapid_muskingum.yaml
+rr route examples/config.yaml
 ```
 
 ## Testing

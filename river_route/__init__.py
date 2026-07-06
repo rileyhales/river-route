@@ -1,22 +1,18 @@
-from . import metrics, runoff, streams, tools, uhkernels
+from . import metrics, runoff, streams, tools
 from ._metadata import __author__, __url__, __version__
 from .routers import Configs, Router
 
 __all__ = [
-    # configuration + unified router
+    # unified router
     'Configs',
     'Router',
-
-    # uhkernel creating classes
-    'uhkernels',
-
     # modules
     'runoff',
     'streams',
     'tools',
     'metrics',
-
+    # metadata
     '__version__',
     '__author__',
-    '__url__'
+    '__url__',
 ]

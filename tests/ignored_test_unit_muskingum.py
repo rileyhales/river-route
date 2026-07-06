@@ -34,7 +34,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         np.random.seed(42)
         depths = np.random.uniform(0, 0.2, (n_timesteps, n_rivers)).astype(np.float32)
         runoff_ds = xr.Dataset(
-            {'qlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
+            {'vlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
             coords={'time': dates, 'river_id': river_ids},
         )
         runoff_file = os.path.join(tmpdir, 'synthetic_depths.nc')
@@ -48,7 +48,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=[runoff_file],
+            vlateral_files=[runoff_file],
             discharge_files=[discharge_file],
             channel_state_final_file=final_state_file,
             uh_state_final_file=uh_state_file,
@@ -89,7 +89,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
             dates = pd.date_range(f'2020-01-0{i + 1}', periods=n_timesteps, freq='h')
             depths = np.random.uniform(0, 0.001, (n_timesteps, n_rivers)).astype(np.float32)
             ds = xr.Dataset(
-                {'qlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
+                {'vlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
                 coords={'time': dates, 'river_id': river_ids},
             )
             path = os.path.join(tmpdir, f'runoff_{i}.nc')
@@ -103,7 +103,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=runoff_files,
+            vlateral_files=runoff_files,
             discharge_files=q_all,
             log=False, progress_bar=False,
         ).route()
@@ -115,7 +115,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=[runoff_files[0]],
+            vlateral_files=[runoff_files[0]],
             discharge_files=[q_f1],
             channel_state_final_file=channel_state,
             uh_state_final_file=uh_state,
@@ -127,7 +127,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=[runoff_files[1]],
+            vlateral_files=[runoff_files[1]],
             discharge_files=[q_f2],
             channel_state_init_file=channel_state,
             uh_state_init_file=uh_state,
