@@ -10,6 +10,16 @@
   irregular timesteps. The 3.0.5 floor also skips 3.0.4, which is yanked from PyPI for segfaults in
   datetime handling that this package hit on every CF encoded time axis it read.
 - Increased the minimum numpy version to 2.5.
+- Routing from gridded runoff no longer rebuilds, copies, or reallocates lateral inflow for every runoff file.
+  The weight table is read and checked against the params file once per `route()`, and each file is aggregated
+  in a single pass (area weighting, de-accumulation, clipping, NaN replacement, and the volume product) straight
+  into a reused C-order buffer that the kernels read without a copy. The pieces are available as
+  `GridWeights`, `read_grid_runoff`, and `aggregate_grid_runoff` in `river_route.runoff`, and
+  `runoff_to_vlateral` is built on them. The runoff read itself is unchanged. With `threads` above 1 the
+  rivers are split into ranges of similar work that the same kernel aggregates concurrently on the router's
+  thread pool; single threaded, one range covers every river.
+- Fixed `runoff_to_vlateral` raising `output array is read-only` for irregular timesteps with
+  `as_volumes=True`.
 - Added tests for the gridded runoff path: weight table construction, area weighted aggregation, unit
   conversion, cumulative de-accumulation, irregular timestep resampling, and routing from grid files.
 - Input arrays are validated before they reach the numba kernels. The kernels are compiled without bounds

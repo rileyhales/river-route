@@ -15,7 +15,7 @@ import yaml
 from tqdm import tqdm
 
 from .. import streams
-from ..runoff import runoff_to_vlateral
+from ..runoff import GridWeights, aggregate_grid_runoff, read_grid_runoff
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, VlateralGeneratorSignature, WriteDischargesFn
 from ._kernel_registry import dispatch
 from .Configs import Configs
@@ -418,7 +418,6 @@ class Router:
                 not match the params file, or carries river ids that differ from the params file
         """
         rid = self.cfg.var_river_id
-        n_rivers = self.river_ids.shape[0]
         if 'vlateral' not in ds:
             raise ValueError(f'{source} does not contain a vlateral variable')
         array = ds['vlateral']
@@ -427,18 +426,36 @@ class Router:
             raise ValueError(f'{source} vlateral must have 2 dimensions (time, {rid}), found {dims}')
         if rid in dims and dims[1] != rid:
             raise ValueError(f'{source} vlateral dimensions must be ordered (time, {rid}), found {dims}')
-        if array.shape[1] != n_rivers:
+        file_ids = ds[rid].values if rid in ds.variables else None
+        self._check_river_alignment(file_ids, array.shape[1], source)
+        return
+
+    def _check_river_alignment(self, file_ids: IntArray | None, n_columns: int, source: PathInput) -> None:
+        """
+        Verify that the river columns of a lateral inflow source match the params file in count and order.
+
+        Args:
+            file_ids: river id of each column in order, or None when the source does not record them
+            n_columns: number of river columns the source provides
+            source: path of the file the columns came from, used in error messages
+
+        Raises:
+            ValueError: if the river count does not match the params file, or the river ids differ from it
+        """
+        rid = self.cfg.var_river_id
+        n_rivers = self.river_ids.shape[0]
+        if n_columns != n_rivers:
             raise ValueError(
-                f'{source} provides lateral inflow for {array.shape[1]} rivers but {self.cfg.params_file} has '
+                f'{source} provides lateral inflow for {n_columns} rivers but {self.cfg.params_file} has '
                 f'{n_rivers} rivers. The two files must describe the same network.'
             )
-        if rid not in ds.variables:
+        if file_ids is None:
             self.logger.warning(
                 f'{source} has no {rid} variable so its column order cannot be verified against the params '
                 f'file. Values are assumed to be in the same order as {self.cfg.params_file}.'
             )
             return
-        file_ids = ds[rid].values.astype(np.int64, copy=False)
+        file_ids = np.asarray(file_ids).astype(np.int64, copy=False)
         if not np.array_equal(file_ids, self.river_ids):
             n_diff = int(np.count_nonzero(file_ids != self.river_ids))
             same_set = set(file_ids.tolist()) == set(self.river_ids.tolist())
@@ -459,24 +476,40 @@ class Router:
                     array = ds['vlateral'].values.astype(np.float32, copy=False)
                     yield dates, array, lateral_file, discharge_file
         elif self.cfg.grid_runoff_files and self.cfg.grid_weights_file:
+            # The weight table is identical for every runoff file, so it is read and checked against the params file
+            # once. Every file is then aggregated into one reused C-order buffer that the kernels read directly: no
+            # per-file allocation or copy. The yielded array is overwritten by the next file.
+            weights = GridWeights.from_file(self.cfg.grid_weights_file, var_river_id=self.cfg.var_river_id)
+            self._check_river_alignment(weights.river_ids, weights.river_ids.shape[0], self.cfg.grid_weights_file)
+            buffer = np.empty((0, self.river_ids.shape[0]), dtype=np.float32)
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files, strict=True):
                 self.logger.info('-' * 60)
                 self.logger.debug(f'Calculating vlateral: {runoff_file}')
-                ds = runoff_to_vlateral(
+                runoff, dates, conversion_factor = read_grid_runoff(
                     runoff_file,
-                    grid_weights_file=self.cfg.grid_weights_file,
+                    weights,
                     var_runoff=self.cfg.var_grid_runoff,
                     var_x=self.cfg.var_x,
                     var_y=self.cfg.var_y,
                     var_t=self.cfg.var_t,
-                    var_river_id=self.cfg.var_river_id,
+                )
+                if buffer.shape[0] < runoff.shape[0]:
+                    buffer = np.empty((runoff.shape[0], self.river_ids.shape[0]), dtype=np.float32)
+                vlateral, dates = aggregate_grid_runoff(
+                    runoff,
+                    dates,
+                    weights,
+                    conversion_factor,
                     cumulative=self.cfg.grid_accumulation_type == 'cumulative',
                     as_volumes=True,
+                    out=buffer,
+                    pool=self.thread_pool(),
+                    threads=self.cfg.threads,
                 )
-                self._check_vlateral_alignment(ds, runoff_file)
+                del runoff
                 yield (
-                    ds['time'].values.astype('datetime64[s]'),
-                    ds['vlateral'].values.astype(np.float32, copy=False),
+                    dates.astype('datetime64[s]'),
+                    vlateral.astype(np.float32, copy=False),
                     runoff_file,
                     discharge_file,
                 )
