@@ -12,3 +12,7 @@ __pycache__/
 plans/
 experiments/
 .venv/
+# stray data and scratch scripts that accumulate in the repo root
+/test.parquet
+/profile_route.py
+/evaluate_network.py

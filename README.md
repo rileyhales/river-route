@@ -59,8 +59,11 @@ Core required inputs are:
 
 ```bash
 rr --help
-rr route examples/config.yaml
+rr route /path/to/config.yaml
 ```
+
+Copy a template from the `examples` directory to start: `config_muskingum.yaml` for channel routing,
+`config_rapid_muskingum.yaml` for lateral inflow routing, or `config.yaml` for the full list of keys.
 
 ## Testing
 

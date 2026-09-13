@@ -262,7 +262,7 @@ Q_{l,t} = \sum_{\tau=0}^{n_\text{steps}-1} K_\tau \cdot r_{t-\tau}
 $$
 
 The planned implementation would compute this as a fourier transform over the full timeseries using `scipy.signal.fftconvolve`.
-That convolution helper currently exists only in `river_route/uhkernels/UnitHydrograph.py` and is not yet wired into routing.
+That convolution helper is not part of the current release and is not wired into routing.
 
 ## Forward Substitution Algorithm
 

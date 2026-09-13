@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 import xarray as xr
-
 from conftest import RFSv2ConfigsData
+
 from river_route.tools import adjacency_matrix, connectivity_to_digraph, subset_configs_to_river
 
 
@@ -107,8 +107,9 @@ def test_subset_configs_to_river_with_weights(vpu: RFSv2ConfigsData):
     try:
         out_params = os.path.join(tmpdir, 'subset.parquet')
         out_weights = os.path.join(tmpdir, 'subset_weights.nc')
-        subset_configs_to_river(target, str(vpu.rr2_params_file), out_params,
-                                weights=str(vpu.grid_weights_file), out_weights=out_weights)
+        subset_configs_to_river(
+            target, str(vpu.rr2_params_file), out_params, weights=str(vpu.grid_weights_file), out_weights=out_weights
+        )
 
         sub = pd.read_parquet(out_params)
         with xr.open_dataset(out_weights) as ds:

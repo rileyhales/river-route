@@ -46,6 +46,10 @@ start_datetime: '1970-01-01'     # ISO date for output timestamps
 runoff_processing_mode: 'sequential'     # sequential | ensemble
 grid_accumulation_type: 'incremental'    # incremental | cumulative
 
+# validation — optional
+deep_validation: true                    # read and check the contents of the input files before routing
+unstable_coefficients: 'warn'            # warn | raise | ignore, when a river is not stable for dt_routing
+
 # logging — optional
 log: true
 progress_bar: true
@@ -57,7 +61,6 @@ log_format: '%(levelname)s - %(asctime)s - %(message)s'
 var_river_id: 'river_id'
 var_discharge: 'Q'
 var_grid_runoff: 'ro'
-var_vlateral: 'vlateral'
 var_x: 'x'
 var_y: 'y'
 var_t: 'time'

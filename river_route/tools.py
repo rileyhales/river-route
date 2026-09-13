@@ -10,19 +10,15 @@ from .types import PathInput
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    'subset_configs_to_river',
-    'connectivity_to_digraph',
-    'adjacency_matrix',
-]
+__all__ = ['subset_configs_to_river', 'connectivity_to_digraph', 'adjacency_matrix']
 
 
 def subset_configs_to_river(
-        target_river: int,
-        params: PathInput,
-        out_params: PathInput,
-        weights: PathInput | None = None,
-        out_weights: PathInput | None = None,
+    target_river: int,
+    params: PathInput,
+    out_params: PathInput,
+    weights: PathInput | None = None,
+    out_weights: PathInput | None = None,
 ) -> None:
     """
     Subset routing parameters and weight tables to the target river and all rivers upstream of it.

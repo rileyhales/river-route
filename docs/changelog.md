@@ -2,6 +2,46 @@
 
 ---
 
+### Unreleased
+
+- Increased the minimum Python version to 3.14.
+- Increased the minimum pandas version to 3.0.5. pandas 3 changed `DataFrame.to_numpy()` to return a
+  read-only array, which broke the in-place unit conversion in `runoff_to_vlateral` for inputs with
+  irregular timesteps. The 3.0.5 floor also skips 3.0.4, which is yanked from PyPI for segfaults in
+  datetime handling that this package hit on every CF encoded time axis it read.
+- Increased the minimum numpy version to 2.5.
+- Added tests for the gridded runoff path: weight table construction, area weighted aggregation, unit
+  conversion, cumulative de-accumulation, irregular timestep resampling, and routing from grid files.
+- Input arrays are validated before they reach the numba kernels. The kernels are compiled without bounds
+  checking, so a lateral inflow file or channel state file that does not match the params file previously
+  read and wrote past the end of its array instead of raising.
+- Lateral inflow files are checked against the params file for river count and river id order. A file whose
+  columns are ordered differently is rejected rather than routing each river's water down the wrong reach.
+- Rivers whose parameters are not Muskingum-stable for `dt_routing` are now reported. Stability requires
+  `2*k*x <= dt_routing <= 2*k*(1-x)`; outside that window the solution oscillates and clamping the negative
+  discharges to zero does not conserve mass. Controlled by the new `unstable_coefficients` config
+  (`warn` by default, or `raise` / `ignore`).
+- `Configs.deep_validate()` is now called from `route()`, controlled by the new `deep_validation` config.
+  It also validates the `alpha` and `beta` columns when `coeff` is `dynamic`, and honors `var_river_id`.
+- Fixed `dt_total` with `forcing: vlateral`. A value shorter than the input file now routes that portion,
+  and one longer than the input file raises instead of reading past the end of the array.
+- Unrecognized config keys raise a `ValueError` naming the key and suggesting the closest valid option,
+  rather than a dataclass `TypeError`.
+- Missing params file columns are reported by name instead of raising `KeyError`.
+- `discharge_dir` rejects input files with duplicate basenames, which previously resolved to a single
+  output file and silently overwrote each other.
+- Repeated `route()` calls on one object restart from `channel_state_init_file` rather than silently
+  continuing from the previous run's final state.
+- Each `Router` gets its own log handler. Loggers were named from `id(self)`, which CPython reuses after
+  garbage collection, so handlers accumulated and log lines were duplicated.
+- Added `examples/config_muskingum.yaml` and `examples/config_rapid_muskingum.yaml`, which the docs
+  referenced but were not present, and removed the invalid `var_vlateral` key from `examples/config.yaml`.
+- Added synthetic network tests that run without the downloaded reference data, and CI now runs the test
+  suite, ruff, and mypy on every push and pull request.
+- Added lower and upper version bounds to all dependencies.
+
+---
+
 ### [v3.0.0](https://github.com/rileyhales/river-route/tree/v3.0.0) — 2026-06-18
 
 - Consolidated all routing into a single config-driven `rr.Router`.

@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-
 from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
+
 from river_route.runoff import grid_weights, runoff_to_vlateral
 
 
@@ -20,8 +20,9 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
     if river_id_col is None:
         pytest.fail(f'No linkno/LINKNO column in {vpu.catchments}; found {list(catchment_cols)}')
 
-    result = grid_weights(ERA5_FILES[0], str(vpu.catchments), var_x='longitude', var_y='latitude',
-                          var_river_id=river_id_col)
+    result = grid_weights(
+        ERA5_FILES[0], str(vpu.catchments), var_x='longitude', var_y='latitude', var_river_id=river_id_col
+    )
 
     expected_cols = {river_id_col, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion'}
     assert expected_cols.issubset(set(result.columns)), f'Missing columns: {expected_cols - set(result.columns)}'
@@ -30,27 +31,29 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
     sort_keys = ['river_id', 'x_index', 'y_index', 'area_sqm']
     compare_cols = ['river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion']
     known = (
-        xr.open_dataset(str(vpu.grid_weights_file))
-        [compare_cols]
+        xr.open_dataset(str(vpu.grid_weights_file))[compare_cols]
         .to_dataframe()
         .reset_index(drop=True)
         .sort_values(sort_keys)
         .reset_index(drop=True)
     )
     generated = (
-        result
-        .rename(columns={river_id_col: 'river_id'})
-        [compare_cols]
-        .sort_values(sort_keys)
-        .reset_index(drop=True)
+        result.rename(columns={river_id_col: 'river_id'})[compare_cols].sort_values(sort_keys).reset_index(drop=True)
     )
     pd.testing.assert_frame_equal(generated, known, check_exact=False, check_dtype=False, rtol=1e-5)
 
 
 def test_grid_to_vlateral(vpu: RFSv2ConfigsData):
     """Aggregate ERA5 gridded runoff to vlateral depths using the weight table."""
-    ds = runoff_to_vlateral(ERA5_FILES[0], grid_weights_file=str(vpu.grid_weights_file), var_runoff='ro',
-                            var_x='longitude', var_y='latitude', var_t='valid_time', as_volumes=True)
+    ds = runoff_to_vlateral(
+        ERA5_FILES[0],
+        grid_weights_file=str(vpu.grid_weights_file),
+        var_runoff='ro',
+        var_x='longitude',
+        var_y='latitude',
+        var_t='valid_time',
+        as_volumes=True,
+    )
     assert 'vlateral' in ds
     assert 'time' in ds.dims
     assert 'river_id' in ds.dims
@@ -59,7 +62,9 @@ def test_grid_to_vlateral(vpu: RFSv2ConfigsData):
     known_file = vpu.vlateral_files[0]
     ds_known = xr.open_dataset(known_file)
     np.testing.assert_allclose(
-        ds['vlateral'].values, ds_known['vlateral'].values, atol=0.1,
+        ds['vlateral'].values,
+        ds_known['vlateral'].values,
+        atol=0.1,
         err_msg='Aggregated vlateral does not match known-good output',
     )
 
@@ -82,7 +87,10 @@ def test_grid_to_vlateral_cumulative_input(vpu: RFSv2ConfigsData):
 
         kwargs = dict(
             grid_weights_file=str(vpu.grid_weights_file),
-            var_runoff='ro', var_x='longitude', var_y='latitude', var_t='valid_time',
+            var_runoff='ro',
+            var_x='longitude',
+            var_y='latitude',
+            var_t='valid_time',
         )
 
         ds_inc = runoff_to_vlateral(str(incremental_file), cumulative=False, **kwargs)
@@ -91,8 +99,10 @@ def test_grid_to_vlateral_cumulative_input(vpu: RFSv2ConfigsData):
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation
         np.testing.assert_allclose(
-            ds_inc['vlateral'].values, ds_cum['vlateral'].values,
-            rtol=0.02, atol=0.15,
+            ds_inc['vlateral'].values,
+            ds_cum['vlateral'].values,
+            rtol=0.02,
+            atol=0.15,
             err_msg='Cumulative input does not produce same vlateral as incremental',
         )
     finally:

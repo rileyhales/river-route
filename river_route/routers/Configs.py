@@ -1,7 +1,8 @@
+import difflib
 import os
 import types
-from dataclasses import dataclass, field
-from typing import ClassVar, Literal, Self, get_args, get_origin, get_type_hints
+from dataclasses import dataclass, field, fields
+from typing import Any, ClassVar, Literal, Self, get_args, get_origin, get_type_hints
 
 import numpy as np
 import pandas as pd
@@ -59,6 +60,14 @@ class Configs:
     uh_state_init_file: PathInput | None = None
     uh_state_final_file: PathInput | None = None
 
+    # Concurrency. Regions come from the params file 'region' column (see streams.partition_network) or are
+    # derived at setup when it is absent. threads=1 routes the whole network in a single pass.
+    threads: int = 1
+
+    # Validation behavior
+    deep_validation: bool = True  # read and check the contents of the input files before routing
+    unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
+
     # Misc behavior that users may want to override
     log: bool = True
     progress_bar: bool = True
@@ -86,8 +95,6 @@ class Configs:
     _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
 
     def __setattr__(self, name: str, value: object) -> None:
-        if getattr(self, '_frozen', False) and name != '_frozen':
-            raise AttributeError(f'Configs is frozen — cannot set {name!r}')
         allowed = type(self).__dict__.get('_VALID_VALUES', {}).get(name)
         if allowed is not None and value not in allowed:
             raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
@@ -108,6 +115,28 @@ class Configs:
             if getattr(self, key) in (None, '', []):
                 raise ValueError(f'Missing required config: {key}')
         return
+
+    @classmethod
+    def from_mapping(cls, raw: dict[str, Any]) -> Self:
+        """
+        Build Configs from a mapping, reporting unrecognized keys by name instead of raising the
+        dataclass TypeError. Suggests the closest valid key name for likely typos.
+
+        Args:
+            raw: mapping of config key to value, e.g. parsed from a YAML or JSON config file
+
+        Raises:
+            ValueError: if the mapping contains any key that is not a config option
+        """
+        known = {f.name for f in fields(cls)}
+        unknown = sorted(set(raw) - known)
+        if unknown:
+            described = []
+            for key in unknown:
+                close = difflib.get_close_matches(key, sorted(known), n=1)
+                described.append(f'{key!r}' + (f' (did you mean {close[0]!r}?)' if close else ''))
+            raise ValueError(f'Unrecognized config key(s): {", ".join(described)}')
+        return cls(**raw)
 
     # --- path normalization and verification ---
     def _coerce_path_list_fields(self) -> None:
@@ -156,7 +185,14 @@ class Configs:
         d = self.discharge_dir
         input_files = self.vlateral_files or self.grid_runoff_files or []
         if input_files:
-            self.discharge_files = [os.path.join(d, f'discharge_{os.path.basename(f)}') for f in input_files]
+            basenames = [os.path.basename(f) for f in input_files]
+            duplicates = sorted({name for name in basenames if basenames.count(name) > 1})
+            if duplicates:
+                raise ValueError(
+                    f'Input files with duplicate names would resolve to the same output file in discharge_dir: '
+                    f'{", ".join(duplicates)}. Use discharge_files to give explicit output paths.'
+                )
+            self.discharge_files = [os.path.join(d, f'discharge_{name}') for name in basenames]
         else:
             # Muskingum (no lateral inflow files)
             self.discharge_files = [os.path.join(d, 'discharge.nc')]
@@ -184,6 +220,9 @@ class Configs:
     def validate(self) -> Self:
         """Validate that the configured options are mutually consistent for the chosen routing procedure. Cares
         only about the existence and validity of options, not file contents (see deep_validate). Raise ValueError."""
+        # __setattr__ only auto-checks fields declared as Literal, so the numeric range is checked here
+        if not isinstance(self.threads, int) or isinstance(self.threads, bool) or self.threads < 1:
+            raise ValueError(f'threads must be an integer >= 1, got {self.threads!r}')
         if self.forcing == 'channel':
             for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
                 if not getattr(self, key, None):
@@ -201,6 +240,8 @@ class Configs:
         n_inputs = len(vlateral) + len(self.grid_runoff_files or [])
         if len(self.discharge_files) != n_inputs:
             raise ValueError('Number of resolved discharge output files must match number of input files')
+        if len(set(self.discharge_files)) != len(self.discharge_files):
+            raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
         if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
             raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
         return self
@@ -216,20 +257,21 @@ class Configs:
             params_df = pd.read_parquet(self.params_file)
         except Exception as e:
             raise ValueError('Error reading params file. Must be valid parquet file') from e
-        if 'river_id' not in params_df.columns:
-            raise ValueError(f'{self.params_file} missing river_id column')
+        rid = self.var_river_id
+        if rid not in params_df.columns:
+            raise ValueError(f'{self.params_file} missing {rid} column')
         if 'next_river_id' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing next_river_id column')
         if 'k' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing k column')
         if 'x' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing x column')
-        if np.any(params_df['river_id'].isnull()):
-            raise ValueError(f'{self.params_file} river_id column contains null values')
-        if not pd.api.types.is_integer_dtype(params_df['river_id']):
-            raise ValueError(f'{self.params_file} river_id column must be integer type')
-        if not params_df['river_id'].is_unique:
-            raise ValueError(f'{self.params_file} river_id column must be unique')
+        if np.any(params_df[rid].isnull()):
+            raise ValueError(f'{self.params_file} {rid} column contains null values')
+        if not pd.api.types.is_integer_dtype(params_df[rid]):
+            raise ValueError(f'{self.params_file} {rid} column must be integer type')
+        if not params_df[rid].is_unique:
+            raise ValueError(f'{self.params_file} {rid} column must be unique')
         if np.any(params_df['next_river_id'].isnull()):
             raise ValueError(f'{self.params_file} next_river_id column contains null values')
         if not pd.api.types.is_integer_dtype(params_df['next_river_id']):
@@ -237,16 +279,30 @@ class Configs:
         if np.any(params_df['next_river_id'] < -1):
             raise ValueError(f'{self.params_file} next_river_id column must be -1 or positive integers')
         downstream_ids = set(params_df['next_river_id'].unique())
-        river_ids = set(params_df['river_id'].unique())
+        river_ids = set(params_df[rid].unique())
         if not downstream_ids.issubset(river_ids.union({-1})):
-            raise ValueError(f'{self.params_file} next_river_id values must exist in river_id (except -1)')
+            raise ValueError(f'{self.params_file} next_river_id values must exist in {rid} (except -1)')
+        if np.any(params_df['k'].isnull()) or np.any(params_df['x'].isnull()):
+            raise ValueError(f'{self.params_file} k and x columns must not contain null values')
         if np.any(params_df['k'] <= 0):
             raise ValueError(f'{self.params_file} k column must be positive')
         if np.any(params_df['x'] < 0) or np.any(params_df['x'] > 0.5):
             raise ValueError(f'{self.params_file} x column must be in the range [0, 0.5]')
 
+        # dynamic coefficients are rebuilt in the kernel from K = alpha * Q ** beta
+        if self.coeff == 'dynamic':
+            for column in ('alpha', 'beta'):
+                if column not in params_df.columns:
+                    raise ValueError(f'{self.params_file} missing {column} column required when coeff is dynamic')
+                if np.any(params_df[column].isnull()):
+                    raise ValueError(f'{self.params_file} {column} column contains null values')
+                if not pd.api.types.is_numeric_dtype(params_df[column]):
+                    raise ValueError(f'{self.params_file} {column} column must be numeric type')
+            if np.any(params_df['alpha'] <= 0):
+                raise ValueError(f'{self.params_file} alpha column must be strictly positive')
+
         # check topological sort: every next_river_id must appear later in the table than its upstream
-        river_id_index = {int(rid): i for i, rid in enumerate(params_df['river_id'])}
+        river_id_index = {int(river_id): i for i, river_id in enumerate(params_df[rid])}
         for upstream_idx, ds_id in enumerate(params_df['next_river_id']):
             if int(ds_id) < 0:
                 continue
@@ -259,16 +315,16 @@ class Configs:
                 ds = xr.load_dataset(self.grid_weights_file)
             except Exception as e:
                 raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
-            expected_variables = ('river_id', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion')
+            expected_variables = (rid, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion')
             for variable in expected_variables:
                 if variable not in ds:
                     raise ValueError(f'Grid weights file missing {variable} variable')
-            if np.any(ds['river_id'].isnull()):
-                raise ValueError('Grid weights river_id variable contains null values')
-            if not pd.api.types.is_integer_dtype(ds['river_id'].dtype):
-                raise ValueError('Grid weights river_id variable must be integer type')
-            if not set(ds['river_id'].values).issubset(river_ids):
-                raise ValueError('Grid weights river_id values must exist in params river_id')
+            if np.any(ds[rid].isnull()):
+                raise ValueError(f'Grid weights {rid} variable contains null values')
+            if not pd.api.types.is_integer_dtype(ds[rid].dtype):
+                raise ValueError(f'Grid weights {rid} variable must be integer type')
+            if not set(ds[rid].values).issubset(river_ids):
+                raise ValueError(f'Grid weights {rid} values must exist in params {rid}')
             for variable in expected_variables[1:]:
                 if np.any(ds[variable].isnull()):
                     raise ValueError(f'Grid weights {variable} variable contains null values')
@@ -278,7 +334,7 @@ class Configs:
                 raise ValueError('Grid weights area_sqm variable must be positive')
             if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
                 raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
-            proportions_sum = ds['proportion'].groupby(ds['river_id']).sum()
+            proportions_sum = ds['proportion'].groupby(ds[rid]).sum()
             if not np.allclose(proportions_sum.values, 1.0):
                 raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
 

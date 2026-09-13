@@ -10,16 +10,12 @@ type PathList = list[PathInput]
 type FloatArray = NDArray[np.float32]
 type IntArray = NDArray[np.int64]
 type DatetimeArray = NDArray[np.datetime64]
-type VlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput], None, None]
+type VlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput]]
 
 
 class WriteDischargesFn(Protocol):
     def __call__(
-            self,
-            dates: DatetimeArray,
-            q_array: FloatArray,
-            q_file: PathInput,
-            routed_file: PathInput = '',
+        self, dates: DatetimeArray, q_array: FloatArray, q_file: PathInput, routed_file: PathInput = ''
     ) -> None: ...
 
 

@@ -87,6 +87,27 @@ The following table lists where each remaining key applies.
 | `var_t`                  | Time dimension name in depth grids                     | `'time'`                                      |
 | `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`       | `'incremental'`                               |
 | `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs       | `'sequential'`                                |
+| `deep_validation`        | Check the contents of input files before routing       | `True`                                        |
+| `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
+
+## Validation
+
+`Router.route()` validates before it computes anything.
+
+`deep_validation` (on by default) reads the params file, grid weights, and initial state and checks their
+columns, types, and value ranges, that the network is topologically sorted, and that the weight table
+proportions sum to 1 per river. Turn it off to skip re-reading input files you have already validated.
+
+`unstable_coefficients` controls what happens when a river's parameters are not Muskingum-stable for the
+routing timestep, which requires `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window the solution for
+that river oscillates and negative discharges are clamped to zero, which does not conserve mass. The
+default `'warn'` logs how many rivers are affected; `'raise'` refuses to route; `'ignore'` is silent. Use
+`river_route.streams.analyze_stability` to inspect a network before routing it.
+
+Lateral inflow files are also checked against the params file as each one is opened: the river count must
+match and, when the file carries a `river_id` variable, the ids must be in the same order as the params
+file. The routing kernels index by position and are compiled without bounds checking, so a mismatch would
+otherwise read past the end of the array or route water down the wrong reach.
 
 ## Example Configuration YAMLs
 

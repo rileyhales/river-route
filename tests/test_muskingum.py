@@ -5,9 +5,9 @@ import tempfile
 import numpy as np
 import pandas as pd
 import xarray as xr
+from conftest import RFSv2ConfigsData
 
 import river_route as rr
-from conftest import RFSv2ConfigsData
 
 
 def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
@@ -24,7 +24,8 @@ def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q_channel_only.nc')
         # final_state_file = os.path.join(tmpdir, 'final_state.parquet')
 
-        rr.Router(forcing='channel', 
+        rr.Router(
+            forcing='channel',
             params_file=str(vpu.rr2_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,
@@ -58,7 +59,8 @@ def test_muskingum_zero_initial_state(vpu: RFSv2ConfigsData):
 
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
-        rr.Router(forcing='channel', 
+        rr.Router(
+            forcing='channel',
             params_file=str(vpu.rr2_params_file),
             discharge_files=[discharge_file],
             channel_state_init_file=init_state_file,

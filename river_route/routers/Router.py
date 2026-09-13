@@ -1,7 +1,10 @@
+import atexit
 import datetime
+import itertools
 import json
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Self
 
 import netCDF4 as nc
@@ -11,6 +14,7 @@ import xarray as xr
 import yaml
 from tqdm import tqdm
 
+from .. import streams
 from ..runoff import runoff_to_vlateral
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, VlateralGeneratorSignature, WriteDischargesFn
 from ._kernel_registry import dispatch
@@ -20,6 +24,8 @@ __all__ = ['Router']
 
 PROGRESS = 25
 logging.addLevelName(PROGRESS, 'PROGRESS')
+
+_ROUTER_COUNT = itertools.count()  # id() is reused after garbage collection, so it cannot name a logger uniquely
 
 
 class Router:
@@ -54,6 +60,14 @@ class Router:
     downstream_c1: FloatArray
     downstream_c2: FloatArray
 
+    # Region schedule for threaded routing (see streams.assign_regions). Built once per Router and then only
+    # read, never rebuilt per input file. These are index ranges into the parameter table as given: no river
+    # vector is ever reordered and no forcing or discharge array is ever gathered.
+    routing_jobs: tuple[tuple[IntArray, IntArray, int, int], ...]  # (block_starts, block_stops, outlet, region)
+    cut_target: IntArray  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
+    _stored_region: IntArray | None  # the params file 'region' column, when it has one
+    _pool: ThreadPoolExecutor | None
+
     # State variables
     channel_state: FloatArray  # routing depends only on a channel state vector
     _ensemble_member_states: list[FloatArray]  # for ensemble routing
@@ -70,6 +84,8 @@ class Router:
     # methods overridable via dependency injection
     _write_discharges: WriteDischargesFn
 
+    _warned_dt_routing: bool
+
     def __init__(self, configs: PathInput | None = None, **kwargs: Any) -> None:
         # parse and create configs
         raw: dict[str, Any] = {}
@@ -84,10 +100,11 @@ class Router:
             else:
                 raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
         raw.update(kwargs)
-        self.cfg = Configs(**raw)
+        self.cfg = Configs.from_mapping(raw)
 
         # configure logging - progress bar and info/debug logs are mutually exclusive
-        self.logger = logging.getLogger(f'river_route.{id(self):x}')
+        self.logger = logging.getLogger(f'river_route.router{next(_ROUTER_COUNT)}')
+        self.logger.propagate = False  # this logger owns its handler; propagating would double every message
         self.logger.disabled = not self.cfg.log
         self.logger.setLevel(self.cfg.log_level)
         if self.cfg.log_stream == 'stdout':
@@ -99,6 +116,29 @@ class Router:
 
         # default discharge writer; overridable via set_write_discharges
         self._write_discharges = self._default_write_discharges
+        self._warned_dt_routing = False
+        self._pool = None
+        return
+
+    def thread_pool(self) -> ThreadPoolExecutor | None:
+        """
+        The worker pool for region-parallel routing, or None when routing single-threaded.
+
+        Created once and reused for the life of the Router. A pool built per file or per dispatch costs more to
+        start than the routing it would overlap: a short run measured slower with two fresh-per-call workers than
+        with none at all.
+        """
+        if self.cfg.threads < 2:
+            return None
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(self.cfg.threads, thread_name_prefix='river-route')
+            atexit.register(self._shutdown_pool)
+        return self._pool
+
+    def _shutdown_pool(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
         return
 
     def __repr__(self) -> str:
@@ -109,16 +149,22 @@ class Router:
     ################################################
 
     def _read_initial_state(self) -> None:
-        if hasattr(self, 'channel_state'):
-            return
-
+        """Read the initial channel state from the config. Called on every route() so that repeated calls on
+        the same object always start from the configured state instead of the previous run's final state."""
+        n_rivers = self.river_ids.shape[0]
         state_file = self.cfg.channel_state_init_file
         if not state_file:
             self.logger.warning('channel_state_init_file not provided. Defaulting to zero initial conditions')
-            self.channel_state = np.zeros(self.river_ids.shape[0], dtype=np.float32)
+            self.channel_state = np.zeros(n_rivers, dtype=np.float32)
             return
         self.logger.debug('Reading Initial State from Parquet')
-        self.channel_state = pd.read_parquet(state_file).values.flatten().astype(np.float32, copy=False)
+        state = pd.read_parquet(state_file).values.flatten().astype(np.float32, copy=False)
+        if state.shape[0] != n_rivers:
+            raise ValueError(
+                f'channel_state_init_file has {state.shape[0]} values but {self.cfg.params_file} has '
+                f'{n_rivers} rivers. The state file must have one row per river in the same order.'
+            )
+        self.channel_state = state
         return
 
     def _write_final_state(self) -> None:
@@ -137,10 +183,21 @@ class Router:
         self.logger.debug('Calculating network dependent vectors')
         # todo use a cache for the params file to speed up possible repeated reads
         df = pd.read_parquet(self.cfg.params_file)
-        # todo validate that the expected columns for river, next river, k, and x are here before assigning
+
+        required = [self.cfg.var_river_id, 'next_river_id', 'k', 'x']
+        if self.cfg.coeff == 'dynamic':
+            required += ['alpha', 'beta']
+        missing = [column for column in required if column not in df.columns]
+        if missing:
+            raise ValueError(f'params_file is missing required column(s): {", ".join(missing)}')
 
         if df[self.cfg.var_river_id].duplicated().any():
             raise ValueError('params_file contains duplicate river IDs.')
+
+        # a stored partition (streams.partition_network) is reused as-is; absent, one is derived at setup
+        self._stored_region = (
+            np.ascontiguousarray(df['region'].to_numpy(copy=False), dtype=np.int64) if 'region' in df.columns else None
+        )
 
         self.river_ids = np.ascontiguousarray(df[self.cfg.var_river_id].to_numpy(copy=False), dtype=np.int64)
         self.next_river_ids = np.ascontiguousarray(df['next_river_id'].to_numpy(copy=False), dtype=np.int64)
@@ -176,6 +233,59 @@ class Router:
         self.logger.log(logging.INFO, f'Network: {n} river segments')
         return
 
+    def _set_region_schedule(self) -> None:
+        """
+        Build the list of index ranges the kernels sweep. Computed once per Router and reused for every file.
+
+        The parameter table is always used in the order it is given. Nothing in the routing path reorders a
+        river, so the forcing, the state and the routed discharge stay in parameter file order from end to end.
+        Threaded routing additionally requires that order to be DFS computation order -- a river following all
+        of its own upstream rivers, which makes every subtree a contiguous block that a worker can be handed as
+        a plain index range. That is checked against the input and reported if absent, never corrected here.
+
+        The jobs are ordered longest first so the pool packs the very uneven region sizes a river network
+        produces, with the main stem last. That orders the work queue only; the rivers inside each block keep
+        their file positions. Single-threaded routing gets one job spanning the whole network,
+        which is the same sweep the kernels did before any of this existed.
+        """
+        n = self.river_ids.shape[0]
+        whole = (np.array([0], dtype=np.int32), np.array([n], dtype=np.int32), -1, 0)
+        if self.cfg.threads < 2:
+            self.routing_jobs = (whole,)
+            self.cut_target = np.zeros(0, dtype=np.int32)
+            return
+
+        downstream_index = self.downstream_indices.astype(np.int64)
+        if self._stored_region is not None:
+            self.logger.debug('Using the region column stored in the params file')
+            region = self._stored_region
+        else:
+            self.logger.debug('Deriving a network partition for threaded routing')
+            region, _ = streams.assign_regions(downstream_index, threads=self.cfg.threads)
+        layout = streams.regions_to_layout(region, downstream_index)
+
+        n_regions = layout['n_regions']
+        if not n_regions:
+            self.logger.warning('The network did not split into any concurrent regions; routing single-threaded')
+            self.routing_jobs = (whole,)
+            self.cut_target = np.zeros(0, dtype=np.int32)
+            return
+
+        starts, stops = layout['region_starts'], layout['region_stops']
+        order = np.argsort(starts - stops)  # submission order for the pool only; river order is untouched
+        jobs = [(starts[r : r + 1], stops[r : r + 1], int(layout['region_outlet'][r]), int(r)) for r in order.tolist()]
+        jobs.append((layout['stem_starts'], layout['stem_stops'], -1, 0))
+        self.routing_jobs = tuple(jobs)
+        self.cut_target = layout['cut_target']
+
+        main_stem = int((layout['stem_stops'] - layout['stem_starts']).sum())
+        self.logger.log(
+            logging.INFO,
+            f'Partition: {n_regions} concurrent regions on {self.cfg.threads} threads, '
+            f'{main_stem} rivers ({main_stem / n:.2%}) routed sequentially as the main stem',
+        )
+        return
+
     def _set_channel_time_options(self) -> None:
         self.dt_routing = self.cfg.dt_routing
         self.dt_total = self.cfg.dt_total
@@ -188,8 +298,9 @@ class Router:
         self.dt_runoff = self.cfg.dt_runoff or (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
         self.dt_discharge = self.cfg.dt_discharge or self.dt_runoff
         self.dt_total = self.cfg.dt_total or self.dt_runoff * dates.shape[0]
-        if not self.cfg.dt_routing:
+        if not self.cfg.dt_routing and not self._warned_dt_routing:
             self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
+            self._warned_dt_routing = True
         self.dt_routing = self.cfg.dt_routing or self.dt_runoff
         self._validate_time_options()
         return
@@ -237,6 +348,7 @@ class Router:
         self.c3 = np.ascontiguousarray(((2 * (1 - self.x)) - dt_div_k) / denominator, dtype=np.float32)
         self.c4 = np.ascontiguousarray(self.c1 + self.c2, dtype=np.float32)
         self.c4_dt = np.ascontiguousarray(self.c4 / self.dt_runoff, dtype=np.float32)
+        self._check_coefficient_stability()
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')
             self.logger.debug(f'c1: {self.c1}')
@@ -253,15 +365,96 @@ class Router:
         self.downstream_c2[valid] = self.c2[self.downstream_indices[valid]]
         return
 
+    def _check_coefficient_stability(self) -> None:
+        """
+        Report rivers whose Muskingum coefficients are not stable for the current dt_routing.
+
+        Non-negative coefficients require ``2*k*x <= dt_routing <= 2*k*(1-x)``. Outside that window the
+        solution oscillates and the kernels clamp the resulting negative discharges to zero, which does not
+        conserve mass. The c1+c2+c3 == 1 identity holds for negative coefficients too, so it cannot detect this.
+
+        The action taken is set by the ``unstable_coefficients`` config: ``warn`` (default), ``raise``, or
+        ``ignore``. See ``river_route.streams`` for the analysis tools that quantify how to fix a network.
+        """
+        if self.cfg.unstable_coefficients == 'ignore':
+            return
+        dt = self.dt_routing
+        too_long = 2 * self.k * self.x > dt  # c1 < 0
+        too_short = 2 * self.k * (1 - self.x) < dt  # c3 < 0
+        n_unstable = int(np.count_nonzero(too_long | too_short))
+        if not n_unstable:
+            return
+        message = (
+            f'{n_unstable} of {self.k.shape[0]} rivers are not Muskingum-stable for dt_routing={dt} s '
+            f'({int(np.count_nonzero(too_long))} need a larger dt_routing, '
+            f'{int(np.count_nonzero(too_short))} need a smaller one). '
+            f'Stability requires 2*k*x <= dt_routing <= 2*k*(1-x) for every river. '
+            f'Routed discharge for these rivers oscillates and negative values are clamped to zero, '
+            f'which does not conserve mass. Use river_route.streams.analyze_stability to inspect the network, '
+            f"or set unstable_coefficients to 'ignore' to silence this."
+        )
+        if self.cfg.unstable_coefficients == 'raise':
+            raise ValueError(message)
+        self.logger.warning(message)
+        return
+
     #################################################
     # Generator for lateral flow routing
     #################################################
+
+    def _check_vlateral_alignment(self, ds: xr.Dataset, source: PathInput) -> None:
+        """
+        Verify that a lateral inflow dataset lines up with the routing network before its values reach the
+        kernels. The kernels are compiled without bounds checking and index vlateral by river position, so a
+        mismatched river count reads past the end of the array and a mismatched order silently routes each
+        river's water down the wrong reach.
+
+        Args:
+            ds: dataset holding the ``vlateral`` variable with dimensions (time, river)
+            source: path of the file the dataset came from, used in error messages
+
+        Raises:
+            ValueError: if the variable is missing, not 2D, ordered (river, time), has a river count that does
+                not match the params file, or carries river ids that differ from the params file
+        """
+        rid = self.cfg.var_river_id
+        n_rivers = self.river_ids.shape[0]
+        if 'vlateral' not in ds:
+            raise ValueError(f'{source} does not contain a vlateral variable')
+        array = ds['vlateral']
+        dims = tuple(array.dims)
+        if len(dims) != 2:
+            raise ValueError(f'{source} vlateral must have 2 dimensions (time, {rid}), found {dims}')
+        if rid in dims and dims[1] != rid:
+            raise ValueError(f'{source} vlateral dimensions must be ordered (time, {rid}), found {dims}')
+        if array.shape[1] != n_rivers:
+            raise ValueError(
+                f'{source} provides lateral inflow for {array.shape[1]} rivers but {self.cfg.params_file} has '
+                f'{n_rivers} rivers. The two files must describe the same network.'
+            )
+        if rid not in ds.variables:
+            self.logger.warning(
+                f'{source} has no {rid} variable so its column order cannot be verified against the params '
+                f'file. Values are assumed to be in the same order as {self.cfg.params_file}.'
+            )
+            return
+        file_ids = ds[rid].values.astype(np.int64, copy=False)
+        if not np.array_equal(file_ids, self.river_ids):
+            n_diff = int(np.count_nonzero(file_ids != self.river_ids))
+            same_set = set(file_ids.tolist()) == set(self.river_ids.tolist())
+            reason = 'are in a different order than' if same_set else 'are not the same rivers as'
+            raise ValueError(
+                f'{source} {rid} values {reason} {self.cfg.params_file} ({n_diff} positions differ). '
+                f'Sort the lateral inflow columns to match the params file river order.'
+            )
+        return
 
     def _vlateral_generator(self) -> VlateralGeneratorSignature:
         if self.cfg.vlateral_files:
             for lateral_file, discharge_file in zip(self.cfg.vlateral_files, self.cfg.discharge_files, strict=True):
                 self.logger.info('-' * 60)
                 with xr.open_dataset(lateral_file) as ds:
+                    self._check_vlateral_alignment(ds, lateral_file)
                     dates = ds['time'].values.astype('datetime64[s]')
                     array = ds['vlateral'].values.astype(np.float32, copy=False)
                     yield dates, array, lateral_file, discharge_file
@@ -280,6 +473,7 @@ class Router:
                     cumulative=self.cfg.grid_accumulation_type == 'cumulative',
                     as_volumes=True,
                 )
+                self._check_vlateral_alignment(ds, runoff_file)
                 yield (
                     ds['time'].values.astype('datetime64[s]'),
                     ds['vlateral'].values.astype(np.float32, copy=False),
@@ -306,10 +500,14 @@ class Router:
         # validate configuration options
         self.logger.debug('Validating configs')
         self.cfg.validate()
+        if self.cfg.deep_validation:
+            self.logger.debug('Validating contents of input files')
+            self.cfg.deep_validate()
         self.logger.debug(self)
         # build network vectors
         self._set_vectors_from_params()  # river_id, next_river_id, k, x, and alpha and beta (dynamic only)
         self._set_connectivity_vectors()  # downstream_indices
+        self._set_region_schedule()  # index ranges the kernels sweep; no vector is reordered
         # read state, route, write state
         self._read_initial_state()
         self._execute_routing()
@@ -366,6 +564,15 @@ class Router:
         for dates, vlateral, runoff_file, discharge_file in file_iter:
             self.logger.info(f'Routing vlateral: {runoff_file}')
             self._set_forced_time_options(dates)
+            if self.num_runoff_steps > dates.shape[0]:
+                raise ValueError(
+                    f'dt_total={self.dt_total} s needs {self.num_runoff_steps} steps of lateral inflow but '
+                    f'{runoff_file} provides {dates.shape[0]}. Lower dt_total or provide more input.'
+                )
+            if self.num_runoff_steps < dates.shape[0]:
+                self.logger.debug(f'Using the first {self.num_runoff_steps} of {dates.shape[0]} steps for dt_total')
+                dates = dates[: self.num_runoff_steps]
+                vlateral = vlateral[: self.num_runoff_steps]
             # static coefficients depend only on dt_routing/dt_runoff, so rebuild them only when those change
             # across files (dynamic coefficients are rebuilt inside the kernel each substep)
             if self.cfg.coeff != 'dynamic' and (self.dt_routing, self.dt_runoff) != coeff_dt:
@@ -429,6 +636,12 @@ class Router:
             q_file: path to write the discharge data to
             routed_file: path to the lateral inflow used to generate the discharge values, if applicable.
         """
+        if dates.shape[0] != q_array.shape[0]:
+            raise ValueError(f'Cannot write {q_file}: {dates.shape[0]} dates for {q_array.shape[0]} rows of discharge')
+        if q_array.shape[1] != self.river_ids.shape[0]:
+            raise ValueError(
+                f'Cannot write {q_file}: {q_array.shape[1]} columns of discharge for {self.river_ids.shape[0]} rivers'
+            )
         with nc.Dataset(str(q_file), mode='w', format='NETCDF4') as ds:
             ds.createDimension('time', size=q_array.shape[0])
             ds.createDimension(self.cfg.var_river_id, size=q_array.shape[1])

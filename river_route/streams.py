@@ -23,6 +23,9 @@ so close to 0.5 that no integer fits the window) and it is kept as a single reac
 eventually this module should merge with the present tools.py
 """
 
+import heapq
+
+import numba
 import numpy as np
 import pandas as pd
 
@@ -474,10 +477,333 @@ def analyze_stability(df: pd.DataFrame, dt: float) -> dict:
     print(f'Static stability analysis for dt={dt}')
     print(f'  rivers in:              {summary["n_rivers"]:,}')
     print(f'  already stable:         {summary["n_already_stable"]:,}')
-    print(f'  fixable by splitting:   {summary["n_resolved_by_split"]:,} '
-          f'(up to {summary["max_subreaches"]} sub-reaches each)')
-    print(f'  unresolvable errors:    {summary["n_unresolvable"]:,} '
-          f'(too short for dt or window empty; kept as 1 reach)')
+    print(
+        f'  fixable by splitting:   {summary["n_resolved_by_split"]:,} '
+        f'(up to {summary["max_subreaches"]} sub-reaches each)'
+    )
+    print(
+        f'  unresolvable errors:    {summary["n_unresolvable"]:,} (too short for dt or window empty; kept as 1 reach)'
+    )
     print(f'  total streams in fixed network: {summary["total_streams"]:,}')
     print(f'  new streams to create:          {summary["streams_to_create"]:,}')
     return summary
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Network partitioning for multi-threaded routing
+#
+# Everything here assumes the parameter table is in DFS computation order: a depth-first walk from each basin
+# outlet upstream, emitted so that every river follows all of its own upstream rivers. That ordering makes every
+# subtree a CONTIGUOUS block ending at its own outlet, which is what lets a thread be handed a plain index range
+# instead of a list of rivers. Nothing here ever reorders a parameter table: the order it is given in is the
+# order it is routed and written in, so the forcing, the state and the routed discharge always line up with the
+# file the user provided. DFS order is a property of the input, checked with is_dfs_ordered and required by
+# assign_regions; a table that lacks it is reported, never rewritten.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _downstream_indices(df: pd.DataFrame) -> np.ndarray:
+    """
+    Map the next_river_id column to positional indices, -1 where a river has no downstream.
+
+    Raises:
+        ValueError: if a next_river_id is absent from river_id (a topology hole), or if the table is not
+            sorted upstream-before-downstream (which every routine here relies on).
+    """
+    n = df.shape[0]
+    river_id = df['river_id'].to_numpy(dtype=np.int64)
+    next_river_id = df['next_river_id'].to_numpy(dtype=np.int64)
+    downstream_index = np.full(n, -1, dtype=np.int64)
+    has_downstream = next_river_id != -1
+    mapped = pd.Series(np.arange(n, dtype=np.int64), index=river_id).reindex(next_river_id[has_downstream]).to_numpy()
+    if np.isnan(mapped).any():
+        raise ValueError(
+            'next_river_id values reference ids not present in river_id (topology hole); '
+            'validate with river_connectivity_is_valid before partitioning'
+        )
+    downstream_index[has_downstream] = mapped.astype(np.int64)
+    if not np.all((downstream_index < 0) | (downstream_index > np.arange(n))):
+        raise ValueError(
+            'rivers must be topologically sorted upstream-before-downstream '
+            '(next_river_id must appear after river_id); run river_connectivity_is_valid'
+        )
+    return downstream_index
+
+
+@numba.njit(cache=True)
+def _subtree_extent(downstream_index: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    One forward pass giving each river's upstream count and the lowest index in its subtree.
+
+    Correct only because the table is topologically sorted: every contributor of river i sits at a lower index,
+    so both values are final by the time the loop reaches i and can be folded into its downstream.
+    """
+    n = downstream_index.shape[0]
+    size = np.ones(n, dtype=np.int64)
+    lowest = np.arange(n)
+    for i in range(n):
+        d = downstream_index[i]
+        if d >= 0:
+            size[d] += size[i]
+            if lowest[i] < lowest[d]:
+                lowest[d] = lowest[i]
+    return size, lowest
+
+
+def is_dfs_ordered(downstream_index: np.ndarray) -> np.ndarray:
+    """
+    Per-river check that the table is in DFS computation order.
+
+    A river's subtree is contiguous exactly when the lowest index it contains is ``i - upstream_count``. Any
+    river failing this has some of its upstream water sitting outside its own block, so the block cannot be
+    routed as an independent range. Returns the per-river boolean so callers can report how far off a table is.
+    """
+    size, lowest = _subtree_extent(downstream_index)
+    return lowest == (np.arange(downstream_index.shape[0]) - size + 1)
+
+
+@numba.njit(cache=True)
+def _claim_regions(size: np.ndarray, lowest: np.ndarray, order: np.ndarray, cap: int):
+    """
+    Claim maximal subtrees of at most ``cap`` rivers as concurrent regions, largest first.
+
+    In DFS computation order a subtree is just the range [lowest[v], v], so claiming one is marking a slice --
+    no traversal. Visiting candidates in descending size is what makes the result safe to route concurrently.
+    Any ancestor of a river is at least as large as it, so ancestors are considered first: once a river is
+    unclaimed at its turn, no ancestor of it has been claimed either. That yields the two properties the kernels
+    depend on:
+        1. regions are disjoint contiguous ranges, each holding every river upstream of its own outlet, so a
+           region needs nothing from outside its range;
+        2. a region's outlet always drains into unclaimed water, never into another region, so the only
+           cross-region write in a routing sweep is the single push at each region's outlet.
+
+    Returns the per-river region id (-1 for rivers left to the sequential main stem) and the region count.
+    """
+    n = size.shape[0]
+    region = np.full(n, -1, dtype=np.int64)
+    n_regions = 0
+    for oi in range(order.shape[0]):
+        v = order[oi]
+        if region[v] >= 0 or size[v] > cap:
+            continue
+        for i in range(lowest[v], v + 1):
+            region[i] = n_regions
+        n_regions += 1
+    return region, n_regions
+
+
+def _parallel_cost(region: np.ndarray, n_regions: int, threads: int) -> tuple[int, int, float]:
+    """
+    Predict the cost of a partition as (parallel span, sequential main stem, speedup over one thread).
+
+    Regions are packed onto ``threads`` workers longest-first, which is how a work-stealing pool schedules them
+    when the largest regions are submitted first. Cost is counted in rivers swept, since the kernel does a fixed
+    amount of work per river per sweep. The main stem is added whole because it runs single-threaded afterwards.
+    """
+    counts = np.bincount(region[region >= 0], minlength=max(n_regions, 1))
+    main_stem = int(np.count_nonzero(region < 0))
+    bins = [(0, w) for w in range(threads)]
+    heapq.heapify(bins)
+    for count in sorted(counts.tolist(), reverse=True):
+        load, w = heapq.heappop(bins)
+        heapq.heappush(bins, (load + int(count), w))
+    span = max(load for load, _ in bins) if threads else 0
+    total = span + main_stem
+    return span, main_stem, (region.shape[0] / total if total else 1.0)
+
+
+# fractions of the ideal per-thread share to try as the largest allowed region; the best is chosen by
+# _parallel_cost. A loose cap leaves a short main stem but packs unevenly, a tight one packs evenly but
+# pushes more water into the sequential main stem, and the trade turns over at a different point per network.
+_CAP_MULTIPLIERS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0, 1.3, 1.6, 2.0)
+
+
+def assign_regions(
+    downstream_index: np.ndarray, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
+) -> tuple[np.ndarray, int]:
+    """
+    Partition a DFS-ordered network into contiguous regions that can be routed concurrently (see _claim_regions).
+
+    Args:
+        downstream_index: positional index of each river's downstream, -1 where there is none
+        threads: worker count the partition is being sized for
+        granularity: regions to aim for per thread. More regions than threads let a work-stealing pool even out
+            the uneven region sizes a river network produces; 2 is the measured sweet spot.
+        cap_multiplier: largest allowed region as a multiple of the ideal per-thread share. None searches
+            _CAP_MULTIPLIERS and keeps whichever partition _parallel_cost rates fastest.
+
+    Returns:
+        region: per-river region id, -1 for rivers in the sequential main stem
+        n_regions: number of concurrent regions
+
+    Raises:
+        ValueError: if the network is not in DFS computation order, since regions would not be contiguous
+    """
+    if threads < 1:
+        raise ValueError(f'threads must be >= 1, got {threads}')
+    if granularity < 1:
+        raise ValueError(f'granularity must be >= 1, got {granularity}')
+    n = downstream_index.shape[0]
+    size, lowest = _subtree_extent(downstream_index)
+    contiguous = lowest == (np.arange(n) - size + 1)
+    if not contiguous.all():
+        raise ValueError(
+            f'{int((~contiguous).sum()):,} of {n:,} rivers do not have a contiguous subtree, so the parameter '
+            f'table is not in DFS computation order and cannot be split into concurrent ranges. Provide a '
+            f'parameter table sorted in depth-first computation order, or route with threads=1, which places '
+            f'no ordering requirement beyond upstream-before-downstream.'
+        )
+    order = np.argsort(-size, kind='stable')
+    share = n / (threads * granularity)
+
+    multipliers = _CAP_MULTIPLIERS if cap_multiplier is None else (cap_multiplier,)
+    best: tuple[float, np.ndarray, int] | None = None
+    for multiplier in multipliers:
+        region, n_regions = _claim_regions(size, lowest, order, max(1, int(share * multiplier)))
+        _, _, speedup = _parallel_cost(region, n_regions, threads)
+        if best is None or speedup > best[0]:
+            best = (speedup, region, n_regions)
+    _, region, n_regions = best
+    return region, n_regions
+
+
+def partition_network(
+    df: pd.DataFrame, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
+) -> pd.DataFrame:
+    """
+    Annotate a routing parameter table with the region each river belongs to for multi-threaded routing.
+
+    Topology and row order are unchanged; one column is added. The table must already be in DFS computation
+    order, which is what makes each region a contiguous range of rows, and is a property of the input this
+    function checks rather than imposes.
+
+    Routing a partitioned network is a two-stage pass with a single barrier between them, not a barrier per time
+    step: coupling between rivers only ever runs downstream, so a region can be routed for the whole simulation
+    in isolation. Each region's outlet contribution is buffered per routing step and injected when the main stem
+    is swept.
+
+    The partition depends only on connectivity and ``threads``, never on the forcing, dt, or coefficients, so it
+    is computed once and stored with the parameters rather than rebuilt per simulation.
+
+    Args:
+        df: parameter table with columns river_id and next_river_id (other columns are preserved)
+        threads: worker count the partition is sized for
+        granularity: regions to aim for per thread; see assign_regions
+        cap_multiplier: largest allowed region as a multiple of the ideal per-thread share; None auto-selects
+
+    Returns:
+        A copy of df with one added column:
+            region -- int32, the concurrent region a river belongs to, or -1 if it is routed in the sequential
+                      main stem after the barrier
+    """
+    region, _ = assign_regions(_downstream_indices(df), threads, granularity, cap_multiplier)
+    out = df.copy()
+    out['region'] = region.astype(np.int32)
+    return out
+
+
+def analyze_partitioning(
+    df: pd.DataFrame, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
+) -> dict:
+    """
+    Static analysis of partitioning a network for multi-threaded routing (see partition_network).
+
+    Reports the region count, how evenly they pack onto ``threads`` workers, how much of the network falls into
+    the sequential main stem, and the speedup that implies. The speedup is an upper bound from work alone: it
+    assumes perfect scaling and ignores memory bandwidth, which this kernel is largely bound by. Also prints a
+    human-readable report.
+    """
+    region, n_regions = assign_regions(_downstream_indices(df), threads, granularity, cap_multiplier)
+    span, main_stem, speedup = _parallel_cost(region, n_regions, threads)
+    counts = np.bincount(region[region >= 0], minlength=max(n_regions, 1))
+    n_rivers = df.shape[0]
+
+    summary = {
+        'threads': threads,
+        'n_rivers': n_rivers,
+        'n_regions': n_regions,
+        'largest_region': int(counts.max()) if n_regions else 0,
+        'smallest_region': int(counts.min()) if n_regions else 0,
+        'parallel_span': span,
+        'main_stem': main_stem,
+        'main_stem_fraction': main_stem / n_rivers if n_rivers else 0.0,
+        'predicted_speedup': speedup,
+    }
+
+    print(f'Partitioning analysis for threads={threads}')
+    print(f'  rivers in:              {summary["n_rivers"]:,}')
+    print(
+        f'  concurrent regions:     {summary["n_regions"]:,} '
+        f'(largest {summary["largest_region"]:,}, smallest {summary["smallest_region"]:,})'
+    )
+    print(f'  parallel span:          {summary["parallel_span"]:,} rivers on the busiest thread')
+    print(f'  sequential main stem:   {summary["main_stem"]:,} ({summary["main_stem_fraction"]:.1%})')
+    print(f'  predicted speedup:      {summary["predicted_speedup"]:.2f}x (work only; ignores memory bandwidth)')
+    return summary
+
+
+def regions_to_layout(region: np.ndarray, downstream_index: np.ndarray) -> dict:
+    """
+    Turn a per-river region assignment into the index ranges a region-parallel routing kernel consumes.
+
+    Nothing is reordered. In DFS computation order each region is already a contiguous run of rows, so this only
+    locates the run boundaries. The main stem is what is left between the regions, which is generally SEVERAL
+    ranges rather than one: a main stem river sits between the tributary subtrees that feed it. The kernel
+    therefore takes a list of blocks and sweeps them in increasing index order, which is still a valid
+    topological sweep because the whole table is topologically sorted.
+
+    Args:
+        region: per-river region id from assign_regions, -1 for the sequential main stem
+        downstream_index: positional index of each river's downstream, -1 where there is none
+
+    Returns a dict of arrays:
+        region_starts / region_stops -- int32 (n_regions,), region r is [start, stop)
+        region_outlet -- int32 (n_regions,), the river whose push is buffered; always stop - 1 in DFS order
+        cut_target    -- int32 (n_regions,), index each region's outlet drains into, -1 at a basin outlet
+        stem_starts / stem_stops     -- int32 (m,), the main stem blocks, in increasing index order
+        n_regions     -- int, number of concurrent regions
+
+    Raises:
+        ValueError: if a region is not one contiguous run, or if a region's outlet drains into another region
+            rather than the main stem, either of which would make the regions unsafe to route concurrently
+    """
+    n = region.shape[0]
+    if downstream_index.shape[0] != n:
+        raise ValueError(f'region has {n} values but downstream_index has {downstream_index.shape[0]}')
+    concurrent = region[region >= 0]
+    n_regions = int(concurrent.max()) + 1 if concurrent.size else 0
+    if concurrent.size and not np.array_equal(np.unique(concurrent), np.arange(n_regions)):
+        raise ValueError(f'region ids must be a contiguous range 0..{n_regions - 1} (plus -1 for the main stem)')
+
+    # boundaries of every run of equal region id, then split them into concurrent regions and main stem blocks
+    edges = np.nonzero(np.diff(region))[0] + 1
+    starts = np.concatenate(([0], edges))
+    stops = np.concatenate((edges, [n]))
+    labels = region[starts]
+
+    region_starts = np.full(n_regions, -1, dtype=np.int64)
+    region_stops = np.full(n_regions, -1, dtype=np.int64)
+    for start, stop, label in zip(starts[labels >= 0], stops[labels >= 0], labels[labels >= 0], strict=True):
+        if region_starts[label] >= 0:
+            raise ValueError(f'region {int(label)} is split across more than one range of rows; it must be one block')
+        region_starts[label] = start
+        region_stops[label] = stop
+
+    # a region's outlet is the last river of its block, and its downstream must land in the main stem
+    region_outlet = region_stops - 1
+    cut_target = downstream_index[region_outlet] if n_regions else np.zeros(0, dtype=np.int64)
+    if n_regions and np.any(region[cut_target[cut_target >= 0]] >= 0):
+        raise ValueError(
+            'a region outlet drains into another region rather than the sequential main stem; '
+            'the partition is not safe to route concurrently (build it with assign_regions)'
+        )
+
+    return {
+        'region_starts': region_starts.astype(np.int32),
+        'region_stops': region_stops.astype(np.int32),
+        'region_outlet': region_outlet.astype(np.int32),
+        'cut_target': np.asarray(cut_target).astype(np.int32),
+        'stem_starts': starts[labels < 0].astype(np.int32),
+        'stem_stops': stops[labels < 0].astype(np.int32),
+        'n_regions': n_regions,
+    }
