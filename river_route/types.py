@@ -1,9 +1,12 @@
 from collections.abc import Generator
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from .routers import Router
 
 PathInput = str | Path  # used at runtime for validation so it can't be a lazy type alias
 type PathList = list[PathInput]
@@ -15,7 +18,12 @@ type VlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, Pat
 
 class WriteDischargesFn(Protocol):
     def __call__(
-        self, dates: DatetimeArray, q_array: FloatArray, q_file: PathInput, routed_file: PathInput = ''
+        self,
+        router: Router,
+        dates: DatetimeArray,
+        discharge_array: FloatArray,
+        discharge_file: PathInput,
+        runoff_file: PathInput = '',
     ) -> None: ...
 
 

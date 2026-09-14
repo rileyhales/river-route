@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -126,9 +127,15 @@ def _check_partition_arrays(router: Router, n_rivers: int) -> None:
     return
 
 
-def dispatch(router: Router, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray | None = None) -> None:
+def dispatch(
+    router: Router,
+    q_t: FloatArray,
+    discharge_array: FloatArray,
+    vlateral: FloatArray | None = None,
+    thread_pool: ThreadPoolExecutor | None = None,
+) -> None:
     """
-    Route the whole network, concurrently across regions when the schedule and config allow it.
+    Route the whole network, concurrently across regions on ``thread_pool`` when the schedule and config allow it.
 
     Threading is deliberately not part of the registry key. That key says which MATH to run; how the sweep is
     scheduled is orthogonal to it, and folding concurrency in would double every combination that has to be
@@ -168,12 +175,11 @@ def dispatch(router: Router, q_t: FloatArray, discharge_array: FloatArray, vlate
 
     if n_regions:
         regions = router.routing_jobs[:-1]  # already ordered longest first by the Router
-        pool = router.thread_pool()
-        if pool is None:
+        if thread_pool is None:
             for job in regions:
                 run(job, _NO_CUTS)
         else:
-            list(pool.map(lambda job: run(job, _NO_CUTS), regions))  # list() so a worker exception propagates
+            list(thread_pool.map(lambda job: run(job, _NO_CUTS), regions))  # list() so a worker exception propagates
 
     # the one barrier of the simulation: every region has finished before the main stem consumes its buffer
     run(router.routing_jobs[-1], router.cut_target)

@@ -62,8 +62,7 @@ rr --help
 rr route /path/to/config.yaml
 ```
 
-Copy a template from the `examples` directory to start: `config_muskingum.yaml` for channel routing,
-`config_rapid_muskingum.yaml` for lateral inflow routing, or `config.yaml` for the full list of keys.
+Copy `examples/config.yaml` to start; it lists every config key.
 
 ## Testing
 

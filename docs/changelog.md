@@ -6,19 +6,40 @@
 
 - Increased the minimum Python version to 3.14.
 - Increased the minimum pandas version to 3.0.5. pandas 3 changed `DataFrame.to_numpy()` to return a
-  read-only array, which broke the in-place unit conversion in `runoff_to_vlateral` for inputs with
+  read-only array, which broke the in-place unit conversion when preparing vlateral from runoff with
   irregular timesteps. The 3.0.5 floor also skips 3.0.4, which is yanked from PyPI for segfaults in
   datetime handling that this package hit on every CF encoded time axis it read.
 - Increased the minimum numpy version to 2.5.
+- Added `river_route.writers` with premade discharge writers for `Router.set_write_discharges`: `netcdf_writer`, the
+  default, and `zarr_writer`, which writes uncompressed `(time, river_id)` discharge in chunks of 500 rivers that
+  each span every time step, writing up to `threads` chunks at once (optionally packed into shard files with
+  `writers.ZARR_CHUNKS_PER_SHARD`), and `parquet_writer`, which writes one row per
+  river and one column per time step, uncompressed and without dictionary encoding or statistics by default
+  (`writers.PARQUET_WRITE_OPTIONS`). `null_writer` sends discharge to the operating system's null device
+  (`os.devnull`) so a route keeps nothing on disk. zarr is now a dependency.
+- Discharge writers now receive the `Router` as their first argument:
+  `writer(router, dates, discharge_array, discharge_file, runoff_file)`, so they can read `router.river_ids` and
+  `router.cfg`. Custom writers written for the previous 4 argument signature need the new first argument.
+  `Router._default_write_discharges` is removed; use `river_route.writers.netcdf_writer`.
 - Routing from gridded runoff no longer rebuilds, copies, or reallocates lateral inflow for every runoff file.
   The weight table is read and checked against the params file once per `route()`, and each file is aggregated
   in a single pass (area weighting, de-accumulation, clipping, NaN replacement, and the volume product) straight
-  into a reused C-order buffer that the kernels read without a copy. The pieces are available as
-  `GridWeights`, `read_grid_runoff`, and `aggregate_grid_runoff` in `river_route.runoff`, and
-  `runoff_to_vlateral` is built on them. The runoff read itself is unchanged. With `threads` above 1 the
-  rivers are split into ranges of similar work that the same kernel aggregates concurrently on the router's
-  thread pool; single threaded, one range covers every river.
-- Fixed `runoff_to_vlateral` raising `output array is read-only` for irregular timesteps with
+  into a reused C-order buffer that the kernels read without a copy. The runoff read itself is unchanged. With
+  `threads` above 1 the rivers are split into ranges of similar work that the same kernel aggregates
+  concurrently on the `thread_pool`; single threaded, one range covers every river.
+- Threading happens only on a thread pool the caller passes; the package never creates one.
+  `Router.route(thread_pool=pool)` uses a `ThreadPoolExecutor` as given and never shuts it down, so it can be shared
+  with `Runoff(thread_pool=pool)` and closed by the caller's `with` block. The `threads` config sets how many regions
+  the network is partitioned into when a pool is given; without one, routing is single-threaded.
+  `Router.thread_pool()` is removed.
+- `river_route.runoff` is now a subpackage following the layout of `river_route.routers`. Runoff preparation is
+  the `Runoff` class (also exported as `river_route.Runoff`), which reads the weight table once
+  and provides `read_runoff`, `aggregate`, `vlateral` (into a reused buffer), and `to_dataset`. It replaces the
+  `runoff_to_vlateral` function: use `Runoff(grid_weights_file, ...).to_dataset(runoff_files)`. The
+  aggregation kernel lives in `river_route.runoff._numba_kernels`, and the weight table functions
+  (`grid_weights`, `compute_voronoi_catchment_intersects`, `voronoi_diagram_from_regular_xy`,
+  `cell_xy_from_regular_grid`) in `river_route.runoff.weights`, still importable from `river_route.runoff`.
+- Fixed vlateral preparation raising `output array is read-only` for irregular timesteps with
   `as_volumes=True`.
 - Added tests for the gridded runoff path: weight table construction, area weighted aggregation, unit
   conversion, cumulative de-accumulation, irregular timestep resampling, and routing from grid files.
@@ -44,8 +65,7 @@
   continuing from the previous run's final state.
 - Each `Router` gets its own log handler. Loggers were named from `id(self)`, which CPython reuses after
   garbage collection, so handlers accumulated and log lines were duplicated.
-- Added `examples/config_muskingum.yaml` and `examples/config_rapid_muskingum.yaml`, which the docs
-  referenced but were not present, and removed the invalid `var_vlateral` key from `examples/config.yaml`.
+- Removed the invalid `var_vlateral` key from `examples/config.yaml`.
 - Added synthetic network tests that run without the downloaded reference data, and CI now runs the test
   suite, ruff, and mypy on every push and pull request.
 - Added lower and upper version bounds to all dependencies.

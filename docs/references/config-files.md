@@ -111,23 +111,8 @@ otherwise read past the end of the array or route water down the wrong reach.
 
 ## Example Configuration YAMLs
 
-The general template in YAML format lists all keys with comments. Template files for specific
-procedures are available in the examples directory `config_muskingum.yaml`, `config_rapid_muskingum.yaml`.
-
-### General Config File
+The general template in YAML format lists all keys with comments.
 
 ```yaml title="config.yaml"
 {% include-markdown "../../examples/config.yaml" %}
-```
-
-### Channel-only
-
-```yaml title="config_muskingum.yaml"
-{% include-markdown "../../examples/config_muskingum.yaml" %}
-```
-
-### Lateral runoff (Rapid-style)
-
-```yaml title="config_rapid_muskingum.yaml"
-{% include-markdown "../../examples/config_rapid_muskingum.yaml" %}
 ```

@@ -85,19 +85,35 @@ m = (
 ## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disk.
-The default function writes discharge to netCDF.
+The default function, `river_route.writers.netcdf_writer`, writes discharge to netCDF.
+
+Premade writers are in `river_route.writers`. `zarr_writer` writes each output as an uncompressed zarr store with
+dimensions `(time, river_id)`, built to write as fast as possible. It writes up to `threads` chunks at once. `parquet_writer` writes
+one row per river and one column per time step, with the pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
+
+```python title="Write Routed Flows to Zarr"
+import river_route as rr
+
+(
+    rr
+    .Router('config.yaml', forcing='vlateral')
+    .set_write_discharges(rr.writers.zarr_writer)
+    .route()
+)
+```
 
 A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
 Use the `set_write_discharges` method to supply a custom writer function; it returns the `Router`
-so you can chain it onto the constructor. Your custom function must accept exactly 4 arguments:
+so you can chain it onto the constructor. The writer is called once per routed input file with 5 arguments:
 
-1. `dates`: datetime array for rows in the discharge array.
-2. `discharge_array`: routed discharge array with shape `(time, river_id)`.
-3. `discharge_file`: path to the output file.
-4. `runoff_file`: path to the runoff input used to produce this output.
+1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
+2. `dates`: datetime array for rows in the discharge array.
+3. `discharge_array`: routed discharge array with shape `(time, river_id)`.
+4. `discharge_file`: path to the output file.
+5. `runoff_file`: path to the runoff input used to produce this output.
 
 As an example, you might want to write output as Parquet instead. The snippets below focus on the
 writer override; for `.route()` to actually run, the config must select `forcing: vlateral` and supply a
@@ -105,15 +121,12 @@ water source (`vlateral_files`, or `grid_runoff_files` plus `grid_weights_file`)
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
-import xarray as xr
 
 import river_route as rr
 
 
-def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+def custom_write_discharges(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.river_ids)
     df.to_parquet(discharge_file)
     return
 
@@ -134,7 +147,7 @@ import xarray as xr
 import river_route as rr
 
 
-def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+def append_to_existing_file(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
     ensemble_number = os.path.basename(runoff_file).split('_')[1]
     ds = xr.load_dataset(discharge_file)
     ds['Q'].loc[dict(ensemble=ensemble_number)] = discharge_array
@@ -152,15 +165,12 @@ def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_
 
 ```python title="Save a Subset of the Routed Flows"
 import pandas as pd
-import xarray as xr
 
 import river_route as rr
 
 
-def save_partial_results(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+def save_partial_results(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
     df.to_parquet(discharge_file)

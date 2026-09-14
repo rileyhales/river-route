@@ -1,4 +1,3 @@
-import atexit
 import datetime
 import itertools
 import json
@@ -7,15 +6,14 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Self
 
-import netCDF4 as nc
 import numpy as np
 import pandas as pd
 import xarray as xr
 import yaml
 from tqdm import tqdm
 
-from .. import streams
-from ..runoff import GridWeights, aggregate_grid_runoff, read_grid_runoff
+from .. import streams, writers
+from ..runoff import Runoff
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, VlateralGeneratorSignature, WriteDischargesFn
 from ._kernel_registry import dispatch
 from .Configs import Configs
@@ -66,7 +64,6 @@ class Router:
     routing_jobs: tuple[tuple[IntArray, IntArray, int, int], ...]  # (block_starts, block_stops, outlet, region)
     cut_target: IntArray  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
     _stored_region: IntArray | None  # the params file 'region' column, when it has one
-    _pool: ThreadPoolExecutor | None
 
     # State variables
     channel_state: FloatArray  # routing depends only on a channel state vector
@@ -83,8 +80,6 @@ class Router:
 
     # methods overridable via dependency injection
     _write_discharges: WriteDischargesFn
-
-    _warned_dt_routing: bool
 
     def __init__(self, configs: PathInput | None = None, **kwargs: Any) -> None:
         # parse and create configs
@@ -115,30 +110,7 @@ class Router:
         self.logger.debug('Logger initialized')
 
         # default discharge writer; overridable via set_write_discharges
-        self._write_discharges = self._default_write_discharges
-        self._warned_dt_routing = False
-        self._pool = None
-        return
-
-    def thread_pool(self) -> ThreadPoolExecutor | None:
-        """
-        The worker pool for region-parallel routing, or None when routing single-threaded.
-
-        Created once and reused for the life of the Router. A pool built per file or per dispatch costs more to
-        start than the routing it would overlap: a short run measured slower with two fresh-per-call workers than
-        with none at all.
-        """
-        if self.cfg.threads < 2:
-            return None
-        if self._pool is None:
-            self._pool = ThreadPoolExecutor(self.cfg.threads, thread_name_prefix='river-route')
-            atexit.register(self._shutdown_pool)
-        return self._pool
-
-    def _shutdown_pool(self) -> None:
-        if self._pool is not None:
-            self._pool.shutdown(wait=False)
-            self._pool = None
+        self._write_discharges = writers.netcdf_writer
         return
 
     def __repr__(self) -> str:
@@ -233,7 +205,7 @@ class Router:
         self.logger.log(logging.INFO, f'Network: {n} river segments')
         return
 
-    def _set_region_schedule(self) -> None:
+    def _set_region_schedule(self, thread_pool: ThreadPoolExecutor | None = None) -> None:
         """
         Build the list of index ranges the kernels sweep. Computed once per Router and reused for every file.
 
@@ -245,12 +217,12 @@ class Router:
 
         The jobs are ordered longest first so the pool packs the very uneven region sizes a river network
         produces, with the main stem last. That orders the work queue only; the rivers inside each block keep
-        their file positions. Single-threaded routing gets one job spanning the whole network,
-        which is the same sweep the kernels did before any of this existed.
+        their file positions. Single-threaded routing, without a thread_pool or with threads=1, gets one job spanning
+        the whole network, which is the same sweep the kernels did before any of this existed.
         """
         n = self.river_ids.shape[0]
         whole = (np.array([0], dtype=np.int32), np.array([n], dtype=np.int32), -1, 0)
-        if self.cfg.threads < 2:
+        if thread_pool is None or self.cfg.threads < 2:
             self.routing_jobs = (whole,)
             self.cut_target = np.zeros(0, dtype=np.int32)
             return
@@ -298,9 +270,8 @@ class Router:
         self.dt_runoff = self.cfg.dt_runoff or (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
         self.dt_discharge = self.cfg.dt_discharge or self.dt_runoff
         self.dt_total = self.cfg.dt_total or self.dt_runoff * dates.shape[0]
-        if not self.cfg.dt_routing and not self._warned_dt_routing:
+        if not self.cfg.dt_routing:
             self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
-            self._warned_dt_routing = True
         self.dt_routing = self.cfg.dt_routing or self.dt_runoff
         self._validate_time_options()
         return
@@ -466,7 +437,7 @@ class Router:
             )
         return
 
-    def _vlateral_generator(self) -> VlateralGeneratorSignature:
+    def _vlateral_generator(self, thread_pool: ThreadPoolExecutor | None = None) -> VlateralGeneratorSignature:
         if self.cfg.vlateral_files:
             for lateral_file, discharge_file in zip(self.cfg.vlateral_files, self.cfg.discharge_files, strict=True):
                 self.logger.info('-' * 60)
@@ -479,34 +450,23 @@ class Router:
             # The weight table is identical for every runoff file, so it is read and checked against the params file
             # once. Every file is then aggregated into one reused C-order buffer that the kernels read directly: no
             # per-file allocation or copy. The yielded array is overwritten by the next file.
-            weights = GridWeights.from_file(self.cfg.grid_weights_file, var_river_id=self.cfg.var_river_id)
-            self._check_river_alignment(weights.river_ids, weights.river_ids.shape[0], self.cfg.grid_weights_file)
-            buffer = np.empty((0, self.river_ids.shape[0]), dtype=np.float32)
+            runoff = Runoff(
+                self.cfg.grid_weights_file,
+                var_river_id=self.cfg.var_river_id,
+                var_runoff=self.cfg.var_grid_runoff,
+                var_x=self.cfg.var_x,
+                var_y=self.cfg.var_y,
+                var_t=self.cfg.var_t,
+                cumulative=self.cfg.grid_accumulation_type == 'cumulative',
+                as_volumes=True,
+                thread_pool=thread_pool,
+                threads=self.cfg.threads,
+            )
+            self._check_river_alignment(runoff.river_ids, runoff.river_ids.shape[0], self.cfg.grid_weights_file)
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files, strict=True):
                 self.logger.info('-' * 60)
                 self.logger.debug(f'Calculating vlateral: {runoff_file}')
-                runoff, dates, conversion_factor = read_grid_runoff(
-                    runoff_file,
-                    weights,
-                    var_runoff=self.cfg.var_grid_runoff,
-                    var_x=self.cfg.var_x,
-                    var_y=self.cfg.var_y,
-                    var_t=self.cfg.var_t,
-                )
-                if buffer.shape[0] < runoff.shape[0]:
-                    buffer = np.empty((runoff.shape[0], self.river_ids.shape[0]), dtype=np.float32)
-                vlateral, dates = aggregate_grid_runoff(
-                    runoff,
-                    dates,
-                    weights,
-                    conversion_factor,
-                    cumulative=self.cfg.grid_accumulation_type == 'cumulative',
-                    as_volumes=True,
-                    out=buffer,
-                    pool=self.thread_pool(),
-                    threads=self.cfg.threads,
-                )
-                del runoff
+                vlateral, dates = runoff.vlateral(runoff_file)
                 yield (
                     dates.astype('datetime64[s]'),
                     vlateral.astype(np.float32, copy=False),
@@ -518,11 +478,16 @@ class Router:
     # Methods to execute routing simulation
     ################################################
 
-    def route(self) -> Self:
+    def route(self, thread_pool: ThreadPoolExecutor | None = None) -> Self:
         """
         Execute the simulation described by the provided configs and routing parameters. All configs, file paths,
         parameters, and options must be set when the object is initialized so that validation is performed before the
         simulation.
+
+        Args:
+            thread_pool: optional pool to route concurrently on, split into ``threads`` regions. It is used as given
+                and never shut down here, so it can be shared and closed by the caller's with block. Without one,
+                routing is single-threaded regardless of ``threads``.
 
         Returns:
             Self: the class instance with updated channel_state and output files written to disk
@@ -540,25 +505,25 @@ class Router:
         # build network vectors
         self._set_vectors_from_params()  # river_id, next_river_id, k, x, and alpha and beta (dynamic only)
         self._set_connectivity_vectors()  # downstream_indices
-        self._set_region_schedule()  # index ranges the kernels sweep; no vector is reordered
+        self._set_region_schedule(thread_pool)  # index ranges the kernels sweep; no vector is reordered
         # read state, route, write state
         self._read_initial_state()
-        self._execute_routing()
+        self._execute_routing(thread_pool)
         self._write_final_state()
         # log total time
         t2 = datetime.datetime.now()
         self.logger.log(PROGRESS, f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return self
 
-    def _execute_routing(self) -> None:
+    def _execute_routing(self, thread_pool: ThreadPoolExecutor | None) -> None:
         # there are two types of loops, one for channel only, one if lateral forcing(s) are provided.
         if self.cfg.forcing == 'channel':
-            self._execute_routing_channel()
+            self._execute_routing_channel(thread_pool)
         else:
-            self._execute_routing_forced()
+            self._execute_routing_forced(thread_pool)
         return
 
-    def _execute_routing_channel(self) -> None:
+    def _execute_routing_channel(self, thread_pool: ThreadPoolExecutor | None) -> None:
         self.logger.info('-' * 60)
 
         # channel routing time options and (static) coefficients
@@ -568,7 +533,7 @@ class Router:
         self.logger.debug('Starting routing computation')
         q_t = self.channel_state.astype(np.float32, copy=True)
         discharge_array = np.zeros((self.num_runoff_steps, self.river_ids.shape[0]), dtype=np.float32)
-        dispatch(self, q_t=q_t, discharge_array=discharge_array)
+        dispatch(self, q_t=q_t, discharge_array=discharge_array, thread_pool=thread_pool)
         self.channel_state = q_t
 
         # generate dates since they cannot be copied from an external forcing file
@@ -581,15 +546,15 @@ class Router:
         # write outputs
         self.logger.debug('Writing Discharge Array to File')
         discharge_array = discharge_array.astype(np.float32, copy=False)
-        self._write_discharges(dates, discharge_array, self.cfg.discharge_files[0])
+        self._write_discharges(self, dates, discharge_array, self.cfg.discharge_files[0])
         self.logger.info('-' * 60)
         return
 
-    def _execute_routing_forced(self) -> None:
+    def _execute_routing_forced(self, thread_pool: ThreadPoolExecutor | None) -> None:
         self._ensemble_member_states = []
 
         total_files = len(self.cfg.vlateral_files or self.cfg.grid_runoff_files or [])
-        file_iter = self._vlateral_generator()
+        file_iter = self._vlateral_generator(thread_pool)
         if self.cfg.progress_bar:
             file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
 
@@ -614,7 +579,13 @@ class Router:
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
             q_array = np.zeros((self.num_runoff_steps, self.river_ids.shape[0]), dtype=np.float32)
-            dispatch(self, q_t=q_t, discharge_array=q_array, vlateral=np.ascontiguousarray(vlateral, dtype=np.float32))
+            dispatch(
+                self,
+                q_t=q_t,
+                discharge_array=q_array,
+                vlateral=np.ascontiguousarray(vlateral, dtype=np.float32),
+                thread_pool=thread_pool,
+            )
             if self.cfg.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t
@@ -635,7 +606,7 @@ class Router:
 
             self.logger.debug('Writing Discharge Array to File')
             q_array = q_array.astype(np.float32, copy=False)
-            self._write_discharges(dates, q_array, discharge_file, runoff_file)
+            self._write_discharges(self, dates, q_array, discharge_file, runoff_file)
 
         if self.cfg.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
@@ -648,46 +619,12 @@ class Router:
 
     def set_write_discharges(self, func: WriteDischargesFn) -> Self:
         """
-        Overwrites the default write_discharges method to a custom function
+        Replace the discharge writer, which defaults to ``river_route.writers.netcdf_writer``. Premade writers are in
+        ``river_route.writers``, e.g. ``router.set_write_discharges(rr.writers.zarr_writer)``.
 
         Args:
-            func (callable): function that takes dates, discharge_array, discharge_file, runoff_file and returns None
+            func (callable): function that takes router, dates, discharge_array, discharge_file, runoff_file and
+                returns None. It is called once per routed input file with this Router as the first argument.
         """
         self._write_discharges = func
         return self
-
-    def _default_write_discharges(
-        self, dates: DatetimeArray, q_array: FloatArray, q_file: PathInput, routed_file: PathInput = ''
-    ) -> None:
-        """
-        Writes routed discharge from a routing simulation to a netcdf file.
-        You can overwrite this method with a custom handler using set_write_discharges.
-
-        Args:
-            dates: datetime array corresponding to the discharge rows
-            q_array: routed discharge values with shape (time, river)
-            q_file: path to write the discharge data to
-            routed_file: path to the lateral inflow used to generate the discharge values, if applicable.
-        """
-        if dates.shape[0] != q_array.shape[0]:
-            raise ValueError(f'Cannot write {q_file}: {dates.shape[0]} dates for {q_array.shape[0]} rows of discharge')
-        if q_array.shape[1] != self.river_ids.shape[0]:
-            raise ValueError(
-                f'Cannot write {q_file}: {q_array.shape[1]} columns of discharge for {self.river_ids.shape[0]} rivers'
-            )
-        with nc.Dataset(str(q_file), mode='w', format='NETCDF4') as ds:
-            ds.createDimension('time', size=q_array.shape[0])
-            ds.createDimension(self.cfg.var_river_id, size=q_array.shape[1])
-            ds.runoff_file = str(routed_file)
-            time_var = ds.createVariable('time', 'f8', ('time',))
-            time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
-            time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
-            id_var = ds.createVariable(self.cfg.var_river_id, 'i4', self.cfg.var_river_id)
-            id_var[:] = self.river_ids
-            flow_var = ds.createVariable(self.cfg.var_discharge, 'f4', ('time', self.cfg.var_river_id))
-            flow_var[:] = q_array
-            flow_var.long_name = 'Discharge at catchment outlet'
-            flow_var.standard_name = 'discharge'
-            flow_var.aggregation_method = 'mean'
-            flow_var.units = 'm3 s-1'
-        return

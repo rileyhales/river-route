@@ -89,6 +89,10 @@ The grid weights netCDF has the following variables:
 Routed discharge outputs are given in a netCDF file with 2 dimensions: `time` and `river_id`. It will
 have 1 variable named `Q` which is an array of shape `(time, river_id)` of dtype float.
 
+`river_route.writers.zarr_writer` instead writes a zarr store with the same `(time, river_id)` layout, uncompressed.
+`river_route.writers.parquet_writer` writes a parquet file with a `river_id` column followed by one column per time
+step, named `YYYY-MM-DDTHH:MM:SS`.
+
 You can change the structure of the output file by overriding the default write function.
 See the [Advanced Uses](../tutorial/advanced.md) page for more information.
 

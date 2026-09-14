@@ -61,7 +61,8 @@ class Configs:
     uh_state_final_file: PathInput | None = None
 
     # Concurrency. Regions come from the params file 'region' column (see streams.partition_network) or are
-    # derived at setup when it is absent. threads=1 routes the whole network in a single pass.
+    # derived at setup when it is absent. threads=1 routes the whole network in a single pass. The thread pool itself
+    # is not a config: it is passed to Router.route(), and without one routing is single-threaded.
     threads: int = 1
 
     # Validation behavior

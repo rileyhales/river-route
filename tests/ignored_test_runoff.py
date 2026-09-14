@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
 
-from river_route.runoff import grid_weights, runoff_to_vlateral
+from river_route.runoff import Runoff, grid_weights
 
 
 def test_grid_weights(vpu: RFSv2ConfigsData):
@@ -45,15 +45,14 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
 
 def test_grid_to_vlateral(vpu: RFSv2ConfigsData):
     """Aggregate ERA5 gridded runoff to vlateral depths using the weight table."""
-    ds = runoff_to_vlateral(
-        ERA5_FILES[0],
-        grid_weights_file=str(vpu.grid_weights_file),
+    ds = Runoff(
+        str(vpu.grid_weights_file),
         var_runoff='ro',
         var_x='longitude',
         var_y='latitude',
         var_t='valid_time',
         as_volumes=True,
-    )
+    ).to_dataset(ERA5_FILES[0])
     assert 'vlateral' in ds
     assert 'time' in ds.dims
     assert 'river_id' in ds.dims
@@ -85,16 +84,10 @@ def test_grid_to_vlateral_cumulative_input(vpu: RFSv2ConfigsData):
             ds_out['ro'] = (ds['ro'].dims, ro_cum)
             ds_out.to_netcdf(cumulative_file)
 
-        kwargs = dict(
-            grid_weights_file=str(vpu.grid_weights_file),
-            var_runoff='ro',
-            var_x='longitude',
-            var_y='latitude',
-            var_t='valid_time',
-        )
+        kwargs = dict(var_runoff='ro', var_x='longitude', var_y='latitude', var_t='valid_time')
 
-        ds_inc = runoff_to_vlateral(str(incremental_file), cumulative=False, **kwargs)
-        ds_cum = runoff_to_vlateral(cumulative_file, cumulative=True, **kwargs)
+        ds_inc = Runoff(str(vpu.grid_weights_file), cumulative=False, **kwargs).to_dataset(str(incremental_file))
+        ds_cum = Runoff(str(vpu.grid_weights_file), cumulative=True, **kwargs).to_dataset(cumulative_file)
 
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation

@@ -17,7 +17,9 @@ nav:
   - License: terms.md
   - Changelog: changelog.md
   - API Docs:
+      - Runoff: api/runoff.md
       - Router: api/routers.md
+      - Writers: api/writers.md
       - Tools: api/tools.md
   - References:
       - The Config File: references/config-files.md

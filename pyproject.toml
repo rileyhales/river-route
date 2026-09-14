@@ -38,6 +38,7 @@ dependencies = [
     "shapely>=2.0,<3",
     "tqdm==4.70.1",
     "xarray==2026.7.0",
+    "zarr>=3.3,<4",
 ]
 
 [dependency-groups]
