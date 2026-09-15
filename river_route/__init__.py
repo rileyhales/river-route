@@ -1,29 +1,23 @@
-from . import metrics
-from . import runoff
-from . import tools
-from . import uhkernels
-from ._metadata import __version__, __author__, __url__
-from .routers import Configs
-from .routers import Muskingum
-from .routers import RapidMuskingum
-from .routers import UnitMuskingum
+from . import metrics, runoff, streams, tools, writers
+from ._metadata import __author__, __url__, __version__
+from .configs import Configs
+from .routers import Router
+from .runoff import Runoff
 
 __all__ = [
-    # router classes
+    # unified router
     'Configs',
-    'Muskingum',
-    'RapidMuskingum',
-    'UnitMuskingum',
-
-    # uhkernel creating classes
-    'uhkernels',
-
+    'Router',
+    # runoff preparation
+    'Runoff',
     # modules
     'runoff',
+    'streams',
     'tools',
     'metrics',
-
+    'writers',
+    # metadata
     '__version__',
     '__author__',
-    '__url__'
+    '__url__',
 ]

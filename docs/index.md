@@ -2,13 +2,22 @@
 
 `river-route` routes runoff and discharge through large river networks using numba-accelerated Muskingum-family solvers.
 
-## Choose a Router
+## Describe your routing
 
-| Router           | Description                                                      |
-|------------------|------------------------------------------------------------------|
-| `Muskingum`      | Channel routing only (no lateral inflow).                        |
-| `RapidMuskingum` | Routes lateral runoff directly to channels each runoff interval. |
-| `UnitMuskingum`  | Convolves runoff with a unit hydrograph, then routes in-channel. |
+There is one router, `rr.Router`. You describe the routing procedure with three config selector keys.
+
+| Selector  | Options                                                                                                                                | Default      |
+|-----------|----------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| `coeff`   | `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha*Q^beta from columns `alpha`, `beta`, `x`). | `'static'`   |
+| `forcing` | `'channel'` (channel routing only) or `'vlateral'` (route lateral inflow). One value only.                     | `'channel'`  |
+| `network` | `'standard'` (one reach per river).                                                                                                    | `'standard'` |
+
+```python
+import river_route as rr
+
+configs = rr.Configs.from_file("/path/to/config.yaml")  # sets coeff, forcing, network, and the other options
+rr.Router(configs).route()
+```
 
 ## Quick Start
 
@@ -19,39 +28,32 @@ pip install river-route
 ```python
 import river_route as rr
 
-(
-    rr
-    .RapidMuskingum("/path/to/config.yaml")
-    .route()
-)
+configs = rr.Configs.from_file("/path/to/config.yaml")
+rr.Router(configs).route()
 ```
 
-Config can be passed as:
-
-1. A YAML/JSON file path.
-2. Keyword arguments.
-3. Both (keyword arguments override config file values).
+Options are held by a frozen `Configs` object, built from keyword arguments or read from a YAML/JSON file with
+`Configs.from_file`, and validated when they are used. Keyword arguments given to `Router` change a copy of the
+configs for that router only. `to_yaml` and `to_json` write the options to a file that `Configs.from_file` reads back.
 
 ```python
 import river_route as rr
 
-(
-    rr
-    .RapidMuskingum(
-        "/path/to/config.yaml",
-        qlateral_files=["/path/to/catchment_runoff.nc"],
-        discharge_dir="/path/to/output/",
-    )
-    .route()
+configs = rr.Configs(
+    params_file="/path/to/params.parquet",
+    forcing="vlateral",
+    vlateral_files=["/path/to/catchment_runoff.nc"],
+    discharge_dir="/path/to/output/",
 )
+configs.to_yaml("/path/to/config.yaml")
+rr.Router(configs).route()
 ```
 
 ## Start Here
 
 1. [Basics](tutorial/basics.md)
-2. [Unit Hydrographs with Routing](tutorial/unit-hydrograph-routing.md)
-3. [Routing Ensembles](tutorial/routing-ensembles.md)
-4. [Advanced Uses](tutorial/advanced.md)
+2. [Routing Ensembles](tutorial/routing-ensembles.md)
+3. [Advanced Uses](tutorial/advanced.md)
 
 ## Core References
 

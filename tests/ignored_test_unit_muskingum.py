@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import scipy.sparse
 import xarray as xr
+from conftest import RFSv2ConfigsData
 
 import river_route as rr
-from conftest import RFSv2ConfigsData
 
 
 def _make_sparse_kernel(n_rivers, n_kernel_steps, tmpdir):
@@ -34,8 +34,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         np.random.seed(42)
         depths = np.random.uniform(0, 0.2, (n_timesteps, n_rivers)).astype(np.float32)
         runoff_ds = xr.Dataset(
-            {'qlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
-            coords={'time': dates, 'river_id': river_ids},
+            {'vlateral': xr.DataArray(depths, dims=('time', 'river_id'))}, coords={'time': dates, 'river_id': river_ids}
         )
         runoff_file = os.path.join(tmpdir, 'synthetic_depths.nc')
         runoff_ds.to_netcdf(runoff_file)
@@ -48,7 +47,7 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=[runoff_file],
+            vlateral_files=[runoff_file],
             discharge_files=[discharge_file],
             channel_state_final_file=final_state_file,
             uh_state_final_file=uh_state_file,
@@ -66,8 +65,9 @@ def test_unit_muskingum_synthetic(vpu: RFSv2ConfigsData):
 
         # State saved transposed: (n_rivers, n_kernel_steps)
         state_df = pd.read_parquet(uh_state_file)
-        assert state_df.shape == (n_rivers, n_kernel_steps), \
+        assert state_df.shape == (n_rivers, n_kernel_steps), (
             f'UH state shape {state_df.shape} != expected ({n_rivers}, {n_kernel_steps})'
+        )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -89,7 +89,7 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
             dates = pd.date_range(f'2020-01-0{i + 1}', periods=n_timesteps, freq='h')
             depths = np.random.uniform(0, 0.001, (n_timesteps, n_rivers)).astype(np.float32)
             ds = xr.Dataset(
-                {'qlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
+                {'vlateral': xr.DataArray(depths, dims=('time', 'river_id'))},
                 coords={'time': dates, 'river_id': river_ids},
             )
             path = os.path.join(tmpdir, f'runoff_{i}.nc')
@@ -103,9 +103,10 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=runoff_files,
+            vlateral_files=runoff_files,
             discharge_files=q_all,
-            log=False, progress_bar=False,
+            log=False,
+            progress_bar=False,
         ).route()
 
         # Route file 1 and save both channel + UH state
@@ -115,11 +116,12 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=[runoff_files[0]],
+            vlateral_files=[runoff_files[0]],
             discharge_files=[q_f1],
             channel_state_final_file=channel_state,
             uh_state_final_file=uh_state,
-            log=False, progress_bar=False,
+            log=False,
+            progress_bar=False,
         ).route()
 
         # Route file 2 from saved state
@@ -127,19 +129,22 @@ def test_unit_muskingum_uh_state_roundtrip(vpu: RFSv2ConfigsData):
         rr.UnitMuskingum(
             params_file=str(vpu.rr2_params_file),
             uh_kernel_file=kernel_file,
-            qlateral_files=[runoff_files[1]],
+            vlateral_files=[runoff_files[1]],
             discharge_files=[q_f2],
             channel_state_init_file=channel_state,
             uh_state_init_file=uh_state,
-            log=False, progress_bar=False,
+            log=False,
+            progress_bar=False,
         ).route()
 
         # File 2 output from split routing should match file 2 from all-at-once
         with xr.open_dataset(q_all[1]) as ds_all, xr.open_dataset(q_f2) as ds_split:
             assert ds_all['Q'].shape == ds_split['Q'].shape
             np.testing.assert_allclose(
-                ds_all['Q'].values, ds_split['Q'].values,
-                rtol=1e-4, atol=0.01,
+                ds_all['Q'].values,
+                ds_split['Q'].values,
+                rtol=1e-4,
+                atol=0.01,
                 err_msg='UnitMuskingum state roundtrip: sequential does not match all-at-once',
             )
     finally:

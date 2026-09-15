@@ -2,45 +2,46 @@
 
 ```mermaid
 graph TD
-    A[route method] --> B[validate configs]
-    B --> C[set network vectors]
+    A[route method] --> B[validate config for coeff/forcing/network]
+    B --> C[prepare network from params_file]
     C --> D[read initial state]
-    D --> E[hook: before route]
-    E --> F{_execute_routing}
+    D --> E{forcing}
 
-    F -->|Muskingum| G[set time params from config]
-    G --> H[set Muskingum coefficients]
-    H --> I[route for num_output_steps]
-    I --> J[generate date array]
-    J --> K[write discharges]
+    E -->|channel| F[set time params from config]
+    F --> G[set Muskingum coefficients]
+    G --> H[route channel-only over dt_total]
+    H --> I[generate date array]
+    I --> J[write discharges]
 
-    F -->|TransformMuskingum| L[init ensemble state]
-    L --> M[loop: catchment runoff generator]
-    M --> N[set time params from dates]
-    N --> O[prepare qlateral]
-    O --> P[set Muskingum coefficients]
-    P --> Q[_router: route with lateral inflow]
-    Q --> R{dt_discharge > dt_runoff?}
-    R -->|yes| S[resample to discharge timestep]
-    R -->|no| T[write discharges]
-    S --> T
-    T --> U{more runoff files?}
-    U -->|yes| M
-    U -->|no| V{ensemble mode?}
-    V -->|yes| W[mean of member states]
-    V -->|no| X[done]
-    W --> X
+    E -->|lateral| K[loop: runoff input files generator]
+    K --> L[set time params from dates]
+    L --> M[prepare vlateral]
+    M --> N[set coefficients]
+    N --> O[route with lateral inflow]
+    O --> P{dt_discharge > dt_runoff?}
+    P -->|yes| Q[resample to discharge timestep]
+    P -->|no| R[write discharges]
+    Q --> R
+    R --> S{more runoff files?}
+    S -->|yes| K
+    S -->|no| T{ensemble mode?}
+    T -->|yes| U[mean of member states]
+    T -->|no| V[done]
+    U --> V
 
-    K --> Y[write final state]
-    X --> Y
-    Y --> Z[hook: after route]
-    Z --> AA[log timing]
+    J --> W[write final state]
+    V --> W
+    W --> X[log timing]
 ```
 
-**Muskingum** reads time parameters directly from the config and runs a single routing pass for
-a fixed number of output steps. **TransformMuskingum** (used by `RapidMuskingum` and
-`UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's date
-array, and optionally resamples output to a coarser discharge timestep.
+`Router.route()` first validates the required config keys and inflow source for the selected
+`coeff`, `forcing`, and `network` before any routing data is read. It then prepares the network
+topology and coefficients, and resolves the numba kernel when it dispatches each routing pass (an
+unimplemented combination raises `NotImplementedError` at that point). When `forcing` is `'channel'`, time parameters are read directly from the config and a
+single channel-only routing pass runs over `dt_total`. Otherwise the router loops over the runoff
+input files (processed sequentially or as an ensemble), inferring time parameters from each file's
+date array, routes each one, optionally resamples the output to a coarser discharge timestep, and
+writes the result.
 
 ## Finding Inputs and Config Files at Runtime
 
@@ -50,7 +51,7 @@ Depending on your preference, you may want to generate many config files in adva
 future use.
 
 The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments
-to the `RapidMuskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file
+to the `Router`. You could alternatively write the inputs to a YAML or JSON file and use that config file
 instead.
 
 ```python
@@ -70,55 +71,69 @@ runoff_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
 outputs = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(outputs, exist_ok=True)
 
-m = (
-    rr
-    .RapidMuskingum(**{
-        'params_file': params_file,
-        'qlateral_files': runoff_files,
-        'discharge_dir': outputs,
-    })
-    .route()
+configs = rr.Configs(
+    forcing='vlateral',
+    params_file=params_file,
+    vlateral_files=runoff_files,
+    discharge_dir=outputs,
 )
+m = rr.Router(configs).route()
 ```
 
 ## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disk.
-The default function writes discharge to netCDF.
+The default function, `river_route.writers.netcdf_writer`, writes discharge to netCDF.
+
+Premade writers are in `river_route.writers`. `zarr_writer` writes each output as an uncompressed zarr store with
+dimensions `(time, river_id)`, built to write as fast as possible. It writes up to the `threads` given to
+`Router.route` chunks at once. `parquet_writer` writes one row per river and one column per time step, with the
+pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
+
+```python title="Write Routed Flows to Zarr"
+import river_route as rr
+
+(
+    rr
+    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .set_discharge_writer(rr.writers.zarr_writer)
+    .route()
+)
+```
 
 A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
-You can override the `write_discharges` method directly in your code or use the
-`set_write_discharges` method. Your custom function must accept exactly 4 arguments:
+Use the `set_discharge_writer` method to supply a custom writer function; it returns the `Router`
+so you can chain it onto the constructor. The writer is called once per routed input file with 5 arguments:
 
-1. `dates`: datetime array for rows in the discharge array.
-2. `discharge_array`: routed discharge array with shape `(time, river_id)`.
-3. `discharge_file`: path to the output file.
-4. `runoff_file`: path to the runoff input used to produce this output.
+1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
+2. `dates`: datetime array for rows in the discharge array.
+3. `discharge_array`: routed discharge array with shape `(time, river_id)`.
+4. `discharge_file`: path to the output file.
+5. `runoff_file`: path to the runoff input used to produce this output.
 
-As an example, you might want to write output as Parquet instead.
+As an example, you might want to write output as Parquet instead. The snippets below focus on the
+writer override; for `.route()` to actually run, the config must select `forcing: vlateral` and supply a
+water source (`vlateral_files`, or `grid_runoff_files` plus `grid_weights_file`).
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
-import xarray as xr
 
 import river_route as rr
 
 
-def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+def custom_write_discharges(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.river_ids)
     df.to_parquet(discharge_file)
     return
 
 
 (
     rr
-    .RapidMuskingum('../../examples/config.yaml')
-    .set_write_discharges(custom_write_discharges)
+    .Router(rr.Configs.from_file('../../examples/config.yaml'), forcing='vlateral')
+    .set_discharge_writer(custom_write_discharges)
     .route()
 )
 ```
@@ -131,7 +146,7 @@ import xarray as xr
 import river_route as rr
 
 
-def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+def append_to_existing_file(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
     ensemble_number = os.path.basename(runoff_file).split('_')[1]
     ds = xr.load_dataset(discharge_file)
     ds['Q'].loc[dict(ensemble=ensemble_number)] = discharge_array
@@ -141,23 +156,20 @@ def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .RapidMuskingum('config.yaml')
-    .set_write_discharges(append_to_existing_file)
+    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .set_discharge_writer(append_to_existing_file)
     .route()
 )
 ```
 
 ```python title="Save a Subset of the Routed Flows"
 import pandas as pd
-import xarray as xr
 
 import river_route as rr
 
 
-def save_partial_results(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+def save_partial_results(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
     df.to_parquet(discharge_file)
@@ -166,8 +178,8 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
 
 (
     rr
-    .RapidMuskingum('config.yaml')
-    .set_write_discharges(save_partial_results)
+    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .set_discharge_writer(save_partial_results)
     .route()
 )
 ```

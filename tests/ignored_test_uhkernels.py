@@ -5,8 +5,7 @@ import tempfile
 import numpy as np
 import pytest
 import scipy.sparse
-
-from river_route.uhkernels import SCSTriangular, SCSCurvilinear, UnitHydrograph
+from river_route.uhkernels import SCSCurvilinear, SCSTriangular, UnitHydrograph
 
 KERNEL_CLASSES = [SCSTriangular, SCSCurvilinear]
 
@@ -24,8 +23,7 @@ def test_volume_conservation(kernel_cls):
     uh = kernel_cls(tr=tr, tc=tc, area=area)
     integrated = uh.kernel.sum(axis=0) * tr
     np.testing.assert_allclose(
-        integrated, area, rtol=1e-6,
-        err_msg=f'{kernel_cls.__name__}: kernel does not conserve volume',
+        integrated, area, rtol=1e-6, err_msg=f'{kernel_cls.__name__}: kernel does not conserve volume'
     )
     return
 

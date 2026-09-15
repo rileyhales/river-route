@@ -7,6 +7,11 @@
 
 ## Router Class Changes
 
+!!! note
+    This is the historical v1 → v2 guide. In **v3** the `Muskingum`, `RapidMuskingum`, and
+    `UnitMuskingum` classes below were removed in favor of a single unified `Router` selected by
+    config keys (`coeff`/`forcing`/`network`).
+
 The `Muskingum` class has been renamed and is now supplemented with routing options.
 
 | v1 Class    | v2 Replacement   | Use Case                                           |

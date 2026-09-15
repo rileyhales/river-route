@@ -5,9 +5,9 @@ import tempfile
 import numpy as np
 import pandas as pd
 import xarray as xr
+from conftest import RFSv2ConfigsData
 
 import river_route as rr
-from conftest import RFSv2ConfigsData
 
 
 def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
@@ -22,15 +22,18 @@ def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
         pd.DataFrame({'Q': np.full(n_rivers, 10.0)}).to_parquet(init_state_file)
 
         discharge_file = os.path.join(tmpdir, 'q_channel_only.nc')
-        final_state_file = os.path.join(tmpdir, 'final_state.parquet')
+        # final_state_file = os.path.join(tmpdir, 'final_state.parquet')
 
-        rr.Muskingum(
-            params_file=str(vpu.rr2_params_file),
-            discharge_files=[discharge_file],
-            channel_state_init_file=init_state_file,
-            dt_routing=900,
-            dt_total=3600 * 24 * 15,
-            log=False,
+        rr.Router(
+            rr.Configs(
+                forcing='channel',
+                params_file=str(vpu.rr2_params_file),
+                discharge_files=[discharge_file],
+                channel_state_init_file=init_state_file,
+                dt_routing=900,
+                dt_total=3600 * 24 * 15,
+                log=False,
+            )
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:
@@ -58,13 +61,16 @@ def test_muskingum_zero_initial_state(vpu: RFSv2ConfigsData):
 
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
-        rr.Muskingum(
-            params_file=str(vpu.rr2_params_file),
-            discharge_files=[discharge_file],
-            channel_state_init_file=init_state_file,
-            dt_routing=3600,
-            dt_total=3600 * 6,
-            log=False,
+        rr.Router(
+            rr.Configs(
+                forcing='channel',
+                params_file=str(vpu.rr2_params_file),
+                discharge_files=[discharge_file],
+                channel_state_init_file=init_state_file,
+                dt_routing=3600,
+                dt_total=3600 * 6,
+                log=False,
+            )
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:

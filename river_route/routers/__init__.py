@@ -1,6 +1,3 @@
-from .Config import Configs
-from .Muskingum import Muskingum
-from .RapidMuskingum import RapidMuskingum
-from .UnitMuskingum import UnitMuskingum
+from .Router import Router
 
-__all__ = ['Configs', 'Muskingum', 'RapidMuskingum', 'UnitMuskingum', ]
+__all__ = ['Router']

@@ -10,7 +10,8 @@ routing is state handling:
 
 There are two common ways to run ensembles in `river-route`.
 
-Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
+Ensemble routing is available whenever there is forcing (e.g. `forcing: vlateral`); it is not
+meaningful for channel-only routing (`forcing: channel`). Set it with `runoff_processing_mode: ensemble`.
 
 1. Run each member in a separate job (loop, multiprocessing, cluster workers). This is easiest
    to parallelize and gives full control over member-specific output paths.
@@ -46,14 +47,14 @@ import xarray as xr
 import river_route as rr
 
 
-def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
+def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file):
+    # router: the Router doing the routing, which provides river_ids and the cfg options
     # dates: datetime array for routed discharge rows
     # discharge_array: routed flows with shape (time, river_id)
     # discharge_file: the path to the output file provided by your config file
     # runoff_file: the path to the runoff file used to produce this output, if you need it
 
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
+    river_ids = router.river_ids
     df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
 
     # you probably want to include the member number in the output file name which could come from the discharge or runoff file
@@ -78,8 +79,8 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
 
 m = (
     rr
-    .RapidMuskingum('your_config_file.yaml')
-    .set_write_discharges(custom_output_writer)  # set the custom output writer function
+    .Router(rr.Configs.from_file('your_config_file.yaml'), forcing='vlateral')
+    .set_discharge_writer(custom_output_writer)  # set the custom output writer function
     .route()
 )
 
