@@ -28,7 +28,7 @@ jobs:
         run: uv sync --locked --group docs --python 3.14
 
       - name: Build site
-        run: uv run mkdocs build --strict --site-dir site
+        run: uv run zensical build --clean --strict
 
       - name: Write CNAME for custom domain
         run: echo 'river-route.code.hales.app' > site/CNAME

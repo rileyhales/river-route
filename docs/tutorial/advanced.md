@@ -71,15 +71,13 @@ runoff_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
 outputs = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(outputs, exist_ok=True)
 
-m = (
-    rr
-    .Router(forcing='vlateral', **{
-        'params_file': params_file,
-        'vlateral_files': runoff_files,
-        'discharge_dir': outputs,
-    })
-    .route()
+configs = rr.Configs(
+    forcing='vlateral',
+    params_file=params_file,
+    vlateral_files=runoff_files,
+    discharge_dir=outputs,
 )
+m = rr.Router(configs).route()
 ```
 
 ## Customizing Outputs
@@ -88,16 +86,17 @@ You can override the default function used by `river-route` when writing routed 
 The default function, `river_route.writers.netcdf_writer`, writes discharge to netCDF.
 
 Premade writers are in `river_route.writers`. `zarr_writer` writes each output as an uncompressed zarr store with
-dimensions `(time, river_id)`, built to write as fast as possible. It writes up to `threads` chunks at once. `parquet_writer` writes
-one row per river and one column per time step, with the pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
+dimensions `(time, river_id)`, built to write as fast as possible. It writes up to the `threads` given to
+`Router.route` chunks at once. `parquet_writer` writes one row per river and one column per time step, with the
+pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
 
 ```python title="Write Routed Flows to Zarr"
 import river_route as rr
 
 (
     rr
-    .Router('config.yaml', forcing='vlateral')
-    .set_write_discharges(rr.writers.zarr_writer)
+    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .set_discharge_writer(rr.writers.zarr_writer)
     .route()
 )
 ```
@@ -106,7 +105,7 @@ A single netCDF is not ideal for all use cases, so you can override it to store 
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
-Use the `set_write_discharges` method to supply a custom writer function; it returns the `Router`
+Use the `set_discharge_writer` method to supply a custom writer function; it returns the `Router`
 so you can chain it onto the constructor. The writer is called once per routed input file with 5 arguments:
 
 1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
@@ -133,8 +132,8 @@ def custom_write_discharges(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router('../../examples/config.yaml', forcing='vlateral')
-    .set_write_discharges(custom_write_discharges)
+    .Router(rr.Configs.from_file('../../examples/config.yaml'), forcing='vlateral')
+    .set_discharge_writer(custom_write_discharges)
     .route()
 )
 ```
@@ -157,8 +156,8 @@ def append_to_existing_file(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router('config.yaml', forcing='vlateral')
-    .set_write_discharges(append_to_existing_file)
+    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .set_discharge_writer(append_to_existing_file)
     .route()
 )
 ```
@@ -179,8 +178,8 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 (
     rr
-    .Router('config.yaml', forcing='vlateral')
-    .set_write_discharges(save_partial_results)
+    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .set_discharge_writer(save_partial_results)
     .route()
 )
 ```

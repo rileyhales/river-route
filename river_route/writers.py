@@ -1,5 +1,5 @@
 """
-Premade discharge writers for ``Router.set_write_discharges``.
+Premade discharge writers for ``Router.set_discharge_writer``.
 
 A writer is called once per routed input file as
 ``writer(router, dates, discharge_array, discharge_file, runoff_file)``. The router supplies the river ids, variable
@@ -94,8 +94,8 @@ def zarr_writer(
 
     The array is stored exactly as routed, with no filters or compression, in chunks of ``ZARR_RIVERS_PER_CHUNK``
     rivers that each span every time step of the file. Chunks are written one at a time with ``threads=1`` and up to
-    the router's ``threads`` at once otherwise. Setting ``ZARR_CHUNKS_PER_SHARD`` packs that many chunks into each
-    shard file instead of writing one file per chunk. The store opens with ``xarray.open_zarr``.
+    the ``threads`` given to ``Router.route`` at once otherwise. Setting ``ZARR_CHUNKS_PER_SHARD`` packs that many
+    chunks into each shard file instead of writing one file per chunk. The store opens with ``xarray.open_zarr``.
 
     Args:
         router: the Router that routed the discharge
@@ -108,7 +108,7 @@ def zarr_writer(
     rid = router.cfg.var_river_id
     n_steps, n_rivers = discharge_array.shape
     # zarr sizes its worker pool once per process, so the per-operation concurrency limit is what follows threads
-    with zarr.config.set({'async.concurrency': router.cfg.threads}):
+    with zarr.config.set({'async.concurrency': router.threads}):
         group = zarr.create_group(str(discharge_file), overwrite=True, attributes={'runoff_file': str(runoff_file)})
         flow = group.create_array(
             router.cfg.var_discharge,
@@ -158,7 +158,7 @@ def parquet_writer(
     The first column holds the river ids and every other column is named by its time step as
     ``YYYY-MM-DDTHH:MM:SS``. Each time step column is a row of the routed array, which pyarrow wraps without a
     copy. ``PARQUET_WRITE_OPTIONS`` is passed to ``pyarrow.parquet.write_table`` and sets the compression. pyarrow
-    writes a parquet file on one thread, so the router's ``threads`` does not apply.
+    writes a parquet file on one thread, so the ``threads`` given to ``Router.route`` does not apply.
 
     Args:
         router: the Router that routed the discharge

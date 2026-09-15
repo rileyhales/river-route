@@ -42,8 +42,9 @@ Rows must be in **topological order**: all upstream segments before their downst
 
 ## Config File
 
-Config values can be passed as a YAML/JSON file, as keyword arguments, or both. Keyword arguments
-override values from the config file.
+Config values are held by a frozen `Configs` object. Build it from keyword arguments or read it from a YAML/JSON
+file with `Configs.from_file`, then pass it to `Router`. Keyword arguments given to `Router` change a copy of the
+configs for that router only.
 
 ```yaml
 params_file: '/path/to/params.parquet'
@@ -56,25 +57,26 @@ discharge_dir: '/path/to/output/'
 ```python
 import river_route as rr
 
-rr.Router('config.yaml', forcing='vlateral').route()
+configs = rr.Configs.from_file('config.yaml')
+rr.Router(configs, forcing='vlateral').route()
 ```
 
-Or pass arguments directly without a config file:
+Or build the configs directly without a config file:
 
 ```python
 import river_route as rr
 
-(
-    rr
-    .Router(
-        params_file='params.parquet',
-        vlateral_files=['vlateral.nc', ],
-        discharge_dir='./output/',
-        forcing='vlateral',
-    )
-    .route()
+configs = rr.Configs(
+    params_file='params.parquet',
+    vlateral_files=['vlateral.nc', ],
+    discharge_dir='./output/',
+    forcing='vlateral',
 )
+rr.Router(configs).route()
 ```
+
+Use `configs.replace(...)` for a copy with some options changed, and `configs.to_yaml(path)` or `configs.to_json(path)`
+to write the options to a file that `Configs.from_file` reads back, e.g. to prepare many jobs for a scheduler.
 
 ## Warm-Starting Channel State
 

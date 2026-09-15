@@ -37,17 +37,19 @@ uv sync --group dev     # ...or include the test and docs tooling
 ```python
 import river_route as rr
 
-rr.Router("./path/to/configs.yaml").route()
+configs = rr.Configs.from_file("./path/to/configs.yaml")
+rr.Router(configs).route()
 
-# selectors can also be passed (or overridden) as keyword arguments
-rr.Router("./path/to/configs.yaml", forcing="vlateral").route()
+# options can also be overridden for one router; the overrides change a copy of the configs
+rr.Router(configs, forcing="vlateral").route()
 ```
 
-Configuration can be provided by:
+Configuration is held by a frozen `Configs` object, built from:
 
-1. A YAML/JSON config file path.
-2. Keyword arguments.
-3. Both (kwargs override file values).
+1. A YAML/JSON config file with `Configs.from_file`.
+2. Keyword arguments, `Configs(params_file=..., ...)`.
+
+`Configs.to_yaml` and `Configs.to_json` write the options to a file that `Configs.from_file` reads back.
 
 Core required inputs are:
 

@@ -1,6 +1,7 @@
 from . import metrics, runoff, streams, tools, writers
 from ._metadata import __author__, __url__, __version__
-from .routers import Configs, Router
+from .configs import Configs
+from .routers import Router
 from .runoff import Runoff
 
 __all__ = [

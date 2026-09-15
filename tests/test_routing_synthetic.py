@@ -3,6 +3,7 @@ Routing tests built on small synthetic networks. These run anywhere, with no dow
 the numerical behavior of the kernels plus every check that stands between a config file and an njit kernel.
 """
 
+import dataclasses
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -15,14 +16,16 @@ from conftest import SyntheticNetwork, build_network, write_params, write_vlater
 import river_route as rr
 
 
-def route_vlateral(network: SyntheticNetwork, out_name: str = 'q.nc', **kwargs) -> np.ndarray:
+def route_vlateral(network: SyntheticNetwork, out_name: str = 'q.nc', threads: int = 1, **kwargs) -> np.ndarray:
     """Route the network's lateral inflow file and return the discharge array that was written."""
     out = network.path(out_name)
     kwargs.setdefault('params_file', str(network.params_file))
     kwargs.setdefault('vlateral_files', [str(network.vlateral_file)])
     kwargs.setdefault('channel_state_init_file', str(network.state_file))
     kwargs.setdefault('dt_routing', network.dt_runoff)
-    rr.Router(forcing='vlateral', discharge_files=[out], log=False, progress_bar=False, **kwargs).route()
+    rr.Router(rr.Configs(forcing='vlateral', discharge_files=[out], log=False, progress_bar=False, **kwargs)).route(
+        threads=threads
+    )
     with xr.open_dataset(out) as ds:
         return ds['Q'].values
 
@@ -61,14 +64,16 @@ def test_channel_routing_decays_to_zero(tmp_path):
     out = net.path('q_channel.nc')
 
     rr.Router(
-        forcing='channel',
-        params_file=str(net.params_file),
-        discharge_files=[out],
-        channel_state_init_file=str(state_file),
-        dt_routing=900,
-        dt_total=3600 * 24,
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='channel',
+            params_file=str(net.params_file),
+            discharge_files=[out],
+            channel_state_init_file=str(state_file),
+            dt_routing=900,
+            dt_total=3600 * 24,
+            log=False,
+            progress_bar=False,
+        )
     ).route()
 
     with xr.open_dataset(out) as ds:
@@ -90,34 +95,40 @@ def test_final_state_roundtrip(network: SyntheticNetwork):
 
     both = [network.path('q_both_1.nc'), network.path('q_both_2.nc')]
     rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(first), str(second)],
-        discharge_files=both,
-        channel_state_init_file=str(network.state_file),
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(first), str(second)],
+            discharge_files=both,
+            channel_state_init_file=str(network.state_file),
+            log=False,
+            progress_bar=False,
+        )
     ).route()
 
     state_between = network.path('state_between.parquet')
     rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(first)],
-        discharge_files=[network.path('q_split_1.nc')],
-        channel_state_init_file=str(network.state_file),
-        channel_state_final_file=state_between,
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(first)],
+            discharge_files=[network.path('q_split_1.nc')],
+            channel_state_init_file=str(network.state_file),
+            channel_state_final_file=state_between,
+            log=False,
+            progress_bar=False,
+        )
     ).route()
     rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(second)],
-        discharge_files=[network.path('q_split_2.nc')],
-        channel_state_init_file=state_between,
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(second)],
+            discharge_files=[network.path('q_split_2.nc')],
+            channel_state_init_file=state_between,
+            log=False,
+            progress_bar=False,
+        )
     ).route()
 
     with xr.open_dataset(both[1]) as ds_all, xr.open_dataset(network.path('q_split_2.nc')) as ds_split:
@@ -127,19 +138,21 @@ def test_final_state_roundtrip(network: SyntheticNetwork):
 def test_route_twice_is_repeatable(network: SyntheticNetwork):
     """A second route() call must start from the configured initial state, not the previous run's final state."""
     router = rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(network.vlateral_file)],
-        discharge_files=[network.path('q_first.nc')],
-        channel_state_init_file=str(network.state_file),
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(network.vlateral_file)],
+            discharge_files=[network.path('q_first.nc')],
+            channel_state_init_file=str(network.state_file),
+            log=False,
+            progress_bar=False,
+        )
     )
     router.route()
     with xr.open_dataset(network.path('q_first.nc')) as ds:
         first = ds['Q'].values.copy()
 
-    router.cfg.discharge_files = [network.path('q_second.nc')]
+    router.cfg = router.cfg.replace(discharge_files=[network.path('q_second.nc')])
     router.route()
     with xr.open_dataset(network.path('q_second.nc')) as ds:
         second = ds['Q'].values
@@ -224,15 +237,17 @@ def test_dispatch_rejects_mismatched_arrays(network: SyntheticNetwork):
     from river_route.routers._kernel_registry import dispatch
 
     router = rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(network.vlateral_file)],
-        discharge_files=[network.path('q_unused.nc')],
-        dt_routing=network.dt_runoff,
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(network.vlateral_file)],
+            discharge_files=[network.path('q_unused.nc')],
+            dt_routing=network.dt_runoff,
+            log=False,
+            progress_bar=False,
+        )
     )
-    router.cfg.validate()
+    router.cfg.validate_routing()
     router._set_vectors_from_params()
     router._set_connectivity_vectors()
     router.num_runoff_steps = 4
@@ -252,12 +267,14 @@ def test_params_missing_column_raises(tmp_path):
     pd.read_parquet(net.params_file).drop(columns=['k']).to_parquet(bad, index=False)
     with pytest.raises(ValueError, match='missing k column'):
         rr.Router(
-            forcing='vlateral',
-            params_file=str(bad),
-            vlateral_files=[str(net.vlateral_file)],
-            discharge_files=[net.path('q.nc')],
-            log=False,
-            progress_bar=False,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(bad),
+                vlateral_files=[str(net.vlateral_file)],
+                discharge_files=[net.path('q.nc')],
+                log=False,
+                progress_bar=False,
+            )
         ).route()
 
 
@@ -267,12 +284,14 @@ def test_params_not_topologically_sorted_raises(tmp_path):
     pd.read_parquet(net.params_file).iloc[::-1].to_parquet(unsorted, index=False)
     with pytest.raises(ValueError, match='topologically sorted'):
         rr.Router(
-            forcing='vlateral',
-            params_file=str(unsorted),
-            vlateral_files=[str(net.vlateral_file)],
-            discharge_files=[net.path('q.nc')],
-            log=False,
-            progress_bar=False,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(unsorted),
+                vlateral_files=[str(net.vlateral_file)],
+                discharge_files=[net.path('q.nc')],
+                log=False,
+                progress_bar=False,
+            )
         ).route()
 
 
@@ -282,12 +301,14 @@ def test_params_x_out_of_range_raises(tmp_path):
     write_params(bad, n_rivers=net.n_rivers, x=0.9)
     with pytest.raises(ValueError, match='x column must be in the range'):
         rr.Router(
-            forcing='vlateral',
-            params_file=str(bad),
-            vlateral_files=[str(net.vlateral_file)],
-            discharge_files=[net.path('q.nc')],
-            log=False,
-            progress_bar=False,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(bad),
+                vlateral_files=[str(net.vlateral_file)],
+                discharge_files=[net.path('q.nc')],
+                log=False,
+                progress_bar=False,
+            )
         ).route()
 
 
@@ -297,14 +318,16 @@ def test_deep_validation_can_be_skipped(tmp_path):
     bad = tmp_path / 'bad_x.parquet'
     write_params(bad, n_rivers=net.n_rivers, x=0.9)
     rr.Router(
-        forcing='vlateral',
-        params_file=str(bad),
-        vlateral_files=[str(net.vlateral_file)],
-        discharge_files=[net.path('q.nc')],
-        deep_validation=False,
-        unstable_coefficients='ignore',
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(bad),
+            vlateral_files=[str(net.vlateral_file)],
+            discharge_files=[net.path('q.nc')],
+            deep_validation=False,
+            unstable_coefficients='ignore',
+            log=False,
+            progress_bar=False,
+        )
     ).route()
 
 
@@ -315,16 +338,18 @@ def route_capturing_logs(net, log_file, **kwargs) -> str:
     """Route with logging directed to a file and return what was written. The router's logger does not
     propagate to the root logger, so caplog cannot see it."""
     rr.Router(
-        forcing='vlateral',
-        params_file=str(net.params_file),
-        vlateral_files=[str(net.vlateral_file)],
-        discharge_files=[net.path('q.nc')],
-        channel_state_init_file=str(net.state_file),
-        log=True,
-        log_level='WARNING',
-        log_stream=str(log_file),
-        progress_bar=False,
-        **kwargs,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(net.params_file),
+            vlateral_files=[str(net.vlateral_file)],
+            discharge_files=[net.path('q.nc')],
+            channel_state_init_file=str(net.state_file),
+            log=True,
+            log_level='WARNING',
+            log_stream=str(log_file),
+            progress_bar=False,
+            **kwargs,
+        )
     ).route()
     return log_file.read_text()
 
@@ -341,14 +366,16 @@ def test_unstable_coefficients_can_raise(tmp_path):
     net = build_network(tmp_path / 'net', k=600.0, x=0.1, n_steps=24)
     with pytest.raises(ValueError, match='not Muskingum-stable'):
         rr.Router(
-            forcing='vlateral',
-            params_file=str(net.params_file),
-            vlateral_files=[str(net.vlateral_file)],
-            discharge_files=[net.path('q.nc')],
-            channel_state_init_file=str(net.state_file),
-            unstable_coefficients='raise',
-            log=False,
-            progress_bar=False,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(net.params_file),
+                vlateral_files=[str(net.vlateral_file)],
+                discharge_files=[net.path('q.nc')],
+                channel_state_init_file=str(net.state_file),
+                unstable_coefficients='raise',
+                log=False,
+                progress_bar=False,
+            )
         ).route()
 
 
@@ -361,11 +388,19 @@ def test_stable_network_does_not_warn(tmp_path):
 # ── config handling ─────────────────────────────────────────────────────────
 
 
+def test_threads_is_not_a_config(network: SyntheticNetwork):
+    configs = rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
+    with pytest.raises(ValueError, match='Unrecognized config key'):
+        rr.Router(configs, threads=2)
+
+
 @pytest.mark.parametrize('threads', [0, -1, 2.0, True])
 def test_invalid_threads_raise(network: SyntheticNetwork, threads):
-    cfg = rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')], threads=threads)
+    router = rr.Router(
+        rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')], log=False)
+    )
     with pytest.raises(ValueError, match='threads must be'):
-        cfg.validate()
+        router.route(threads=threads)
 
 
 def test_threads_without_a_thread_pool_route_single_threaded(network: SyntheticNetwork):
@@ -378,29 +413,76 @@ def test_threads_without_a_thread_pool_route_single_threaded(network: SyntheticN
 def test_route_leaves_a_given_thread_pool_open(network: SyntheticNetwork):
     """A thread_pool passed to route() belongs to the caller: it is used, then left for the with block to close."""
     router = rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(network.vlateral_file)],
-        channel_state_init_file=str(network.state_file),
-        dt_routing=network.dt_runoff,
-        discharge_files=[network.path('q_pool.nc')],
-        threads=2,
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(network.vlateral_file)],
+            channel_state_init_file=str(network.state_file),
+            dt_routing=network.dt_runoff,
+            discharge_files=[network.path('q_pool.nc')],
+            log=False,
+            progress_bar=False,
+        )
     )
     with ThreadPoolExecutor(2) as pool:
-        router.route(thread_pool=pool)
+        router.route(thread_pool=pool, threads=2)
         assert pool.submit(lambda: 1).result() == 1
 
 
 def test_unknown_config_key_names_the_key(network: SyntheticNetwork):
     with pytest.raises(ValueError, match='Unrecognized config key'):
-        rr.Router(forcing='channel', params_file=str(network.params_file), var_vlateral='vlateral')
+        rr.Configs.from_mapping({'forcing': 'channel', 'params_file': str(network.params_file), 'var_vlateral': 'x'})
 
 
 def test_unknown_config_key_suggests_a_close_match(network: SyntheticNetwork):
     with pytest.raises(ValueError, match="did you mean 'dt_routing'"):
-        rr.Router(forcing='channel', params_file=str(network.params_file), dt_routeing=3600)
+        rr.Configs.from_mapping({'forcing': 'channel', 'params_file': str(network.params_file), 'dt_routeing': 3600})
+
+
+@pytest.mark.parametrize('suffix', ['.yaml', '.json'])
+def test_configs_file_roundtrip(network: SyntheticNetwork, tmp_path, suffix):
+    """Configs written with to_yaml or to_json read back equal with from_file, including a discharge_dir."""
+    out_dir = tmp_path / 'out'
+    out_dir.mkdir()
+    configs = rr.Configs(
+        forcing='vlateral',
+        params_file=str(network.params_file),
+        vlateral_files=[str(network.vlateral_file)],
+        discharge_dir=str(out_dir),
+        dt_routing=network.dt_runoff,
+    )
+    path = tmp_path / f'configs{suffix}'
+    if suffix == '.yaml':
+        configs.to_yaml(path)
+    else:
+        configs.to_json(path)
+    assert rr.Configs.from_file(path) == configs
+
+
+def test_configs_are_frozen_and_overrides_change_a_copy(network: SyntheticNetwork):
+    configs = rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        configs.dt_routing = 900
+    assert (configs.dt_routing, configs.replace(dt_routing=900).dt_routing) == (0, 900)
+    router = rr.Router(configs, dt_total=3600)
+    assert (configs.dt_total, router.cfg.dt_total) == (0, 3600)
+
+
+def test_configs_are_validated_once_when_routed(network: SyntheticNetwork):
+    configs = rr.Configs(
+        forcing='vlateral',
+        params_file=str(network.params_file),
+        vlateral_files=[str(network.vlateral_file)],
+        discharge_files=[network.path('q.nc')],
+        channel_state_init_file=str(network.state_file),
+        log=False,
+        progress_bar=False,
+    )
+    assert not configs._validated
+    rr.Router(configs).route()
+    assert configs._validated
+    with pytest.raises(ValueError, match='dt_routing is required for channel routing'):
+        rr.Router(configs, forcing='channel').route()
 
 
 def test_example_config_template_loads(network: SyntheticNetwork, tmp_path):
@@ -420,7 +502,7 @@ def test_example_config_template_loads(network: SyntheticNetwork, tmp_path):
         dt_total=3600,
     )
     template.pop('discharge_dir', None)
-    rr.Configs.from_mapping(template).validate()
+    rr.Configs.from_mapping(template).validate_routing()
 
 
 def test_duplicate_input_basenames_raise(network: SyntheticNetwork, tmp_path):
@@ -432,12 +514,14 @@ def test_duplicate_input_basenames_raise(network: SyntheticNetwork, tmp_path):
     out_dir.mkdir()
     with pytest.raises(ValueError, match='duplicate names'):
         rr.Router(
-            forcing='vlateral',
-            params_file=str(network.params_file),
-            vlateral_files=[str(network.vlateral_file), str(nested / 'vlateral.nc')],
-            discharge_dir=str(out_dir),
-            log=False,
-            progress_bar=False,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(network.params_file),
+                vlateral_files=[str(network.vlateral_file), str(nested / 'vlateral.nc')],
+                discharge_dir=str(out_dir),
+                log=False,
+                progress_bar=False,
+            )
         )
 
 
@@ -445,15 +529,17 @@ def test_each_router_has_one_log_handler(network: SyntheticNetwork):
     """Loggers were named by id(self), which CPython reuses, so handlers accumulated across instances."""
     for _ in range(8):
         router = rr.Router(
-            forcing='channel',
-            params_file=str(network.params_file),
-            discharge_files=[network.path('q.nc')],
-            channel_state_init_file=str(network.state_file),
-            dt_routing=3600,
-            dt_total=3600,
-            log=True,
-            log_level='WARNING',
-            progress_bar=False,
+            rr.Configs(
+                forcing='channel',
+                params_file=str(network.params_file),
+                discharge_files=[network.path('q.nc')],
+                channel_state_init_file=str(network.state_file),
+                dt_routing=3600,
+                dt_total=3600,
+                log=True,
+                log_level='WARNING',
+                progress_bar=False,
+            )
         )
         assert len(router.logger.handlers) == 1
         del router
@@ -462,13 +548,15 @@ def test_each_router_has_one_log_handler(network: SyntheticNetwork):
 def test_router_logger_does_not_propagate(network: SyntheticNetwork):
     """The router owns its handler, so propagating to the root logger would print every message twice."""
     router = rr.Router(
-        forcing='channel',
-        params_file=str(network.params_file),
-        discharge_files=[network.path('q.nc')],
-        channel_state_init_file=str(network.state_file),
-        dt_routing=3600,
-        dt_total=3600,
-        log=True,
-        progress_bar=False,
+        rr.Configs(
+            forcing='channel',
+            params_file=str(network.params_file),
+            discharge_files=[network.path('q.nc')],
+            channel_state_init_file=str(network.state_file),
+            dt_routing=3600,
+            dt_total=3600,
+            log=True,
+            progress_bar=False,
+        )
     )
     assert router.logger.propagate is False

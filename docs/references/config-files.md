@@ -1,6 +1,7 @@
 ## Configuration File
 
-`river-route` computations are controlled by config values passed as keyword arguments or from a YAML/JSON file.
+`river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
+YAML/JSON file with `Configs.from_file`.
 There is a single `Router`. The routing procedure it runs is set by three selector keys (`coeff`, `forcing`,
 `network`), and the required config keys depend on which selections you make.
 
@@ -87,12 +88,18 @@ The following table lists where each remaining key applies.
 | `var_t`                  | Time dimension name in depth grids                     | `'time'`                                      |
 | `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`       | `'incremental'`                               |
 | `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs       | `'sequential'`                                |
-| `deep_validation`        | Check the contents of input files before routing       | `True`                                        |
+| `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
+| `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
+| `force_uniform_timesteps` | Resample irregular grid runoff to the first timestep  | `True`                                        |
+| `as_volumes`             | `Runoff` prepares volumes instead of depths            | `False`                                       |
+| `deep_validation`        | Check the contents of input files when validated       | `True`                                        |
 | `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
 
 ## Validation
 
-`Router.route()` validates before it computes anything.
+`Router.route()` validates the configs with `Configs.validate_routing` before it computes anything, and `Runoff`
+validates them with `Configs.validate_runoff` before it reads the weight table. Configs are frozen, so once they pass
+they are not checked again.
 
 `deep_validation` (on by default) reads the params file, grid weights, and initial state and checks their
 columns, types, and value ranges, that the network is topologically sorted, and that the weight table
@@ -114,5 +121,5 @@ otherwise read past the end of the array or route water down the wrong reach.
 The general template in YAML format lists all keys with comments.
 
 ```yaml title="config.yaml"
-{% include-markdown "../../examples/config.yaml" %}
+--8<-- "examples/config.yaml"
 ```

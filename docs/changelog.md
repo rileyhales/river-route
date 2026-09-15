@@ -10,10 +10,10 @@
   irregular timesteps. The 3.0.5 floor also skips 3.0.4, which is yanked from PyPI for segfaults in
   datetime handling that this package hit on every CF encoded time axis it read.
 - Increased the minimum numpy version to 2.5.
-- Added `river_route.writers` with premade discharge writers for `Router.set_write_discharges`: `netcdf_writer`, the
+- Added `river_route.writers` with premade discharge writers for `Router.set_discharge_writer`: `netcdf_writer`, the
   default, and `zarr_writer`, which writes uncompressed `(time, river_id)` discharge in chunks of 500 rivers that
-  each span every time step, writing up to `threads` chunks at once (optionally packed into shard files with
-  `writers.ZARR_CHUNKS_PER_SHARD`), and `parquet_writer`, which writes one row per
+  each span every time step, writing up to the `threads` given to `Router.route` chunks at once (optionally packed
+  into shard files with `writers.ZARR_CHUNKS_PER_SHARD`), and `parquet_writer`, which writes one row per
   river and one column per time step, uncompressed and without dictionary encoding or statistics by default
   (`writers.PARQUET_WRITE_OPTIONS`). `null_writer` sends discharge to the operating system's null device
   (`os.devnull`) so a route keeps nothing on disk. zarr is now a dependency.
@@ -21,21 +21,32 @@
   `writer(router, dates, discharge_array, discharge_file, runoff_file)`, so they can read `router.river_ids` and
   `router.cfg`. Custom writers written for the previous 4 argument signature need the new first argument.
   `Router._default_write_discharges` is removed; use `river_route.writers.netcdf_writer`.
+- `Router.set_write_discharges` is renamed `Router.set_discharge_writer`.
+- `Configs` is its own subpackage, `river_route.configs`, and is the one way options are given. Build a frozen
+  `Configs` from keyword arguments or with `Configs.from_file`, `from_json`, or `from_yaml`, then pass it to
+  `Router(configs, **overrides)` or `Runoff(configs, **overrides)`; the overrides change a copy. `Router` no longer
+  takes a config file path or options as keyword arguments alone, and `Runoff` no longer takes a weight table path
+  and options. `Configs.to_json` and `Configs.to_yaml` write the options to a file that `from_file` reads back, and
+  `Configs.replace` returns a copy with options changed. `Router.route` calls `Configs.validate_routing` and
+  `Runoff` calls `Configs.validate_runoff`, which check the options once and run `Configs.deep_validate` when
+  `deep_validation` is True. `Configs.validate` is removed. The runoff options `runoff_depth_unit`,
+  `force_positive_runoff`, `force_uniform_timesteps`, and `as_volumes` are now configs.
 - Routing from gridded runoff no longer rebuilds, copies, or reallocates lateral inflow for every runoff file.
   The weight table is read and checked against the params file once per `route()`, and each file is aggregated
   in a single pass (area weighting, de-accumulation, clipping, NaN replacement, and the volume product) straight
   into a reused C-order buffer that the kernels read without a copy. The runoff read itself is unchanged. With
   `threads` above 1 the rivers are split into ranges of similar work that the same kernel aggregates
   concurrently on the `thread_pool`; single threaded, one range covers every river.
-- Threading happens only on a thread pool the caller passes; the package never creates one.
-  `Router.route(thread_pool=pool)` uses a `ThreadPoolExecutor` as given and never shuts it down, so it can be shared
-  with `Runoff(thread_pool=pool)` and closed by the caller's `with` block. The `threads` config sets how many regions
-  the network is partitioned into when a pool is given; without one, routing is single-threaded.
+- Threading happens only on a thread pool the caller passes; the package never creates one. Threads are a runtime
+  resource, not a config. `Router.route(thread_pool=pool, threads=n)` uses a `ThreadPoolExecutor` as given and never
+  shuts it down, so it can be shared with `Runoff.vlateral(..., thread_pool=pool, threads=n)` and closed by the
+  caller's `with` block. `threads` sets how many regions the network is partitioned into when a pool is given;
+  without one, routing is single-threaded. `Runoff.aggregate` and `Runoff.to_dataset` take the same arguments.
   `Router.thread_pool()` is removed.
 - `river_route.runoff` is now a subpackage following the layout of `river_route.routers`. Runoff preparation is
   the `Runoff` class (also exported as `river_route.Runoff`), which reads the weight table once
   and provides `read_runoff`, `aggregate`, `vlateral` (into a reused buffer), and `to_dataset`. It replaces the
-  `runoff_to_vlateral` function: use `Runoff(grid_weights_file, ...).to_dataset(runoff_files)`. The
+  `runoff_to_vlateral` function: use `Runoff(Configs(grid_weights_file=..., ...)).to_dataset(runoff_files)`. The
   aggregation kernel lives in `river_route.runoff._numba_kernels`, and the weight table functions
   (`grid_weights`, `compute_voronoi_catchment_intersects`, `voronoi_diagram_from_regular_xy`,
   `cell_xy_from_regular_grid`) in `river_route.runoff.weights`, still importable from `river_route.runoff`.

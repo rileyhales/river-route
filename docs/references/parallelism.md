@@ -1,40 +1,57 @@
 # Parallelism in River Routing
 
-Many scientific computations jump to parallelism and GPU acceleration. There is, sometimes significant,
-overhead to orchestrate multiple workers. The effectiveness depends on the strategy, size and complexity
-of the job and the hardware being used. Not all strategies are worth using on all cases. This page is a
-list of the parallelization strategies tested in `river-route` and my recommendations based on using these
-methods to operate a global hydrological model and generate a 5 trillion data point simulation product.
+Many scientific computations jump quickly to various methods of parallelism and GPU acceleration. River routing
+math is very well suited for parallelization, but it is even more advantageous to worry first about the efficiency 
+of the algorithm. There are more efficiency gains to be had through careful choice of solving procedures and 
+preparing the inputs in more careful ways than there is through jumping immediately to parallelization. The 
+effectiveness of parallelization depends on the strategy, the size and complexity of the network, and the 
+hardware being used. 
+
+Not all parallelization strategies are worth pursing in river routing cases. This page is a list of the strategies 
+tested in `river-route` and recommendations based on using these methods to operate a global hydrological model 
+generating a 5 trillion data point simulation product.
+
+The following guide is the order of significance in how effective various methods are in speeding up and increasing 
+resource efficiency of routing computation. This is shared both as justification for why `river-route` is designed 
+in this way and also as an educational guide for other projects. 
 
 ## What cannot be parallelized?
 
-The fundamental constraint to parallelism in river routing is that it is a time stepping process.
-You must solve for discharge in time order without skipping steps. The discharge at time `t+1`
-depends on the discharge at time `t`.
+The two fundamental constraints in river routing. First, it is a time stepping process. At any given river, you must 
+solve for discharge at the current time `t` before solving for the next time `t+1`. Second, there is an 
+order dependency that river segment upstream must be solved before the current river and the downstream river.
 
-## Asynchronous pipelines for file I/O and computations
+Within a time step, the solve is a forward substitution: the value at row $i$ depends on all previously solved
+rows $1, \ldots, i-1$. Water only moves downstream, so a river cannot be computed before every river upstream of it.
+A large river's main stem depends on its whole basin and is always computed on one thread.
 
-**Summary**: A single routing process can have up to 3 meaningful threads: 1 reads inputs from disk, 1
-does computations, 1 writes results to disk. All 3 can be operating at the same time.
+## Better ways to prepare inputs
 
-```mermaid
-block-beta
-    columns 7
-    space:1 s1["Step 1"] s2["Step 2"] s3["Step 3"] s4["Step 4"] s5["Step 5"] s6["Step 6"]
-    r["Read"]:1 r1["t=1"] r2["t=2"] r3["t=3"] r4["t=4"] space:2
-    c["Compute"]:1 space:1 c1["t=1"] c2["t=2"] c3["t=3"] c4["t=4"] space:1
-    w["Write"]:1 space:2 w1["t=1"] w2["t=2"] w3["t=3"] w4["t=4"]
-```
+### Topological river sorting and Depth First Search (DFS)
 
-If you have an unfavorable combination of slow I/O, slow CPU, and large computations, this solution
-might help. Individual routing jobs get faster but by making threads for portions that depend on
-different hardware. However, using this method means you probably won't be able to use it in
-combination with another parallelization strategy because you more quickly consume memory and disk
-I/O bandwidth with one job. In my experience, this speedup is at most a few percent.
+TBD
 
-**Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware capabilities.
+### Splitting watershed subgraphs
 
-## Multiprocessing or multithreading matrix solvers
+[//]: # (todo: talk about identificaiton of subgraphs and balancing size with resources)
+
+**Summary**: If your computations contains several independent watersheds, you can route them simultaneously in separate processes.
+
+**Conclusion**: This is more beneficial as job sizes get larger. Watersheds have no dependencies on others. Separate watersheds and
+process simultaneously or combine them into a single config file if compute times are small enough.
+
+### Formats of inputs and outputs
+
+[//]: # (todo)
+
+after you carefully prepare inputs and the algorithm, a large, possibly the largest, portion of remaining time is spent reading and writing data.
+You should reduce the number of times the code needs to read/write data and the number of total files it needs to read/write.
+
+## Options for parallelism
+
+### Multithreading matrix solvers
+
+[//]: # (todo: only if you sort the network into independent but ordered subgraphs then you can solve each with parallel threads.)
 
 **Summary**: Use vector solvers that use efficient and possibly parallelized methods to solve array operations.
 
@@ -55,16 +72,9 @@ has the advantages that it:
 3. is the computationally fastest option because it does not iterate or do any matrix conditioning or pivoting
 4. is the direct solution so there is no error due to solver convergence tolerances.
 
-**Conclusion**: It's less efficient to parallelize than to carefully prepare your inputs and use better solvers.
+**Conclusion**: Meaningful speedup is possible with multiple threads but only if you 
 
-## Complete watersheds in separate processes
-
-**Summary**: If your computations contains several independent watersheds, you can route them simultaneously in separate processes.
-
-**Conclusion**: This is more beneficial as job sizes get larger. Watersheds have no dependencies on others. Separate watersheds and
-process simultaneously or combine them into a single config file if compute times are small enough.
-
-## Ensemble simulations in separate processes
+### Concurrent jobs vs multiple threads in one job
 
 **Summary**: Simulations of many inputs, perhaps from an ensemble of runoff projections, share
 only the initial state. Multiple members can be processed concurrently in separate processes.
@@ -89,12 +99,13 @@ output_files = ['discharges_member_1.nc',
 
 
 def route(input_file: str, output_file: str) -> None:
-    rr.Router(
+    configs = rr.Configs(
         forcing='vlateral',
         params_file=params_file,
         vlateral_files=[input_file, ],
         discharge_files=[output_file, ],
-    ).route()
+    )
+    rr.Router(configs).route()
 
 
 if __name__ == '__main__':
@@ -103,3 +114,29 @@ if __name__ == '__main__':
 ```
 
 **Conclusion**: This is the best way to speed up ensemble simulations. 
+
+### Separate pipelines for reading inputs, compute, writing outputs
+
+**Summary**: A single routing process can have up to 3 meaningful tasks: 1 reads inputs from disk, 1
+does computations, 1 writes results to disk. All 3 can be operating independently at the same time.
+
+```mermaid
+block-beta
+    columns 7
+    space:1 s1["Step 1"] s2["Step 2"] s3["Step 3"] s4["Step 4"] s5["Step 5"] s6["Step 6"]
+    r["Read"]:1 r1["t=1"] r2["t=2"] r3["t=3"] r4["t=4"] space:2
+    c["Compute"]:1 space:1 c1["t=1"] c2["t=2"] c3["t=3"] c4["t=4"] space:1
+    w["Write"]:1 space:2 w1["t=1"] w2["t=2"] w3["t=3"] w4["t=4"]
+```
+
+If you have an unfavorable combination of slow I/O, slow CPU, and large computations, this solution
+might help. Individual routing jobs get faster but by making threads for portions that depend on
+different hardware. However, using this method means you probably won't be able to use it in
+combination with another parallelization strategy because you more quickly consume memory and disk
+I/O bandwidth with one job. In my experience, this speedup is at most a few percent.
+
+**Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware capabilities.
+
+## Conclusions
+
+The most important thing to work on is the efficiency of the algorithm and statically determining subgraphs.

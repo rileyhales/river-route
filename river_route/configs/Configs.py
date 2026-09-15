@@ -1,30 +1,36 @@
 import difflib
+import json
 import os
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any, ClassVar, Literal, Self, get_args, get_origin, get_type_hints
 
 import numpy as np
 import pandas as pd
 import xarray as xr
+import yaml
 
 from river_route.types import PathInput, PathList
 
 __all__ = ['Configs']
 
 _PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
-_MISSING = object()  # used to distinguish between missing and None
 
 
-@dataclass
+@dataclass(kw_only=True, frozen=True)
 class Configs:
     """
-    Accepts and validates configuration options. The class will validates in the following ways:
+    Frozen configuration options. Build one from keyword arguments with ``Configs(...)`` or from a file with
+    ``Configs.from_file``, then pass it to ``Router`` or ``Runoff``. Building a Configs normalizes it: file paths are
+    made absolute, discharge_files are derived from discharge_dir, and selector values are checked. The options are
+    validated when they are used: ``Router.route`` calls ``validate_routing`` and ``Runoff`` calls ``validate_runoff``.
+    Either one checks that the required options are set, that input paths exist, and that output paths are in
+    existing directories, runs ``deep_validate`` when ``deep_validation`` is True, and then marks the Configs as
+    validated so it is not checked again.
 
-    1. Required keys are non-null and non-empty.
-    2. Values are from given enumerations if applicable
-    3. Required paths or directories must exist
-    4. File paths are converted to absolute paths.
+    Use ``replace`` to get a copy with some options changed, and ``to_json`` or ``to_yaml`` to write the options to a
+    file that ``from_file`` reads back.
     """
 
     # annotate file path fields with PathInput or PathList
@@ -60,13 +66,14 @@ class Configs:
     uh_state_init_file: PathInput | None = None
     uh_state_final_file: PathInput | None = None
 
-    # Concurrency. Regions come from the params file 'region' column (see streams.partition_network) or are
-    # derived at setup when it is absent. threads=1 routes the whole network in a single pass. The thread pool itself
-    # is not a config: it is passed to Router.route(), and without one routing is single-threaded.
-    threads: int = 1
+    # Gridded runoff preparation (Runoff)
+    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
+    force_positive_runoff: bool = False  # clip negative runoff depths to zero
+    force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
+    as_volumes: bool = False  # Runoff prepares volumes (m³) instead of depths (m); routing always uses volumes
 
     # Validation behavior
-    deep_validation: bool = True  # read and check the contents of the input files before routing
+    deep_validation: bool = True  # read and check the contents of the input files when the configs are validated
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
     # Misc behavior that users may want to override
@@ -82,43 +89,52 @@ class Configs:
     var_y: str = 'y'
     var_t: str = 'time'
 
+    # False until validate_routing or validate_runoff passes
+    _validated: bool = field(default=False, init=False, repr=False, compare=False)
+
     # special subset of auto-detected PathLists where the directory needs to exist, not the file
     _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({'channel_state_final_file', 'uh_state_final_file'})
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
 
-    _ALWAYS_REQUIRED: ClassVar[tuple[str, ...]] = ('params_file',)
+    # options no validation reads, so a replace that changes only these keeps a validated Configs validated
+    _NOT_VALIDATED: ClassVar[frozenset[str]] = frozenset(
+        {
+            'as_volumes',
+            'force_positive_runoff',
+            'force_uniform_timesteps',
+            'runoff_depth_unit',
+            'log',
+            'progress_bar',
+            'log_level',
+            'log_stream',
+            'log_format',
+        }
+    )
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
     _LIST_PATH_FIELDS: ClassVar[frozenset[str]]
     _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
 
-    def __setattr__(self, name: str, value: object) -> None:
-        allowed = type(self).__dict__.get('_VALID_VALUES', {}).get(name)
-        if allowed is not None and value not in allowed:
-            raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
-        object.__setattr__(self, name, value)
-
     def __post_init__(self) -> None:
+        for name, allowed in self._VALID_VALUES.items():
+            value = getattr(self, name)
+            if value not in allowed:
+                raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
         # turn off progress bar if logging was turned off but progress was left at default on
-        self.progress_bar = bool(self.log) and bool(self.progress_bar)
+        object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
         # normalize paths given as strings to lists. make paths absolute.
         self._coerce_path_list_fields()
         self._absolutize_paths()
         # derive discharge_files from discharge_dir + input files when not explicitly provided
         self._resolve_discharge_dir()
-        self._verify_input_files_exist()
-        self._verify_output_directories_exist()
-        # make sure required fields are set
-        for key in self._ALWAYS_REQUIRED:
-            if getattr(self, key) in (None, '', []):
-                raise ValueError(f'Missing required config: {key}')
         return
 
+    # --- construction, copying, and serialization ---
     @classmethod
-    def from_mapping(cls, raw: dict[str, Any]) -> Self:
+    def from_mapping(cls, raw: Mapping[str, Any]) -> Self:
         """
         Build Configs from a mapping, reporting unrecognized keys by name instead of raising the
         dataclass TypeError. Suggests the closest valid key name for likely typos.
@@ -129,7 +145,76 @@ class Configs:
         Raises:
             ValueError: if the mapping contains any key that is not a config option
         """
-        known = {f.name for f in fields(cls)}
+        cls._check_keys(raw)
+        return cls(**raw)
+
+    @classmethod
+    def from_file(cls, path: PathInput) -> Self:
+        """Build Configs from a .json, .yml, or .yaml file."""
+        path = str(path)
+        if path.endswith('.json'):
+            return cls.from_json(path)
+        if path.endswith(('.yml', '.yaml')):
+            return cls.from_yaml(path)
+        raise ValueError(f'Unrecognized config file type: {path}. Must be .json, .yml, or .yaml')
+
+    @classmethod
+    def from_json(cls, path: PathInput) -> Self:
+        """Build Configs from a JSON file."""
+        with open(path) as f:
+            return cls.from_mapping(json.load(f))
+
+    @classmethod
+    def from_yaml(cls, path: PathInput) -> Self:
+        """Build Configs from a YAML file."""
+        with open(path) as f:
+            return cls.from_mapping(yaml.safe_load(f) or {})
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Every option as a mapping that ``from_mapping`` builds the same Configs from. Discharge files derived from
+        ``discharge_dir`` are left out so that the directory and the files are not both set.
+        """
+        values = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
+        values = {key: list(value) if isinstance(value, list) else value for key, value in values.items()}
+        if self.discharge_dir:
+            values['discharge_files'] = []
+        return values
+
+    def to_json(self, path: PathInput) -> None:
+        """Write every option to a JSON file that ``from_file`` reads back."""
+        with open(path, 'w') as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    def to_yaml(self, path: PathInput) -> None:
+        """Write every option to a YAML file that ``from_file`` reads back."""
+        with open(path, 'w') as f:
+            yaml.safe_dump(self.to_dict(), f, sort_keys=False)
+
+    def replace(self, **kwargs: Any) -> Self:
+        """
+        Return a copy with the given options changed. This Configs is not modified. Giving ``discharge_files``
+        replaces a ``discharge_dir`` and giving ``discharge_dir`` replaces ``discharge_files``. The copy is validated
+        only if this Configs is and every changed option is one that no validation reads.
+
+        Raises:
+            ValueError: if any keyword is not a config option
+        """
+        self._check_keys(kwargs)
+        values = self.to_dict()
+        if 'discharge_files' in kwargs:
+            values['discharge_dir'] = None
+        elif 'discharge_dir' in kwargs:
+            values['discharge_files'] = []
+        values.update(kwargs)
+        configs = type(self)(**values)
+        if self._validated and self._NOT_VALIDATED.issuperset(kwargs):
+            object.__setattr__(configs, '_validated', True)
+        return configs
+
+    @classmethod
+    def _check_keys(cls, raw: Mapping[str, Any]) -> None:
+        known = {f.name for f in fields(cls) if f.init}
         unknown = sorted(set(raw) - known)
         if unknown:
             described = []
@@ -137,7 +222,7 @@ class Configs:
                 close = difflib.get_close_matches(key, sorted(known), n=1)
                 described.append(f'{key!r}' + (f' (did you mean {close[0]!r}?)' if close else ''))
             raise ValueError(f'Unrecognized config key(s): {", ".join(described)}')
-        return cls(**raw)
+        return
 
     # --- path normalization and verification ---
     def _coerce_path_list_fields(self) -> None:
@@ -145,7 +230,7 @@ class Configs:
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key)
             if isinstance(val, PathInput) and val:
-                setattr(self, key, [str(val)])
+                object.__setattr__(self, key, [str(val)])
         return
 
     def _absolutize_paths(self) -> None:
@@ -153,11 +238,11 @@ class Configs:
         for key in self._SINGLE_PATH_FIELDS:
             val = getattr(self, key, None)
             if val:
-                setattr(self, key, os.path.abspath(val))
+                object.__setattr__(self, key, os.path.abspath(val))
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key, [])
             if val:
-                setattr(self, key, [os.path.abspath(p) for p in val])
+                object.__setattr__(self, key, [os.path.abspath(p) for p in val])
         return
 
     def _verify_input_files_exist(self) -> None:
@@ -177,8 +262,6 @@ class Configs:
     def _resolve_discharge_dir(self) -> None:
         """Populate discharge_files from discharge_dir when explicit paths are not given."""
         if not self.discharge_dir:
-            if not self.discharge_files:
-                raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             return
         if self.discharge_files:
             raise ValueError('Provide discharge_dir or discharge_files, not both')
@@ -193,10 +276,11 @@ class Configs:
                     f'Input files with duplicate names would resolve to the same output file in discharge_dir: '
                     f'{", ".join(duplicates)}. Use discharge_files to give explicit output paths.'
                 )
-            self.discharge_files = [os.path.join(d, f'discharge_{name}') for name in basenames]
+            discharge_files = [os.path.join(d, f'discharge_{name}') for name in basenames]
         else:
             # Muskingum (no lateral inflow files)
-            self.discharge_files = [os.path.join(d, 'discharge.nc')]
+            discharge_files = [os.path.join(d, 'discharge.nc')]
+        object.__setattr__(self, 'discharge_files', discharge_files)
         return
 
     def _verify_output_directories_exist(self) -> None:
@@ -218,37 +302,83 @@ class Configs:
                 raise NotADirectoryError(f'Output directory not found: {val}')
         return
 
-    def validate(self) -> Self:
-        """Validate that the configured options are mutually consistent for the chosen routing procedure. Cares
-        only about the existence and validity of options, not file contents (see deep_validate). Raise ValueError."""
-        # __setattr__ only auto-checks fields declared as Literal, so the numeric range is checked here
-        if not isinstance(self.threads, int) or isinstance(self.threads, bool) or self.threads < 1:
-            raise ValueError(f'threads must be an integer >= 1, got {self.threads!r}')
+    # --- validation ---
+    def validate_routing(self) -> Self:
+        """
+        Validate the options for routing: the options the chosen procedure requires are set and consistent, input
+        paths exist, and outputs are in existing directories. Runs deep_validate when deep_validation is True. Called
+        by Router.route. Returns immediately once the Configs has been validated.
+
+        Raises:
+            ValueError, FileNotFoundError, NotADirectoryError: if any option is missing or invalid
+        """
+        if not self.params_file:
+            raise ValueError('params_file is required to route')
+        if self._validated:
+            return self
+        self._verify_input_files_exist()
+        self._verify_output_directories_exist()
+        if not self.discharge_files:
+            raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
         if self.forcing == 'channel':
             for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
                 if not getattr(self, key, None):
                     raise ValueError(f'{key} is required for channel routing')
             if len(self.discharge_files) != 1:
                 raise ValueError('Channel routing requires exactly one entry in discharge_files')
-            return self
+        else:
+            vlateral = self.vlateral_files
+            grids = self.grid_runoff_files and self.grid_weights_file
+            if vlateral and grids:
+                raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file, not both')
+            if not vlateral and not grids:
+                raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file')
+            n_inputs = len(vlateral) + len(self.grid_runoff_files or [])
+            if len(self.discharge_files) != n_inputs:
+                raise ValueError('Number of resolved discharge output files must match number of input files')
+            if len(set(self.discharge_files)) != len(self.discharge_files):
+                raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
+            if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
+                raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
+        if self.deep_validation:
+            self.deep_validate()
+        object.__setattr__(self, '_validated', True)
+        return self
 
-        vlateral = self.vlateral_files
-        grids = self.grid_runoff_files and self.grid_weights_file
-        if vlateral and grids:
-            raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file, not both')
-        if not vlateral and not grids:
-            raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file')
-        n_inputs = len(vlateral) + len(self.grid_runoff_files or [])
-        if len(self.discharge_files) != n_inputs:
-            raise ValueError('Number of resolved discharge output files must match number of input files')
-        if len(set(self.discharge_files)) != len(self.discharge_files):
-            raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
-        if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
-            raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
+    def validate_runoff(self) -> Self:
+        """
+        Validate the options for preparing gridded runoff: grid_weights_file is set and every input path exists.
+        Runs deep_validate when deep_validation is True. Called by Runoff. Returns immediately once the Configs has
+        been validated.
+
+        Raises:
+            ValueError, FileNotFoundError: if any option is missing or invalid
+        """
+        if not self.grid_weights_file:
+            raise ValueError('grid_weights_file is required to prepare runoff')
+        if self._validated:
+            return self
+        self._verify_input_files_exist()
+        if self.deep_validation:
+            self.deep_validate()
+        object.__setattr__(self, '_validated', True)
         return self
 
     def deep_validate(self) -> Self:
-        """Perform deep validation of file contents and inter-file consistency. Raise ValueError if any issues found."""
+        """
+        Validate the contents of every input file that is set and their consistency with each other.
+
+        Raises:
+            ValueError: if any file or combination of files is invalid
+        """
+        params_df = self._deep_validate_params_file() if self.params_file else None
+        if self.grid_weights_file:
+            self._deep_validate_grid_weights_file(self.grid_weights_file, params_df)
+        if self.channel_state_init_file:
+            self._deep_validate_channel_state_init_file(params_df)
+        return self
+
+    def _deep_validate_params_file(self) -> pd.DataFrame:
         # params df should be parquet with columns river_id, next_river_id, k, x
         # river_id should be non-null, integer, and unique
         # next_river_id should be non-null, integer, all -1 or positive, and exist in river_id (except for -1)
@@ -309,55 +439,58 @@ class Configs:
                 continue
             if river_id_index[int(ds_id)] <= upstream_idx:
                 raise ValueError(f'{self.params_file} is not topologically sorted (upstream to downstream)')
+        return params_df
 
+    def _deep_validate_grid_weights_file(self, grid_weights_file: PathInput, params_df: pd.DataFrame | None) -> None:
         # weights should be netcdf with variables river_id, x_index, y_index, x, y, area_sqm, proportion.
-        if self.grid_weights_file:
-            try:
-                ds = xr.load_dataset(self.grid_weights_file)
-            except Exception as e:
-                raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
-            expected_variables = (rid, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion')
-            for variable in expected_variables:
-                if variable not in ds:
-                    raise ValueError(f'Grid weights file missing {variable} variable')
-            if np.any(ds[rid].isnull()):
-                raise ValueError(f'Grid weights {rid} variable contains null values')
-            if not pd.api.types.is_integer_dtype(ds[rid].dtype):
-                raise ValueError(f'Grid weights {rid} variable must be integer type')
-            if not set(ds[rid].values).issubset(river_ids):
-                raise ValueError(f'Grid weights {rid} values must exist in params {rid}')
-            for variable in expected_variables[1:]:
-                if np.any(ds[variable].isnull()):
-                    raise ValueError(f'Grid weights {variable} variable contains null values')
-                if not pd.api.types.is_numeric_dtype(ds[variable].dtype):
-                    raise ValueError(f'Grid weights {variable} variable must be numeric type')
-            if np.any(ds['area_sqm'] <= 0):
-                raise ValueError('Grid weights area_sqm variable must be positive')
-            if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
-                raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
-            proportions_sum = ds['proportion'].groupby(ds[rid]).sum()
-            if not np.allclose(proportions_sum.values, 1.0):
-                raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
+        rid = self.var_river_id
+        try:
+            ds = xr.load_dataset(grid_weights_file)
+        except Exception as e:
+            raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
+        expected_variables = (rid, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion')
+        for variable in expected_variables:
+            if variable not in ds:
+                raise ValueError(f'Grid weights file missing {variable} variable')
+        if np.any(ds[rid].isnull()):
+            raise ValueError(f'Grid weights {rid} variable contains null values')
+        if not pd.api.types.is_integer_dtype(ds[rid].dtype):
+            raise ValueError(f'Grid weights {rid} variable must be integer type')
+        if params_df is not None and not set(ds[rid].values).issubset(set(params_df[rid].unique())):
+            raise ValueError(f'Grid weights {rid} values must exist in params {rid}')
+        for variable in expected_variables[1:]:
+            if np.any(ds[variable].isnull()):
+                raise ValueError(f'Grid weights {variable} variable contains null values')
+            if not pd.api.types.is_numeric_dtype(ds[variable].dtype):
+                raise ValueError(f'Grid weights {variable} variable must be numeric type')
+        if np.any(ds['area_sqm'] <= 0):
+            raise ValueError('Grid weights area_sqm variable must be positive')
+        if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
+            raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
+        proportions_sum = ds['proportion'].groupby(ds[rid]).sum()
+        if not np.allclose(proportions_sum.values, 1.0):
+            raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
+        return
 
+    def _deep_validate_channel_state_init_file(self, params_df: pd.DataFrame | None) -> None:
         # initial channel state should be parquet with 1 column named Q.
         # Q should be non-null, numeric, and non-negative.
         # it should be exactly the same shape as the number of rows in the params file and in the same order.
-        if self.channel_state_init_file:
-            try:
-                state_df = pd.read_parquet(self.channel_state_init_file)
-            except Exception as e:
-                raise ValueError('Error reading initial state file. Must be valid parquet file') from e
-            if 'Q' not in state_df.columns:
-                raise ValueError('Initial state file missing Q column')
-            if np.any(state_df['Q'].isnull()):
-                raise ValueError('Initial state file Q column contains null values')
-            if not pd.api.types.is_numeric_dtype(state_df['Q']):
-                raise ValueError('Initial state file Q column must be numeric type')
-            if np.any(state_df['Q'] < 0):
-                raise ValueError('Initial state file Q column must be non-negative')
-            if state_df.shape[0] != params_df.shape[0]:
-                raise ValueError(f'Initial state file must have the same number of rows as {self.params_file}')
-        return self
+        try:
+            state_df = pd.read_parquet(self.channel_state_init_file)
+        except Exception as e:
+            raise ValueError('Error reading initial state file. Must be valid parquet file') from e
+        if 'Q' not in state_df.columns:
+            raise ValueError('Initial state file missing Q column')
+        if np.any(state_df['Q'].isnull()):
+            raise ValueError('Initial state file Q column contains null values')
+        if not pd.api.types.is_numeric_dtype(state_df['Q']):
+            raise ValueError('Initial state file Q column must be numeric type')
+        if np.any(state_df['Q'] < 0):
+            raise ValueError('Initial state file Q column must be non-negative')
+        if params_df is not None and state_df.shape[0] != params_df.shape[0]:
+            raise ValueError(f'Initial state file must have the same number of rows as {self.params_file}')
+        return
 
 
 def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:

@@ -15,7 +15,8 @@ There is one router, `rr.Router`. You describe the routing procedure with three 
 ```python
 import river_route as rr
 
-rr.Router("/path/to/config.yaml", coeff="dynamic", forcing="vlateral", network="standard").route()
+configs = rr.Configs.from_file("/path/to/config.yaml")  # sets coeff, forcing, network, and the other options
+rr.Router(configs).route()
 ```
 
 ## Quick Start
@@ -27,28 +28,25 @@ pip install river-route
 ```python
 import river_route as rr
 
-rr.Router("/path/to/config.yaml").route()
+configs = rr.Configs.from_file("/path/to/config.yaml")
+rr.Router(configs).route()
 ```
 
-Config can be passed as:
-
-1. A YAML/JSON file path.
-2. Keyword arguments.
-3. Both (keyword arguments override config file values).
+Options are held by a frozen `Configs` object, built from keyword arguments or read from a YAML/JSON file with
+`Configs.from_file`, and validated when they are used. Keyword arguments given to `Router` change a copy of the
+configs for that router only. `to_yaml` and `to_json` write the options to a file that `Configs.from_file` reads back.
 
 ```python
 import river_route as rr
 
-(
-    rr
-    .Router(
-        "/path/to/config.yaml",
-        forcing="vlateral",
-        vlateral_files=["/path/to/catchment_runoff.nc"],
-        discharge_dir="/path/to/output/",
-    )
-    .route()
+configs = rr.Configs(
+    params_file="/path/to/params.parquet",
+    forcing="vlateral",
+    vlateral_files=["/path/to/catchment_runoff.nc"],
+    discharge_dir="/path/to/output/",
 )
+configs.to_yaml("/path/to/config.yaml")
+rr.Router(configs).route()
 ```
 
 ## Start Here

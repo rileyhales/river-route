@@ -46,11 +46,8 @@ test = [
     "pytest",
 ]
 docs = [
-    "mkdocs<2",
-    "mkdocs-material>=9.5",
-    "mkdocstrings",
+    "zensical",
     "mkdocstrings-python",
-    "mkdocs-include-markdown-plugin",
 ]
 lint = [
     "ruff",
@@ -75,6 +72,7 @@ line-length = 120
 extend-exclude = ["tests/ignored_test_*.py"]
 
 [tool.ruff.format]
+exclude = ["benchmarks/*"]
 skip-magic-trailing-comma = true
 quote-style = "single"
 

@@ -1,5 +1,6 @@
 import argparse
 
+from .configs import Configs
 from .routers import Router
 
 
@@ -21,7 +22,7 @@ def main():
         return
 
     if args.command == 'route':
-        Router(args.config).route()
+        Router(Configs.from_file(args.config)).route()
 
 
 if __name__ == '__main__':

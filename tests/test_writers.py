@@ -16,27 +16,29 @@ from conftest import SyntheticNetwork, build_network
 import river_route as rr
 
 
-def route_with_writer(network: SyntheticNetwork, out_name: str, writer=None, **kwargs) -> str:
+def route_with_writer(network: SyntheticNetwork, out_name: str, writer=None, threads: int = 1, **kwargs) -> str:
     out = network.path(out_name)
     router = rr.Router(
-        forcing='vlateral',
-        params_file=str(network.params_file),
-        vlateral_files=[str(network.vlateral_file)],
-        channel_state_init_file=str(network.state_file),
-        dt_routing=network.dt_runoff,
-        discharge_files=[out],
-        log=False,
-        progress_bar=False,
-        **kwargs,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(network.vlateral_file)],
+            channel_state_init_file=str(network.state_file),
+            dt_routing=network.dt_runoff,
+            discharge_files=[out],
+            log=False,
+            progress_bar=False,
+            **kwargs,
+        )
     )
     if writer is not None:
-        router.set_write_discharges(writer)
-    router.route()
+        router.set_discharge_writer(writer)
+    router.route(threads=threads)
     return out
 
 
 def test_netcdf_writer_is_the_default(network: SyntheticNetwork):
-    router = rr.Router(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
+    router = rr.Router(rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')]))
     assert router._write_discharges is rr.writers.netcdf_writer
 
 
@@ -67,7 +69,9 @@ def test_zarr_writer_splits_rivers_into_chunks(tmp_path):
     """A network wider than one chunk is split only on the river dimension and still reads back exactly."""
     n_rivers = rr.writers.ZARR_RIVERS_PER_CHUNK * 2 + 7
     router = rr.Router(
-        params_file=str(build_network(tmp_path / 'net').params_file), discharge_files=[str(tmp_path / 'q.nc')]
+        rr.Configs(
+            params_file=str(build_network(tmp_path / 'net').params_file), discharge_files=[str(tmp_path / 'q.nc')]
+        )
     )
     router.river_ids = np.arange(1, n_rivers + 1, dtype=np.int64)
     dates = pd.date_range('2000-01-01', periods=6, freq='h').to_numpy()
@@ -91,7 +95,9 @@ def test_zarr_writer_packs_chunks_into_shards(tmp_path, monkeypatch):
     monkeypatch.setattr(rr.writers, 'ZARR_CHUNKS_PER_SHARD', 2)
     n_rivers = rr.writers.ZARR_RIVERS_PER_CHUNK * 3 + 7
     router = rr.Router(
-        params_file=str(build_network(tmp_path / 'net').params_file), discharge_files=[str(tmp_path / 'q.nc')]
+        rr.Configs(
+            params_file=str(build_network(tmp_path / 'net').params_file), discharge_files=[str(tmp_path / 'q.nc')]
+        )
     )
     router.river_ids = np.arange(1, n_rivers + 1, dtype=np.int64)
     dates = pd.date_range('2000-01-01', periods=6, freq='h').to_numpy()
@@ -136,7 +142,7 @@ def test_zarr_store_opens_without_warnings(network: SyntheticNetwork):
 
 @pytest.mark.parametrize('writer', [rr.writers.netcdf_writer, rr.writers.zarr_writer, rr.writers.parquet_writer])
 def test_writers_reject_mismatched_shapes(network: SyntheticNetwork, writer):
-    router = rr.Router(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
+    router = rr.Router(rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')]))
     router.river_ids = np.arange(1, network.n_rivers + 1, dtype=np.int64)
     dates = pd.date_range('2000-01-01', periods=4, freq='h').to_numpy()
     with pytest.raises(ValueError, match='dates for'):

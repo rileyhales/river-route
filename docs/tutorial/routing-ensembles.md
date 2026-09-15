@@ -79,8 +79,8 @@ def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_
 
 m = (
     rr
-    .Router('your_config_file.yaml', forcing='vlateral')
-    .set_write_discharges(custom_output_writer)  # set the custom output writer function
+    .Router(rr.Configs.from_file('your_config_file.yaml'), forcing='vlateral')
+    .set_discharge_writer(custom_output_writer)  # set the custom output writer function
     .route()
 )
 

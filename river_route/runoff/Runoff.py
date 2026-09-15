@@ -1,5 +1,6 @@
 import logging
 from concurrent.futures import Executor
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -7,6 +8,7 @@ import scipy.sparse
 import xarray as xr
 
 from .._metadata import __version__
+from ..configs import Configs
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput
 from . import _numba_kernels as kernels
 
@@ -45,62 +47,34 @@ class Runoff:
     force_uniform_timesteps: bool
     as_volumes: bool
 
-    # Concurrency
-    thread_pool: Executor | None
-    threads: int
-
     # Customizable/optimizable: 32 and 64 were benchmarked as near equivalents.
     rivers_per_block: int = 64
 
     _buffer: FloatArray  # (time, n_rivers) reused output of vlateral(), grown to the longest file seen
 
-    def __init__(
-        self,
-        grid_weights_file: PathInput,
-        *,
-        var_river_id: str = 'river_id',
-        var_runoff: str = 'ro',
-        var_x: str = 'lon',
-        var_y: str = 'lat',
-        var_t: str = 'time',
-        runoff_depth_unit: str | None = None,
-        cumulative: bool = False,
-        force_positive_runoff: bool = False,
-        force_uniform_timesteps: bool = True,
-        as_volumes: bool = False,
-        thread_pool: Executor | None = None,
-        threads: int = 1,
-    ) -> None:
+    def __init__(self, configs: Configs, **kwargs: Any) -> None:
         """
         Args:
-            grid_weights_file: path to the weight table netCDF produced by ``river_route.runoff.grid_weights``
-            var_river_id: river ID variable name in the weight table
-            var_runoff: runoff variable name in the runoff files
-            var_x: x-coordinate variable name in the runoff files
-            var_y: y-coordinate variable name in the runoff files
-            var_t: time variable name in the runoff files
-            runoff_depth_unit: unit of the depth values; checked for in file attributes, defaulting to meters
-            cumulative: whether the runoff data is cumulative; converted to incremental if True
-            force_positive_runoff: clip negative runoff values to zero
-            force_uniform_timesteps: resample to a uniform timestep if the input is irregular
-            as_volumes: if True, prepare volumes (m³) instead of depths (m)
-            thread_pool: optional thread pool, used as given and never shut down here. The rivers are split into
-                ``threads`` ranges of similar work that the same kernel aggregates concurrently. Without a pool one
-                range covers every river.
-            threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
+            configs: options from ``Configs(...)`` or ``Configs.from_file(path)``. Reads grid_weights_file (the weight
+                table netCDF produced by ``river_route.runoff.grid_weights``), var_river_id, var_grid_runoff, var_x,
+                var_y, var_t, grid_accumulation_type, runoff_depth_unit, force_positive_runoff,
+                force_uniform_timesteps, and as_volumes.
+            **kwargs: config options to change for this Runoff. They are applied to a copy, so ``configs`` itself
+                is not modified. The configs are validated for runoff before the weight table is read.
         """
-        self.var_runoff = var_runoff
-        self.var_x = var_x
-        self.var_y = var_y
-        self.var_t = var_t
-        self.runoff_depth_unit = runoff_depth_unit
-        self.cumulative = cumulative
-        self.force_positive_runoff = force_positive_runoff
-        self.force_uniform_timesteps = force_uniform_timesteps
-        self.as_volumes = as_volumes
-        self.thread_pool = thread_pool
-        self.threads = threads
-        self._read_weights(grid_weights_file, var_river_id)
+        cfg = configs.replace(**kwargs) if kwargs else configs
+        cfg.validate_runoff()
+        assert cfg.grid_weights_file is not None  # validate_runoff raises when it is not set
+        self.var_runoff = cfg.var_grid_runoff
+        self.var_x = cfg.var_x
+        self.var_y = cfg.var_y
+        self.var_t = cfg.var_t
+        self.runoff_depth_unit = cfg.runoff_depth_unit
+        self.cumulative = cfg.grid_accumulation_type == 'cumulative'
+        self.force_positive_runoff = cfg.force_positive_runoff
+        self.force_uniform_timesteps = cfg.force_uniform_timesteps
+        self.as_volumes = cfg.as_volumes
+        self._read_weights(cfg.grid_weights_file, cfg.var_river_id)
         self._buffer = np.empty((0, self.river_ids.shape[0]), dtype=np.float32)
         return
 
@@ -141,12 +115,16 @@ class Runoff:
     # Prepare vlateral from runoff
     ################################################
 
-    def vlateral(self, runoff_data: PathInput | list[PathInput]) -> tuple[FloatArray, DatetimeArray]:
+    def vlateral(
+        self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
+    ) -> tuple[FloatArray, DatetimeArray]:
         """
         Read and aggregate runoff into one reused buffer so that repeated calls allocate nothing.
 
         Args:
             runoff_data: path(s) to runoff files
+            thread_pool: optional thread pool to aggregate on, used as given and never shut down here
+            threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
             tuple: (vlateral as a C-order (time, n_rivers) array, its time values). The array is a view of the
@@ -155,21 +133,29 @@ class Runoff:
         runoff, time_index, conversion_factor = self.read_runoff(runoff_data)
         if self._buffer.shape[0] < runoff.shape[0]:
             self._buffer = np.empty((runoff.shape[0], self.river_ids.shape[0]), dtype=np.float32)
-        return self.aggregate(runoff, time_index, conversion_factor, out=self._buffer)
+        return self.aggregate(
+            runoff, time_index, conversion_factor, out=self._buffer, thread_pool=thread_pool, threads=threads
+        )
 
-    def to_dataset(self, runoff_data: PathInput | list[PathInput]) -> xr.Dataset:
+    def to_dataset(
+        self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
+    ) -> xr.Dataset:
         """
         Read and aggregate runoff into a vlateral dataset that can be saved and routed with ``vlateral_files``.
 
         Args:
             runoff_data: path(s) to runoff files
+            thread_pool: optional thread pool to aggregate on, used as given and never shut down here
+            threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
             xr.Dataset: vlateral with dimensions ``time`` and ``river_id``.
                 Contains a single variable ``vlateral`` in meters or m³.
         """
         runoff, time_index, conversion_factor = self.read_runoff(runoff_data)
-        vlateral, time_index = self.aggregate(runoff, time_index, conversion_factor)
+        vlateral, time_index = self.aggregate(
+            runoff, time_index, conversion_factor, thread_pool=thread_pool, threads=threads
+        )
         del runoff
 
         units = 'm3' if self.as_volumes else 'm'
@@ -237,6 +223,8 @@ class Runoff:
         time_index: DatetimeArray,
         conversion_factor: int | float = 1,
         out: FloatArray | None = None,
+        thread_pool: Executor | None = None,
+        threads: int = 1,
     ) -> tuple[FloatArray, DatetimeArray]:
         """
         Aggregate gridded runoff depths onto rivers as area weighted depths or volumes in a single pass.
@@ -247,6 +235,10 @@ class Runoff:
             conversion_factor: multiplier converting the runoff depth unit to meters
             out: optional C-order array with at least as many rows as ``runoff`` and one column per river, used as
                 the output buffer. Not used when irregular timesteps are resampled.
+            thread_pool: optional thread pool, used as given and never shut down here. The rivers are split into
+                ``threads`` ranges of similar work that the same kernel aggregates concurrently. Without a pool one
+                range covers every river.
+            threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
             tuple: (vlateral as a C-order (time, n_rivers) array, its time values). When ``out`` is used the array is
@@ -261,7 +253,7 @@ class Runoff:
         time_diff = np.diff(time_index)
         if self.force_uniform_timesteps and time_diff.size and not np.all(time_diff == time_diff[0]):
             vlateral = np.empty((n_steps, n_rivers), dtype=dtype)
-            self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, False, vlateral)
+            self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, False, vlateral, thread_pool, threads)
             timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's'))
             logger.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
             df = pd.DataFrame(vlateral, index=time_index, columns=self.river_ids)
@@ -282,11 +274,18 @@ class Runoff:
             raise ValueError(f'out must be a C-order array of at least ({n_steps}, {n_rivers}), got shape {out.shape}')
         vlateral = out[:n_steps]
         scale = self.catchment_area if self.as_volumes else no_scale
-        self._aggregate_over_ranges(runoff_by_cell, weight, scale, True, vlateral)
+        self._aggregate_over_ranges(runoff_by_cell, weight, scale, True, vlateral, thread_pool, threads)
         return vlateral, time_index
 
     def _aggregate_over_ranges(
-        self, runoff_by_cell: FloatArray, weight: FloatArray, scale: FloatArray, replace_nan: bool, out: FloatArray
+        self,
+        runoff_by_cell: FloatArray,
+        weight: FloatArray,
+        scale: FloatArray,
+        replace_nan: bool,
+        out: FloatArray,
+        thread_pool: Executor | None,
+        threads: int,
     ) -> None:
         """
         Run the aggregation kernel over every river: as one range covering the network when single threaded, or as
@@ -295,7 +294,7 @@ class Runoff:
         """
         n_steps = runoff_by_cell.shape[1]
         dtype = np.result_type(runoff_by_cell.dtype, weight.dtype)
-        bounds = self._river_ranges(self.indptr, self.threads if self.thread_pool is not None else 1)
+        bounds = self._river_ranges(self.indptr, threads if thread_pool is not None else 1)
 
         def run(i: int) -> None:
             r_start, r_stop = int(bounds[i]), int(bounds[i + 1])
@@ -316,11 +315,11 @@ class Runoff:
             )
 
         n_ranges = bounds.shape[0] - 1
-        if self.thread_pool is None or n_ranges < 2:
+        if thread_pool is None or n_ranges < 2:
             for i in range(n_ranges):
                 run(i)
         else:
-            list(self.thread_pool.map(run, range(n_ranges)))  # list() so a worker exception propagates
+            list(thread_pool.map(run, range(n_ranges)))  # list() so a worker exception propagates
         return
 
     @staticmethod

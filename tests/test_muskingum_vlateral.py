@@ -21,14 +21,16 @@ def test_rapid_muskingum_from_depths(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=[ERA5_FILES[0]],
-            discharge_files=[discharge_file],
-            log=False,
-            progress_bar=False,
-            **ERA5_KWARGS,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                grid_weights_file=str(vpu.grid_weights_file),
+                grid_runoff_files=[ERA5_FILES[0]],
+                discharge_files=[discharge_file],
+                log=False,
+                progress_bar=False,
+                **ERA5_KWARGS,
+            )
         ).route()
 
         assert os.path.exists(discharge_file)
@@ -64,26 +66,30 @@ def test_initial_state_used(vpu: RFSv2ConfigsData):
         q_without_state = os.path.join(tmpdir, 'q_without.nc')
 
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=[ERA5_FILES[0]],
-            discharge_files=[q_with_state],
-            channel_state_init_file=init_state_file,
-            log=False,
-            progress_bar=False,
-            **ERA5_KWARGS,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                grid_weights_file=str(vpu.grid_weights_file),
+                grid_runoff_files=[ERA5_FILES[0]],
+                discharge_files=[q_with_state],
+                channel_state_init_file=init_state_file,
+                log=False,
+                progress_bar=False,
+                **ERA5_KWARGS,
+            )
         ).route()
 
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=[ERA5_FILES[0]],
-            discharge_files=[q_without_state],
-            log=False,
-            progress_bar=False,
-            **ERA5_KWARGS,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                grid_weights_file=str(vpu.grid_weights_file),
+                grid_runoff_files=[ERA5_FILES[0]],
+                discharge_files=[q_without_state],
+                log=False,
+                progress_bar=False,
+                **ERA5_KWARGS,
+            )
         ).route()
 
         with xr.open_dataset(q_with_state) as ds1, xr.open_dataset(q_without_state) as ds2:
@@ -109,41 +115,47 @@ def test_final_state_roundtrip(vpu: RFSv2ConfigsData):
     try:
         q_all = [os.path.join(tmpdir, f'q_all_{i}.nc') for i in range(2)]
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=ERA5_FILES[:2],
-            discharge_files=q_all,
-            log=False,
-            progress_bar=False,
-            **ERA5_KWARGS,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                grid_weights_file=str(vpu.grid_weights_file),
+                grid_runoff_files=ERA5_FILES[:2],
+                discharge_files=q_all,
+                log=False,
+                progress_bar=False,
+                **ERA5_KWARGS,
+            )
         ).route()
 
         q_m1 = os.path.join(tmpdir, 'q_m1.nc')
         state_after_m1 = os.path.join(tmpdir, 'state_m1.parquet')
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=[ERA5_FILES[0]],
-            discharge_files=[q_m1],
-            channel_state_final_file=state_after_m1,
-            log=False,
-            progress_bar=False,
-            **ERA5_KWARGS,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                grid_weights_file=str(vpu.grid_weights_file),
+                grid_runoff_files=[ERA5_FILES[0]],
+                discharge_files=[q_m1],
+                channel_state_final_file=state_after_m1,
+                log=False,
+                progress_bar=False,
+                **ERA5_KWARGS,
+            )
         ).route()
 
         q_m2 = os.path.join(tmpdir, 'q_m2.nc')
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            grid_weights_file=str(vpu.grid_weights_file),
-            grid_runoff_files=[ERA5_FILES[1]],
-            discharge_files=[q_m2],
-            channel_state_init_file=state_after_m1,
-            log=False,
-            progress_bar=False,
-            **ERA5_KWARGS,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                grid_weights_file=str(vpu.grid_weights_file),
+                grid_runoff_files=[ERA5_FILES[1]],
+                discharge_files=[q_m2],
+                channel_state_init_file=state_after_m1,
+                log=False,
+                progress_bar=False,
+                **ERA5_KWARGS,
+            )
         ).route()
 
         with xr.open_dataset(q_all[1]) as ds_all, xr.open_dataset(q_m2) as ds_split:
@@ -166,12 +178,14 @@ def test_rapid_muskingum_from_vlateral(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.Router(
-            forcing='vlateral',
-            params_file=str(vpu.rr2_params_file),
-            vlateral_files=[vpu.vlateral_files[0]],
-            discharge_files=[discharge_file],
-            log=False,
-            progress_bar=False,
+            rr.Configs(
+                forcing='vlateral',
+                params_file=str(vpu.rr2_params_file),
+                vlateral_files=[vpu.vlateral_files[0]],
+                discharge_files=[discharge_file],
+                log=False,
+                progress_bar=False,
+            )
         ).route()
 
         assert os.path.exists(discharge_file)

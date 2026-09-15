@@ -1,6 +1,5 @@
 import datetime
 import itertools
-import json
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -9,14 +8,13 @@ from typing import Any, Self
 import numpy as np
 import pandas as pd
 import xarray as xr
-import yaml
 from tqdm import tqdm
 
 from .. import streams, writers
+from ..configs import Configs
 from ..runoff import Runoff
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, VlateralGeneratorSignature, WriteDischargesFn
 from ._kernel_registry import dispatch
-from .Configs import Configs
 
 __all__ = ['Router']
 
@@ -64,6 +62,7 @@ class Router:
     routing_jobs: tuple[tuple[IntArray, IntArray, int, int], ...]  # (block_starts, block_stops, outlet, region)
     cut_target: IntArray  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
     _stored_region: IntArray | None  # the params file 'region' column, when it has one
+    threads: int = 1  # the threads passed to the most recent route(), read by writers such as zarr_writer
 
     # State variables
     channel_state: FloatArray  # routing depends only on a channel state vector
@@ -81,21 +80,19 @@ class Router:
     # methods overridable via dependency injection
     _write_discharges: WriteDischargesFn
 
-    def __init__(self, configs: PathInput | None = None, **kwargs: Any) -> None:
-        # parse and create configs
-        raw: dict[str, Any] = {}
-        if configs is not None and configs != '':
-            configs = str(configs)
-            if configs.endswith('.json'):
-                with open(configs) as f:
-                    raw = json.load(f)
-            elif configs.endswith(('.yml', '.yaml')):
-                with open(configs) as f:
-                    raw = yaml.load(f, Loader=yaml.FullLoader)
-            else:
-                raise RuntimeError('Unrecognized simulation config file type. Must be .json or .yaml')
-        raw.update(kwargs)
-        self.cfg = Configs.from_mapping(raw)
+    def __init__(self, configs: Configs, **kwargs: Any) -> None:
+        """
+        Args:
+            configs: options describing the simulation, from ``Configs(...)`` or ``Configs.from_file(path)``. They
+                are validated for routing when ``route`` is called.
+            **kwargs: config options to change for this Router. They are applied to a copy, so ``configs`` itself
+                is not modified.
+        """
+        if not isinstance(configs, Configs):
+            raise TypeError(
+                f'Router takes a Configs, got {type(configs).__name__}. Use Configs(...) or Configs.from_file(path).'
+            )
+        self.cfg = configs.replace(**kwargs) if kwargs else configs
 
         # configure logging - progress bar and info/debug logs are mutually exclusive
         self.logger = logging.getLogger(f'river_route.router{next(_ROUTER_COUNT)}')
@@ -109,7 +106,7 @@ class Router:
         self.logger.handlers[0].setFormatter(logging.Formatter(self.cfg.log_format))
         self.logger.debug('Logger initialized')
 
-        # default discharge writer; overridable via set_write_discharges
+        # default discharge writer; overridable via set_discharge_writer
         self._write_discharges = writers.netcdf_writer
         return
 
@@ -205,7 +202,7 @@ class Router:
         self.logger.log(logging.INFO, f'Network: {n} river segments')
         return
 
-    def _set_region_schedule(self, thread_pool: ThreadPoolExecutor | None = None) -> None:
+    def _set_region_schedule(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> None:
         """
         Build the list of index ranges the kernels sweep. Computed once per Router and reused for every file.
 
@@ -222,7 +219,7 @@ class Router:
         """
         n = self.river_ids.shape[0]
         whole = (np.array([0], dtype=np.int32), np.array([n], dtype=np.int32), -1, 0)
-        if thread_pool is None or self.cfg.threads < 2:
+        if thread_pool is None or threads < 2:
             self.routing_jobs = (whole,)
             self.cut_target = np.zeros(0, dtype=np.int32)
             return
@@ -233,7 +230,7 @@ class Router:
             region = self._stored_region
         else:
             self.logger.debug('Deriving a network partition for threaded routing')
-            region, _ = streams.assign_regions(downstream_index, threads=self.cfg.threads)
+            region, _ = streams.assign_regions(downstream_index, threads=threads)
         layout = streams.regions_to_layout(region, downstream_index)
 
         n_regions = layout['n_regions']
@@ -253,7 +250,7 @@ class Router:
         main_stem = int((layout['stem_stops'] - layout['stem_starts']).sum())
         self.logger.log(
             logging.INFO,
-            f'Partition: {n_regions} concurrent regions on {self.cfg.threads} threads, '
+            f'Partition: {n_regions} concurrent regions on {threads} threads, '
             f'{main_stem} rivers ({main_stem / n:.2%}) routed sequentially as the main stem',
         )
         return
@@ -437,7 +434,9 @@ class Router:
             )
         return
 
-    def _vlateral_generator(self, thread_pool: ThreadPoolExecutor | None = None) -> VlateralGeneratorSignature:
+    def _vlateral_generator(
+        self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1
+    ) -> VlateralGeneratorSignature:
         if self.cfg.vlateral_files:
             for lateral_file, discharge_file in zip(self.cfg.vlateral_files, self.cfg.discharge_files, strict=True):
                 self.logger.info('-' * 60)
@@ -450,23 +449,12 @@ class Router:
             # The weight table is identical for every runoff file, so it is read and checked against the params file
             # once. Every file is then aggregated into one reused C-order buffer that the kernels read directly: no
             # per-file allocation or copy. The yielded array is overwritten by the next file.
-            runoff = Runoff(
-                self.cfg.grid_weights_file,
-                var_river_id=self.cfg.var_river_id,
-                var_runoff=self.cfg.var_grid_runoff,
-                var_x=self.cfg.var_x,
-                var_y=self.cfg.var_y,
-                var_t=self.cfg.var_t,
-                cumulative=self.cfg.grid_accumulation_type == 'cumulative',
-                as_volumes=True,
-                thread_pool=thread_pool,
-                threads=self.cfg.threads,
-            )
+            runoff = Runoff(self.cfg, as_volumes=True)
             self._check_river_alignment(runoff.river_ids, runoff.river_ids.shape[0], self.cfg.grid_weights_file)
             for runoff_file, discharge_file in zip(self.cfg.grid_runoff_files, self.cfg.discharge_files, strict=True):
                 self.logger.info('-' * 60)
                 self.logger.debug(f'Calculating vlateral: {runoff_file}')
-                vlateral, dates = runoff.vlateral(runoff_file)
+                vlateral, dates = runoff.vlateral(runoff_file, thread_pool=thread_pool, threads=threads)
                 yield (
                     dates.astype('datetime64[s]'),
                     vlateral.astype(np.float32, copy=False),
@@ -478,49 +466,49 @@ class Router:
     # Methods to execute routing simulation
     ################################################
 
-    def route(self, thread_pool: ThreadPoolExecutor | None = None) -> Self:
+    def route(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> Self:
         """
-        Execute the simulation described by the provided configs and routing parameters. All configs, file paths,
-        parameters, and options must be set when the object is initialized so that validation is performed before the
-        simulation.
+        Execute the simulation described by the configs and routing parameters. The configs are validated for routing
+        first. The thread pool and thread count are runtime resources, not configs, so they are given here.
 
         Args:
-            thread_pool: optional pool to route concurrently on, split into ``threads`` regions. It is used as given
-                and never shut down here, so it can be shared and closed by the caller's with block. Without one,
+            thread_pool: optional pool to route and aggregate gridded runoff concurrently on. It is used as given and
+                never shut down here, so it can be shared and closed by the caller's with block. Without one,
                 routing is single-threaded regardless of ``threads``.
+            threads: number of regions the network is split into, and river ranges gridded runoff is aggregated in,
+                when ``thread_pool`` is given. Also the concurrency limit of writers that follow it, like zarr_writer.
 
         Returns:
             Self: the class instance with updated channel_state and output files written to disk
         """
+        if not isinstance(threads, int) or isinstance(threads, bool) or threads < 1:
+            raise ValueError(f'threads must be an integer >= 1, got {threads!r}')
+        self.threads = threads
         # start timer
         self.logger.log(PROGRESS, 'Beginning routing')
         t1 = datetime.datetime.now()
-        # validate configuration options
         self.logger.debug('Validating configs')
-        self.cfg.validate()
-        if self.cfg.deep_validation:
-            self.logger.debug('Validating contents of input files')
-            self.cfg.deep_validate()
+        self.cfg.validate_routing()
         self.logger.debug(self)
         # build network vectors
         self._set_vectors_from_params()  # river_id, next_river_id, k, x, and alpha and beta (dynamic only)
         self._set_connectivity_vectors()  # downstream_indices
-        self._set_region_schedule(thread_pool)  # index ranges the kernels sweep; no vector is reordered
+        self._set_region_schedule(thread_pool, threads)  # index ranges the kernels sweep; no vector is reordered
         # read state, route, write state
         self._read_initial_state()
-        self._execute_routing(thread_pool)
+        self._execute_routing(thread_pool, threads)
         self._write_final_state()
         # log total time
         t2 = datetime.datetime.now()
         self.logger.log(PROGRESS, f'Routing completed in {(t2 - t1).total_seconds()} seconds')
         return self
 
-    def _execute_routing(self, thread_pool: ThreadPoolExecutor | None) -> None:
+    def _execute_routing(self, thread_pool: ThreadPoolExecutor | None, threads: int) -> None:
         # there are two types of loops, one for channel only, one if lateral forcing(s) are provided.
         if self.cfg.forcing == 'channel':
             self._execute_routing_channel(thread_pool)
         else:
-            self._execute_routing_forced(thread_pool)
+            self._execute_routing_forced(thread_pool, threads)
         return
 
     def _execute_routing_channel(self, thread_pool: ThreadPoolExecutor | None) -> None:
@@ -550,11 +538,11 @@ class Router:
         self.logger.info('-' * 60)
         return
 
-    def _execute_routing_forced(self, thread_pool: ThreadPoolExecutor | None) -> None:
+    def _execute_routing_forced(self, thread_pool: ThreadPoolExecutor | None, threads: int) -> None:
         self._ensemble_member_states = []
 
         total_files = len(self.cfg.vlateral_files or self.cfg.grid_runoff_files or [])
-        file_iter = self._vlateral_generator(thread_pool)
+        file_iter = self._vlateral_generator(thread_pool, threads)
         if self.cfg.progress_bar:
             file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
 
@@ -617,10 +605,10 @@ class Router:
     # Dependency injection methods for users to overwrite default behaviors without subclassing
     ################################################
 
-    def set_write_discharges(self, func: WriteDischargesFn) -> Self:
+    def set_discharge_writer(self, func: WriteDischargesFn) -> Self:
         """
         Replace the discharge writer, which defaults to ``river_route.writers.netcdf_writer``. Premade writers are in
-        ``river_route.writers``, e.g. ``router.set_write_discharges(rr.writers.zarr_writer)``.
+        ``river_route.writers``, e.g. ``router.set_discharge_writer(rr.writers.zarr_writer)``.
 
         Args:
             func (callable): function that takes router, dates, discharge_array, discharge_file, runoff_file and

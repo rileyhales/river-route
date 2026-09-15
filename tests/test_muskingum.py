@@ -25,13 +25,15 @@ def test_muskingum_channel_only(vpu: RFSv2ConfigsData):
         # final_state_file = os.path.join(tmpdir, 'final_state.parquet')
 
         rr.Router(
-            forcing='channel',
-            params_file=str(vpu.rr2_params_file),
-            discharge_files=[discharge_file],
-            channel_state_init_file=init_state_file,
-            dt_routing=900,
-            dt_total=3600 * 24 * 15,
-            log=False,
+            rr.Configs(
+                forcing='channel',
+                params_file=str(vpu.rr2_params_file),
+                discharge_files=[discharge_file],
+                channel_state_init_file=init_state_file,
+                dt_routing=900,
+                dt_total=3600 * 24 * 15,
+                log=False,
+            )
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:
@@ -60,13 +62,15 @@ def test_muskingum_zero_initial_state(vpu: RFSv2ConfigsData):
         discharge_file = os.path.join(tmpdir, 'q.nc')
 
         rr.Router(
-            forcing='channel',
-            params_file=str(vpu.rr2_params_file),
-            discharge_files=[discharge_file],
-            channel_state_init_file=init_state_file,
-            dt_routing=3600,
-            dt_total=3600 * 6,
-            log=False,
+            rr.Configs(
+                forcing='channel',
+                params_file=str(vpu.rr2_params_file),
+                discharge_files=[discharge_file],
+                channel_state_init_file=init_state_file,
+                dt_routing=3600,
+                dt_total=3600 * 6,
+                log=False,
+            )
         ).route()
 
         with xr.open_dataset(discharge_file) as ds:

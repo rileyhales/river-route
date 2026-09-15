@@ -99,7 +99,8 @@ def grid_case(tmp_path: Path) -> dict:
 
 def prepare(grid_case: dict, **kwargs) -> rr.Runoff:
     """A Runoff for the synthetic grid's variable names and weight table."""
-    return rr.Runoff(grid_case['weights_file'], var_runoff='ro', var_x='lon', var_y='lat', **kwargs)
+    configs = rr.Configs(grid_weights_file=grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat')
+    return rr.Runoff(configs, **kwargs)
 
 
 def test_grid_weights_proportions_sum_to_one(grid_case):
@@ -151,7 +152,7 @@ def test_cumulative_runoff_matches_incremental(grid_case, tmp_path):
     write_runoff_grid(cumulative_file, cumulative=True)
 
     incremental = prepare(grid_case, as_volumes=True).to_dataset(grid_case['grid_file'])
-    converted = prepare(grid_case, cumulative=True, as_volumes=True).to_dataset(cumulative_file)
+    converted = prepare(grid_case, grid_accumulation_type='cumulative', as_volumes=True).to_dataset(cumulative_file)
     np.testing.assert_allclose(converted['vlateral'].values, incremental['vlateral'].values, rtol=1e-5, atol=1e-6)
 
 
@@ -159,16 +160,18 @@ def test_route_from_grid_files(grid_case):
     """Routing straight from grid files must conserve the water the grid delivered."""
     out = grid_case['directory'] / 'q_grid.nc'
     rr.Router(
-        forcing='vlateral',
-        params_file=str(grid_case['params_file']),
-        grid_weights_file=str(grid_case['weights_file']),
-        grid_runoff_files=[str(grid_case['grid_file'])],
-        discharge_files=[str(out)],
-        var_grid_runoff='ro',
-        var_x='lon',
-        var_y='lat',
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(grid_case['params_file']),
+            grid_weights_file=str(grid_case['weights_file']),
+            grid_runoff_files=[str(grid_case['grid_file'])],
+            discharge_files=[str(out)],
+            var_grid_runoff='ro',
+            var_x='lon',
+            var_y='lat',
+            log=False,
+            progress_bar=False,
+        )
     ).route()
 
     with xr.open_dataset(out) as ds:
@@ -199,14 +202,18 @@ def test_route_from_grid_matches_route_from_vlateral(grid_case):
     from_grid = grid_case['directory'] / 'q_from_grid.nc'
     from_vlateral = grid_case['directory'] / 'q_from_vlateral.nc'
     rr.Router(
-        forcing='vlateral',
-        grid_weights_file=str(grid_case['weights_file']),
-        grid_runoff_files=[str(grid_case['grid_file'])],
-        discharge_files=[str(from_grid)],
-        **shared,
+        rr.Configs(
+            forcing='vlateral',
+            grid_weights_file=str(grid_case['weights_file']),
+            grid_runoff_files=[str(grid_case['grid_file'])],
+            discharge_files=[str(from_grid)],
+            **shared,
+        )
     ).route()
     rr.Router(
-        forcing='vlateral', vlateral_files=[str(vlateral_file)], discharge_files=[str(from_vlateral)], **shared
+        rr.Configs(
+            forcing='vlateral', vlateral_files=[str(vlateral_file)], discharge_files=[str(from_vlateral)], **shared
+        )
     ).route()
 
     with xr.open_dataset(from_grid) as a, xr.open_dataset(from_vlateral) as b:
@@ -277,7 +284,12 @@ def test_one_pass_aggregation_matches_array_passes(
     grid_case, cumulative, force_positive, as_volumes, conversion_factor
 ):
     """The one-pass kernel must equal the same conversion done as separate whole-array passes, NaN included."""
-    preparer = prepare(grid_case, cumulative=cumulative, force_positive_runoff=force_positive, as_volumes=as_volumes)
+    preparer = prepare(
+        grid_case,
+        grid_accumulation_type='cumulative' if cumulative else 'incremental',
+        force_positive_runoff=force_positive,
+        as_volumes=as_volumes,
+    )
     n_cells = preparer.x_index.shape[0]
     runoff = np.random.default_rng(42).normal(0.0, RUNOFF_DEPTH, size=(NT, n_cells)).astype(np.float32)
     runoff[4, 0] = np.nan
@@ -318,13 +330,17 @@ def test_aggregation_writes_into_a_reused_buffer(grid_case):
 @pytest.mark.parametrize('cumulative', [False, True])
 def test_threaded_aggregation_matches_single_threaded(grid_case, cumulative):
     """Aggregating river ranges concurrently must give exactly what one range over every river gives."""
-    shared = dict(cumulative=cumulative, force_positive_runoff=True, as_volumes=True)
+    shared = dict(
+        grid_accumulation_type='cumulative' if cumulative else 'incremental',
+        force_positive_runoff=True,
+        as_volumes=True,
+    )
     single_preparer = prepare(grid_case, **shared)
     runoff = np.random.default_rng(7).normal(0.0, RUNOFF_DEPTH, size=(NT, single_preparer.x_index.shape[0]))
     runoff = runoff.astype(np.float32)
     single, _ = single_preparer.aggregate(runoff, hourly_times(NT))
     with ThreadPoolExecutor(3) as pool:
-        threaded, _ = prepare(grid_case, thread_pool=pool, threads=3, **shared).aggregate(runoff, hourly_times(NT))
+        threaded, _ = prepare(grid_case, **shared).aggregate(runoff, hourly_times(NT), thread_pool=pool, threads=3)
     np.testing.assert_array_equal(threaded, single)
 
 
@@ -343,9 +359,9 @@ def test_route_with_thread_pool_matches_single_threaded(grid_case):
     )
     single = grid_case['directory'] / 'q_single.nc'
     threaded = grid_case['directory'] / 'q_threaded.nc'
-    rr.Router(discharge_files=[str(single)], **shared).route()
+    rr.Router(rr.Configs(discharge_files=[str(single)], **shared)).route()
     with ThreadPoolExecutor(2) as pool:
-        rr.Router(discharge_files=[str(threaded)], threads=2, **shared).route(thread_pool=pool)
+        rr.Router(rr.Configs(discharge_files=[str(threaded)], **shared)).route(thread_pool=pool, threads=2)
     with xr.open_dataset(single) as a, xr.open_dataset(threaded) as b:
         np.testing.assert_array_equal(a['Q'].values, b['Q'].values)
 
@@ -363,16 +379,18 @@ def test_river_ranges_cover_every_river_once(n_ranges):
 def test_router_grid_forcing_needs_no_copy(grid_case):
     """The kernels need C-order float32 vlateral; the grid path must produce it so route() never copies it."""
     router = rr.Router(
-        forcing='vlateral',
-        params_file=str(grid_case['params_file']),
-        grid_weights_file=str(grid_case['weights_file']),
-        grid_runoff_files=[str(grid_case['grid_file'])],
-        discharge_files=[str(grid_case['directory'] / 'q.nc')],
-        var_grid_runoff='ro',
-        var_x='lon',
-        var_y='lat',
-        log=False,
-        progress_bar=False,
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(grid_case['params_file']),
+            grid_weights_file=str(grid_case['weights_file']),
+            grid_runoff_files=[str(grid_case['grid_file'])],
+            discharge_files=[str(grid_case['directory'] / 'q.nc')],
+            var_grid_runoff='ro',
+            var_x='lon',
+            var_y='lat',
+            log=False,
+            progress_bar=False,
+        )
     )
     router._set_vectors_from_params()
     _, vlateral, _, _ = next(router._vlateral_generator())
