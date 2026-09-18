@@ -27,6 +27,9 @@ A large river's main stem depends on its whole basin and is always computed on o
 
 ## Better ways to prepare inputs
 
+Much of the slowness in a routing scheme can be entirely avoided, not just sped up, by choosing the best ways to
+prepare computations.
+
 ### Topological river sorting and Depth First Search (DFS)
 
 TBD
@@ -46,33 +49,73 @@ process simultaneously or combine them into a single config file if compute time
 
 after you carefully prepare inputs and the algorithm, a large, possibly the largest, portion of remaining time is spent reading and writing data.
 You should reduce the number of times the code needs to read/write data and the number of total files it needs to read/write.
+Faster storage formats and fewer, better sized files do more than parallelizing file I/O.
 
-## Options for parallelism
-
-### Multithreading matrix solvers
-
-[//]: # (todo: only if you sort the network into independent but ordered subgraphs then you can solve each with parallel threads.)
-
-**Summary**: Use vector solvers that use efficient and possibly parallelized methods to solve array operations.
+## The forward substitution solving algorithm
 
 Forward substitution is inherently sequential: the value at row $i$ depends on all previously
 solved rows $1, \ldots, i-1$. There is no way to compute row $i$ before its upstream dependencies
 are known. This means the core solve cannot be split across threads or cores in a straightforward
 way.
 
-However, the forward substitutions have been made about as minimal as possible, use sparse matrix
-formats, and JIT compilation. In my experience, this is preferable to multiprocessing methods even
-though it uses an inherently sequential forward substitution algorithm. This approach is the best
-method in my experience using it on a wide range of scales up to global computations of hourly
-resolution discharge on millions of rivers and producing a 5 trillion data point simulation. It
-has the advantages that it:
+However, the routing kernels have been made about as minimal as possible: a single topological sweep per routing
+step, sparse connectivity instead of matrices, and JIT compiled numba code. In my experience, this is preferable to
+multiprocessing methods even though it uses an inherently sequential forward substitution algorithm. This approach is
+the best method in my experience using it on a wide range of scales up to global computations of hourly resolution
+discharge on millions of rivers and producing a 5 trillion data point simulation. It has the advantages that it:
 
 1. needs only mainstream scientific python dependencies simply installed on a variety of hardware and Python versions
 2. is the most memory efficient option
 3. is the computationally fastest option because it does not iterate or do any matrix conditioning or pivoting
 4. is the direct solution so there is no error due to solver convergence tolerances.
 
-**Conclusion**: Meaningful speedup is possible with multiple threads but only if you 
+What you control is how much work you ask that kernel to do.
+
+1. **Choose the simplest routing procedure your problem needs.** `coeff: static` computes Muskingum coefficients
+   once and reuses them for every file with the same time steps. `coeff: dynamic` rebuilds them inside the kernel
+   on every substep. Only pay for dynamic coefficients when the application needs them. See the
+   [config file reference](config-files.md#routing-procedure-selectors).
+2. **Use the largest stable routing time step.** Every routing substep is a full sweep of the network, so
+   `dt_routing` directly sets the amount of work. Check stability with `river_route.streams.analyze_stability`
+   rather than defaulting to a small step. See [Time Variables](time-options.md).
+3. **Only produce the output you will use.** A coarser `dt_discharge` averages results before they are written, and
+   a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
+   `zarr_writer` is built to write as fast as possible when you need everything.
+4. **Route what matters.** Rivers that do not contribute to the results you need do not have to be in the network.
+
+## Options for parallelism
+
+Once a job is efficient on a single core, these strategies can add to it. Measure each one against your
+single-threaded result on your own hardware before keeping it.
+
+### Multithreading matrix solvers
+
+**Summary**: A network in DFS computation order can be split into independent upstream regions that are routed
+concurrently, followed by the main stem on a single thread.
+
+`river-route` never creates threads on its own. Threads are a runtime resource, not a config, so pass a
+`ThreadPoolExecutor` and `threads`, the number of regions to split the network into, to `Router.route`. The same pool
+is used to aggregate gridded runoff when routing from `grid_runoff_files`.
+
+```python title="Threaded Routing"
+from concurrent.futures import ThreadPoolExecutor
+
+import river_route as rr
+
+router = rr.Router(rr.Configs.from_file('config.yaml'))
+with ThreadPoolExecutor(max_workers=8) as pool:
+    router.route(thread_pool=pool, threads=8)
+```
+
+The speedup is limited by the rivers left in the sequential main stem and by memory bandwidth, which the routing
+kernel is largely bound by. Use `river_route.streams.analyze_partitioning` to see how a network splits and the upper
+bound on speedup before committing to it. The partition depends only on connectivity and `threads`, so
+`river_route.streams.partition_network` can store it as a `region` column in the parameter file instead of it being
+derived for every simulation.
+
+**Conclusion**: Meaningful speedup is possible with multiple threads but only if you sort the network into
+independent but ordered subgraphs. This is an optional addition to a job that is already efficient single threaded.
+It is not a substitute for a better algorithm or better prepared inputs.
 
 ### Concurrent jobs vs multiple threads in one job
 
@@ -130,12 +173,13 @@ block-beta
 ```
 
 If you have an unfavorable combination of slow I/O, slow CPU, and large computations, this solution
-might help. Individual routing jobs get faster but by making threads for portions that depend on
+might help. Individual routing jobs get faster by making threads for portions that depend on
 different hardware. However, using this method means you probably won't be able to use it in
 combination with another parallelization strategy because you more quickly consume memory and disk
 I/O bandwidth with one job. In my experience, this speedup is at most a few percent.
 
-**Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware capabilities.
+**Conclusion**: This speeds up individual jobs bottlenecked by I/O but not by much given modern hardware
+capabilities. Faster storage formats and fewer, better sized files do more.
 
 ## Conclusions
 
