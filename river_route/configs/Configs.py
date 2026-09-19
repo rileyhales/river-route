@@ -429,7 +429,7 @@ class Configs:
             raise ValueError(f'Grid weights {rid} variable contains null values')
         if not pd.api.types.is_integer_dtype(ds[rid].dtype):
             raise ValueError(f'Grid weights {rid} variable must be integer type')
-        if params_df is not None and not set(ds[rid].values).issubset(set(params_df[rid].unique())):
+        if params_df is not None and not np.isin(ds[rid].values, params_df[rid].to_numpy()).all():
             raise ValueError(f'Grid weights {rid} values must exist in params {rid}')
         for variable in expected_variables[1:]:
             if np.any(ds[variable].isnull()):
@@ -440,8 +440,10 @@ class Configs:
             raise ValueError('Grid weights area_sqm variable must be positive')
         if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
             raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
-        proportions_sum = ds['proportion'].groupby(ds[rid]).sum()
-        if not np.allclose(proportions_sum.values, 1.0):
+        # pandas groups in one hashed pass. xarray's groupby materializes a DataArray per group and concatenates
+        # them, which on a weight table with a group per river costs more than the whole routing it validates.
+        proportions_sum = pd.Series(ds['proportion'].values).groupby(ds[rid].values).sum()
+        if not np.allclose(proportions_sum.to_numpy(), 1.0):
             raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
         return
 

@@ -42,7 +42,8 @@ if __name__ == '__main__':
 
     conf.validate_routing()
     conf.validate_runoff()
-    conf.deep_validate()
+    # deep_validate() reads every input file and checks its contents. It is a one off check to run on inputs you
+    # have not used before, not part of a run: routing never calls it, and it costs more than the routing does.
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()
     with pool_context as pool:

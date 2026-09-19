@@ -151,19 +151,24 @@ class Network:
         """Build the index vectors describing network connectivity from river_ids and next_river_ids"""
         self.logger.debug('Calculating network connectivity vectors')
         n = self.river_ids.shape[0]
-        river_index = {int(river_id): idx for idx, river_id in enumerate(self.river_ids.tolist())}
+
+        # The lookup is a hash join, not a row at a time dict lookup: at several million rivers the loop it
+        # replaces is most of the cost of building a Network. _set_vectors has already rejected duplicate river
+        # ids, which is what get_indexer needs to resolve every id to exactly one row.
+        has_downstream = self.next_river_ids >= 0
+        upstream_idx = np.flatnonzero(has_downstream)
+        downstream_idx = pd.Index(self.river_ids).get_indexer(self.next_river_ids[has_downstream])
+
+        missing = downstream_idx < 0  # get_indexer returns -1 for an id that is not in the river_id column
+        if missing.any():
+            unknown = self.next_river_ids[has_downstream][missing]
+            raise ValueError(f'{self.source} next_river_id {unknown[0]} is not in the river_id column')
+        if np.any(downstream_idx <= upstream_idx):
+            raise ValueError(f'{self.source} must be topologically sorted upstream to downstream')
 
         # 1D array giving the index of the downstream river in the parameter arrays, -1 if none downstream
         self.downstream_indices = np.full(n, -1, dtype=np.int32)
-        for upstream_idx, next_river_id in enumerate(self.next_river_ids.tolist()):
-            if next_river_id < 0:
-                continue
-            downstream_idx = river_index.get(int(next_river_id))
-            if downstream_idx is None:
-                raise ValueError(f'{self.source} next_river_id {next_river_id} is not in the river_id column')
-            if downstream_idx <= upstream_idx:
-                raise ValueError(f'{self.source} must be topologically sorted upstream to downstream')
-            self.downstream_indices[upstream_idx] = downstream_idx
+        self.downstream_indices[upstream_idx] = downstream_idx.astype(np.int32, copy=False)
 
         self.logger.log(logging.INFO, f'Network: {n} river segments')
         return
