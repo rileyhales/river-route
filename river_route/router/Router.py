@@ -142,14 +142,8 @@ class Router:
     def _set_routing_schedule(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> None:
         """Bind the index ranges the kernels sweep, derived and cached by the Network so that repeated
         simulations over one network never re-partition it."""
-        river_order = self.configs.routing_order == 'river'
-        if river_order and thread_pool is not None:
-            self.logger.warning(
-                "routing_order='river' routes the network on one thread; the thread_pool is only used to aggregate "
-                'gridded runoff when it is not fused into routing'
-            )
         self.routing_jobs, self.cut_target = self.network.routing_schedule(
-            threads=threads, concurrent=thread_pool is not None and not river_order
+            threads=threads, concurrent=thread_pool is not None
         )
         return
 
@@ -287,7 +281,7 @@ class Router:
 
         self.logger.debug('Starting routing computation')
         q_t = self.channel_state.astype(np.float32, copy=True)
-        discharge_array = np.zeros((self.num_runoff_steps, self.network.river_ids.shape[0]), dtype=np.float32)
+        discharge_array = self._discharge_buffer()
         dispatch(self, q_t=q_t, discharge_array=discharge_array, thread_pool=thread_pool)
         self.channel_state = q_t
 
@@ -349,9 +343,9 @@ class Router:
                 coeff_dt = (self.dt_routing, self.dt_runoff)
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
-            q_array = np.zeros((self.num_runoff_steps, self.network.river_ids.shape[0]), dtype=np.float32)
+            q_array = self._discharge_buffer()
             if isinstance(forcing, CellRunoff):
-                dispatch_grid(self, q_t=q_t, discharge_array=q_array, runoff=forcing)
+                dispatch_grid(self, q_t=q_t, discharge_array=q_array, runoff=forcing, thread_pool=thread_pool)
             else:
                 dispatch(
                     self,
@@ -385,6 +379,19 @@ class Router:
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
         self.logger.info('-' * 60)
         return
+
+    def _discharge_buffer(self) -> FloatArray:
+        """
+        A zeroed (time, river) array for the routed discharge. River order kernels write each river's series in place
+        when the array is the transpose of a C-order (river, time) buffer, which skips transposing into (time, river),
+        so that layout is used whenever the discharge writer declares ``discharge_layout = 'river'`` (it reads that
+        layout at least as fast). Otherwise, and always for time order, the array is C-order (time, river).
+        """
+        shape = (self.num_runoff_steps, self.network.river_ids.shape[0])
+        river_layout = getattr(self._discharge_writer, 'discharge_layout', 'time') == 'river'
+        if self.configs.routing_order == 'river' and river_layout:
+            return np.zeros(shape[::-1], dtype=np.float32).T
+        return np.zeros(shape, dtype=np.float32)
 
     def _fuses_grid_runoff(self) -> bool:
         """

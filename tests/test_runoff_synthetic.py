@@ -311,7 +311,7 @@ def hourly_times(n_steps: int) -> np.ndarray:
 def test_one_pass_aggregation_matches_array_passes(
     grid_case, cumulative, force_positive, as_volumes, conversion_factor
 ):
-    """The one-pass kernel must equal the same conversion done as separate whole-array passes, NaN included."""
+    """The one-pass kernel must equal the same conversion done as separate whole-array passes, NaN cells as zero."""
     preparer = prepare(
         grid_case,
         grid_accumulation_type='cumulative' if cumulative else 'incremental',
@@ -325,12 +325,12 @@ def test_one_pass_aggregation_matches_array_passes(
     matrix = scipy.sparse.csr_matrix(
         (preparer.proportion * conversion_factor, preparer.cell, preparer.indptr), shape=(N_RIVERS, n_cells)
     )
-    expected = np.asarray(matrix @ runoff.T).T.copy()
+    # a NaN cell contributes nothing, while the other cells of its catchments still count
+    expected = np.asarray(matrix @ np.nan_to_num(runoff, nan=0.0).T).T.copy()
     if cumulative:
         expected[1:] = np.diff(expected, axis=0)
     if force_positive:
         np.clip(expected, 0, None, out=expected)
-    expected[np.isnan(expected)] = 0.0
     if as_volumes:
         expected *= preparer.catchment_area[np.newaxis, :]
 
@@ -534,21 +534,13 @@ def test_fused_grid_kernel_matches_aggregate_then_route(n_substeps, cumulative, 
     runoff_by_cell = rng.normal(RUNOFF_DEPTH, RUNOFF_DEPTH, (n_cells, n_steps)).astype(np.float32)
     if cumulative:
         runoff_by_cell = np.ascontiguousarray(np.cumsum(np.abs(runoff_by_cell), axis=1, dtype=np.float32))
-    runoff_by_cell[5, 7] = np.nan
     indptr = np.concatenate(([0], np.cumsum(rng.integers(1, 4, n_rivers)))).astype(np.int32)
     cell = rng.integers(0, n_cells, indptr[-1]).astype(np.int32)
     weight = rng.uniform(0.1, 1.0, indptr[-1]).astype(np.float32)
     scale = rng.uniform(1e5, 1e7, n_rivers).astype(np.float32)
     q_init = rng.uniform(0, 50, n_rivers).astype(np.float32)
     aggregation = dict(
-        indptr=indptr,
-        cell=cell,
-        weight=weight,
-        scale=scale,
-        zero=np.float32(0),
-        cumulative=cumulative,
-        force_positive=force_positive,
-        replace_nan=True,
+        indptr=indptr, cell=cell, weight=weight, scale=scale, cumulative=cumulative, force_positive=force_positive
     )
 
     vlateral = np.empty((n_steps, n_rivers), dtype=np.float32)
@@ -558,6 +550,7 @@ def test_fused_grid_kernel_matches_aggregate_then_route(n_substeps, cumulative, 
         r_stop=n_rivers,
         scratch=np.empty((64, n_steps), np.float32),
         out=vlateral,
+        zero=np.float32(0),
         **aggregation,
     )
     q_expected = q_init.copy()
@@ -594,10 +587,9 @@ def test_fused_grid_kernel_matches_aggregate_then_route(n_substeps, cumulative, 
         c4_dt=c4_dt,
         n_substeps=n_substeps,
         runoff_by_cell=runoff_by_cell,
-        scratch=np.empty((64, n_steps), np.float32),
+        block=_river_kernels.BLOCK,
         **aggregation,
     )
-    assert not np.isnan(fused).any()
     scale_q = float(np.abs(expected).max())
     np.testing.assert_allclose(fused, expected, rtol=1e-5, atol=1e-6 * scale_q)
     np.testing.assert_allclose(q_fused, q_expected, rtol=1e-5, atol=1e-6 * scale_q)
@@ -607,12 +599,14 @@ def test_fused_inflow_rows_follow_the_open_confluences():
     """The fused kernel keeps one inflow row per river whose upstreams are partly routed, never one per river."""
     from river_route.router._river_kernels import plan_inflow_rows
 
+    def whole(downstream):
+        n = downstream.shape[0]
+        return plan_inflow_rows(downstream, np.array([0]), np.array([n]), np.array([-1]), np.zeros(0, np.int32))
+
     # while a river is routed its own row and its downstream's row are both live
-    chain = np.array([1, 2, 3, -1], dtype=np.int32)
-    assert plan_inflow_rows(chain) == 2
+    assert whole(np.array([1, 2, 3, -1], dtype=np.int32)) == 2
     # 0 -> 1 -> 5 and 2 -> 3 -> 4 -> 5: river 5's row stays open while the second branch is routed
-    two_branches = np.array([1, 5, 3, 4, 5, -1], dtype=np.int32)
-    assert plan_inflow_rows(two_branches) == 3
+    assert whole(np.array([1, 5, 3, 4, 5, -1], dtype=np.int32)) == 3
 
 
 def test_route_irregular_grid_falls_back_to_resampled_vlateral(grid_case, tmp_path):
@@ -645,3 +639,26 @@ def test_route_irregular_grid_falls_back_to_resampled_vlateral(grid_case, tmp_pa
     with xr.open_dataset(from_grid) as a, xr.open_dataset(from_vlateral) as b:
         assert a['Q'].shape == (7, N_RIVERS)
         np.testing.assert_array_equal(a['Q'].values, b['Q'].values)
+
+
+def test_nan_runoff_is_replaced_once_when_prepared(grid_case, tmp_path):
+    """NaN runoff becomes zero in the cell series before any kernel runs, on the fused path and the aggregate path."""
+    preparer = prepare(grid_case, as_volumes=True)
+    runoff = np.full((NT, preparer.x_index.shape[0]), RUNOFF_DEPTH, dtype=np.float32)
+    runoff[2, 0] = np.nan
+    by_cell = preparer._by_cell(runoff)
+    assert by_cell.flags.c_contiguous and not np.isnan(by_cell).any() and by_cell[0, 2] == 0
+    vlateral, _ = preparer.aggregate(runoff, hourly_times(NT))
+    assert not np.isnan(vlateral).any()
+    assert (vlateral[2] > 0).all(), 'a NaN cell must not zero the other cells of its catchments'
+
+
+def test_nan_vlateral_is_replaced_when_read(tmp_path):
+    from conftest import write_vlateral
+
+    volumes = np.ones((4, 3), dtype=np.float32)
+    volumes[1, 2] = np.nan
+    path = tmp_path / 'vlateral_nan.nc'
+    write_vlateral(path, volumes, np.arange(1, 4))
+    ((_, vlateral, _),) = list(rr.RunoffVlateral().reader([path]))
+    assert not np.isnan(vlateral).any() and vlateral[1, 2] == 0

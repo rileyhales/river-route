@@ -20,6 +20,11 @@ ZARR_RIVERS_PER_CHUNK = 500
 ZARR_CHUNKS_PER_SHARD: int | None = None
 PARQUET_WRITE_OPTIONS = {'compression': 'none', 'use_dictionary': False, 'write_statistics': False}
 
+# A writer may declare discharge_layout = 'river' when it reads a (time, river) array that is the transpose of a C-order
+# (river, time) buffer at least as fast as a C-order one. River order routing then writes each river's series in place
+# instead of transposing it into (time, river). zarr_writer copies each chunk on its own threads, so it is faster that
+# way; netcdf_writer and parquet_writer copy the whole array on one thread first, so they keep the default 'time'.
+
 
 def _check_discharge_shape(router: Router, dates: DatetimeArray, discharge_array: FloatArray, path: PathInput) -> None:
     if dates.shape[0] != discharge_array.shape[0]:
@@ -43,6 +48,9 @@ def null_writer(*args, **kwargs) -> None:
         discharge_array.tofile(sink)
     """
     return
+
+
+null_writer.discharge_layout = 'river'
 
 
 def netcdf_writer(
@@ -143,6 +151,9 @@ def zarr_writer(
         id_var[:] = router.network.river_ids
         zarr.consolidate_metadata(str(discharge_file))
     return
+
+
+zarr_writer.discharge_layout = 'river'
 
 
 def parquet_writer(

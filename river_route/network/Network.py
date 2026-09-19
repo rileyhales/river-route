@@ -173,6 +173,13 @@ class Network:
         self.logger.log(logging.INFO, f'Network: {n} river segments')
         return
 
+    def shreve_order(self) -> IntArray:
+        """
+        Shreve magnitude of every river, in parameter table order: 1 for a headwater, and the sum of its upstream
+        rivers' magnitudes otherwise, which is the number of headwaters upstream of and including it.
+        """
+        return streams.shreve_order(self.downstream_indices.astype(np.int64))
+
     ################################################
     # Concurrent routing schedule
     ################################################

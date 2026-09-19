@@ -29,6 +29,7 @@ if __name__ == '__main__':
         discharge_files=null_outputs,
         forcing='vlateral',
         coeff='static',
+        routing_order='river',
         dt_routing=args.dt_routing,
         runoff_processing_mode='sequential',
         var_grid_runoff='ro',

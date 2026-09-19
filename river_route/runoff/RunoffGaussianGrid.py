@@ -225,7 +225,7 @@ class RunoffGaussianGrid(Runoff):
                 yield time_index.astype('datetime64[s]'), vlateral.astype(np.float32, copy=False), runoff_file
                 continue
             forcing = CellRunoff(
-                runoff_by_cell=np.ascontiguousarray(runoff.T),
+                runoff_by_cell=self._by_cell(runoff),
                 weight=self._weight(conversion_factor),
                 scale=self.catchment_area if self.as_volumes else self.catchment_area[:0],
             )
@@ -309,14 +309,14 @@ class RunoffGaussianGrid(Runoff):
                 a view of its first rows.
         """
         n_steps, n_rivers = runoff.shape[0], self.river_ids.shape[0]
-        runoff_by_cell = np.ascontiguousarray(runoff.T)  # each cell's time series contiguous for the vectorized sums
+        runoff_by_cell = self._by_cell(runoff)
         weight = self._weight(conversion_factor)
         dtype = np.result_type(runoff.dtype, weight.dtype)
         no_scale = self.catchment_area[:0]
 
         if self._needs_resampling(time_index):
             vlateral = np.empty((n_steps, n_rivers), dtype=dtype)
-            self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, False, vlateral, thread_pool, threads)
+            self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, vlateral, thread_pool, threads)
             timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's'))
             logger.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
             df = pd.DataFrame(vlateral, index=time_index, columns=self.river_ids)
@@ -337,8 +337,20 @@ class RunoffGaussianGrid(Runoff):
             raise ValueError(f'out must be a C-order array of at least ({n_steps}, {n_rivers}), got shape {out.shape}')
         vlateral = out[:n_steps]
         scale = self.catchment_area if self.as_volumes else no_scale
-        self._aggregate_over_ranges(runoff_by_cell, weight, scale, True, vlateral, thread_pool, threads)
+        self._aggregate_over_ranges(runoff_by_cell, weight, scale, vlateral, thread_pool, threads)
         return vlateral, time_index
+
+    @staticmethod
+    def _by_cell(runoff: FloatArray) -> FloatArray:
+        """
+        The (time, n_cells) runoff as C-order (n_cells, time), each cell's series contiguous for the vectorized sums,
+        with NaN replaced by zero. This is the one place NaN is handled, so a missing cell contributes nothing while
+        the other cells of its catchments still count, and no kernel downstream ever sees a NaN.
+        """
+        runoff = np.ascontiguousarray(runoff)
+        runoff_by_cell = np.empty(runoff.shape[::-1], dtype=runoff.dtype)
+        kernels.cells_by_time(runoff, runoff_by_cell)
+        return runoff_by_cell
 
     def _weight(self, conversion_factor: int | float) -> FloatArray:
         """The weight table proportions multiplied by the factor converting the runoff depth unit to meters."""
@@ -354,7 +366,6 @@ class RunoffGaussianGrid(Runoff):
         runoff_by_cell: FloatArray,
         weight: FloatArray,
         scale: FloatArray,
-        replace_nan: bool,
         out: FloatArray,
         thread_pool: Executor | None,
         threads: int,
@@ -379,7 +390,6 @@ class RunoffGaussianGrid(Runoff):
                 zero=dtype.type(0),
                 cumulative=self.cumulative,
                 force_positive=self.force_positive_runoff,
-                replace_nan=replace_nan,
                 r_start=r_start,
                 r_stop=r_stop,
                 scratch=np.empty((min(self.rivers_per_block, r_stop - r_start), n_steps), dtype=dtype),

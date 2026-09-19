@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
@@ -166,46 +167,101 @@ def dispatch(
     if vlateral is not None and kernel.routing_order == 'time':
         vlateral = np.ascontiguousarray(vlateral)  # time order kernels read (time, river) rows in place
 
-    n_regions = len(router.routing_jobs) - 1
-    n_routing_steps = router.num_runoff_steps * router.num_routing_steps_per_runoff
-    boundary = tuple(
-        np.zeros((max(n_regions, 1), n_routing_steps), dtype=np.float32) for _ in range(kernel.boundary_buffers)
-    )
     forcing = {'vlateral': vlateral} if router.configs.forcing == 'vlateral' else {}
-
-    def run(job, cut_target: FloatArray) -> None:
-        starts, stops, outlet, region = job
-        kernel(
-            router,
-            q_t=q_t,
-            discharge_array=discharge_array,
-            block_starts=starts,
-            block_stops=stops,
-            outlet=outlet,
-            region=region,
-            cut_target=cut_target,
-            boundary=boundary,
-            **forcing,
-        )
-
-    if n_regions:
-        regions = router.routing_jobs[:-1]  # already ordered longest first by the Router
-        if thread_pool is None:
-            for job in regions:
-                run(job, _NO_CUTS)
-        else:
-            list(thread_pool.map(lambda job: run(job, _NO_CUTS), regions))  # list() so a worker exception propagates
-
-    # the one barrier of the simulation: every region has finished before the main stem consumes its buffer
-    run(router.routing_jobs[-1], router.cut_target)
+    _run_schedule(
+        router,
+        lambda **job: kernel(router, q_t=q_t, discharge_array=discharge_array, **forcing, **job),
+        kernel.boundary_buffers,
+        kernel.routing_order,
+        thread_pool,
+    )
     return
 
 
-def dispatch_grid(router: Router, q_t: FloatArray, discharge_array: FloatArray, runoff: CellRunoff) -> None:
+def _run_schedule(
+    router: Router,
+    run_pass: Callable[..., None],
+    boundary_buffers: int,
+    routing_order: str,
+    thread_pool: ThreadPoolExecutor | None,
+) -> None:
     """
-    Aggregate gridded runoff and route it in one single-threaded river order pass with the fused kernel, which never
-    builds a vlateral array. Supports static coefficients on a standard network with uniform lateral forcing only;
-    the Router chooses this path only for routing_order='river' with that combination.
+    Run the Router's schedule: every region, concurrently on ``thread_pool`` when given, then the main stem, which
+    consumes the boundary buffers the regions filled.
+
+    A time order buffer holds one value per routing step, and each region is its own pass. A river order buffer holds a
+    region outlet's whole series plus its initial state, and a river order pass takes many regions as blocks, each
+    with its own outlet, so the regions are packed longest first into one pass per thread. That keeps the per-pass
+    cost in Python and the buffers each pass allocates to once per thread rather than once per region.
+    """
+    n_regions = len(router.routing_jobs) - 1
+    n_routing_steps = router.num_runoff_steps * router.num_routing_steps_per_runoff
+    width = n_routing_steps + (1 if routing_order == 'river' else 0)
+    boundary = tuple(np.zeros((max(n_regions, 1), width), dtype=np.float32) for _ in range(boundary_buffers))
+    regions = router.routing_jobs[:-1]  # already ordered longest first by the Router
+    stem_starts, stem_stops, _, _ = router.routing_jobs[-1]
+
+    if routing_order == 'river':
+        passes = _pack_regions(regions, router.threads if thread_pool is not None else 1)
+        stem = dict(block_outlet=np.full(stem_starts.shape[0], -1, dtype=np.int32))
+        stem['block_region'] = np.zeros(stem_starts.shape[0], dtype=np.int32)
+    else:
+        passes = [dict(block_starts=s, block_stops=e, outlet=o, region=r) for s, e, o, r in regions]
+        stem = dict(outlet=-1, region=0)
+
+    def run(job: dict) -> None:
+        run_pass(cut_target=_NO_CUTS, boundary=boundary, **job)
+
+    if passes:
+        if thread_pool is None:
+            for job in passes:
+                run(job)
+        else:
+            list(thread_pool.map(run, passes))  # list() so a worker exception propagates
+
+    # the one barrier of the simulation: every region has finished before the main stem consumes its buffer
+    run_pass(block_starts=stem_starts, block_stops=stem_stops, cut_target=router.cut_target, boundary=boundary, **stem)
+    return
+
+
+def _pack_regions(regions: tuple, n_bins: int) -> list[dict]:
+    """
+    Pack region jobs, longest first, onto the least loaded of ``n_bins`` passes. Each pass lists its regions as
+    blocks in index order with the outlet and boundary row of each.
+    """
+    loads = [(0, b) for b in range(max(1, n_bins))]
+    members: list[list] = [[] for _ in loads]
+    for starts, stops, outlet, region in regions:
+        load, b = heapq.heappop(loads)
+        members[b].append((int(starts[0]), int(stops[0]), outlet, region))
+        heapq.heappush(loads, (load + int(stops[0] - starts[0]), b))
+    passes = []
+    for jobs in sorted(members, key=lambda jobs: -sum(stop - start for start, stop, _, _ in jobs)):
+        if not jobs:
+            continue
+        jobs.sort()
+        block_starts, block_stops, block_outlet, block_region = (
+            np.array(v, dtype=np.int32) for v in zip(*jobs, strict=True)
+        )
+        passes.append(
+            dict(
+                block_starts=block_starts, block_stops=block_stops, block_outlet=block_outlet, block_region=block_region
+            )
+        )
+    return passes
+
+
+def dispatch_grid(
+    router: Router,
+    q_t: FloatArray,
+    discharge_array: FloatArray,
+    runoff: CellRunoff,
+    thread_pool: ThreadPoolExecutor | None = None,
+) -> None:
+    """
+    Aggregate gridded runoff and route it in river order with the fused kernel, which never builds a vlateral array,
+    concurrently across regions on ``thread_pool`` when given. Supports static coefficients on a standard network with
+    uniform lateral forcing only; the Router chooses this path only for routing_order='river' with that combination.
     """
     _check_kernel_arrays(router, q_t=q_t, discharge_array=discharge_array, vlateral=None)
     n_steps, n_rivers = discharge_array.shape
@@ -221,27 +277,28 @@ def dispatch_grid(router: Router, q_t: FloatArray, discharge_array: FloatArray, 
     if runoff.scale.shape[0] not in (0, n_rivers):
         raise ValueError(f'scale has shape {runoff.scale.shape}, expected ({n_rivers},) or (0,)')
 
-    dtype = np.result_type(runoff.runoff_by_cell.dtype, runoff.weight.dtype)
-    river_kernels.static_grid(
-        q_t=q_t,
-        discharge_array=discharge_array,
-        downstream_indices=router.network.downstream_indices,
-        c1=router.c1,
-        c2=router.c2,
-        c3=router.c3,
-        c4_dt=router.c4_dt,
-        n_substeps=router.num_routing_steps_per_runoff,
-        runoff_by_cell=runoff.runoff_by_cell,
-        indptr=grid.indptr,
-        cell=grid.cell,
-        weight=runoff.weight,
-        scale=runoff.scale,
-        zero=dtype.type(0),
-        cumulative=grid.cumulative,
-        force_positive=grid.force_positive_runoff,
-        replace_nan=True,
-        scratch=np.empty((min(grid.rivers_per_block, n_rivers), n_steps), dtype=dtype),
-    )
+    def run_pass(**job):
+        river_kernels.static_grid(
+            q_t=q_t,
+            discharge_array=discharge_array,
+            downstream_indices=router.network.downstream_indices,
+            c1=router.c1,
+            c2=router.c2,
+            c3=router.c3,
+            c4_dt=router.c4_dt,
+            n_substeps=router.num_routing_steps_per_runoff,
+            runoff_by_cell=runoff.runoff_by_cell,
+            indptr=grid.indptr,
+            cell=grid.cell,
+            weight=runoff.weight,
+            scale=runoff.scale,
+            cumulative=grid.cumulative,
+            force_positive=grid.force_positive_runoff,
+            block=river_kernels.BLOCK,
+            **_river_pass(**job),
+        )
+
+    _run_schedule(router, run_pass, 1, 'river', thread_pool)
     return
 
 
@@ -355,14 +412,9 @@ def dynamic_vlateral(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# River order kernel cells. These route the whole network in one call, so they take the single whole-network job of
-# an unthreaded schedule, which the Router always builds for routing_order='river'.
+# River order kernel cells. The same pass contract as the time order cells, except that a region's boundary row holds
+# its outlet's whole series, so one buffer serves static and dynamic coefficients alike.
 # ──────────────────────────────────────────────────────────────────────────────
-
-
-def _require_whole_network(block_starts: FloatArray, block_stops: FloatArray, outlet: int, n_rivers: int) -> None:
-    if outlet != -1 or block_starts.shape[0] != 1 or block_starts[0] != 0 or block_stops[0] != n_rivers:
-        raise ValueError("routing_order='river' kernels route the whole network in one call and take no regions")
 
 
 def _river_layout(vlateral: FloatArray) -> tuple[FloatArray, bool]:
@@ -376,20 +428,12 @@ def _river_layout(vlateral: FloatArray) -> tuple[FloatArray, bool]:
     return np.ascontiguousarray(vlateral), False
 
 
+def _river_pass(boundary: tuple[FloatArray, ...], **job) -> dict:
+    return dict(boundary=boundary[0], **job)
+
+
 @register('static', 'channel', 'uniform', 'standard', routing_order='river')
-def static_channel_river(
-    r: Router,
-    *,
-    q_t: FloatArray,
-    discharge_array: FloatArray,
-    block_starts: FloatArray,
-    block_stops: FloatArray,
-    outlet: int,
-    region: int,
-    cut_target: FloatArray,
-    boundary: tuple[FloatArray, ...],
-) -> None:
-    _require_whole_network(block_starts, block_stops, outlet, r.network.river_ids.shape[0])
+def static_channel_river(r: Router, *, q_t: FloatArray, discharge_array: FloatArray, **job) -> None:
     river_kernels.static_channel(
         q_t=q_t,
         discharge_array=discharge_array,
@@ -399,24 +443,14 @@ def static_channel_river(
         c3=r.c3,
         n_substeps=r.num_routing_steps_per_runoff,
         block=river_kernels.BLOCK,
+        **_river_pass(**job),
     )
 
 
 @register('static', 'vlateral', 'uniform', 'standard', routing_order='river')
 def static_vlateral_river(
-    r: Router,
-    *,
-    q_t: FloatArray,
-    discharge_array: FloatArray,
-    vlateral: FloatArray,
-    block_starts: FloatArray,
-    block_stops: FloatArray,
-    outlet: int,
-    region: int,
-    cut_target: FloatArray,
-    boundary: tuple[FloatArray, ...],
+    r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job
 ) -> None:
-    _require_whole_network(block_starts, block_stops, outlet, r.network.river_ids.shape[0])
     vlateral, by_river = _river_layout(vlateral)
     river_kernels.static_vlateral(
         q_t=q_t,
@@ -430,24 +464,14 @@ def static_vlateral_river(
         vlateral=vlateral,
         by_river=by_river,
         block=river_kernels.BLOCK,
+        **_river_pass(**job),
     )
 
 
-@register('dynamic', 'vlateral', 'uniform', 'standard', routing_order='river', boundary_buffers=2)
+@register('dynamic', 'vlateral', 'uniform', 'standard', routing_order='river')
 def dynamic_vlateral_river(
-    r: Router,
-    *,
-    q_t: FloatArray,
-    discharge_array: FloatArray,
-    vlateral: FloatArray,
-    block_starts: FloatArray,
-    block_stops: FloatArray,
-    outlet: int,
-    region: int,
-    cut_target: FloatArray,
-    boundary: tuple[FloatArray, ...],
+    r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job
 ) -> None:
-    _require_whole_network(block_starts, block_stops, outlet, r.network.river_ids.shape[0])
     vlateral, by_river = _river_layout(vlateral)
     river_kernels.dynamic_vlateral(
         q_t=q_t,
@@ -456,10 +480,11 @@ def dynamic_vlateral_river(
         alpha=r.network.alpha,
         beta=r.network.beta,
         x=r.network.x,
-        dt_routing=np.float32(r.dt_routing),
-        dt_runoff=np.float32(r.dt_runoff),
+        dt_routing=r.dt_routing,
+        dt_runoff=r.dt_runoff,
         n_substeps=r.num_routing_steps_per_runoff,
         vlateral=vlateral,
         by_river=by_river,
         block=river_kernels.BLOCK,
+        **_river_pass(**job),
     )
