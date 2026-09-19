@@ -2,8 +2,8 @@
 
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
 YAML/JSON file with `Configs.from_file`.
-All routing runs through `Router`. The procedure it runs is set by four selector keys (`coeff`, `forcing`,
-`transform`, `network`), and the required config keys depend on which selections you make.
+All routing runs through `Router`. The procedure it runs is set by five selector keys (`coeff`, `forcing`,
+`transform`, `network_conditioning`, `routing_order`), and the required config keys depend on which selections you make.
 
 `Router` takes a `Configs` and nothing else. `Network` and `RunoffGaussianGrid` take the options they need as ordinary
 arguments and each has a `from_configs` classmethod that reads those same values off a `Configs`; `Router` builds
@@ -17,7 +17,14 @@ both that way. `examples/config.yaml` below groups every option under the class 
   A single value. Default `'channel'`.
 - `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
   Only read when `forcing` is `'vlateral'`. Default `'uniform'`.
-- `network` - `'standard'` (one reach per river). Default `'standard'`.
+- `network_conditioning` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
+  `dt_routing` is routed as the fewest equal sub-reaches in series that are each Muskingum-stable, and each river
+  too short for it is sub-cycled in the fewest equal steps of its own that are). Default `'standard'`.
+  `'stabilized'` needs static coefficients and river routing order, and multiplies the routing work by the average
+  number of sub-reaches and substeps per river. A sub-cycled river interpolates its upstream inflow linearly within
+  each routing step. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which every river can
+  be made stable. The state files then hold one value per sub-reach, each
+  river's sub-reaches upstream to downstream; a state file with one value per river seeds all of its sub-reaches.
 - `routing_order` - `'time'` (every river is solved once per time step) or `'river'` (each river's whole time
   series is solved before the next river). Default `'river'`. See [Routing Kernels](kernels.md) for which to use.
 
@@ -90,7 +97,7 @@ The following table lists where each remaining key applies.
 | `coeff`                  | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
 | `forcing`                | Inflow forcing: `'channel'`, `'vlateral'`              | `'channel'`                                   |
 | `transform`              | Runoff transform: `'uniform'`, `'unit_hydrograph'`     | `'uniform'`                                   |
-| `network`                | Reach handling: `'standard'`                           | `'standard'`                                  |
+| `network_conditioning`   | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |
 | `routing_order`          | Solve order: `'river'` or `'time'`                     | `'river'`                                     |
 | `log`                    | Enable or disable logging                              | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                 | `True`                                        |
@@ -133,7 +140,8 @@ that river oscillates and negative discharges are clamped to zero, which does no
 default `'warn'` logs how many rivers are affected; `'raise'` refuses to route; `'ignore'` is silent. `Router`
 applies it by calling `Network.check_stability`. Use `Network.stability_report(dt)` to inspect a network before
 routing it, and `Network.stabilize(dt)` to build the stabilized network, which adds sub-reaches until every
-one routes stably at that dt.
+one routes stably at that dt. `network_conditioning='stabilized'` routes that network, and sub-cycles the rivers
+too short for `dt_routing`, which splitting cannot fix, in `Network.substeps(dt)` steps each.
 
 ## Example Configuration YAMLs
 

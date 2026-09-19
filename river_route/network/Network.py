@@ -10,7 +10,7 @@ from ..configs import Configs
 from ..types import FloatArray, IntArray, PathInput
 from . import streams
 
-__all__ = ['Network', 'StabilizedNetwork', 'StabilityReport',]
+__all__ = ['Network', 'StabilizedNetwork', 'StabilityReport']
 
 _NULL_LOGGER = logging.getLogger('river_route.network.null')
 _NULL_LOGGER.addHandler(logging.NullHandler())
@@ -253,45 +253,144 @@ class Network:
     # Muskingum stability
     ################################################
 
-    def stability_window(self) -> tuple[FloatArray, FloatArray]:
+    def stability_window(self, subdivisions: IntArray | None = None) -> tuple[FloatArray, FloatArray]:
         """
         The inclusive range of routing time steps each river is Muskingum-stable over, ``(2*k*x, 2*k*(1-x))``.
-        A river is stable for dt exactly when ``dt`` falls inside its own window.
+        A river is stable for dt exactly when ``dt`` falls inside its own window. With ``subdivisions`` the window
+        is that of one of the river's equal sub-reaches, whose travel time is ``k / subdivisions``.
         """
         k = self.k.astype(np.float64)
         x = self.x.astype(np.float64)
+        if subdivisions is not None:
+            k = k / subdivisions
         return 2 * k * x, 2 * k * (1 - x)
 
-    def unstable_mask(self, dt: float) -> tuple[np.ndarray, np.ndarray]:
+    def unstable_mask(
+        self, dt: float, subdivisions: IntArray | None = None, substeps: IntArray | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Per-river masks of the two ways a river fails Muskingum stability at ``dt``.
+        Per-river masks of the two ways a river fails Muskingum stability at ``dt``, for the whole river or, with
+        ``subdivisions``, for each of its equal sub-reaches. With ``substeps`` each river is checked at its own step
+        ``dt / substeps``.
 
         Returns:
             tuple: (too_long, too_short). ``too_long`` is ``2*k*x > dt``, which makes c1 negative and is fixable
-                by subdivision. ``too_short`` is ``2*k*(1-x) < dt``, which makes c3 negative and is not.
+                by subdivision. ``too_short`` is ``2*k*(1-x) < dt``, which makes c3 negative and is fixable by
+                substeps.
         """
-        lower, upper = self.stability_window()
-        return lower > dt, upper < dt
+        lower, upper = self.stability_window(subdivisions)
+        step = dt if substeps is None else dt / substeps
+        return lower > step + _tolerance(lower), upper < step - _tolerance(upper)
+
+    def subdivisions(self, dt: float) -> tuple[IntArray, np.ndarray]:
+        """
+        The fewest equal sub-reaches each river is split into to route stably at ``dt``, which is what
+        ``Configs(network_conditioning='stabilized')`` routes. The count is ``ceil(2*k*x/dt)``: the smallest that
+        brings every sub-reach's travel time ``k/N`` under the upper bound ``dt/(2*x)``. It is the same count
+        ``stabilize`` uses, laid out the same way, so a per-reach state from one lines up with the other.
+
+        A river that is too short for dt cannot be fixed by splitting, since splitting shortens it further, and one
+        whose window holds no whole count is left alone too. Both keep one reach and are reported as unresolvable.
+
+        Returns:
+            tuple: (subdivisions, resolvable). ``subdivisions`` is int64 and at least 1 for every river.
+                ``resolvable`` is True where the sub-reaches are all stable at dt.
+        """
+        if dt <= 0:
+            raise ValueError(f'dt must be positive, got {dt}')
+        k = self.k.astype(np.float64)
+        x = self.x.astype(np.float64)
+        # the ratio is nudged down by the round-off slack so a reach that divides the bound exactly is not split
+        # one time more than it needs
+        n_sub = np.maximum(1, np.ceil(2 * k * x / dt * (1 - _FLOAT32_SLACK))).astype(np.int64)
+        k_lo = dt / (2 * (1 - x))
+        resolvable = k / n_sub >= k_lo - _tolerance(k_lo)
+        return np.where(resolvable, n_sub, 1), resolvable
+
+    def substeps(self, dt: float) -> tuple[IntArray, np.ndarray]:
+        """
+        The fewest equal substeps each river is sub-cycled in within ``dt`` to route stably, which is what
+        ``Configs(network_conditioning='stabilized')`` does for rivers too short for dt. The count is
+        ``ceil(dt/(2*k*(1-x)))``: the smallest that brings the river's own step ``dt/m`` under the upper bound
+        ``2*k*(1-x)``. A river that is not too short takes 1.
+
+        A step can also fall under the lower bound ``2*k*x``, when the window is narrower than one whole count of
+        substeps; such a river keeps one step and is reported as unresolvable. For ``x <= 1/3`` the window always
+        holds one.
+
+        Returns:
+            tuple: (substeps, resolvable). ``substeps`` is int64 and at least 1 for every river. ``resolvable`` is
+                True where the river is stable at its own step.
+        """
+        if dt <= 0:
+            raise ValueError(f'dt must be positive, got {dt}')
+        k = self.k.astype(np.float64)
+        x = self.x.astype(np.float64)
+        upper = 2 * k * (1 - x)
+        with np.errstate(divide='ignore'):
+            m = np.ceil(np.where(upper > 0, dt / upper, np.inf) * (1 - _FLOAT32_SLACK))
+        m = np.maximum(1, np.nan_to_num(m, posinf=np.iinfo(np.int32).max)).astype(np.int64)
+        lower = 2 * k * x
+        resolvable = dt / m >= lower - _tolerance(lower)
+        return np.where(resolvable, m, 1), resolvable
+
+    def conditioning(self, dt: float) -> tuple[IntArray, IntArray, np.ndarray]:
+        """
+        How ``Configs(network_conditioning='stabilized')`` makes each river stable at ``dt``: a river too long for dt
+        is split into ``subdivisions`` equal sub-reaches, and a river too short for it is sub-cycled in ``substeps``
+        equal steps. No river needs both, since for ``x <= 0.5`` a river cannot be too long and too short at once.
+
+        Returns:
+            tuple: (subdivisions, substeps, resolvable). ``resolvable`` is True where the river routes stably.
+        """
+        subdivisions, split_ok = self.subdivisions(dt)
+        substeps, cycle_ok = self.substeps(dt)
+        too_long, too_short = self.unstable_mask(dt)
+        substeps = np.where(too_short, substeps, 1)
+        resolvable = np.where(too_short, cycle_ok, split_ok)
+        return np.where(too_long, subdivisions, 1), substeps, resolvable
+
+    def largest_stable_dt(self, period: int) -> int:
+        """
+        The largest routing time step that divides ``period`` evenly and at which every river can be made stable by
+        ``conditioning``. The fewest sub-reaches a river needs, ``ceil(2*k*x/dt)``, only shrinks as dt grows, so the
+        largest such dt also gives the fewest reaches and the fewest steps. Rivers too short for dt are sub-cycled
+        in their own steps, so they do not pull the whole network down to the dt of its shortest river. For
+        ``x <= 1/3`` every river is resolvable at any dt, so this returns ``period`` itself.
+        """
+        period = int(period)
+        if period <= 0:
+            raise ValueError(f'period must be a positive integer, got {period}')
+        for dt in streams._divisors(period)[::-1]:
+            _, _, resolvable = self.conditioning(float(dt))
+            if resolvable.all():
+                return int(dt)
+        return 1
 
     def substeps_required(self, dt: float) -> IntArray:
         """
         How many times each river would have to be sub-cycled within ``dt`` for its own step to fall inside its
-        stability window. 1 means the river needs no temporal refinement. This is the size of the gap described on
-        ``StabilizedNetwork``: no routing kernel consumes it yet.
+        stability window. 1 means the river needs no temporal refinement. ``substeps`` gives the counts
+        ``Configs(network_conditioning='stabilized')`` routes with.
         """
         _, upper = self.stability_window()
         with np.errstate(divide='ignore', invalid='ignore'):
             needed = np.ceil(np.where(upper > 0, dt / upper, np.inf))
         return np.maximum(1, np.nan_to_num(needed, nan=1.0, posinf=np.iinfo(np.int32).max)).astype(np.int64)
 
-    def stability_report(self, dt: float) -> StabilityReport:
+    def stability_report(
+        self, dt: float, subdivisions: IntArray | None = None, substeps: IntArray | None = None
+    ) -> StabilityReport:
         """
-        Count how this network fares at ``dt`` and how much bigger the stabilized network would be.
+        Count how this network fares at ``dt`` and how much bigger the stabilized network would be. With
+        ``subdivisions`` and ``substeps`` the stable, too long, and too short counts are of rivers split into that
+        many equal sub-reaches and sub-cycled in that many steps, as ``Configs(network_conditioning='stabilized')``
+        routes them.
 
         Returns a ``StabilityReport``, which prints as a readable summary and adds to other reports at the same dt
         so a sweep over many parameter tables accumulates into one total.
         """
-        too_long, too_short = self.unstable_mask(dt)
+        too_long, too_short = self.unstable_mask(dt, subdivisions, substeps)
         n_subreaches, resolvable = streams.required_subreaches(self.k, self.x, dt)
         stable = ~(too_long | too_short)
         return StabilityReport(
@@ -306,9 +405,16 @@ class Network:
             max_subreaches=int(n_subreaches.max()) if n_subreaches.size else 0,
         )
 
-    def check_stability(self, dt: float, action: Literal['warn', 'raise', 'ignore'] = 'warn') -> StabilityReport | None:
+    def check_stability(
+        self,
+        dt: float,
+        action: Literal['warn', 'raise', 'ignore'] = 'warn',
+        subdivisions: IntArray | None = None,
+        substeps: IntArray | None = None,
+    ) -> StabilityReport | None:
         """
-        Report rivers that are not Muskingum-stable for ``dt`` and take the configured action.
+        Report rivers that are not Muskingum-stable for ``dt`` and take the configured action. With
+        ``subdivisions`` and ``substeps`` a river counts as stable when its equal sub-reaches are at its own step.
 
         Stability requires ``2*k*x <= dt <= 2*k*(1-x)``. Outside that window the solution oscillates and the
         kernels clamp the resulting negative discharges to zero, which does not conserve mass. The c1+c2+c3 == 1
@@ -317,13 +423,15 @@ class Network:
         Args:
             dt: the routing time step to check against
             action: ``warn`` logs the summary, ``raise`` raises ValueError, ``ignore`` does nothing and returns None
+            subdivisions: optional sub-reach count per river, as from ``conditioning``
+            substeps: optional substep count per river, as from ``conditioning``
 
         Returns:
             The report, or None when ``action='ignore'`` or every river is stable.
         """
         if action == 'ignore':
             return None
-        report = self.stability_report(dt)
+        report = self.stability_report(dt, subdivisions, substeps)
         if report.n_too_long == 0 and report.n_too_short == 0:
             return None
         message = (
@@ -332,8 +440,8 @@ class Network:
             f'smaller one). Stability requires 2*k*x <= dt_routing <= 2*k*(1-x) for every river. '
             f'Routed discharge for these rivers oscillates and negative values are clamped to zero, '
             f'which does not conserve mass. Use Network.stability_report to inspect the network or '
-            f'Network.stabilize to build a stabilized network, '
-            f"or set unstable_coefficients to 'ignore' to silence this."
+            f"Network.stabilize to build a stabilized network, route with network_conditioning='stabilized' "
+            f"to split rivers that are too long, or set unstable_coefficients to 'ignore' to silence this."
         )
         if action == 'raise':
             raise ValueError(message)
@@ -554,12 +662,10 @@ class StabilizedNetwork:
     A reach is identified across rebuilds by the ``(reach_river_id, subreach_number)`` pair, with subreach_number 0
     at the outlet and counting upstream, so per-reach state can be matched back after the network is rebuilt.
 
-    TODO: rivers whose travel time is TOO SHORT for dt (``2*k*(1-x) < dt``) are a known gap. Adding reaches cannot
-      fix them -- splitting a reach shrinks k, which moves a too-short river further outside the stability window.
-      The fix is temporal: sub-cycle those reaches ``substeps_required`` times at ``dt / substeps_required`` and
-      average the substep outflows. ``substeps_required`` is computed and reported here so the size of the gap is
-      visible, but no routing kernel consumes it: ``_kernel_registry`` registers only ``network='standard'``, so
-      these rivers are routed as a single unstable reach and are flagged by ``unresolvable``/``too_short``.
+    Rivers whose travel time is too short for dt (``2*k*(1-x) < dt``) cannot be fixed by adding reaches, since
+    splitting shrinks k and moves them further outside the window, so they are kept whole here and flagged by
+    ``resolvable``/``too_short``. The fix is temporal: ``Configs(network_conditioning='stabilized')`` sub-cycles each
+    of them ``Network.substeps`` times within dt, and routes this layout's uniform sub-reaches for the rest.
     """
 
     n_reaches: int
@@ -623,8 +729,8 @@ class StabilityReport:
                                         sub-reaches in series shrinks each k and fixes it, when an integer split
                                         count also satisfies the lower bound. See ``Network.stabilize``.
         too_short (``2*k*(1-x) < dt``)  the reach travel time is too short for dt. Splitting makes this worse.
-                                        The fix is temporal (sub-cycling at a smaller dt), which is NOT
-                                        implemented; see the ``substeps`` gap noted on ``StabilizedNetwork``.
+                                        The fix is temporal: sub-cycling the reach at a smaller step of its
+                                        own, see ``Network.substeps``.
 
     Reports add together so a run over many parameter files can accumulate one total, provided every report used
     the same dt.
@@ -687,7 +793,7 @@ class StabilityReport:
             f'  already stable:         {self.n_stable:,}\n'
             f'  too long for dt:        {self.n_too_long:,} '
             f'({self.n_resolved_by_split:,} fixable by splitting, up to {self.max_subreaches:,} sub-reaches each)\n'
-            f'  too short for dt:       {self.n_too_short:,} (needs substeps, not implemented)\n'
+            f'  too short for dt:       {self.n_too_short:,} (needs substeps, see Network.substeps)\n'
             f'  unresolvable by split:  {self.n_unresolvable:,} (kept as 1 reach, still an error)\n'
             f'  reaches in fixed network: {self.total_subreaches:,}\n'
             f'  sub-reaches to create:    {self.subreaches_to_create:,}'

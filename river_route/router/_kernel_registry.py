@@ -20,23 +20,31 @@ __all__ = ['KERNEL_REGISTRY', 'resolve_kernel', 'dispatch', 'dispatch_grid']
 KERNEL_REGISTRY: dict[tuple[str, str, str, str, str], Callable[..., None]] = {}
 
 
-def _describe_kernel(coeff: str, forcing: str, transform: str, network: str, routing_order: str) -> str:
-    return f'coeff={coeff}, forcing={forcing}, transform={transform}, network={network}, routing_order={routing_order}'
+def _describe_kernel(coeff: str, forcing: str, transform: str, network_conditioning: str, routing_order: str) -> str:
+    return (
+        f'coeff={coeff}, forcing={forcing}, transform={transform}, network_conditioning={network_conditioning}, '
+        f'routing_order={routing_order}'
+    )
 
 
 def register(
-    coeff: str, forcing: str, transform: str, network: str, routing_order: str = 'time', boundary_buffers: int = 1
+    coeff: str,
+    forcing: str,
+    transform: str,
+    network_conditioning: str,
+    routing_order: str = 'time',
+    boundary_buffers: int = 1,
 ):
     """
-    Register the decorated function as the kernel-runner for one (coeff, forcing, transform, network, routing_order)
-    combination.
+    Register the decorated function as the kernel-runner for one (coeff, forcing, transform, network_conditioning,
+    routing_order) combination.
 
     ``boundary_buffers`` is how many (n_regions, n_routing_steps) arrays the kernel needs to hand each region's
     outlet contribution to the sequential remainder. Static coefficients need one (the finished contribution);
     dynamic coefficients need two, because the weights belong to the river being pushed into and are rebuilt
     every substep, so the two discharges are handed over instead of the product.
     """
-    key = (coeff, forcing, transform, network, routing_order)
+    key = (coeff, forcing, transform, network_conditioning, routing_order)
 
     def deco(run: Callable[..., None]):
         if key in KERNEL_REGISTRY:
@@ -56,10 +64,10 @@ def _lookup_transform(forcing: str, transform: str) -> str:
 
 
 def resolve_kernel(
-    coeff: str, forcing: str, transform: str, network: str, routing_order: str = 'time'
+    coeff: str, forcing: str, transform: str, network_conditioning: str, routing_order: str = 'time'
 ) -> Callable[..., None]:
     """Look up the kernel-runner for a combination, or raise ``NotImplementedError`` listing what is implemented."""
-    key = (coeff, forcing, _lookup_transform(forcing, transform), network, routing_order)
+    key = (coeff, forcing, _lookup_transform(forcing, transform), network_conditioning, routing_order)
     kernel = KERNEL_REGISTRY.get(key)
     if kernel is None:
         available = '\n  '.join(sorted(_describe_kernel(*k) for k in KERNEL_REGISTRY))
@@ -84,7 +92,16 @@ def _check_kernel_arrays(
     """
     n_rivers = router.network.river_ids.shape[0]
     n_steps = router.num_runoff_steps
-    expected = {'q_t': ((n_rivers,), q_t.shape), 'discharge_array': ((n_steps, n_rivers), discharge_array.shape)}
+    reach_indptr = router.reach_indptr
+    if reach_indptr.shape[0] and (
+        reach_indptr.shape != (n_rivers + 1,) or reach_indptr[0] != 0 or np.any(np.diff(reach_indptr) < 1)
+    ):
+        raise ValueError(f'reach_indptr must be ({n_rivers + 1},) offsets from 0 with at least one reach per river')
+    n_states = int(reach_indptr[-1]) if reach_indptr.shape[0] else n_rivers  # one state per reach
+    substeps = router.substeps
+    if substeps.shape[0] and (substeps.shape != (n_rivers,) or substeps.min() < 1):
+        raise ValueError(f'substeps must be ({n_rivers},) counts of at least 1, or empty')
+    expected = {'q_t': ((n_states,), q_t.shape), 'discharge_array': ((n_steps, n_rivers), discharge_array.shape)}
     if vlateral is not None:
         expected['vlateral'] = ((n_steps, n_rivers), vlateral.shape)
     for name, (want, got) in expected.items():
@@ -158,7 +175,7 @@ def dispatch(
         coeff=router.configs.coeff,
         forcing=router.configs.forcing,
         transform=router.configs.transform,
-        network=router.configs.network,
+        network_conditioning=router.configs.network_conditioning,
         routing_order=router.configs.routing_order,
     )
     if router.configs.forcing == 'vlateral' and vlateral is None:
@@ -261,7 +278,8 @@ def dispatch_grid(
     """
     Aggregate gridded runoff and route it in river order with the fused kernel, which never builds a vlateral array,
     concurrently across regions on ``thread_pool`` when given. Supports static coefficients on a standard network with
-    uniform lateral forcing only; the Router chooses this path only for routing_order='river' with that combination.
+    uniform lateral forcing only, on a standard or stabilized network; the Router chooses this path only for
+    routing_order='river' with that combination.
     """
     _check_kernel_arrays(router, q_t=q_t, discharge_array=discharge_array, vlateral=None)
     n_steps, n_rivers = discharge_array.shape
@@ -295,6 +313,8 @@ def dispatch_grid(
             cumulative=grid.cumulative,
             force_positive=grid.force_positive_runoff,
             block=river_kernels.BLOCK,
+            reach_indptr=router.reach_indptr,
+            substeps=router.substeps,
             **_river_pass(**job),
         )
 
@@ -432,6 +452,7 @@ def _river_pass(boundary: tuple[FloatArray, ...], **job) -> dict:
     return dict(boundary=boundary[0], **job)
 
 
+@register('static', 'channel', 'uniform', 'stabilized', routing_order='river')
 @register('static', 'channel', 'uniform', 'standard', routing_order='river')
 def static_channel_river(r: Router, *, q_t: FloatArray, discharge_array: FloatArray, **job) -> None:
     river_kernels.static_channel(
@@ -443,10 +464,13 @@ def static_channel_river(r: Router, *, q_t: FloatArray, discharge_array: FloatAr
         c3=r.c3,
         n_substeps=r.num_routing_steps_per_runoff,
         block=river_kernels.BLOCK,
+        reach_indptr=r.reach_indptr,
+        substeps=r.substeps,
         **_river_pass(**job),
     )
 
 
+@register('static', 'vlateral', 'uniform', 'stabilized', routing_order='river')
 @register('static', 'vlateral', 'uniform', 'standard', routing_order='river')
 def static_vlateral_river(
     r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job
@@ -464,6 +488,8 @@ def static_vlateral_river(
         vlateral=vlateral,
         by_river=by_river,
         block=river_kernels.BLOCK,
+        reach_indptr=r.reach_indptr,
+        substeps=r.substeps,
         **_river_pass(**job),
     )
 

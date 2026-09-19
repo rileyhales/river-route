@@ -198,11 +198,23 @@ def _recurrence(q, c3, work, n):
 
 
 @numba.njit(cache=True, nogil=True, fastmath={'contract'})
-def _route_static_river(q, c1, c2, c3, c4_dt, lateral, up, down, out, work, n_steps, n_substeps):
+def _route_static_river(
+    q_t, p0, n_pieces, m, c1, c2, c3, c4_dt, lateral, up, down, out, work, chain, n_steps, n_substeps
+):
     """
-    Route one river's whole series. Its unclamped series is added into ``down`` for the downstream river, its
-    clamped per-step mean is written into ``out``, and its final state is returned. ``lateral`` is None for channel
-    routing. ``work`` holds n_steps * n_substeps values of scratch.
+    Route one river's whole series through its ``n_pieces`` equal sub-reaches in series, whose states are
+    ``q_t[p0:p0 + n_pieces]``: one piece on a standard network, and as many as stability needs on a stabilized one.
+    The last piece's unclamped series is added into ``down`` for the downstream river and its clamped per-step mean is
+    written into ``out``; the states are updated in place. ``lateral`` is None for channel routing, and every piece
+    takes an equal share of it through ``c4_dt``.
+
+    ``m`` sub-cycles the river: each routing step is taken as m equal steps of its own, which is how a river too short
+    for the routing step is kept stable. The upstream series arrives once per routing step and is interpolated
+    linearly between those levels, and the downstream river is handed the level at the end of each routing step,
+    since Muskingum inflow is the discharge at the time levels. With m = 1 the river is routed at the routing step.
+
+    ``work`` holds n_steps * n_substeps * m values of scratch and ``chain`` one more, which carries a piece's series
+    to the next piece in the same layout as an inflow row.
 
     Only the recurrence q = c3 q + forcing is serial, so it runs alone in its own loop; the passes before and after
     it are independent per step and vectorize. Fusing multiply-adds is the only fastmath flag, which keeps NaN
@@ -210,49 +222,66 @@ def _route_static_river(q, c1, c2, c3, c4_dt, lateral, up, down, out, work, n_st
     """
     zero = np.float32(0.0)
     n_routing = n_steps * n_substeps
-
-    # forcing of every step, all known before the recurrence starts
-    for g in range(n_routing):
-        work[g] = c1 * up[g + 1] + c2 * up[g]
-    if lateral is not None:
-        if n_substeps == 1:
-            for t in range(n_steps):
-                work[t] += c4_dt * np.float32(lateral[t])
+    n_per_step = n_substeps * m  # the river's own steps per runoff step
+    n_fine = n_steps * n_per_step
+    source = up
+    for j in range(n_pieces):
+        # forcing of every step, all known before the recurrence starts
+        if j == 0 and m > 1:
+            inv_m = np.float32(1.0 / m)
+            for g in range(n_routing):
+                start = up[g]
+                rise = (up[g + 1] - start) * inv_m
+                before = start
+                for s in range(m):
+                    after = start + rise * np.float32(s + 1)
+                    work[g * m + s] = c1 * after + c2 * before
+                    before = after
         else:
-            for t in range(n_steps):
-                external = c4_dt * np.float32(lateral[t])
-                for s in range(t * n_substeps, (t + 1) * n_substeps):
-                    work[s] += external
+            for h in range(n_fine):
+                work[h] = c1 * source[h + 1] + c2 * source[h]
+        if lateral is not None:
+            if n_per_step == 1:
+                for t in range(n_steps):
+                    work[t] += c4_dt * np.float32(lateral[t])
+            else:
+                for t in range(n_steps):
+                    external = c4_dt * np.float32(lateral[t])
+                    for h in range(t * n_per_step, (t + 1) * n_per_step):
+                        work[h] += external
 
-    down[0] += q
-    q = _recurrence(q, c3, work, n_routing)
+        # every step of the source has been read, so the chain row can take this piece's series in its place
+        q = q_t[p0 + j]
+        if j == n_pieces - 1:
+            down[0] += q
+            q_t[p0 + j] = _recurrence(q, c3, work, n_fine)
+            if m == 1:
+                for g in range(n_routing):
+                    down[g + 1] += work[g]
+            else:
+                for g in range(n_routing):
+                    down[g + 1] += work[(g + 1) * m - 1]
+        else:
+            chain[0] = q
+            q_t[p0 + j] = _recurrence(q, c3, work, n_fine)
+            for h in range(n_fine):
+                chain[h + 1] = work[h]
+            source = chain
 
-    for g in range(n_routing):
-        down[g + 1] += work[g]
     # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
-    if n_substeps == 1:
+    if n_per_step == 1:
         for t in range(n_steps):
             val = work[t]
             out[t] = val if val > zero else zero
     else:
-        inv_substeps = np.float32(1.0 / n_substeps)
+        inv_per_step = np.float32(1.0 / n_per_step)
         for t in range(n_steps):
             interval_sum = zero
-            for s in range(t * n_substeps, (t + 1) * n_substeps):
-                interval_sum += work[s]
-            val = interval_sum * inv_substeps
+            for h in range(t * n_per_step, (t + 1) * n_per_step):
+                interval_sum += work[h]
+            val = interval_sum * inv_per_step
             out[t] = val if val > zero else zero
-    return q
-    for g in range(n_routing):
-        down[g + 1] += work[g]
-    inv_substeps = np.float32(1.0 / n_substeps)
-    for t in range(n_steps):
-        interval_sum = zero
-        for s in range(t * n_substeps, (t + 1) * n_substeps):
-            interval_sum += work[s]
-        val = interval_sum * inv_substeps
-        out[t] = val if val > zero else zero
-    return q
+    return
 
 
 @numba.njit(cache=True, nogil=True)
@@ -324,6 +353,8 @@ def _route_pass(
     boundary,
     block,
     discharge_by_river,
+    reach_indptr,
+    substeps,
 ):
     """
     Route every river in the given blocks, river by river; see the module header for the pass contract. A block's
@@ -333,6 +364,11 @@ def _route_pass(
     ``lateral_source`` is 0 for none, 1 for (time, river) vlateral, 2 for (river, time) vlateral read in place, and 3
     for gridded runoff aggregated per block. ``discharge_by_river`` means discharge_array is C-order (river, time) and
     each river's series is written into its own row in place rather than transposed into (time, river) by block.
+
+    ``reach_indptr`` is empty on a standard network, where ``q_t`` holds one state per river. On a stabilized network
+    river r is the static sub-reaches ``reach_indptr[r]:reach_indptr[r + 1]`` in series, and ``q_t`` holds one state
+    per sub-reach. ``substeps`` is empty when no river is sub-cycled, and otherwise gives the steps each river takes
+    per routing step.
     """
     n_rivers, n_steps = discharge_array.shape if discharge_by_river else discharge_array.shape[::-1]
     n_routing = n_steps * n_substeps
@@ -343,7 +379,11 @@ def _route_pass(
     next_cut = 0
     scratch = np.zeros((block if lateral_source in (0, 1, 3) else 0, n_steps), dtype=np.float32)
     out = np.empty((0 if discharge_by_river else block, n_steps), dtype=np.float32)
-    work = np.empty(n_routing, dtype=np.float32)
+    expanded = reach_indptr.shape[0] > 0
+    cycled = substeps.shape[0] > 0
+    most = substeps.max() if cycled else 1
+    work = np.empty(n_routing * most, dtype=np.float32)
+    chain = np.empty(n_routing * most + 1 if expanded else 0, dtype=np.float32)
     zero = np.float32(0.0)
 
     for b in range(block_starts.shape[0]):
@@ -396,8 +436,25 @@ def _route_pass(
                         n_substeps,
                     )
                 else:
-                    q_t[r] = _route_static_river(
-                        q_t[r], c1[r], c2[r], c3[r], c4_dt[r], lateral, up, down, series, work, n_steps, n_substeps
+                    p0 = reach_indptr[r] if expanded else r
+                    n_pieces = reach_indptr[r + 1] - p0 if expanded else 1
+                    _route_static_river(
+                        q_t,
+                        p0,
+                        n_pieces,
+                        substeps[r] if cycled else 1,
+                        c1[r],
+                        c2[r],
+                        c3[r],
+                        c4_dt[r],
+                        lateral,
+                        up,
+                        down,
+                        series,
+                        work,
+                        chain,
+                        n_steps,
+                        n_substeps,
                     )
                 _release_row(r - first, slot_of, free, top)
             if not discharge_by_river:
@@ -408,6 +465,7 @@ def _route_pass(
 _NO_FLOATS = np.zeros(0, dtype=np.float32)
 _NO_GRID = np.zeros((0, 0), dtype=np.float32)
 _NO_INTS = np.zeros(0, dtype=np.int32)
+_NO_REACHES = np.zeros(0, dtype=np.int64)  # a standard network: one reach per river
 _UNUSED = dict(
     c4_dt=_NO_FLOATS,
     dynamic=False,
@@ -424,13 +482,15 @@ _UNUSED = dict(
     scale=_NO_FLOATS,
     cumulative=False,
     force_positive=False,
+    reach_indptr=_NO_REACHES,
+    substeps=_NO_REACHES,
 )
 
 
 def _route(q_t, schedule: dict, **arguments) -> None:
     """Call _route_pass with the unused arguments of the kernel filled in and the pass defaulted to the whole
     network with no regions."""
-    n_rivers = q_t.shape[0]
+    n_rivers = arguments['downstream_indices'].shape[0]
     pass_arguments = dict(
         block_starts=schedule.get('block_starts', np.array([0], dtype=np.int32)),
         block_stops=schedule.get('block_stops', np.array([n_rivers], dtype=np.int32)),
@@ -458,8 +518,23 @@ def _discharge_layout(discharge_array):
     raise ValueError('discharge_array must be C-order (time, river) or the transpose of a C-order (river, time) array')
 
 
-def static_channel(*, q_t, discharge_array, downstream_indices, c1, c2, c3, n_substeps, block, **schedule):
-    """Route the initial state through the rivers of one pass with no lateral inflow."""
+def static_channel(
+    *,
+    q_t,
+    discharge_array,
+    downstream_indices,
+    c1,
+    c2,
+    c3,
+    n_substeps,
+    block,
+    reach_indptr=_NO_REACHES,
+    substeps=_NO_REACHES,
+    **schedule,
+):
+    """Route the initial state through the rivers of one pass with no lateral inflow. A nonempty reach_indptr routes
+    each river as its sub-reaches, with one state per sub-reach in q_t, and a nonempty substeps
+    sub-cycles each river in that many steps per routing step."""
     _route(
         q_t,
         schedule,
@@ -472,13 +547,31 @@ def static_channel(*, q_t, discharge_array, downstream_indices, c1, c2, c3, n_su
         n_substeps=n_substeps,
         lateral_source=0,
         block=block,
+        reach_indptr=reach_indptr,
+        substeps=substeps,
     )
 
 
 def static_vlateral(
-    *, q_t, discharge_array, downstream_indices, c1, c2, c3, c4_dt, n_substeps, vlateral, by_river, block, **schedule
+    *,
+    q_t,
+    discharge_array,
+    downstream_indices,
+    c1,
+    c2,
+    c3,
+    c4_dt,
+    n_substeps,
+    vlateral,
+    by_river,
+    block,
+    reach_indptr=_NO_REACHES,
+    substeps=_NO_REACHES,
+    **schedule,
 ):
-    """Route the rivers of one pass with lateral inflow from a vlateral array, (river, time) if by_river."""
+    """Route the rivers of one pass with lateral inflow from a vlateral array, (river, time) if by_river. A nonempty
+    reach_indptr routes each river as its sub-reaches, with one state per sub-reach in q_t, and a nonempty substeps
+    sub-cycles each river in that many steps per routing step."""
     _route(
         q_t,
         schedule,
@@ -492,6 +585,8 @@ def static_vlateral(
         lateral_source=2 if by_river else 1,
         vlateral=vlateral,
         block=block,
+        reach_indptr=reach_indptr,
+        substeps=substeps,
     )
 
 
@@ -513,12 +608,15 @@ def static_grid(
     cumulative,
     force_positive,
     block,
+    reach_indptr=_NO_REACHES,
+    substeps=_NO_REACHES,
     **schedule,
 ):
     """
     Aggregate gridded runoff onto the rivers of one pass and route it in the same sweep. No vlateral array is built:
     each block of rivers is aggregated into scratch and routed while it is still in cache. The runoff must be NaN
-    free, as RunoffGaussianGrid prepares it.
+    free, as RunoffGaussianGrid prepares it. A nonempty reach_indptr routes each river as its sub-reaches, with one
+    state per sub-reach in q_t.
     """
     _route(
         q_t,
@@ -539,6 +637,8 @@ def static_grid(
         cumulative=cumulative,
         force_positive=force_positive,
         block=block,
+        reach_indptr=reach_indptr,
+        substeps=substeps,
     )
 
 

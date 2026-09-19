@@ -44,7 +44,7 @@ class Configs:
     coeff: Literal['static', 'dynamic'] = 'static'
     forcing: Literal['channel', 'vlateral'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
-    network: Literal['standard', 'expanded'] = 'standard'
+    network_conditioning: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
     routing_order: Literal['time', 'river'] = 'river'  # sweep every river per step, or each river's whole series
 
     # Core Routing Files

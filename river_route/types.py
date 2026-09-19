@@ -29,12 +29,4 @@ class WriteDischargesFn(Protocol):
     ) -> None: ...
 
 
-__all__ = [
-    'PathInput',
-    'PathList',
-    'FloatArray',
-    'IntArray',
-    'DatetimeArray',
-    'VlateralGenerator',
-    'WriteDischargesFn',
-]
+__all__ = ['PathInput', 'PathList', 'FloatArray', 'IntArray', 'DatetimeArray', 'VlateralGenerator', 'WriteDischargesFn']
