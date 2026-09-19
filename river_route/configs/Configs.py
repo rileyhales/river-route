@@ -45,6 +45,7 @@ class Configs:
     forcing: Literal['channel', 'vlateral'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
     network: Literal['standard', 'expanded'] = 'standard'
+    routing_order: Literal['time', 'river'] = 'time'  # sweep every river per step, or each river's whole series
 
     # Core Routing Files
     params_file: PathInput | None = None

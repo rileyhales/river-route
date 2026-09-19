@@ -4,6 +4,12 @@
 
 ### Unreleased
 
+- Added the `routing_order` config, `'time'` (the default, and the only order before) or `'river'`. River order routes
+  each river's whole time series before the next river and is 2 to 2.5 times faster on one thread. It has static
+  channel, static vlateral, and dynamic vlateral kernels, and a fused kernel that aggregates gridded runoff and routes
+  it in one pass without building a vlateral array. River order kernels run on one thread; with a `thread_pool` they
+  log a warning and route single-threaded. They read vlateral in either `(time, river)` layout or, when handed the
+  transpose of a `(river, time)` array, one contiguous row per river. See the new Routing Kernels reference.
 - Added `river_route.Network`, which owns the river network: the ids, topology, and Muskingum parameters read from
   the params file, the connectivity vectors, and the concurrent routing partition. A `Router` builds one from its
   `Configs` and reuses it, so the params file is parsed and the network partitioned once per `Network` instead of

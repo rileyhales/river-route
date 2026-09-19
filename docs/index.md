@@ -4,7 +4,7 @@
 
 ## Describe your routing
 
-All routing runs through `rr.Router`. You describe the routing procedure with four config selector keys,
+All routing runs through `rr.Router`. You describe the routing procedure with five config selector keys,
 which together resolve to one compiled kernel.
 
 | Selector    | Options                                                                                                                                | Default      |
@@ -13,6 +13,7 @@ which together resolve to one compiled kernel.
 | `forcing`   | `'channel'` (channel routing only) or `'vlateral'` (route lateral inflow). One value only.                                             | `'channel'`  |
 | `transform` | `'uniform'` or `'unit_hydrograph'`. Only read when `forcing` is `'vlateral'`.                                                          | `'uniform'`  |
 | `network`   | `'standard'` (one reach per river).                                                                                                    | `'standard'` |
+| `routing_order` | `'time'` (every river per time step, can use threads) or `'river'` (each river's whole series, faster on one core). See [Routing Kernels](references/kernels.md). | `'time'` |
 
 An unimplemented combination raises `NotImplementedError` listing the ones that exist.
 

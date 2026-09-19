@@ -18,8 +18,10 @@ both that way. `examples/config.yaml` below groups every option under the class 
 - `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
   Only read when `forcing` is `'vlateral'`. Default `'uniform'`.
 - `network` - `'standard'` (one reach per river). Default `'standard'`.
+- `routing_order` - `'time'` (every river is solved once per time step) or `'river'` (each river's whole time
+  series is solved before the next river). Default `'time'`. See [Routing Kernels](kernels.md) for which to use.
 
-The four keys together resolve to one compiled kernel. A combination with no kernel raises `NotImplementedError`
+The five keys together resolve to one compiled kernel. A combination with no kernel raises `NotImplementedError`
 listing the ones that are implemented.
 
 ## Minimum Required Inputs
@@ -89,6 +91,7 @@ The following table lists where each remaining key applies.
 | `forcing`                | Inflow forcing: `'channel'`, `'vlateral'`              | `'channel'`                                   |
 | `transform`              | Runoff transform: `'uniform'`, `'unit_hydrograph'`     | `'uniform'`                                   |
 | `network`                | Reach handling: `'standard'`                           | `'standard'`                                  |
+| `routing_order`          | Solve order: `'time'` or `'river'`                     | `'time'`                                      |
 | `log`                    | Enable or disable logging                              | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                 | `True`                                        |
 | `log_level`              | Logger level, defaults to between INFO and WARNING     | `'PROGRESS'`                                  |

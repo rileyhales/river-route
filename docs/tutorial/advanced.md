@@ -35,7 +35,7 @@ graph TD
 ```
 
 `Router.route()` first validates the required config keys and inflow source for the selected
-`coeff`, `forcing`, `transform`, and `network` before any routing data is read. It then builds its
+`coeff`, `forcing`, `transform`, `network`, and `routing_order` before any routing data is read. It then builds its
 [`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
 vectors, and the concurrent routing partition, and derives the Muskingum coefficients from them. The
 numba kernel is resolved when it dispatches each routing pass (an unimplemented combination raises

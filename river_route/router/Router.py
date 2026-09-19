@@ -10,9 +10,9 @@ from tqdm import tqdm
 from .._logging import PROGRESS, build_logger
 from ..configs import Configs
 from ..network import Network
-from ..runoff import Runoff, RunoffGaussianGrid, RunoffVlateral
+from ..runoff import CellRunoff, Runoff, RunoffGaussianGrid, RunoffVlateral
 from ..types import DatetimeArray, FloatArray, IntArray, WriteDischargesFn
-from ._kernel_registry import dispatch
+from ._kernel_registry import dispatch, dispatch_grid
 from .writers import netcdf_writer
 
 __all__ = ['Router']
@@ -142,8 +142,14 @@ class Router:
     def _set_routing_schedule(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> None:
         """Bind the index ranges the kernels sweep, derived and cached by the Network so that repeated
         simulations over one network never re-partition it."""
+        river_order = self.configs.routing_order == 'river'
+        if river_order and thread_pool is not None:
+            self.logger.warning(
+                "routing_order='river' routes the network on one thread; the thread_pool is only used to aggregate "
+                'gridded runoff when it is not fused into routing'
+            )
         self.routing_jobs, self.cut_target = self.network.routing_schedule(
-            threads=threads, concurrent=thread_pool is not None
+            threads=threads, concurrent=thread_pool is not None and not river_order
         )
         return
 
@@ -307,10 +313,14 @@ class Router:
         else:
             if self.runoff is None:
                 self.runoff = RunoffGaussianGrid.from_configs(self.configs)
-            runoff_iter = self.runoff.reader(self.configs.grid_runoff_files, thread_pool, threads)
+            if self._fuses_grid_runoff():
+                self.logger.debug('Aggregating and routing gridded runoff in one pass with the fused kernel')
+                runoff_iter = self.runoff.cell_reader(self.configs.grid_runoff_files)
+            else:
+                runoff_iter = self.runoff.reader(self.configs.grid_runoff_files, thread_pool, threads)
         file_iter = (
-            (dates, vlateral, runoff_file, discharge_file)
-            for (dates, vlateral, runoff_file), discharge_file in zip(
+            (dates, forcing, runoff_file, discharge_file)
+            for (dates, forcing, runoff_file), discharge_file in zip(
                 runoff_iter, self.configs.discharge_files, strict=True
             )
         )
@@ -318,7 +328,7 @@ class Router:
             file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
 
         coeff_dt: tuple[int, int] | None = None  # (dt_routing, dt_runoff) the static coefficients were built for
-        for dates, vlateral, runoff_file, discharge_file in file_iter:
+        for dates, forcing, runoff_file, discharge_file in file_iter:
             self.logger.info('-' * 60)
             self.logger.info(f'Routing vlateral: {runoff_file}')
             self._set_forced_time_options(dates)
@@ -330,7 +340,8 @@ class Router:
             if self.num_runoff_steps < dates.shape[0]:
                 self.logger.debug(f'Using the first {self.num_runoff_steps} of {dates.shape[0]} steps for dt_total')
                 dates = dates[: self.num_runoff_steps]
-                vlateral = vlateral[: self.num_runoff_steps]
+                if not isinstance(forcing, CellRunoff):  # the fused kernel reads only the steps it routes
+                    forcing = forcing[: self.num_runoff_steps]
             # static coefficients depend only on dt_routing/dt_runoff, so rebuild them only when those change
             # across files (dynamic coefficients are rebuilt inside the kernel each substep)
             if self.configs.coeff != 'dynamic' and (self.dt_routing, self.dt_runoff) != coeff_dt:
@@ -339,13 +350,16 @@ class Router:
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
             q_array = np.zeros((self.num_runoff_steps, self.network.river_ids.shape[0]), dtype=np.float32)
-            dispatch(
-                self,
-                q_t=q_t,
-                discharge_array=q_array,
-                vlateral=np.ascontiguousarray(vlateral, dtype=np.float32),
-                thread_pool=thread_pool,
-            )
+            if isinstance(forcing, CellRunoff):
+                dispatch_grid(self, q_t=q_t, discharge_array=q_array, runoff=forcing)
+            else:
+                dispatch(
+                    self,
+                    q_t=q_t,
+                    discharge_array=q_array,
+                    vlateral=forcing.astype(np.float32, copy=False),  # the kernel runner picks the layout
+                    thread_pool=thread_pool,
+                )
             if self.configs.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t
@@ -371,6 +385,19 @@ class Router:
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
         self.logger.info('-' * 60)
         return
+
+    def _fuses_grid_runoff(self) -> bool:
+        """
+        Whether gridded runoff is aggregated and routed in one pass by the fused river order kernel instead of being
+        aggregated to a vlateral array first. The fused kernel implements river order routing with static
+        coefficients on a standard network with uniform lateral forcing, so every other combination aggregates first.
+        """
+        return (
+            self.configs.routing_order == 'river'
+            and self.configs.coeff == 'static'
+            and self.configs.transform == 'uniform'
+            and self.configs.network == 'standard'
+        )
 
     ################################################
     # Dependency injection methods for users to overwrite default behaviors without subclassing

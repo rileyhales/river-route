@@ -1,6 +1,7 @@
 import logging
+from collections.abc import Iterator
 from concurrent.futures import Executor
-from typing import Literal, Self
+from typing import Literal, NamedTuple, Self
 
 import numpy as np
 import pandas as pd
@@ -12,9 +13,17 @@ from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, Vl
 from . import _numba_kernels as kernels
 from .Runoff import Runoff
 
-__all__ = ['RunoffGaussianGrid']
+__all__ = ['CellRunoff', 'RunoffGaussianGrid']
 
 logger = logging.getLogger(__name__)
+
+
+class CellRunoff(NamedTuple):
+    """One runoff file read at the weight table's cells, ready for the fused aggregate-and-route kernel."""
+
+    runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths, each cell's time series contiguous
+    weight: FloatArray  # (n_weights,) proportions already multiplied by the depth unit conversion factor
+    scale: FloatArray  # (n_rivers,) catchment areas that turn depths into volumes; EMPTY to keep depths
 
 
 class RunoffGaussianGrid(Runoff):
@@ -193,6 +202,36 @@ class RunoffGaussianGrid(Runoff):
             vlateral, dates = self.vlateral(runoff_file, thread_pool=thread_pool, threads=threads)
             yield dates.astype('datetime64[s]'), vlateral.astype(np.float32, copy=False), runoff_file
 
+    def cell_reader(
+        self, grid_runoff_files: PathList
+    ) -> Iterator[tuple[DatetimeArray, CellRunoff | FloatArray, PathInput]]:
+        """
+        Read gridded runoff files for the fused kernel, which aggregates and routes in one pass, so no vlateral array
+        is built. A file whose timesteps must be resampled cannot be aggregated inside the routing sweep, so it is
+        aggregated here and yielded as a vlateral array instead.
+
+        Args:
+            grid_runoff_files: gridded runoff files to read
+
+        Yields:
+            tuple: (dates, forcing, source_file) per input file, where forcing is a CellRunoff, or a C-order
+                (time, n_rivers) vlateral array when the file was resampled
+        """
+        self.as_volumes = True  # lateral inflow is a volume
+        for runoff_file in grid_runoff_files:
+            runoff, time_index, conversion_factor = self.read_runoff(runoff_file)
+            if self._needs_resampling(time_index):
+                vlateral, time_index = self.aggregate(runoff, time_index, conversion_factor)
+                yield time_index.astype('datetime64[s]'), vlateral.astype(np.float32, copy=False), runoff_file
+                continue
+            forcing = CellRunoff(
+                runoff_by_cell=np.ascontiguousarray(runoff.T),
+                weight=self._weight(conversion_factor),
+                scale=self.catchment_area if self.as_volumes else self.catchment_area[:0],
+            )
+            del runoff
+            yield time_index.astype('datetime64[s]'), forcing, runoff_file
+
     def to_dataset(
         self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
     ) -> xr.Dataset:
@@ -271,12 +310,11 @@ class RunoffGaussianGrid(Runoff):
         """
         n_steps, n_rivers = runoff.shape[0], self.river_ids.shape[0]
         runoff_by_cell = np.ascontiguousarray(runoff.T)  # each cell's time series contiguous for the vectorized sums
-        weight = self.proportion * conversion_factor if conversion_factor != 1 else self.proportion
+        weight = self._weight(conversion_factor)
         dtype = np.result_type(runoff.dtype, weight.dtype)
         no_scale = self.catchment_area[:0]
 
-        time_diff = np.diff(time_index)
-        if self.force_uniform_timesteps and time_diff.size and not np.all(time_diff == time_diff[0]):
+        if self._needs_resampling(time_index):
             vlateral = np.empty((n_steps, n_rivers), dtype=dtype)
             self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, False, vlateral, thread_pool, threads)
             timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's'))
@@ -301,6 +339,15 @@ class RunoffGaussianGrid(Runoff):
         scale = self.catchment_area if self.as_volumes else no_scale
         self._aggregate_over_ranges(runoff_by_cell, weight, scale, True, vlateral, thread_pool, threads)
         return vlateral, time_index
+
+    def _weight(self, conversion_factor: int | float) -> FloatArray:
+        """The weight table proportions multiplied by the factor converting the runoff depth unit to meters."""
+        return self.proportion * conversion_factor if conversion_factor != 1 else self.proportion
+
+    def _needs_resampling(self, time_index: DatetimeArray) -> bool:
+        """Whether irregular timesteps must be resampled onto the first timestep before routing."""
+        time_diff = np.diff(time_index)
+        return bool(self.force_uniform_timesteps and time_diff.size and not np.all(time_diff == time_diff[0]))
 
     def _aggregate_over_ranges(
         self,
