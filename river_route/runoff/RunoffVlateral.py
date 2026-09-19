@@ -23,10 +23,11 @@ class RunoffVlateral(Runoff):
             vlateral_files: netCDF files each holding a ``vlateral`` variable with dimensions (time, river)
 
         Yields:
-            tuple: (dates, vlateral, source_file) per input file
+            tuple: (dates, vlateral, source_file) per input file, with NaN volumes replaced by zero
         """
         for lateral_file in vlateral_files:
             with xr.open_dataset(lateral_file) as ds:
                 dates = ds['time'].values.astype('datetime64[s]')
                 array = ds['vlateral'].values.astype(np.float32, copy=False)
-                yield dates, array, lateral_file
+            np.nan_to_num(array, copy=False, nan=0.0)  # the routing kernels never see NaN
+            yield dates, array, lateral_file

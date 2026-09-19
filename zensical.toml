@@ -20,6 +20,7 @@ nav = [
     { "Time Variables" = "references/time-options.md" },
     { "Math Derivations" = "references/math.md" },
     { "Parallelism" = "references/parallelism.md" },
+    { "Routing Kernels" = "references/kernels.md" },
   ] },
   { "Tutorials" = [
     { "Basics" = "tutorial/basics.md" },

@@ -10,9 +10,9 @@ from tqdm import tqdm
 from .._logging import PROGRESS, build_logger
 from ..configs import Configs
 from ..network import Network
-from ..runoff import Runoff, RunoffGaussianGrid, RunoffVlateral
+from ..runoff import CellRunoff, Runoff, RunoffGaussianGrid, RunoffVlateral
 from ..types import DatetimeArray, FloatArray, IntArray, WriteDischargesFn
-from ._kernel_registry import dispatch
+from ._kernel_registry import dispatch, dispatch_grid
 from .writers import netcdf_writer
 
 __all__ = ['Router']
@@ -24,7 +24,8 @@ class Router:
     - static or dynamic coefficients (e.g. muskingum vs muskingum-cunge style)
     - channel-only or volumetric lateral water inputs (forcing)
     - uniform or unit-hydrograph runoff transformation (transform)
-    - standard or stability-expanded networks (using reach subdivisions and substeps)
+    - standard or stabilized networks (network_conditioning), where rivers too long for dt_routing are routed as
+      the fewest equal sub-reaches in series that are each stable
 
     A Router owns one simulation: the coefficients derived from the network parameters and the time options, the
     channel state, and the routing loop. The network itself -- the ids, the topology, the k and x vectors, the
@@ -46,6 +47,9 @@ class Router:
     c4_dt: FloatArray  # n x 1 - c4 / dt_runoff, scales lateral inflow volumes to a rate
     downstream_c1: FloatArray  # n x 1 - c1 of the downstream river, -1 positions left at zero
     downstream_c2: FloatArray  # n x 1 - c2 of the downstream river, -1 positions left at zero
+    subdivisions: IntArray  # n x 1 - equal sub-reaches each river is routed as, all 1 on a standard network
+    reach_indptr: IntArray  # (n + 1,) offsets of each river's sub-reach states when stabilized, else empty
+    substeps: IntArray  # n x 1 - steps each river takes per routing step when stabilized, else empty
 
     # The schedule the kernels sweep, bound from the Network per route(). These are index ranges into the
     # parameter table as given: no river vector is ever reordered and no forcing or discharge array is
@@ -55,7 +59,8 @@ class Router:
     threads: int = 1  # the threads passed to the most recent route(), read by writers such as zarr_writer
 
     # State variables
-    channel_state: FloatArray  # routing depends only on a channel state vector
+    channel_state: FloatArray  # one value per river, or per sub-reach on a stabilized network
+    _state_indptr: IntArray | None  # the sub-reach layout channel_state is in, None for one value per river
     _ensemble_member_states: list[FloatArray]  # for ensemble routing
 
     # Time options
@@ -99,6 +104,8 @@ class Router:
 
         # default discharge writer; overridable via set_discharge_writer
         self._discharge_writer = netcdf_writer
+        self.reach_indptr = np.zeros(0, dtype=np.int64)
+        self.substeps = np.zeros(0, dtype=np.int64)
         return
 
     def __repr__(self) -> str:
@@ -112,6 +119,7 @@ class Router:
         """Read the initial channel state from the config. Called on every route() so that repeated calls on
         the same object always start from the configured state instead of the previous run's final state."""
         n_rivers = self.network.river_ids.shape[0]
+        self._state_indptr = None
         state_file = self.configs.channel_state_init_file
         if not state_file:
             self.logger.warning('channel_state_init_file not provided. Defaulting to zero initial conditions')
@@ -119,12 +127,40 @@ class Router:
             return
         self.logger.debug('Reading Initial State from Parquet')
         state = pd.read_parquet(state_file).values.flatten().astype(np.float32, copy=False)
-        if state.shape[0] != n_rivers:
+        # a stabilized network may start from one value per sub-reach, which is checked once the layout is known
+        if state.shape[0] != n_rivers and self.configs.network_conditioning != 'stabilized':
             raise ValueError(
                 f'channel_state_init_file has {state.shape[0]} values but {self.configs.params_file} has '
                 f'{n_rivers} rivers. The state file must have one row per river in the same order.'
             )
         self.channel_state = state
+        return
+
+    def _fit_channel_state(self) -> None:
+        """
+        Put channel_state in the layout the kernels route: one value per river on a standard network, one per
+        sub-reach on a stabilized one. A per-river state seeds every sub-reach of its river with the river's value, and
+        a per-sub-reach state from a different layout is reduced to each river's last sub-reach first. A state read
+        from a file with one value per sub-reach must already match the layout.
+        """
+        target = self.reach_indptr if self.reach_indptr.shape[0] else None
+        current = self._state_indptr
+        if current is None and target is not None and self.channel_state.shape[0] != len(self.network):
+            if self.channel_state.shape[0] != target[-1]:
+                raise ValueError(
+                    f'channel_state_init_file has {self.channel_state.shape[0]} values, but the stabilized network '
+                    f'has {len(self.network)} rivers and {int(target[-1])} sub-reaches. The state file must have one '
+                    f'row per river, or one per sub-reach in the order a final state file is written.'
+                )
+            self._state_indptr = target
+            return
+        if (current is None and target is None) or (
+            current is not None and target is not None and np.array_equal(current, target)
+        ):
+            return
+        per_river = self.channel_state if current is None else self.channel_state[current[1:] - 1]
+        self.channel_state = per_river if target is None else np.repeat(per_river, np.diff(target))
+        self._state_indptr = target
         return
 
     def _write_final_state(self) -> None:
@@ -159,9 +195,14 @@ class Router:
         self.dt_runoff = self.configs.dt_runoff or (dates[1] - dates[0]).astype('timedelta64[s]').astype(int)
         self.dt_discharge = self.configs.dt_discharge or self.dt_runoff
         self.dt_total = self.configs.dt_total or self.dt_runoff * dates.shape[0]
-        if not self.configs.dt_routing:
+        if self.configs.dt_routing:
+            self.dt_routing = self.configs.dt_routing
+        elif self.configs.network_conditioning == 'stabilized':
+            self.dt_routing = self.network.largest_stable_dt(self.dt_runoff)
+            self.logger.info(f'dt_routing was not provided; using {self.dt_routing} s, the largest stable divisor')
+        else:
             self.logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
-        self.dt_routing = self.configs.dt_routing or self.dt_runoff
+            self.dt_routing = self.dt_runoff
         self._validate_time_options()
         return
 
@@ -199,7 +240,27 @@ class Router:
         implied dependency on having set time options and the network parameter vectors
         """
         self.logger.debug('Calculating Muskingum coefficients')
-        dt_div_k = self.dt_routing / self.network.k
+        if self.configs.network_conditioning == 'stabilized':
+            # a river too long for dt_routing is split into N sub-reaches that are each k/N long and take 1/N of its
+            # lateral inflow, so one set of coefficients serves all of them. A river too short for it is sub-cycled
+            # in m steps of dt_routing/m, so its coefficients are built for that step.
+            self.subdivisions, substeps, _ = self.network.conditioning(self.dt_routing)
+            self.reach_indptr = np.zeros(len(self.network) + 1, dtype=np.int64)
+            np.cumsum(self.subdivisions, out=self.reach_indptr[1:])
+            self.substeps = substeps if np.any(substeps > 1) else np.zeros(0, dtype=np.int64)
+            k = (self.network.k / self.subdivisions).astype(np.float32)
+            dt_river = (self.dt_routing / substeps).astype(np.float32)  # float32 like the standard path's math
+            self.logger.info(
+                f'Stabilized network: {len(self.network)} rivers routed as {int(self.reach_indptr[-1])} sub-reaches '
+                f'at dt_routing={self.dt_routing} s, {int(np.count_nonzero(substeps > 1))} of them sub-cycled'
+            )
+        else:
+            self.subdivisions = np.ones(len(self.network), dtype=np.int64)
+            self.reach_indptr = np.zeros(0, dtype=np.int64)
+            self.substeps = np.zeros(0, dtype=np.int64)
+            k = self.network.k
+            dt_river = self.dt_routing
+        dt_div_k = dt_river / k
         denominator = dt_div_k + (2 * (1 - self.network.x))
         _2x = 2 * self.network.x
         # contiguous arrays iterate faster in kernels due to cpu and ram access patterns
@@ -208,7 +269,14 @@ class Router:
         self.c3 = np.ascontiguousarray(((2 * (1 - self.network.x)) - dt_div_k) / denominator, dtype=np.float32)
         self.c4 = np.ascontiguousarray(self.c1 + self.c2, dtype=np.float32)
         self.c4_dt = np.ascontiguousarray(self.c4 / self.dt_runoff, dtype=np.float32)
-        self.network.check_stability(self.dt_routing, action=self.configs.unstable_coefficients)
+        if self.reach_indptr.shape[0]:
+            self.c4_dt = np.ascontiguousarray(self.c4_dt / self.subdivisions, dtype=np.float32)
+        self.network.check_stability(
+            self.dt_routing,
+            action=self.configs.unstable_coefficients,
+            subdivisions=self.subdivisions if self.reach_indptr.shape[0] else None,
+            substeps=self.substeps if self.substeps.shape[0] else None,
+        )
         if not np.allclose(self.c1 + self.c2 + self.c3, 1):
             self.logger.warning('Muskingum coefficients do not sum to 1')
             self.logger.debug(f'c1: {self.c1}')
@@ -223,6 +291,7 @@ class Router:
         valid = self.network.downstream_indices >= 0
         self.downstream_c1[valid] = self.c1[self.network.downstream_indices[valid]]
         self.downstream_c2[valid] = self.c2[self.network.downstream_indices[valid]]
+        self._fit_channel_state()
         return
 
     ################################################
@@ -281,7 +350,7 @@ class Router:
 
         self.logger.debug('Starting routing computation')
         q_t = self.channel_state.astype(np.float32, copy=True)
-        discharge_array = np.zeros((self.num_runoff_steps, self.network.river_ids.shape[0]), dtype=np.float32)
+        discharge_array = self._discharge_buffer()
         dispatch(self, q_t=q_t, discharge_array=discharge_array, thread_pool=thread_pool)
         self.channel_state = q_t
 
@@ -307,10 +376,14 @@ class Router:
         else:
             if self.runoff is None:
                 self.runoff = RunoffGaussianGrid.from_configs(self.configs)
-            runoff_iter = self.runoff.reader(self.configs.grid_runoff_files, thread_pool, threads)
+            if self._fuses_grid_runoff():
+                self.logger.debug('Aggregating and routing gridded runoff in one pass with the fused kernel')
+                runoff_iter = self.runoff.cell_reader(self.configs.grid_runoff_files)
+            else:
+                runoff_iter = self.runoff.reader(self.configs.grid_runoff_files, thread_pool, threads)
         file_iter = (
-            (dates, vlateral, runoff_file, discharge_file)
-            for (dates, vlateral, runoff_file), discharge_file in zip(
+            (dates, forcing, runoff_file, discharge_file)
+            for (dates, forcing, runoff_file), discharge_file in zip(
                 runoff_iter, self.configs.discharge_files, strict=True
             )
         )
@@ -318,7 +391,7 @@ class Router:
             file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
 
         coeff_dt: tuple[int, int] | None = None  # (dt_routing, dt_runoff) the static coefficients were built for
-        for dates, vlateral, runoff_file, discharge_file in file_iter:
+        for dates, forcing, runoff_file, discharge_file in file_iter:
             self.logger.info('-' * 60)
             self.logger.info(f'Routing vlateral: {runoff_file}')
             self._set_forced_time_options(dates)
@@ -330,7 +403,8 @@ class Router:
             if self.num_runoff_steps < dates.shape[0]:
                 self.logger.debug(f'Using the first {self.num_runoff_steps} of {dates.shape[0]} steps for dt_total')
                 dates = dates[: self.num_runoff_steps]
-                vlateral = vlateral[: self.num_runoff_steps]
+                if not isinstance(forcing, CellRunoff):  # the fused kernel reads only the steps it routes
+                    forcing = forcing[: self.num_runoff_steps]
             # static coefficients depend only on dt_routing/dt_runoff, so rebuild them only when those change
             # across files (dynamic coefficients are rebuilt inside the kernel each substep)
             if self.configs.coeff != 'dynamic' and (self.dt_routing, self.dt_runoff) != coeff_dt:
@@ -338,14 +412,17 @@ class Router:
                 coeff_dt = (self.dt_routing, self.dt_runoff)
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
-            q_array = np.zeros((self.num_runoff_steps, self.network.river_ids.shape[0]), dtype=np.float32)
-            dispatch(
-                self,
-                q_t=q_t,
-                discharge_array=q_array,
-                vlateral=np.ascontiguousarray(vlateral, dtype=np.float32),
-                thread_pool=thread_pool,
-            )
+            q_array = self._discharge_buffer()
+            if isinstance(forcing, CellRunoff):
+                dispatch_grid(self, q_t=q_t, discharge_array=q_array, runoff=forcing, thread_pool=thread_pool)
+            else:
+                dispatch(
+                    self,
+                    q_t=q_t,
+                    discharge_array=q_array,
+                    vlateral=forcing.astype(np.float32, copy=False),  # the kernel runner picks the layout
+                    thread_pool=thread_pool,
+                )
             if self.configs.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t
@@ -371,6 +448,32 @@ class Router:
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
         self.logger.info('-' * 60)
         return
+
+    def _discharge_buffer(self) -> FloatArray:
+        """
+        A zeroed (time, river) array for the routed discharge. River order kernels write each river's series in place
+        when the array is the transpose of a C-order (river, time) buffer, which skips transposing into (time, river),
+        so that layout is used whenever the discharge writer declares ``discharge_layout = 'river'`` (it reads that
+        layout at least as fast). Otherwise, and always for time order, the array is C-order (time, river).
+        """
+        shape = (self.num_runoff_steps, self.network.river_ids.shape[0])
+        river_layout = getattr(self._discharge_writer, 'discharge_layout', 'time') == 'river'
+        if self.configs.routing_order == 'river' and river_layout:
+            return np.zeros(shape[::-1], dtype=np.float32).T
+        return np.zeros(shape, dtype=np.float32)
+
+    def _fuses_grid_runoff(self) -> bool:
+        """
+        Whether gridded runoff is aggregated and routed in one pass by the fused river order kernel instead of being
+        aggregated to a vlateral array first. The fused kernel implements river order routing with static
+        coefficients on a standard network with uniform lateral forcing, so every other combination aggregates first.
+        """
+        return (
+            self.configs.routing_order == 'river'
+            and self.configs.coeff == 'static'
+            and self.configs.transform == 'uniform'
+            and self.configs.network_conditioning in ('standard', 'stabilized')
+        )
 
     ################################################
     # Dependency injection methods for users to overwrite default behaviors without subclassing

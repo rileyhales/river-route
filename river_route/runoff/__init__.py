@@ -1,5 +1,5 @@
 from .Runoff import Runoff
-from .RunoffGaussianGrid import RunoffGaussianGrid
+from .RunoffGaussianGrid import CellRunoff, RunoffGaussianGrid
 from .RunoffVlateral import RunoffVlateral
 from .weights import (
     cell_xy_from_regular_grid,
@@ -9,6 +9,7 @@ from .weights import (
 )
 
 __all__ = [
+    'CellRunoff',
     'Runoff',
     'RunoffGaussianGrid',
     'RunoffVlateral',

@@ -50,6 +50,7 @@ __all__ = [
     'analyze_min_compute',
     'analyze_stability',
     'is_dfs_ordered',
+    'shreve_order',
     'assign_regions',
     'partition_network',
     'analyze_partitioning',
@@ -580,6 +581,24 @@ def _subtree_extent(downstream_index: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return size, lowest
 
 
+@numba.njit(cache=True)
+def shreve_order(downstream_index: np.ndarray) -> np.ndarray:
+    """
+    Shreve magnitude of every river: 1 for a headwater, and the sum of its upstream rivers' magnitudes otherwise, which
+    is the number of headwaters upstream of and including it. One forward pass, because the table is topologically
+    sorted and every upstream river is final before its downstream is reached.
+    """
+    n = downstream_index.shape[0]
+    magnitude = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        if magnitude[i] == 0:
+            magnitude[i] = 1
+        d = downstream_index[i]
+        if d >= 0:
+            magnitude[d] += magnitude[i]
+    return magnitude
+
+
 def is_dfs_ordered(downstream_index: np.ndarray) -> np.ndarray:
     """
     Per-river check that the table is in DFS computation order.
@@ -649,7 +668,11 @@ _CAP_MULTIPLIERS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0, 1.3, 1.6, 2.0)
 
 
 def assign_regions(
-    downstream_index: np.ndarray, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
+    downstream_index: np.ndarray,
+    threads: int = 4,
+    granularity: int = 2,
+    cap_multiplier: float | None = None,
+    measure: str = 'rivers',
 ) -> tuple[np.ndarray, int]:
     """
     Partition a DFS-ordered network into contiguous regions that can be routed concurrently (see _claim_regions).
@@ -661,6 +684,9 @@ def assign_regions(
             the uneven region sizes a river network produces; 2 is the measured sweet spot.
         cap_multiplier: largest allowed region as a multiple of the ideal per-thread share. None searches
             _CAP_MULTIPLIERS and keeps whichever partition _parallel_cost rates fastest.
+        measure: what sizes a subtree when regions are claimed. 'rivers' counts the rivers in it; 'shreve' uses its
+            Shreve magnitude, the number of headwaters it drains. Either never shrinks downstream, which is what makes
+            claiming the largest subtrees first safe. The partitions are always rated by rivers, the work routed.
 
     Returns:
         region: per-river region id, -1 for rivers in the sequential main stem
@@ -683,13 +709,21 @@ def assign_regions(
             f'parameter table sorted in depth-first computation order, or route with threads=1, which places '
             f'no ordering requirement beyond upstream-before-downstream.'
         )
-    order = np.argsort(-size, kind='stable')
-    share = n / (threads * granularity)
+    if measure == 'rivers':
+        claim_size = size
+    elif measure == 'shreve':
+        claim_size = shreve_order(downstream_index)
+    else:
+        raise ValueError(f"measure must be 'rivers' or 'shreve', got {measure!r}")
+    # largest first, and among equal sizes the downstream river first: a chain of rivers shares one Shreve magnitude,
+    # and its most downstream river must be claimed before any subtree inside it
+    order = np.lexsort((-np.arange(n), -claim_size))
+    share = claim_size[downstream_index < 0].sum() / (threads * granularity)  # the whole network's size
 
     multipliers = _CAP_MULTIPLIERS if cap_multiplier is None else (cap_multiplier,)
     best: tuple[float, np.ndarray, int] | None = None
     for multiplier in multipliers:
-        region, n_regions = _claim_regions(size, lowest, order, max(1, int(share * multiplier)))
+        region, n_regions = _claim_regions(claim_size, lowest, order, max(1, int(share * multiplier)))
         _, _, speedup = _parallel_cost(region, n_regions, threads)
         if best is None or speedup > best[0]:
             best = (speedup, region, n_regions)

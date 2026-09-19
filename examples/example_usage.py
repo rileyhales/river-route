@@ -10,8 +10,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--region', default='6020006540')
     parser.add_argument('--regions-root', default=Path.home() / 'data' / 'v3TestData' / 'hydrography')
-    parser.add_argument('--runoff-root', default=Path.home() / 'data' / 'era5_zarr_8x8_3month')
+    parser.add_argument('--runoff-root', default=Path.home() / 'data' / 'era5_zarr_16x16_yearly')
     parser.add_argument('--dt-routing', type=int, default=3600)
+    parser.add_argument('--network-conditioning', choices=('standard', 'stabilized'), default='standard')
     parser.add_argument('--threads', type=int, default=12)
     args = parser.parse_args()
 
@@ -29,6 +30,8 @@ if __name__ == '__main__':
         discharge_files=null_outputs,
         forcing='vlateral',
         coeff='static',
+        routing_order='river',
+        network_conditioning=args.network_conditioning,
         dt_routing=args.dt_routing,
         runoff_processing_mode='sequential',
         var_grid_runoff='ro',
@@ -40,8 +43,8 @@ if __name__ == '__main__':
         unstable_coefficients='ignore',
     )
 
-    conf.validate_routing()
-    conf.validate_runoff()
+    # conf.validate_routing()
+    # conf.validate_runoff()
     # deep_validate() reads every input file and checks its contents. It is a one off check to run on inputs you
     # have not used before, not part of a run: routing never calls it, and it costs more than the routing does.
 

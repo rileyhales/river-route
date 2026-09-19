@@ -4,6 +4,23 @@
 
 ### Unreleased
 
+- Added the `routing_order` config, `'river'` (the default) or `'time'` (the only order before). River order routes
+  each river's whole time series before the next river, solving that series eight steps per serial operation, and is
+  6 to 8 times faster than time order on one thread and on 12. It has static channel, static vlateral, and dynamic
+  vlateral kernels, and a fused kernel that aggregates gridded runoff and routes it in one pass without building a
+  vlateral array. It routes concurrently on a `thread_pool` over the same regions as time order, packing the regions
+  into one pass per thread. It reads vlateral in either `(time, river)` layout or, when handed the transpose of a
+  `(river, time)` array, one contiguous row per river. See the new Routing Kernels reference.
+- A discharge writer may set `discharge_layout = 'river'` to be handed river order discharge as the transpose of a
+  `(river, time)` buffer, which river order writes without transposing. `zarr_writer` and `null_writer` declare it;
+  `netcdf_writer`, `parquet_writer`, and custom writers still receive C-order `(time, river)`.
+- NaN runoff is set to zero once, when the cell series are prepared, instead of after each river's area weighted
+  sum. A NaN cell now contributes nothing while the other cells of its catchment still count, where before the whole
+  river got zero for that step. vlateral read from files has NaN set to zero too, so no routing kernel sees NaN. The
+  `replace_nan` argument of the aggregation kernels is removed.
+- `streams.shreve_order` and `Network.shreve_order()` give each river's Shreve magnitude, and
+  `streams.assign_regions(..., measure='shreve')` claims concurrent regions by it instead of by river count. On a
+  network where confluences join two rivers the two measures give the same partition.
 - Added `river_route.Network`, which owns the river network: the ids, topology, and Muskingum parameters read from
   the params file, the connectivity vectors, and the concurrent routing partition. A `Router` builds one from its
   `Configs` and reuses it, so the params file is parsed and the network partitioned once per `Network` instead of

@@ -117,3 +117,36 @@ def test_subset_configs_to_river_with_weights(vpu: RFSv2ConfigsData):
         assert weight_river_ids.issubset(set(sub['river_id'].values.tolist()))
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_shreve_order():
+    """Headwaters are 1, a confluence sums its upstreams, and a chain keeps its magnitude."""
+    from river_route.network.streams import shreve_order
+
+    # 0 -> 2, 1 -> 2, 2 -> 3, 3 -> 6, 4 -> 5, 5 -> 6, 6 is the outlet; 7 is a lone basin
+    downstream = np.array([2, 2, 3, 6, 5, 6, -1, -1], dtype=np.int64)
+    np.testing.assert_array_equal(shreve_order(downstream), [1, 1, 2, 2, 1, 1, 3, 1])
+
+
+def test_assign_regions_by_shreve_is_safe_on_chains():
+    """
+    Claiming by Shreve magnitude must take a chain's most downstream river before any subtree inside it, since the
+    chain shares one magnitude; otherwise a region would be claimed inside another.
+    """
+    from river_route.network.streams import assign_regions, regions_to_layout
+
+    # chains 0-2 and 3-5 join at 6; 6 and chains 7-9 and 10-12 drain into outlet 13; 14 is a lone basin
+    downstream = np.array([1, 2, 6, 4, 5, 6, 13, 8, 9, 13, 11, 12, 13, -1, -1])
+    for threads in (2, 3, 4):
+        region, n_regions = assign_regions(downstream, threads=threads, granularity=1, measure='shreve')
+        layout = regions_to_layout(region, downstream)  # raises if any region is split or drains into another
+        assert layout['n_regions'] == n_regions
+
+
+def test_network_shreve_order(tmp_path):
+    import river_route as rr
+
+    pd.DataFrame(
+        {'river_id': [10, 11, 12, 13], 'next_river_id': [12, 12, 13, -1], 'k': [3600.0] * 4, 'x': [0.2] * 4}
+    ).to_parquet(tmp_path / 'params.parquet', index=False)
+    np.testing.assert_array_equal(rr.Network(tmp_path / 'params.parquet').shreve_order(), [1, 1, 2, 2])
