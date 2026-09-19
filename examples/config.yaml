@@ -5,7 +5,7 @@ coeff: static                    # static | dynamic
 forcing: channel                 # channel | vlateral
 transform: uniform               # uniform | unit_hydrograph (only read when forcing == vlateral)
 network: standard                # standard | stabilized
-routing_order: time              # time | river (see the Routing Kernels reference)
+routing_order: river             # river | time (see the Routing Kernels reference)
 
 # Routing network definition for rr.Router
 params_file: ''                       # parquet: river_id, next_river_id, k, x; if coeff == dynamic -> alpha, beta
