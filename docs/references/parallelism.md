@@ -76,8 +76,8 @@ What you control is how much work you ask that kernel to do.
    on every substep. Only pay for dynamic coefficients when the application needs them. See the
    [config file reference](config-files.md#routing-procedure-selectors).
 2. **Use the largest stable routing time step.** Every routing substep is a full sweep of the network, so
-   `dt_routing` directly sets the amount of work. Check stability with `river_route.streams.analyze_stability`
-   rather than defaulting to a small step. See [Time Variables](time-options.md).
+   `dt_routing` directly sets the amount of work. Check stability with `Network.stability_report(dt)` rather than
+   defaulting to a small step. See [Time Variables](time-options.md).
 3. **Only produce the output you will use.** A coarser `dt_discharge` averages results before they are written, and
    a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
    `zarr_writer` is built to write as fast as possible when you need everything.
@@ -108,10 +108,11 @@ with ThreadPoolExecutor(max_workers=8) as pool:
 ```
 
 The speedup is limited by the rivers left in the sequential main stem and by memory bandwidth, which the routing
-kernel is largely bound by. Use `river_route.streams.analyze_partitioning` to see how a network splits and the upper
-bound on speedup before committing to it. The partition depends only on connectivity and `threads`, so
-`river_route.streams.partition_network` can store it as a `region` column in the parameter file instead of it being
-derived for every simulation.
+kernel is largely bound by. Use `river_route.network.streams.analyze_partitioning` to see how a network splits and the upper
+bound on speedup before committing to it. The partition depends only on connectivity and `threads`, never on the
+forcing, dt, or coefficients, so the `Network` derives it once and caches it per thread count: every simulation
+over one `Network` reuses it. `river_route.network.streams.partition_network` can also store it as a `region` column in
+the parameter file, which a `Network` reuses as-is instead of deriving one at all.
 
 **Conclusion**: Meaningful speedup is possible with multiple threads but only if you sort the network into
 independent but ordered subgraphs. This is an optional addition to a job that is already efficient single threaded.

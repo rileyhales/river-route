@@ -3,7 +3,7 @@
 ```mermaid
 graph TD
     A[route method] --> B[validate config for coeff/forcing/network]
-    B --> C[prepare network from params_file]
+    B --> C[build Network from params_file<br/>topology, k and x, partition]
     C --> D[read initial state]
     D --> E{forcing}
 
@@ -35,9 +35,12 @@ graph TD
 ```
 
 `Router.route()` first validates the required config keys and inflow source for the selected
-`coeff`, `forcing`, and `network` before any routing data is read. It then prepares the network
-topology and coefficients, and resolves the numba kernel when it dispatches each routing pass (an
-unimplemented combination raises `NotImplementedError` at that point). When `forcing` is `'channel'`, time parameters are read directly from the config and a
+`coeff`, `forcing`, `transform`, and `network` before any routing data is read. It then builds its
+[`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
+vectors, and the concurrent routing partition, and derives the Muskingum coefficients from them. The
+numba kernel is resolved when it dispatches each routing pass (an unimplemented combination raises
+`NotImplementedError` at that point). The `Network` is built once and reused, so routing repeatedly
+on one `Router` re-reads and re-partitions nothing. When `forcing` is `'channel'`, time parameters are read directly from the config and a
 single channel-only routing pass runs over `dt_total`. Otherwise the router loops over the runoff
 input files (processed sequentially or as an ensemble), inferring time parameters from each file's
 date array, routes each one, optionally resamples the output to a coarser discharge timestep, and
@@ -50,9 +53,9 @@ routing. This is useful when you have a large number of routing runs to perform 
 Depending on your preference, you may want to generate many config files in advance or store them for repeatability and
 future use.
 
-The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments
-to the `Router`. You could alternatively write the inputs to a YAML or JSON file and use that config file
-instead.
+The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword
+arguments to a `Configs`, which is then given to the `Router`. You could alternatively write the inputs to a YAML
+or JSON file and use that config file instead.
 
 ```python
 import glob
@@ -83,9 +86,9 @@ m = rr.Router(configs).route()
 ## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disk.
-The default function, `river_route.writers.netcdf_writer`, writes discharge to netCDF.
+The default function, `river_route.router.writers.netcdf_writer`, writes discharge to netCDF.
 
-Premade writers are in `river_route.writers`. `zarr_writer` writes each output as an uncompressed zarr store with
+Premade writers are in `river_route.router.writers`. `zarr_writer` writes each output as an uncompressed zarr store with
 dimensions `(time, river_id)`, built to write as fast as possible. It writes up to the `threads` given to
 `Router.route` chunks at once. `parquet_writer` writes one row per river and one column per time step, with the
 pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
@@ -96,7 +99,7 @@ import river_route as rr
 (
     rr
     .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
-    .set_discharge_writer(rr.writers.zarr_writer)
+    .set_discharge_writer(rr.router.writers.zarr_writer)
     .route()
 )
 ```
@@ -125,7 +128,7 @@ import river_route as rr
 
 
 def custom_write_discharges(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.river_ids)
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.network.river_ids)
     df.to_parquet(discharge_file)
     return
 
@@ -169,7 +172,7 @@ import river_route as rr
 
 
 def save_partial_results(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.river_ids)
+    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.network.river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
     df.to_parquet(discharge_file)
@@ -183,3 +186,21 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
     .route()
 )
 ```
+
+## Customizing Runoff Inputs
+
+Routing reads the runoff the config names: `vlateral_files` with `RunoffVlateral`, or `grid_runoff_files` aggregated
+with `grid_weights_file` by `RunoffGaussianGrid`. The runoff classes prepare the lateral inflow, so pass a
+`RunoffGaussianGrid` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
+the inflow is prepared.
+
+```python title="Pass a Prepared Runoff"
+import river_route as rr
+
+configs = rr.Configs.from_file('config.yaml')
+runoff = rr.RunoffGaussianGrid.from_configs(configs)
+rr.Router(configs, runoff=runoff).route()
+```
+
+Runoff in a format or a place this package does not read can be written to netCDF with `Runoff.to_netcdf` and
+routed from `vlateral_files`.

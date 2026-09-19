@@ -97,10 +97,38 @@ def grid_case(tmp_path: Path) -> dict:
     }
 
 
-def prepare(grid_case: dict, **kwargs) -> rr.Runoff:
-    """A Runoff for the synthetic grid's variable names and weight table."""
-    configs = rr.Configs(grid_weights_file=grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat')
-    return rr.Runoff(configs, **kwargs)
+def prepare(grid_case: dict, **kwargs) -> rr.RunoffGaussianGrid:
+    """A RunoffGaussianGrid for the synthetic grid's variable names and weight table.
+
+    RunoffGaussianGrid takes a Configs and nothing else, so the per-test options are folded into the Configs here.
+    """
+    configs = rr.Configs(
+        grid_weights_file=grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat', **kwargs
+    )
+    return rr.RunoffGaussianGrid.from_configs(configs)
+
+
+def test_runoff_builds_the_same_thing_directly_and_from_configs(grid_case):
+    """from_configs only reads the values off a Configs; the direct constructor takes those same values."""
+    configs = rr.Configs(
+        grid_weights_file=grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat', as_volumes=True
+    )
+    direct = rr.RunoffGaussianGrid(
+        grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat', as_volumes=True
+    )
+    from_configs = rr.RunoffGaussianGrid.from_configs(configs)
+    np.testing.assert_array_equal(direct.river_ids, from_configs.river_ids)
+    np.testing.assert_array_equal(direct.proportion, from_configs.proportion)
+    assert (direct.var_runoff, direct.var_x, direct.var_y, direct.as_volumes) == (
+        from_configs.var_runoff,
+        from_configs.var_x,
+        from_configs.var_y,
+        from_configs.as_volumes,
+    )
+    with pytest.raises(TypeError, match='from_configs takes a Configs'):
+        rr.RunoffGaussianGrid.from_configs(grid_case['weights_file'])
+    with pytest.raises(ValueError, match='grid_weights_file is required'):
+        rr.RunoffGaussianGrid(None)
 
 
 def test_grid_weights_proportions_sum_to_one(grid_case):
@@ -241,7 +269,7 @@ def test_millimeter_runoff_is_converted(grid_case, tmp_path):
 
 
 def write_irregular_runoff_grid(path: Path) -> np.ndarray:
-    """A grid whose time axis skips steps, which triggers the resample branch in Runoff.aggregate."""
+    """A grid whose time axis skips steps, which triggers the resample branch in RunoffGaussianGrid.aggregate."""
     offsets = np.array([0, 3600, 7200, 14400, 21600], dtype='f8')  # 0, 1, 2, 4, 6 hours
     with nc.Dataset(str(path), 'w') as ds:
         ds.createDimension('time', offsets.shape[0])
@@ -369,31 +397,100 @@ def test_route_with_thread_pool_matches_single_threaded(grid_case):
 @pytest.mark.parametrize('n_ranges', [1, 2, 3, 7, 50])
 def test_river_ranges_cover_every_river_once(n_ranges):
     indptr = np.array([0, 5, 6, 6, 20, 21, 22, 40], dtype=np.int32)
-    bounds = rr.Runoff._river_ranges(indptr, n_ranges)
+    bounds = rr.RunoffGaussianGrid._river_ranges(indptr, n_ranges)
     assert bounds[0] == 0
     assert bounds[-1] == indptr.shape[0] - 1
     assert np.all(np.diff(bounds) > 0)
     assert bounds.shape[0] - 1 <= n_ranges
 
 
-def test_router_grid_forcing_needs_no_copy(grid_case):
+def test_runoff_reader_needs_no_copy(grid_case):
     """The kernels need C-order float32 vlateral; the grid path must produce it so route() never copies it."""
-    router = rr.Router(
-        rr.Configs(
-            forcing='vlateral',
-            params_file=str(grid_case['params_file']),
-            grid_weights_file=str(grid_case['weights_file']),
-            grid_runoff_files=[str(grid_case['grid_file'])],
-            discharge_files=[str(grid_case['directory'] / 'q.nc')],
-            var_grid_runoff='ro',
-            var_x='lon',
-            var_y='lat',
-            log=False,
-            progress_bar=False,
-        )
+    configs = rr.Configs(
+        forcing='vlateral',
+        params_file=str(grid_case['params_file']),
+        grid_weights_file=str(grid_case['weights_file']),
+        grid_runoff_files=[str(grid_case['grid_file'])],
+        discharge_files=[str(grid_case['directory'] / 'q.nc')],
+        var_grid_runoff='ro',
+        var_x='lon',
+        var_y='lat',
+        log=False,
+        progress_bar=False,
     )
-    router._set_vectors_from_params()
-    _, vlateral, _, _ = next(router._vlateral_generator())
+    runoff = rr.RunoffGaussianGrid.from_configs(configs)
+    reader = runoff.reader(configs.grid_runoff_files)
+    _, vlateral, _ = next(reader)
     assert vlateral.shape == (NT, N_RIVERS)
     assert vlateral.dtype == np.float32
     assert vlateral.flags.c_contiguous
+
+
+def test_to_netcdf_is_read_by_runoff_vlateral(grid_case):
+    """A file written by to_netcdf must read back through RunoffVlateral as the same dates and volumes."""
+    runoff = prepare(grid_case)
+    dates, vlateral, _ = next(runoff.reader([grid_case['grid_file']]))
+    path = grid_case['directory'] / 'vlateral_written.nc'
+    runoff.to_netcdf(path, dates, vlateral, runoff.river_ids)
+    read_dates, read_vlateral, _ = next(rr.RunoffVlateral().reader([path]))
+    np.testing.assert_array_equal(read_dates, dates)
+    np.testing.assert_array_equal(read_vlateral, vlateral)
+
+
+def test_runoff_is_abstract():
+    with pytest.raises(TypeError):
+        rr.runoff.Runoff()
+
+
+def grid_configs(grid_case: dict, out_name: str) -> rr.Configs:
+    return rr.Configs(
+        forcing='vlateral',
+        params_file=str(grid_case['params_file']),
+        grid_weights_file=str(grid_case['weights_file']),
+        grid_runoff_files=[str(grid_case['grid_file'])],
+        discharge_files=[str(grid_case['directory'] / out_name)],
+        var_grid_runoff='ro',
+        var_x='lon',
+        var_y='lat',
+        log=False,
+        progress_bar=False,
+    )
+
+
+def test_router_builds_and_reuses_one_runoff(grid_case):
+    """A Router given no RunoffGaussianGrid has none until it routes, then keeps the one the reader built."""
+    router = rr.Router(grid_configs(grid_case, 'q_lazy.nc'))
+    assert router.runoff is None
+    router.route()
+    assert isinstance(router.runoff, rr.RunoffGaussianGrid)
+
+
+def test_router_takes_a_runoff_at_construction(grid_case):
+    """A RunoffGaussianGrid built by hand, or subclassed, is routed as given instead of one built from the weights."""
+    configs = grid_configs(grid_case, 'q_given.nc')
+    runoff = rr.RunoffGaussianGrid(
+        grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat', as_volumes=True
+    )
+    router = rr.Router(configs, runoff=runoff)
+    assert router.runoff is runoff
+    router.route()
+
+    rr.Router(grid_configs(grid_case, 'q_built.nc')).route()
+    with (
+        xr.open_dataset(grid_case['directory'] / 'q_given.nc') as given,
+        xr.open_dataset(grid_case['directory'] / 'q_built.nc') as built,
+    ):
+        np.testing.assert_array_equal(given['Q'].values, built['Q'].values)
+
+
+def test_router_sets_as_volumes_on_a_given_runoff(grid_case):
+    """Routing consumes volumes, so a RunoffGaussianGrid handed over as depths is switched, not silently wrong."""
+    runoff = rr.RunoffGaussianGrid(grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat')
+    assert not runoff.as_volumes
+    rr.Router(grid_configs(grid_case, 'q_depths.nc'), runoff=runoff).route()
+    assert runoff.as_volumes
+
+
+def test_router_rejects_a_runoff_that_is_not_one(grid_case):
+    with pytest.raises(TypeError, match='must be a RunoffGaussianGrid'):
+        rr.Router(grid_configs(grid_case, 'q.nc'), runoff='not a runoff')

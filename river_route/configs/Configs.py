@@ -22,21 +22,25 @@ _PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
 class Configs:
     """
     Frozen configuration options. Build one from keyword arguments with ``Configs(...)`` or from a file with
-    ``Configs.from_file``, then pass it to ``Router`` or ``Runoff``. Building a Configs normalizes it: file paths are
-    made absolute, discharge_files are derived from discharge_dir, and selector values are checked. The options are
-    validated when they are used: ``Router.route`` calls ``validate_routing`` and ``Runoff`` calls ``validate_runoff``.
+    ``Configs.from_file``, then pass it to ``Router`` or ``RunoffGaussianGrid``. Building a Configs normalizes it: file
+    paths are made absolute, discharge_files are derived from discharge_dir, and selector values are checked. The
+    options are validated when they are used: ``Router.route`` calls ``validate_routing`` and ``RunoffGaussianGrid``
+    calls ``validate_runoff``.
     Either one checks that the required options are set, that input paths exist, and that output paths are in
-    existing directories, runs ``deep_validate`` when ``deep_validation`` is True, and then marks the Configs as
-    validated so it is not checked again.
+    existing directories, and then marks the Configs as validated so it is not checked again.
 
-    Use ``replace`` to get a copy with some options changed, and ``to_json`` or ``to_yaml`` to write the options to a
-    file that ``from_file`` reads back.
+    ``deep_validate`` reads the input files and checks their contents. Nothing calls it for you: it is the one
+    validation that costs as much as the read it repeats, so it is a method to run once on inputs you have not
+    checked before, not something a route pays for every time.
+
+    A Configs is set once and never changed. There is no method to copy one with an option altered: build the
+    Configs you want. ``to_json`` and ``to_yaml`` write the options to a file that ``from_file`` reads back.
     """
 
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
 
-    # Routing procedure selectors — describe the procedure resolved to a kernel by routers._kernel_registry
+    # Routing procedure selectors — describe the procedure resolved to a kernel by router._kernel_registry
     coeff: Literal['static', 'dynamic'] = 'static'
     forcing: Literal['channel', 'vlateral'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
@@ -66,14 +70,13 @@ class Configs:
     uh_state_init_file: PathInput | None = None
     uh_state_final_file: PathInput | None = None
 
-    # Gridded runoff preparation (Runoff)
+    # Gridded runoff preparation (RunoffGaussianGrid)
     runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
     force_positive_runoff: bool = False  # clip negative runoff depths to zero
     force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
-    as_volumes: bool = False  # Runoff prepares volumes (m³) instead of depths (m); routing always uses volumes
+    as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
 
     # Validation behavior
-    deep_validation: bool = True  # read and check the contents of the input files when the configs are validated
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
     # Misc behavior that users may want to override
@@ -97,21 +100,7 @@ class Configs:
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
-
-    # options no validation reads, so a replace that changes only these keeps a validated Configs validated
-    _NOT_VALIDATED: ClassVar[frozenset[str]] = frozenset(
-        {
-            'as_volumes',
-            'force_positive_runoff',
-            'force_uniform_timesteps',
-            'runoff_depth_unit',
-            'log',
-            'progress_bar',
-            'log_level',
-            'log_stream',
-            'log_format',
-        }
-    )
+    # where the runoff the router routes comes from, which only the runoff classes' readers take from these options
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -190,27 +179,6 @@ class Configs:
         """Write every option to a YAML file that ``from_file`` reads back."""
         with open(path, 'w') as f:
             yaml.safe_dump(self.to_dict(), f, sort_keys=False)
-
-    def replace(self, **kwargs: Any) -> Self:
-        """
-        Return a copy with the given options changed. This Configs is not modified. Giving ``discharge_files``
-        replaces a ``discharge_dir`` and giving ``discharge_dir`` replaces ``discharge_files``. The copy is validated
-        only if this Configs is and every changed option is one that no validation reads.
-
-        Raises:
-            ValueError: if any keyword is not a config option
-        """
-        self._check_keys(kwargs)
-        values = self.to_dict()
-        if 'discharge_files' in kwargs:
-            values['discharge_dir'] = None
-        elif 'discharge_dir' in kwargs:
-            values['discharge_files'] = []
-        values.update(kwargs)
-        configs = type(self)(**values)
-        if self._validated and self._NOT_VALIDATED.issuperset(kwargs):
-            object.__setattr__(configs, '_validated', True)
-        return configs
 
     @classmethod
     def _check_keys(cls, raw: Mapping[str, Any]) -> None:
@@ -306,8 +274,8 @@ class Configs:
     def validate_routing(self) -> Self:
         """
         Validate the options for routing: the options the chosen procedure requires are set and consistent, input
-        paths exist, and outputs are in existing directories. Runs deep_validate when deep_validation is True. Called
-        by Router.route. Returns immediately once the Configs has been validated.
+        paths exist, and outputs are in existing directories. Called by Router.route. Returns immediately once the
+        Configs has been validated. The contents of the input files are not read; call deep_validate for that.
 
         Raises:
             ValueError, FileNotFoundError, NotADirectoryError: if any option is missing or invalid
@@ -318,15 +286,19 @@ class Configs:
             return self
         self._verify_input_files_exist()
         self._verify_output_directories_exist()
-        if not self.discharge_files:
-            raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
         if self.forcing == 'channel':
+            if not self.discharge_files:
+                raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
                 if not getattr(self, key, None):
                     raise ValueError(f'{key} is required for channel routing')
             if len(self.discharge_files) != 1:
                 raise ValueError('Channel routing requires exactly one entry in discharge_files')
         else:
+            if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
+                raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
+            if not self.discharge_files:
+                raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             vlateral = self.vlateral_files
             grids = self.grid_runoff_files and self.grid_weights_file
             if vlateral and grids:
@@ -338,18 +310,14 @@ class Configs:
                 raise ValueError('Number of resolved discharge output files must match number of input files')
             if len(set(self.discharge_files)) != len(self.discharge_files):
                 raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
-            if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
-                raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
-        if self.deep_validation:
-            self.deep_validate()
         object.__setattr__(self, '_validated', True)
         return self
 
     def validate_runoff(self) -> Self:
         """
         Validate the options for preparing gridded runoff: grid_weights_file is set and every input path exists.
-        Runs deep_validate when deep_validation is True. Called by Runoff. Returns immediately once the Configs has
-        been validated.
+        Called by RunoffGaussianGrid. Returns immediately once the Configs has been validated. The contents of the
+        input files are not read; call deep_validate for that.
 
         Raises:
             ValueError, FileNotFoundError: if any option is missing or invalid
@@ -359,14 +327,19 @@ class Configs:
         if self._validated:
             return self
         self._verify_input_files_exist()
-        if self.deep_validation:
-            self.deep_validate()
         object.__setattr__(self, '_validated', True)
         return self
 
     def deep_validate(self) -> Self:
         """
-        Validate the contents of every input file that is set and their consistency with each other.
+        Validate the contents of every input file that is set and their consistency with each other: the params
+        file columns, types, and value ranges and that it is topologically sorted, that the grid weight table
+        matches the params file and its proportions sum to 1 per river, and that the initial channel state has one
+        row per river.
+
+        Nothing calls this for you. It reads every input file, which is the same work routing is about to do, so
+        run it once on inputs you have not checked before rather than on every route. ``validate_routing`` and
+        ``validate_runoff`` check the options and the paths only.
 
         Raises:
             ValueError: if any file or combination of files is invalid

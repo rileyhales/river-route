@@ -4,13 +4,51 @@
 
 ### Unreleased
 
+- Added `river_route.Network`, which owns the river network: the ids, topology, and Muskingum parameters read from
+  the params file, the connectivity vectors, and the concurrent routing partition. A `Router` builds one from its
+  `Configs` and reuses it, so the params file is parsed and the network partitioned once per `Network` instead of
+  once per `route()`. Assign `router.network` to route over an already built `Network`, which is how one parsed
+  network backs many simulations. The `Router.river_ids`, `next_river_ids`, `downstream_indices`, `k`, `x`,
+  `alpha`, and `beta` attributes are removed: read them off the network, as `router.network.river_ids`. A custom
+  discharge writer that read `router.river_ids` needs the new spelling. `Router._set_vectors_from_params`,
+  `_set_connectivity_vectors`, `_set_region_schedule`, `_check_coefficient_stability`, and `_check_river_alignment`
+  are removed; the equivalents are `Network.routing_schedule` and `Network.check_stability`.
+- `Network.stability_report(dt)` returns a `StabilityReport` counting how many rivers are Muskingum-stable at a
+  routing time step, how many are too long or too short for it, and how much bigger a fixed network would be.
+  Reports at the same dt add together, so a sweep over many parameter files accumulates into one total.
+- `Network.stabilize(dt)` builds, in memory only, the stabilized network: every reach too long for `dt` is
+  replaced by sub-reaches in series that each route stably at it, returned as the flat CSR arrays a kernel
+  consumes. The network gains reaches rather than being divided up, hence `StabilizedNetwork`.
+  `mode='uniform'` gives every sub-reach of a river the same travel time; `mode='nonuniform'` packs pieces of the
+  largest stable travel time and leaves the remainder last; `weights=` apportions each river's travel time over an
+  explicit sequence of segment lengths. Rivers that are too short for `dt` are a known gap: subdivision cannot fix
+  them, `Network.substeps_required(dt)` reports the temporal refinement they would need, and no routing kernel
+  consumes it yet.
+- `Router(configs, network=None, runoff=None)` takes its options from the `Configs` and nothing else.
+  `Router(configs, **overrides)` is removed; build the `Configs` you want and pass it, so there is one way to
+  set every option. `Configs.replace` is removed too: a Configs is set once when it is built and there is no
+  copy-with-changes.
+- `Network` and `RunoffGaussianGrid` take the options they need as ordinary arguments and each has a `from_configs`
+  classmethod that reads those same values off a `Configs` and builds the identical object. `Router` builds both
+  with `from_configs`. `RunoffGaussianGrid(configs, **overrides)` is removed: `RunoffGaussianGrid.from_configs(configs)` replaces it, and
+  `RunoffGaussianGrid(grid_weights_file, var_x=..., ...)` builds one without a `Configs` at all. `Configs.validate_runoff` now
+  runs in `RunoffGaussianGrid.from_configs` rather than in the constructor, since a directly built `RunoffGaussianGrid` has no `Configs`
+  to validate. The docs home page maps every config option to the class it builds.
+
 - Increased the minimum Python version to 3.14.
 - Increased the minimum pandas version to 3.0.5. pandas 3 changed `DataFrame.to_numpy()` to return a
   read-only array, which broke the in-place unit conversion when preparing vlateral from runoff with
   irregular timesteps. The 3.0.5 floor also skips 3.0.4, which is yanked from PyPI for segfaults in
   datetime handling that this package hit on every CF encoded time axis it read.
 - Increased the minimum numpy version to 2.5.
-- Added `river_route.writers` with premade discharge writers for `Router.set_discharge_writer`: `netcdf_writer`, the
+- Added the abstract `Runoff` base class of `RunoffGaussianGrid` and `RunoffVlateral`. Its `to_netcdf` writes a
+  vlateral array in the format `RunoffVlateral` reads and `vlateral_files` routes.
+- Added `RunoffVlateral`, which reads `vlateral_files` for routing. Gridded runoff is read with `router.runoff`, so a
+  `RunoffGaussianGrid` built or subclassed by hand and passed to `Router(configs, runoff=...)` is what prepares the
+  inflow. The `RunoffVlateral.reader` and `RunoffGaussianGrid.reader` methods yield one
+  `(dates, vlateral, source_file)` tuple per input and take only their input files, never a router or output paths.
+- Added `river_route.router.writers` with premade discharge writers for `Router.set_discharge_writer`:
+  `netcdf_writer`, the
   default, and `zarr_writer`, which writes uncompressed `(time, river_id)` discharge in chunks of 500 rivers that
   each span every time step, writing up to the `threads` given to `Router.route` chunks at once (optionally packed
   into shard files with `writers.ZARR_CHUNKS_PER_SHARD`), and `parquet_writer`, which writes one row per
@@ -18,18 +56,18 @@
   (`writers.PARQUET_WRITE_OPTIONS`). `null_writer` sends discharge to the operating system's null device
   (`os.devnull`) so a route keeps nothing on disk. zarr is now a dependency.
 - Discharge writers now receive the `Router` as their first argument:
-  `writer(router, dates, discharge_array, discharge_file, runoff_file)`, so they can read `router.river_ids` and
-  `router.cfg`. Custom writers written for the previous 4 argument signature need the new first argument.
-  `Router._default_write_discharges` is removed; use `river_route.writers.netcdf_writer`.
+  `writer(router, dates, discharge_array, discharge_file, runoff_file)`, so they can read
+  `router.network.river_ids` and `router.configs`. Custom writers written for the previous 4 argument signature need the new first argument.
+  `Router._default_write_discharges` is removed; use `river_route.router.writers.netcdf_writer`.
 - `Router.set_write_discharges` is renamed `Router.set_discharge_writer`.
 - `Configs` is its own subpackage, `river_route.configs`, and is the one way options are given. Build a frozen
   `Configs` from keyword arguments or with `Configs.from_file`, `from_json`, or `from_yaml`, then pass it to
-  `Router(configs, **overrides)` or `Runoff(configs, **overrides)`; the overrides change a copy. `Router` no longer
-  takes a config file path or options as keyword arguments alone, and `Runoff` no longer takes a weight table path
-  and options. `Configs.to_json` and `Configs.to_yaml` write the options to a file that `from_file` reads back, and
-  `Configs.replace` returns a copy with options changed. `Router.route` calls `Configs.validate_routing` and
-  `Runoff` calls `Configs.validate_runoff`, which check the options once and run `Configs.deep_validate` when
-  `deep_validation` is True. `Configs.validate` is removed. The runoff options `runoff_depth_unit`,
+  `Router(configs)` or `RunoffGaussianGrid(configs)`. `Router` no longer takes a config file path or options as keyword
+  arguments, and `RunoffGaussianGrid` no longer takes a weight table path and options. `Configs.to_json` and
+  `Configs.to_yaml` write the options to a file that `from_file` reads back. `Router.route` calls
+  `Configs.validate_routing` and
+  `RunoffGaussianGrid` calls `Configs.validate_runoff`, which check the options and the paths once. `Configs.validate` is
+  removed. The runoff options `runoff_depth_unit`,
   `force_positive_runoff`, `force_uniform_timesteps`, and `as_volumes` are now configs.
 - Routing from gridded runoff no longer rebuilds, copies, or reallocates lateral inflow for every runoff file.
   The weight table is read and checked against the params file once per `route()`, and each file is aggregated
@@ -39,14 +77,17 @@
   concurrently on the `thread_pool`; single threaded, one range covers every river.
 - Threading happens only on a thread pool the caller passes; the package never creates one. Threads are a runtime
   resource, not a config. `Router.route(thread_pool=pool, threads=n)` uses a `ThreadPoolExecutor` as given and never
-  shuts it down, so it can be shared with `Runoff.vlateral(..., thread_pool=pool, threads=n)` and closed by the
+  shuts it down, so it can be shared with `RunoffGaussianGrid.vlateral(..., thread_pool=pool, threads=n)` and closed by the
   caller's `with` block. `threads` sets how many regions the network is partitioned into when a pool is given;
-  without one, routing is single-threaded. `Runoff.aggregate` and `Runoff.to_dataset` take the same arguments.
+  without one, routing is single-threaded. `RunoffGaussianGrid.aggregate` and `RunoffGaussianGrid.to_dataset` take the same arguments.
   `Router.thread_pool()` is removed.
-- `river_route.runoff` is now a subpackage following the layout of `river_route.routers`. Runoff preparation is
-  the `Runoff` class (also exported as `river_route.Runoff`), which reads the weight table once
-  and provides `read_runoff`, `aggregate`, `vlateral` (into a reused buffer), and `to_dataset`. It replaces the
-  `runoff_to_vlateral` function: use `Runoff(Configs(grid_weights_file=..., ...)).to_dataset(runoff_files)`. The
+- `river_route.router.writers` holds the discharge writers, beside the class whose io it is. It is not importable
+  as `river_route.writers` any more. The runoff readers are methods of `RunoffVlateral` and `RunoffGaussianGrid`.
+- `river_route.runoff` is now a subpackage following the layout of `river_route.router`. Runoff preparation is
+  the `RunoffGaussianGrid` class (also exported as `river_route.RunoffGaussianGrid`), which reads the weight table once
+  and provides `read_runoff`, `aggregate`, `vlateral` (into a reused buffer), `reader`, and `to_dataset`. The
+  class was named `Runoff` earlier in this release cycle and is renamed `RunoffGaussianGrid`. It replaces the
+  `runoff_to_vlateral` function: use `RunoffGaussianGrid(Configs(grid_weights_file=..., ...)).to_dataset(runoff_files)`. The
   aggregation kernel lives in `river_route.runoff._numba_kernels`, and the weight table functions
   (`grid_weights`, `compute_voronoi_catchment_intersects`, `voronoi_diagram_from_regular_xy`,
   `cell_xy_from_regular_grid`) in `river_route.runoff.weights`, still importable from `river_route.runoff`.
@@ -63,8 +104,10 @@
   `2*k*x <= dt_routing <= 2*k*(1-x)`; outside that window the solution oscillates and clamping the negative
   discharges to zero does not conserve mass. Controlled by the new `unstable_coefficients` config
   (`warn` by default, or `raise` / `ignore`).
-- `Configs.deep_validate()` is now called from `route()`, controlled by the new `deep_validation` config.
-  It also validates the `alpha` and `beta` columns when `coeff` is `dynamic`, and honors `var_river_id`.
+- `Configs.deep_validate()` reads every input file that is set and checks its contents. Nothing calls it for
+  you: it repeats the read routing is about to do, so it is a method to run once on inputs you have not checked
+  before rather than a cost every route pays. There is no `deep_validation` config. It also validates the
+  `alpha` and `beta` columns when `coeff` is `dynamic`, and honors `var_river_id`.
 - Fixed `dt_total` with `forcing: vlateral`. A value shorter than the input file now routes that portion,
   and one longer than the input file raises instead of reading past the end of the array.
 - Unrecognized config keys raise a `ValueError` naming the key and suggesting the closest valid option,

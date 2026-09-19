@@ -152,7 +152,15 @@ def test_route_twice_is_repeatable(network: SyntheticNetwork):
     with xr.open_dataset(network.path('q_first.nc')) as ds:
         first = ds['Q'].values.copy()
 
-    router.cfg = router.cfg.replace(discharge_files=[network.path('q_second.nc')])
+    router.configs = rr.Configs(
+        forcing='vlateral',
+        params_file=str(network.params_file),
+        vlateral_files=[str(network.vlateral_file)],
+        discharge_files=[network.path('q_second.nc')],
+        channel_state_init_file=str(network.state_file),
+        log=False,
+        progress_bar=False,
+    )
     router.route()
     with xr.open_dataset(network.path('q_second.nc')) as ds:
         second = ds['Q'].values
@@ -193,48 +201,21 @@ def test_vlateral_with_wrong_river_count_raises(network: SyntheticNetwork):
     """A file covering fewer rivers than the network would be read past its end by the kernel."""
     partial = network.directory / 'vlateral_partial.nc'
     write_vlateral(partial, np.zeros((24, 3)), np.arange(1, 4))
-    with pytest.raises(ValueError, match='lateral inflow for 3 rivers'):
+    with pytest.raises(ValueError, match='vlateral has shape'):
         route_vlateral(network, out_name='q_partial.nc', vlateral_files=[str(partial)])
 
 
-def test_vlateral_in_wrong_river_order_raises(network: SyntheticNetwork):
-    """Column order is positional in the kernel, so a reordered file would route water down the wrong reach."""
-    ids = np.arange(1, network.n_rivers + 1)
-    reversed_file = network.directory / 'vlateral_reversed.nc'
-    write_vlateral(reversed_file, np.zeros((24, network.n_rivers)), ids[::-1].copy())
-    with pytest.raises(ValueError, match='different order'):
-        route_vlateral(network, out_name='q_reversed.nc', vlateral_files=[str(reversed_file)])
-
-
-def test_vlateral_with_different_rivers_raises(network: SyntheticNetwork):
-    ids = np.arange(101, 101 + network.n_rivers)
-    other = network.directory / 'vlateral_other.nc'
-    write_vlateral(other, np.zeros((24, network.n_rivers)), ids)
-    with pytest.raises(ValueError, match='not the same rivers'):
-        route_vlateral(network, out_name='q_other.nc', vlateral_files=[str(other)])
-
-
 def test_initial_state_wrong_length_raises(network: SyntheticNetwork):
-    """A short state array would be written past its end by the kernel; deep validation reports it first."""
-    short_state = network.directory / 'state_short.parquet'
-    pd.DataFrame({'Q': np.zeros(network.n_rivers - 2)}).to_parquet(short_state, index=False)
-    with pytest.raises(ValueError, match='same number of rows'):
-        route_vlateral(network, out_name='q_short_state.nc', channel_state_init_file=str(short_state))
-
-
-def test_initial_state_wrong_length_raises_without_deep_validation(network: SyntheticNetwork):
-    """With the file content checks off, the read must still refuse a state that does not fit the network."""
+    """A short state array would be written past its end by the kernel, so the read must refuse it."""
     short_state = network.directory / 'state_short.parquet'
     pd.DataFrame({'Q': np.zeros(network.n_rivers - 2)}).to_parquet(short_state, index=False)
     with pytest.raises(ValueError, match='state file must have one row per river'):
-        route_vlateral(
-            network, out_name='q_short_state.nc', channel_state_init_file=str(short_state), deep_validation=False
-        )
+        route_vlateral(network, out_name='q_short_state.nc', channel_state_init_file=str(short_state))
 
 
 def test_dispatch_rejects_mismatched_arrays(network: SyntheticNetwork):
     """The dispatch guard is the last line of defense and is checked directly."""
-    from river_route.routers._kernel_registry import dispatch
+    from river_route.router._kernel_registry import dispatch
 
     router = rr.Router(
         rr.Configs(
@@ -247,9 +228,8 @@ def test_dispatch_rejects_mismatched_arrays(network: SyntheticNetwork):
             progress_bar=False,
         )
     )
-    router.cfg.validate_routing()
-    router._set_vectors_from_params()
-    router._set_connectivity_vectors()
+    router.configs.validate_routing()
+    router._set_routing_schedule()
     router.num_runoff_steps = 4
     q_t = np.zeros(network.n_rivers - 1, dtype=np.float32)
     with pytest.raises(ValueError, match='q_t has shape'):
@@ -265,7 +245,7 @@ def test_params_missing_column_raises(tmp_path):
     net = build_network(tmp_path / 'net')
     bad = tmp_path / 'bad_params.parquet'
     pd.read_parquet(net.params_file).drop(columns=['k']).to_parquet(bad, index=False)
-    with pytest.raises(ValueError, match='missing k column'):
+    with pytest.raises(ValueError, match='missing required column'):
         rr.Router(
             rr.Configs(
                 forcing='vlateral',
@@ -295,40 +275,77 @@ def test_params_not_topologically_sorted_raises(tmp_path):
         ).route()
 
 
-def test_params_x_out_of_range_raises(tmp_path):
+# ── deep_validate: the file content checks, which only run when they are asked for ──
+
+
+def configs_for_params(net, params_file, **kwargs) -> rr.Configs:
+    return rr.Configs(
+        forcing='vlateral',
+        params_file=str(params_file),
+        vlateral_files=[str(net.vlateral_file)],
+        discharge_files=[net.path('q.nc')],
+        log=False,
+        progress_bar=False,
+        **kwargs,
+    )
+
+
+def test_deep_validate_rejects_x_out_of_range(tmp_path):
     net = build_network(tmp_path / 'net')
     bad = tmp_path / 'bad_x.parquet'
     write_params(bad, n_rivers=net.n_rivers, x=0.9)
     with pytest.raises(ValueError, match='x column must be in the range'):
-        rr.Router(
-            rr.Configs(
-                forcing='vlateral',
-                params_file=str(bad),
-                vlateral_files=[str(net.vlateral_file)],
-                discharge_files=[net.path('q.nc')],
-                log=False,
-                progress_bar=False,
-            )
-        ).route()
+        configs_for_params(net, bad).deep_validate()
 
 
-def test_deep_validation_can_be_skipped(tmp_path):
-    """deep_validation=False must skip the file content checks, not the structural ones."""
+def test_deep_validate_rejects_missing_column(tmp_path):
+    net = build_network(tmp_path / 'net')
+    bad = tmp_path / 'bad_params.parquet'
+    pd.read_parquet(net.params_file).drop(columns=['k']).to_parquet(bad, index=False)
+    with pytest.raises(ValueError, match='missing k column'):
+        configs_for_params(net, bad).deep_validate()
+
+
+def test_deep_validate_rejects_short_initial_state(network: SyntheticNetwork):
+    short_state = network.directory / 'state_short.parquet'
+    pd.DataFrame({'Q': np.zeros(network.n_rivers - 2)}).to_parquet(short_state, index=False)
+    with pytest.raises(ValueError, match='same number of rows'):
+        rr.Configs(
+            forcing='vlateral',
+            params_file=str(network.params_file),
+            vlateral_files=[str(network.vlateral_file)],
+            channel_state_init_file=str(short_state),
+            discharge_files=[network.path('q_short_state.nc')],
+            log=False,
+            progress_bar=False,
+        ).deep_validate()
+
+
+def test_deep_validate_accepts_a_good_network(network: SyntheticNetwork):
+    configs = rr.Configs(
+        forcing='vlateral',
+        params_file=str(network.params_file),
+        vlateral_files=[str(network.vlateral_file)],
+        channel_state_init_file=str(network.state_file),
+        discharge_files=[network.path('q_deep.nc')],
+        log=False,
+        progress_bar=False,
+    )
+    assert configs.deep_validate() is configs
+
+
+def test_route_does_not_deep_validate(tmp_path):
+    """route() checks options and structure, never file contents: an out of range x is not its business."""
     net = build_network(tmp_path / 'net')
     bad = tmp_path / 'bad_x.parquet'
     write_params(bad, n_rivers=net.n_rivers, x=0.9)
-    rr.Router(
-        rr.Configs(
-            forcing='vlateral',
-            params_file=str(bad),
-            vlateral_files=[str(net.vlateral_file)],
-            discharge_files=[net.path('q.nc')],
-            deep_validation=False,
-            unstable_coefficients='ignore',
-            log=False,
-            progress_bar=False,
-        )
-    ).route()
+    rr.Router(configs_for_params(net, bad, unstable_coefficients='ignore')).route()
+
+
+def test_deep_validation_is_not_a_config(network: SyntheticNetwork):
+    """It is a method users opt in to, not an option a config file can turn on or off."""
+    with pytest.raises(ValueError, match='Unrecognized config key'):
+        rr.Configs.from_mapping({'params_file': str(network.params_file), 'deep_validation': False})
 
 
 # ── stability of the muskingum coefficients ─────────────────────────────────
@@ -389,9 +406,19 @@ def test_stable_network_does_not_warn(tmp_path):
 
 
 def test_threads_is_not_a_config(network: SyntheticNetwork):
-    configs = rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
     with pytest.raises(ValueError, match='Unrecognized config key'):
-        rr.Router(configs, threads=2)
+        rr.Configs.from_mapping(
+            {'params_file': str(network.params_file), 'discharge_files': [network.path('q.nc')], 'threads': 2}
+        )
+
+
+def test_router_takes_only_a_configs(network: SyntheticNetwork):
+    """Options reach a Router through its Configs and nowhere else, so there is one way to set every option."""
+    configs = rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
+    with pytest.raises(TypeError):
+        rr.Router(configs, dt_total=3600)
+    with pytest.raises(TypeError, match='must be given an rr.Configs'):
+        rr.Router({'params_file': str(network.params_file)})
 
 
 @pytest.mark.parametrize('threads', [0, -1, 2.0, True])
@@ -459,13 +486,12 @@ def test_configs_file_roundtrip(network: SyntheticNetwork, tmp_path, suffix):
     assert rr.Configs.from_file(path) == configs
 
 
-def test_configs_are_frozen_and_overrides_change_a_copy(network: SyntheticNetwork):
+def test_configs_are_frozen(network: SyntheticNetwork):
+    """Options are set once, when the Configs is built, and cannot be changed afterward or copied with changes."""
     configs = rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')])
     with pytest.raises(dataclasses.FrozenInstanceError):
         configs.dt_routing = 900
-    assert (configs.dt_routing, configs.replace(dt_routing=900).dt_routing) == (0, 900)
-    router = rr.Router(configs, dt_total=3600)
-    assert (configs.dt_total, router.cfg.dt_total) == (0, 3600)
+    assert not hasattr(configs, 'replace')
 
 
 def test_configs_are_validated_once_when_routed(network: SyntheticNetwork):
@@ -481,8 +507,17 @@ def test_configs_are_validated_once_when_routed(network: SyntheticNetwork):
     assert not configs._validated
     rr.Router(configs).route()
     assert configs._validated
+    channel = rr.Configs(
+        forcing='channel',
+        params_file=str(network.params_file),
+        vlateral_files=[str(network.vlateral_file)],
+        discharge_files=[network.path('q.nc')],
+        channel_state_init_file=str(network.state_file),
+        log=False,
+        progress_bar=False,
+    )
     with pytest.raises(ValueError, match='dt_routing is required for channel routing'):
-        rr.Router(configs, forcing='channel').route()
+        rr.Router(channel).route()
 
 
 def test_example_config_template_loads(network: SyntheticNetwork, tmp_path):

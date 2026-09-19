@@ -292,7 +292,7 @@ for j = 1, 2, ..., n:
 
 *Listing 1: Conceptual column-oriented forward substitution pseudocode for a generic unit lower triangular system (not river-route's storage layout).*
 
-In the actual v3 kernels (`river_route/routers/_numba_kernels.py`, e.g. `static_channel`), there is no
+In the actual v3 kernels (`river_route/router/_numba_kernels.py`, e.g. `static_channel`), there is no
 matrix and no CSC arrays. Each river's right-hand side is first seeded with its own $c_3\, Q_t$ term (plus
 any lateral forcing). The kernel then sweeps the rivers in topological order, and once a river's new
 discharge is known it pushes that contribution forward onto its single downstream river using the

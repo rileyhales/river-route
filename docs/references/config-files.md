@@ -2,8 +2,12 @@
 
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
 YAML/JSON file with `Configs.from_file`.
-There is a single `Router`. The routing procedure it runs is set by three selector keys (`coeff`, `forcing`,
-`network`), and the required config keys depend on which selections you make.
+All routing runs through `Router`. The procedure it runs is set by four selector keys (`coeff`, `forcing`,
+`transform`, `network`), and the required config keys depend on which selections you make.
+
+`Router` takes a `Configs` and nothing else. `Network` and `RunoffGaussianGrid` take the options they need as ordinary
+arguments and each has a `from_configs` classmethod that reads those same values off a `Configs`; `Router` builds
+both that way. `examples/config.yaml` below groups every option under the class that reads it.
 
 ### Routing procedure selectors
 
@@ -11,7 +15,12 @@ There is a single `Router`. The routing procedure it runs is set by three select
   from columns `alpha`, `beta`, `x`). Default `'static'`.
 - `forcing` - one of `'channel'` (channel routing only, no inflows) or `'vlateral'` (lateral runoff inflow).
   A single value. Default `'channel'`.
+- `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
+  Only read when `forcing` is `'vlateral'`. Default `'uniform'`.
 - `network` - `'standard'` (one reach per river). Default `'standard'`.
+
+The four keys together resolve to one compiled kernel. A combination with no kernel raises `NotImplementedError`
+listing the ones that are implemented.
 
 ## Minimum Required Inputs
 
@@ -61,6 +70,10 @@ The following table lists where each remaining key applies.
 | `vlateral_files`           | Per-catchment runoff time series | `forcing: vlateral`, _Option 1_                         |
 | `grid_runoff_files`        | Gridded runoff depths            | `forcing: vlateral`, _Option 2_                         |
 | `grid_weights_file`        | Converts depth grids to vlateral | `forcing: vlateral`, _Option 2_                         |
+| **unit hydrograph**        |                                  |                                                        |
+| `uh_kernel_file`           | Unit hydrograph kernel (npz)     | `transform: unit_hydrograph`                           |
+| `uh_state_init_file`       | Initial unit hydrograph state    | optional                                               |
+| `uh_state_final_file`      | Path to save final UH state      | optional                                               |
 | **time**                   |                                  |                                                        |
 | `start_datetime`           | Simulation start date            | optional                                               |
 | `dt_total`                 | Total simulation duration        | `forcing: channel` (else [time docs](time-options.md)) |
@@ -74,6 +87,7 @@ The following table lists where each remaining key applies.
 |--------------------------|--------------------------------------------------------|-----------------------------------------------|
 | `coeff`                  | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
 | `forcing`                | Inflow forcing: `'channel'`, `'vlateral'`              | `'channel'`                                   |
+| `transform`              | Runoff transform: `'uniform'`, `'unit_hydrograph'`     | `'uniform'`                                   |
 | `network`                | Reach handling: `'standard'`                           | `'standard'`                                  |
 | `log`                    | Enable or disable logging                              | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                 | `True`                                        |
@@ -91,30 +105,32 @@ The following table lists where each remaining key applies.
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
 | `force_uniform_timesteps` | Resample irregular grid runoff to the first timestep  | `True`                                        |
-| `as_volumes`             | `Runoff` prepares volumes instead of depths            | `False`                                       |
-| `deep_validation`        | Check the contents of input files when validated       | `True`                                        |
+| `as_volumes`             | `RunoffGaussianGrid` prepares volumes instead of depths            | `False`                                       |
 | `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
 
 ## Validation
 
-`Router.route()` validates the configs with `Configs.validate_routing` before it computes anything, and `Runoff`
-validates them with `Configs.validate_runoff` before it reads the weight table. Configs are frozen, so once they pass
-they are not checked again.
+`Router.route()` validates the configs with `Configs.validate_routing` before it computes anything, and
+`RunoffGaussianGrid.from_configs` validates them with `Configs.validate_runoff` before it reads the weight table. Configs are
+frozen, so once they pass they are not checked again. A `RunoffGaussianGrid` built directly, without a `Configs`, has nothing
+to validate and so runs neither.
 
-`deep_validation` (on by default) reads the params file, grid weights, and initial state and checks their
-columns, types, and value ranges, that the network is topologically sorted, and that the weight table
-proportions sum to 1 per river. Turn it off to skip re-reading input files you have already validated.
+`Configs.deep_validate()` reads the params file, grid weights, and initial state and checks their columns,
+types, and value ranges, that the network is topologically sorted, and that the weight table proportions sum to
+1 per river. Nothing calls it for you, because it reads every input file, which is the same work routing is
+about to do. Run it once on inputs you have not checked before:
+
+```python
+rr.Configs.from_file('config.yaml').deep_validate()
+```
 
 `unstable_coefficients` controls what happens when a river's parameters are not Muskingum-stable for the
 routing timestep, which requires `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window the solution for
 that river oscillates and negative discharges are clamped to zero, which does not conserve mass. The
-default `'warn'` logs how many rivers are affected; `'raise'` refuses to route; `'ignore'` is silent. Use
-`river_route.streams.analyze_stability` to inspect a network before routing it.
-
-Lateral inflow files are also checked against the params file as each one is opened: the river count must
-match and, when the file carries a `river_id` variable, the ids must be in the same order as the params
-file. The routing kernels index by position and are compiled without bounds checking, so a mismatch would
-otherwise read past the end of the array or route water down the wrong reach.
+default `'warn'` logs how many rivers are affected; `'raise'` refuses to route; `'ignore'` is silent. `Router`
+applies it by calling `Network.check_stability`. Use `Network.stability_report(dt)` to inspect a network before
+routing it, and `Network.stabilize(dt)` to build the stabilized network, which adds sub-reaches until every
+one routes stably at that dt.
 
 ## Example Configuration YAMLs
 

@@ -1,12 +1,3 @@
-"""
-Premade discharge writers for ``Router.set_discharge_writer``.
-
-A writer is called once per routed input file as
-``writer(router, dates, discharge_array, discharge_file, runoff_file)``. The router supplies the river ids, variable
-names, and thread count; the other arguments are that file's results.
-``netcdf_writer`` is the default.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -18,17 +9,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import zarr
 
-from .types import DatetimeArray, FloatArray, PathInput
+from ..types import DatetimeArray, FloatArray, PathInput
 
 if TYPE_CHECKING:
-    from .routers import Router
+    from .Router import Router
 
-__all__ = ['netcdf_writer', 'zarr_writer', 'parquet_writer', 'null_writer']
+__all__ = ['null_writer', 'netcdf_writer', 'zarr_writer', 'parquet_writer']
 
 ZARR_RIVERS_PER_CHUNK = 500
-ZARR_CHUNKS_PER_SHARD: int | None = None  # chunks packed into each shard file; None writes one file per chunk
-# keyword arguments for pyarrow.parquet.write_table, set for write speed: dictionary encoding float discharge took 5.3 s
-# instead of 0.84 s for an Amazon month and grew the file, and no compressor shrank unrounded discharge more than 1.13x
+ZARR_CHUNKS_PER_SHARD: int | None = None
 PARQUET_WRITE_OPTIONS = {'compression': 'none', 'use_dictionary': False, 'write_statistics': False}
 
 
@@ -37,11 +26,22 @@ def _check_discharge_shape(router: Router, dates: DatetimeArray, discharge_array
         raise ValueError(
             f'Cannot write {path}: {dates.shape[0]} dates for {discharge_array.shape[0]} rows of discharge'
         )
-    if discharge_array.shape[1] != router.river_ids.shape[0]:
+    if discharge_array.shape[1] != router.network.river_ids.shape[0]:
         raise ValueError(
             f'Cannot write {path}: {discharge_array.shape[1]} columns of discharge for '
-            f'{router.river_ids.shape[0]} rivers'
+            f'{router.network.river_ids.shape[0]} rivers'
         )
+    return
+
+
+def null_writer(*args, **kwargs) -> None:
+    """
+    Return without writing anything. Useful for benchmarking and auditing other processes. If you actually need to
+    write to the null device, your custom writer may need to do something like this:
+
+    with open(os.devnull, 'wb') as sink:
+        discharge_array.tofile(sink)
+    """
     return
 
 
@@ -65,14 +65,14 @@ def netcdf_writer(
     _check_discharge_shape(router, dates, discharge_array, discharge_file)
     with nc.Dataset(str(discharge_file), mode='w', format='NETCDF4') as ds:
         ds.createDimension('time', size=discharge_array.shape[0])
-        ds.createDimension(router.cfg.var_river_id, size=discharge_array.shape[1])
+        ds.createDimension(router.configs.var_river_id, size=discharge_array.shape[1])
         ds.runoff_file = str(runoff_file)
         time_var = ds.createVariable('time', 'f8', ('time',))
         time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
         time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
-        id_var = ds.createVariable(router.cfg.var_river_id, 'i4', router.cfg.var_river_id)
-        id_var[:] = router.river_ids
-        flow_var = ds.createVariable(router.cfg.var_discharge, 'f4', ('time', router.cfg.var_river_id))
+        id_var = ds.createVariable(router.configs.var_river_id, 'i4', router.configs.var_river_id)
+        id_var[:] = router.network.river_ids
+        flow_var = ds.createVariable(router.configs.var_discharge, 'f4', ('time', router.configs.var_river_id))
         flow_var[:] = discharge_array
         flow_var.long_name = 'Discharge at catchment outlet'
         flow_var.standard_name = 'discharge'
@@ -105,13 +105,13 @@ def zarr_writer(
         runoff_file: path to the lateral inflow used to generate the discharge values, if applicable
     """
     _check_discharge_shape(router, dates, discharge_array, discharge_file)
-    rid = router.cfg.var_river_id
+    rid = router.configs.var_river_id
     n_steps, n_rivers = discharge_array.shape
     # zarr sizes its worker pool once per process, so the per-operation concurrency limit is what follows threads
     with zarr.config.set({'async.concurrency': router.threads}):
         group = zarr.create_group(str(discharge_file), overwrite=True, attributes={'runoff_file': str(runoff_file)})
         flow = group.create_array(
-            router.cfg.var_discharge,
+            router.configs.var_discharge,
             shape=(n_steps, n_rivers),
             chunks=(-1, ZARR_RIVERS_PER_CHUNK),
             shards=(-1, ZARR_RIVERS_PER_CHUNK * ZARR_CHUNKS_PER_SHARD) if ZARR_CHUNKS_PER_SHARD else None,
@@ -140,7 +140,7 @@ def zarr_writer(
         )
         time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
         id_var = group.create_array(rid, shape=(n_rivers,), dtype='int64', dimension_names=(rid,))
-        id_var[:] = router.river_ids
+        id_var[:] = router.network.river_ids
         zarr.consolidate_metadata(str(discharge_file))
     return
 
@@ -169,20 +169,9 @@ def parquet_writer(
     """
     _check_discharge_shape(router, dates, discharge_array, discharge_file)
     discharge_array = np.ascontiguousarray(discharge_array, dtype=np.float32)
-    names = [router.cfg.var_river_id, *pd.DatetimeIndex(dates).strftime('%Y-%m-%dT%H:%M:%S')]
-    columns = [pa.array(router.river_ids), *(pa.array(row) for row in discharge_array)]
-    metadata = {'runoff_file': str(runoff_file), 'variable': router.cfg.var_discharge, 'units': 'm3 s-1'}
+    names = [router.configs.var_river_id, *pd.DatetimeIndex(dates).strftime('%Y-%m-%dT%H:%M:%S')]
+    columns = [pa.array(router.network.river_ids), *(pa.array(row) for row in discharge_array)]
+    metadata = {'runoff_file': str(runoff_file), 'variable': router.configs.var_discharge, 'units': 'm3 s-1'}
     table = pa.table(columns, names=names).replace_schema_metadata(metadata)
     pq.write_table(table, str(discharge_file), **PARQUET_WRITE_OPTIONS)
-    return
-
-
-def null_writer(*args, **kwargs) -> None:
-    """
-    Return without writing anything. Useful for benchmarking and auditing other processes. If you actually need to
-    write to the null device, your custom writer may need to do something like this:
-
-    with open(os.devnull, 'wb') as sink:
-        discharge_array.tofile(sink)
-    """
     return

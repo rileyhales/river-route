@@ -10,7 +10,7 @@ import xarray as xr
 from conftest import DATA_DIR, ERA5_FILES, RFSv2ConfigsData
 
 from river_route import Configs
-from river_route.runoff import Runoff, grid_weights
+from river_route.runoff import RunoffGaussianGrid, grid_weights
 
 
 def test_grid_weights(vpu: RFSv2ConfigsData):
@@ -46,7 +46,7 @@ def test_grid_weights(vpu: RFSv2ConfigsData):
 
 def test_grid_to_vlateral(vpu: RFSv2ConfigsData):
     """Aggregate ERA5 gridded runoff to vlateral depths using the weight table."""
-    ds = Runoff(
+    ds = RunoffGaussianGrid(
         Configs(grid_weights_file=str(vpu.grid_weights_file)),
         var_grid_runoff='ro',
         var_x='longitude',
@@ -87,8 +87,8 @@ def test_grid_to_vlateral_cumulative_input(vpu: RFSv2ConfigsData):
 
         kwargs = dict(var_grid_runoff='ro', var_x='longitude', var_y='latitude', var_t='valid_time')
 
-        ds_inc = Runoff(Configs(grid_weights_file=str(vpu.grid_weights_file)), grid_accumulation_type='incremental', **kwargs).to_dataset(str(incremental_file))
-        ds_cum = Runoff(Configs(grid_weights_file=str(vpu.grid_weights_file)), grid_accumulation_type='cumulative', **kwargs).to_dataset(cumulative_file)
+        ds_inc = RunoffGaussianGrid(Configs(grid_weights_file=str(vpu.grid_weights_file)), grid_accumulation_type='incremental', **kwargs).to_dataset(str(incremental_file))
+        ds_cum = RunoffGaussianGrid(Configs(grid_weights_file=str(vpu.grid_weights_file)), grid_accumulation_type='cumulative', **kwargs).to_dataset(cumulative_file)
 
         # Tolerance is loose because cumsum -> float32 storage -> diff loses precision
         # relative to direct incremental aggregation

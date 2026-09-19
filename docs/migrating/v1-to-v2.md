@@ -8,9 +8,11 @@
 ## Router Class Changes
 
 !!! note
-    This is the historical v1 → v2 guide. In **v3** the `Muskingum`, `RapidMuskingum`, and
-    `UnitMuskingum` classes below were removed in favor of a single unified `Router` selected by
-    config keys (`coeff`/`forcing`/`network`).
+    This is the historical v1 → v2 guide, kept as written. In **v3** the `Muskingum`, `RapidMuskingum`, and
+    `UnitMuskingum` classes below were removed in favor of one `Router` selected by config keys
+    (`coeff`/`forcing`/`transform`/`network`), the v2 `qlateral_files` key was renamed `vlateral_files`, and the
+    river network moved onto its own `Network` class. See the [changelog](../changelog.md) for the v2 → v3
+    changes and the [config file reference](../references/config-files.md) for the current keys.
 
 The `Muskingum` class has been renamed and is now supplemented with routing options.
 

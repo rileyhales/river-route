@@ -162,7 +162,7 @@ def grid_weights(
 
     voronoi_gdf = voronoi_diagram_from_regular_xy(x_geo, y, crs=crs)
 
-    # Map x_index back to original grid indices (for use by Runoff)
+    # Map x_index back to original grid indices (for use by RunoffGaussianGrid)
     voronoi_gdf['x_index'] = sort_order[voronoi_gdf['x_index'].values]
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)

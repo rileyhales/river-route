@@ -20,17 +20,47 @@ The fewest-streams choice is the smallest valid N, i.e. N_lo = ceil(2*k*x/dt), p
 If that window is empty the reach cannot be made stable by uniform splitting (it is "too short" / Case 2, or x is
 so close to 0.5 that no integer fits the window) and it is kept as a single reach that remains an error.
 
-eventually this module should merge with the present tools.py
+The module also holds the graph utilities that operate on the same table: the NetworkX and sparse adjacency
+representations of the connectivity and subsetting a parameter table (and its grid weights) to one river.
 """
 
 import heapq
+import logging
 
+import networkx as nx
 import numba
 import numpy as np
 import pandas as pd
+import scipy
+import xarray as xr
+
+from ..types import PathInput
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    'connectivity_is_valid',
+    'required_subreaches',
+    'assign_stable_dt',
+    'analyze_dt_assignment',
+    'optimize_network_compute',
+    'stable_static_network',
+    'expand_network',
+    'broadcast_state_to_reaches',
+    'analyze_min_compute',
+    'analyze_stability',
+    'is_dfs_ordered',
+    'assign_regions',
+    'partition_network',
+    'analyze_partitioning',
+    'regions_to_layout',
+    'subset_configs_to_river',
+    'connectivity_to_digraph',
+    'adjacency_matrix',
+]
 
 
-def river_connectivity_is_valid(df: pd.DataFrame) -> bool:
+def connectivity_is_valid(df: pd.DataFrame) -> bool:
     """
     checks that river ids are unique, all downstreams exist as rivers except -1, and that the table is
     topologically sorted from upstream to downstream (which also rules out cycles).
@@ -356,7 +386,7 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     if np.isnan(mapped).any():  # a next_river_id absent from river_id is a topology hole, not a valid -1 outlet
         raise ValueError(
             'next_river_id values reference ids not present in river_id (topology hole); '
-            'validate with river_connectivity_is_valid before expanding'
+            'validate with connectivity_is_valid before expanding'
         )
     down_orig_index[has_down] = mapped.astype(np.int64)
     outlet_downstream = np.where(down_orig_index >= 0, group_start[np.clip(down_orig_index, 0, n_orig - 1)], -1)
@@ -367,7 +397,7 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     if not np.all((downstream_index < 0) | (downstream_index > np.arange(total))):
         raise ValueError(
             'input rivers must be topologically sorted upstream-before-downstream '
-            '(next_river_id must appear after river_id); run river_connectivity_is_valid'
+            '(next_river_id must appear after river_id); run connectivity_is_valid'
         )
 
     return {
@@ -519,13 +549,13 @@ def _downstream_indices(df: pd.DataFrame) -> np.ndarray:
     if np.isnan(mapped).any():
         raise ValueError(
             'next_river_id values reference ids not present in river_id (topology hole); '
-            'validate with river_connectivity_is_valid before partitioning'
+            'validate with connectivity_is_valid before partitioning'
         )
     downstream_index[has_downstream] = mapped.astype(np.int64)
     if not np.all((downstream_index < 0) | (downstream_index > np.arange(n))):
         raise ValueError(
             'rivers must be topologically sorted upstream-before-downstream '
-            '(next_river_id must appear after river_id); run river_connectivity_is_valid'
+            '(next_river_id must appear after river_id); run connectivity_is_valid'
         )
     return downstream_index
 
@@ -807,3 +837,97 @@ def regions_to_layout(region: np.ndarray, downstream_index: np.ndarray) -> dict:
         'stem_stops': stops[labels < 0].astype(np.int32),
         'n_regions': n_regions,
     }
+
+
+def subset_configs_to_river(
+    target_river: int,
+    params: PathInput,
+    out_params: PathInput,
+    weights: PathInput | None = None,
+    out_weights: PathInput | None = None,
+) -> None:
+    """
+    Subset routing parameters and weight tables to the target river and all rivers upstream of it.
+
+    The target river becomes the outlet (next_river_id set to -1) in the subset. If weight
+    table paths are provided, the weight table is also filtered to only include matching rivers.
+
+    Args:
+        target_river: river_id of the river to subset to (becomes the outlet)
+        params: path to the full routing parameters parquet file
+        out_params: path to write the subsetted parameters parquet file
+        weights: path to the full grid weights netCDF file (optional)
+        out_weights: path to write the subsetted grid weights netCDF file (optional, required if weights is given)
+    """
+    pdf = pd.read_parquet(params)
+    if target_river not in set(pdf['river_id'].values.tolist()):
+        raise ValueError(f'river_id {target_river} is not in the parameter table: {params}')
+
+    graph = connectivity_to_digraph(pdf['river_id'].values, pdf['next_river_id'].values)
+    upstreams = list(nx.ancestors(graph, target_river))
+    upstreams.append(target_river)
+
+    subset = pdf[pdf['river_id'].isin(upstreams)].copy()
+    subset.loc[subset['river_id'] == target_river, 'next_river_id'] = -1
+    subset.to_parquet(out_params)
+
+    if weights is not None and out_weights is not None:
+        with xr.open_dataset(weights) as ds:
+            mask = np.isin(ds['river_id'].values, list(upstreams))
+            ds.isel(index=mask).to_netcdf(out_weights)
+    return
+
+
+def connectivity_to_digraph(river_ids: np.ndarray, downstream_ids: np.ndarray) -> nx.DiGraph:
+    """
+    Build a NetworkX DiGraph from river connectivity arrays.
+
+    Each edge goes from a river to its downstream river (including the -1 sentinel for outlets).
+
+    Args:
+        river_ids: 1D array of river ID integers
+        downstream_ids: 1D array of downstream river ID integers (-1 for outlets)
+
+    Returns:
+        Directed graph with edges from each river_id to its next_river_id
+    """
+    graph = nx.DiGraph()
+    graph.add_edges_from(zip(river_ids, downstream_ids, strict=True))
+    return graph
+
+
+def adjacency_matrix(river_ids: np.ndarray, downstream_ids: np.ndarray) -> scipy.sparse.csc_matrix:
+    """
+    Build a sparse adjacency matrix for the river network.
+
+    Entry A[downstream_idx, upstream_idx] = 1 for each river that flows into a downstream river.
+    Outlet rivers (downstream_id < 0) have no outgoing edges. The input arrays must be topologically
+    sorted (upstream before downstream) — a ValueError is raised otherwise.
+
+    Args:
+        river_ids: 1D array of river ID integers, topologically sorted upstream to downstream
+        downstream_ids: 1D array of downstream river ID integers (-1 for outlets)
+
+    Returns:
+        Sparse CSC matrix of shape (n, n) where n = len(river_ids)
+
+    Raises:
+        ValueError: if a downstream_id is not found in river_ids, or if the arrays are not
+            topologically sorted
+    """
+    river_index = {int(river_id): idx for idx, river_id in enumerate(river_ids.tolist())}
+    row_indices: list[int] = []
+    col_indices: list[int] = []
+    for upstream_idx, next_river_id in enumerate(downstream_ids.tolist()):
+        if next_river_id < 0:
+            continue
+        if next_river_id not in river_index:
+            raise ValueError(f'Unknown next_river_id: {next_river_id}')
+        downstream_idx = river_index[int(next_river_id)]
+        if downstream_idx <= upstream_idx:
+            raise ValueError('params_file must be topologically sorted upstream to downstream')
+        row_indices.append(downstream_idx)
+        col_indices.append(upstream_idx)
+
+    data = np.ones(len(row_indices), dtype=np.float32)
+    return scipy.sparse.csc_matrix((data, (row_indices, col_indices)), shape=(river_ids.shape[0], river_ids.shape[0]))

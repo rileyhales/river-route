@@ -171,7 +171,7 @@ def write_params(path: Path, n_rivers: int = 5, k: float = 3600.0, x: float = 0.
 
 
 def write_vlateral(path: Path, volumes: np.ndarray, river_ids: np.ndarray, dt: int = 3600) -> None:
-    """Write a lateral inflow netCDF with a CF encoded time axis, matching what Runoff produces."""
+    """Write a lateral inflow netCDF with a CF encoded time axis, matching what RunoffGaussianGrid produces."""
     volumes = np.asarray(volumes, dtype=np.float32)
     with nc.Dataset(str(path), mode='w', format='NETCDF4') as ds:
         ds.createDimension('time', volumes.shape[0])

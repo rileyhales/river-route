@@ -8,10 +8,11 @@ nav = [
   { "Changelog" = "changelog.md" },
   { "API Docs" = [
     { "Configs" = "api/configs.md" },
+    { "Network" = "api/network.md" },
     { "Runoff" = "api/runoff.md" },
-    { "Router" = "api/routers.md" },
+    { "Router" = "api/router.md" },
     { "Writers" = "api/writers.md" },
-    { "Tools" = "api/tools.md" },
+    { "Metrics" = "api/metrics.md" },
   ] },
   { "References" = [
     { "The Config File" = "references/config-files.md" },

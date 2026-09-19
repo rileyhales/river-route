@@ -6,14 +6,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from .routers import Router
+    from .router import Router
 
 PathInput = str | Path  # used at runtime for validation so it can't be a lazy type alias
 type PathList = list[PathInput]
 type FloatArray = NDArray[np.float32]
 type IntArray = NDArray[np.int64]
 type DatetimeArray = NDArray[np.datetime64]
-type VlateralGeneratorSignature = Generator[tuple[DatetimeArray, FloatArray, PathInput, PathInput]]
+type VlateralGenerator = Generator[tuple[DatetimeArray, FloatArray, PathInput]]
 
 
 class WriteDischargesFn(Protocol):
@@ -33,6 +33,6 @@ __all__ = [
     'FloatArray',
     'IntArray',
     'DatetimeArray',
-    'VlateralGeneratorSignature',
+    'VlateralGenerator',
     'WriteDischargesFn',
 ]

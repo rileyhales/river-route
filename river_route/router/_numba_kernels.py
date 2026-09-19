@@ -12,7 +12,7 @@ __all__ = ['static_channel', 'static_vlateral', 'static_vlateral_expanded', 'dyn
 #   unthreaded   -- one block covering the network, outlet = -1, cut_target empty. Identical to sweeping the
 #                   whole array, so there is no separate serial code path to keep in sync.
 #   region pass  -- one block, the contiguous range of a subtree in DFS computation order (see
-#                   streams.assign_regions). Upstream-closed, so it needs nothing from outside its range and
+#                   network.streams.assign_regions). Upstream-closed, so it needs nothing from outside its range and
 #                   can run concurrently with the other regions. ``outlet`` is the single river whose
 #                   downstream lies outside the block; rather than pushing into another thread's rhs, its
 #                   contribution is buffered into boundary[region] for every routing step.
@@ -233,7 +233,7 @@ def static_vlateral_expanded(
     n_steps,  # integer number of time steps to route
 ):
     """
-    Unified stabilized Muskingum with lateral inflow over an EXPANDED network (see streams.expand_network). Both
+    Unified stabilized Muskingum with lateral inflow over an EXPANDED network (see network.streams.expand_network). Both
     stability levers are handled by one code path:
 
         - Subdivision (too-long reaches) is already materialized: a split river is a contiguous chain of reaches,
@@ -250,7 +250,7 @@ def static_vlateral_expanded(
     original river via parent_index; because each river's reaches are contiguous and its outlet is processed last,
     the last write for a river is its outlet's value (instantaneous for subdivided rivers, averaged for substepped).
 
-    Caller responsibilities (kernel does no validation to stay a pure hot path; see streams.expand_network):
+    Caller responsibilities (kernel does no validation to stay a pure hot path; see network.streams.expand_network):
         - c1, c2, c3, c4_dt are per reach and built for dt = period / substeps_per_reach[r].
         - c4_dt already folds in the reach's lateral_scale (1 / subdivisions), so lateral volume is conserved.
         - q has length n_reaches, seeded by broadcasting each river's initial discharge across its reaches.

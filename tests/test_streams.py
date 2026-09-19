@@ -10,7 +10,7 @@ import scipy.sparse as sp
 import xarray as xr
 from conftest import RFSv2ConfigsData
 
-from river_route.tools import adjacency_matrix, connectivity_to_digraph, subset_configs_to_river
+from river_route.network.streams import adjacency_matrix, connectivity_to_digraph, subset_configs_to_river
 
 
 def _networkx_adjacency_matrix(params: pd.DataFrame) -> sp.csc_matrix:

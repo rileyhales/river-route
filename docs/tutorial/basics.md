@@ -1,7 +1,7 @@
 ## Overview
 
-`river-route` routes catchment-scale runoff through a vector river network. There is a single `Router`
-class, and the kind of routing it performs is chosen with the `forcing` config selector:
+`river-route` routes catchment-scale runoff through a vector river network. All routing runs through the
+`Router` class, and the kind of routing it performs is chosen with the `forcing` config selector:
 
 - **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
@@ -43,8 +43,9 @@ Rows must be in **topological order**: all upstream segments before their downst
 ## Config File
 
 Config values are held by a frozen `Configs` object. Build it from keyword arguments or read it from a YAML/JSON
-file with `Configs.from_file`, then pass it to `Router`. Keyword arguments given to `Router` change a copy of the
-configs for that router only.
+file with `Configs.from_file`, then pass it to `Router`. A `Router` takes its options from a `Configs` and
+nowhere else, and a `Configs` is set once when it is built, so an option is changed by building the `Configs` you
+want.
 
 ```yaml
 params_file: '/path/to/params.parquet'
@@ -58,7 +59,7 @@ discharge_dir: '/path/to/output/'
 import river_route as rr
 
 configs = rr.Configs.from_file('config.yaml')
-rr.Router(configs, forcing='vlateral').route()
+rr.Router(configs).route()
 ```
 
 Or build the configs directly without a config file:
@@ -75,8 +76,9 @@ configs = rr.Configs(
 rr.Router(configs).route()
 ```
 
-Use `configs.replace(...)` for a copy with some options changed, and `configs.to_yaml(path)` or `configs.to_json(path)`
-to write the options to a file that `Configs.from_file` reads back, e.g. to prepare many jobs for a scheduler.
+A `Configs` is set once, when it is built, and is frozen afterward. There is no method to copy one with an
+option changed: build the `Configs` you want. Use `configs.to_yaml(path)` or `configs.to_json(path)` to write the
+options to a file that `Configs.from_file` reads back, e.g. to prepare many jobs for a scheduler.
 
 ## Warm-Starting Channel State
 

@@ -5,10 +5,10 @@ Premade discharge writers for `Router.set_discharge_writer`. `netcdf_writer` is 
 ```python
 import river_route as rr
 
-router = rr.Router(rr.Configs.from_file('config.yaml')).set_discharge_writer(rr.writers.zarr_writer)
+router = rr.Router(rr.Configs.from_file('config.yaml')).set_discharge_writer(rr.router.writers.zarr_writer)
 ```
 
-::: river_route.writers
+::: river_route.router.writers
     handler: python
     options:
       members_order: source

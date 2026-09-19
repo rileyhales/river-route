@@ -74,7 +74,7 @@ def _check_kernel_arrays(
     Raises:
         ValueError: if any array does not match the network size or the number of routing steps
     """
-    n_rivers = router.river_ids.shape[0]
+    n_rivers = router.network.river_ids.shape[0]
     n_steps = router.num_runoff_steps
     expected = {'q_t': ((n_rivers,), q_t.shape), 'discharge_array': ((n_steps, n_rivers), discharge_array.shape)}
     if vlateral is not None:
@@ -84,14 +84,14 @@ def _check_kernel_arrays(
             raise ValueError(f'{name} has shape {got}, expected {want} for {n_rivers} rivers and {n_steps} steps')
 
     per_river = {
-        'downstream_indices': router.downstream_indices,
+        'downstream_indices': router.network.downstream_indices,
         'c3': getattr(router, 'c3', None),
         'c4_dt': getattr(router, 'c4_dt', None),
         'downstream_c1': getattr(router, 'downstream_c1', None),
         'downstream_c2': getattr(router, 'downstream_c2', None),
-        'alpha': getattr(router, 'alpha', None),
-        'beta': getattr(router, 'beta', None),
-        'x': router.x,
+        'alpha': router.network.alpha,
+        'beta': router.network.beta,
+        'x': router.network.x,
     }
     for name, array in per_river.items():
         if array is not None and array.shape != (n_rivers,):
@@ -145,9 +145,12 @@ def dispatch(
     # todo is there a way to do this without if branching? probably not without failing static checks
     # todo expand to match based on network also?
     kernel = resolve_kernel(
-        coeff=router.cfg.coeff, forcing=router.cfg.forcing, transform=router.cfg.transform, network=router.cfg.network
+        coeff=router.configs.coeff,
+        forcing=router.configs.forcing,
+        transform=router.configs.transform,
+        network=router.configs.network,
     )
-    if router.cfg.forcing == 'vlateral' and vlateral is None:
+    if router.configs.forcing == 'vlateral' and vlateral is None:
         raise ValueError('vlateral array must be provided for vlateral forcing')
     _check_kernel_arrays(router, q_t=q_t, discharge_array=discharge_array, vlateral=vlateral)
 
@@ -156,7 +159,7 @@ def dispatch(
     boundary = tuple(
         np.zeros((max(n_regions, 1), n_routing_steps), dtype=np.float32) for _ in range(kernel.boundary_buffers)
     )
-    forcing = {'vlateral': vlateral} if router.cfg.forcing == 'vlateral' else {}
+    forcing = {'vlateral': vlateral} if router.configs.forcing == 'vlateral' else {}
 
     def run(job, cut_target: FloatArray) -> None:
         starts, stops, outlet, region = job
@@ -213,11 +216,11 @@ def static_channel(
         boundary=boundary[0],
         q_t=q_t,
         discharge_array=discharge_array,
-        downstream_indices=r.downstream_indices,
+        downstream_indices=r.network.downstream_indices,
         downstream_c1=r.downstream_c1,
         downstream_c2=r.downstream_c2,
         c3=r.c3,
-        n_rivers=r.river_ids.shape[0],
+        n_rivers=r.network.river_ids.shape[0],
         n_steps=r.num_runoff_steps,
         n_substeps=r.num_routing_steps_per_runoff,
     )
@@ -246,11 +249,11 @@ def static_vlateral(
         boundary=boundary[0],
         q_t=q_t,
         discharge_array=discharge_array,
-        downstream_indices=r.downstream_indices,
+        downstream_indices=r.network.downstream_indices,
         downstream_c1=r.downstream_c1,
         downstream_c2=r.downstream_c2,
         c3=r.c3,
-        n_rivers=r.river_ids.shape[0],
+        n_rivers=r.network.river_ids.shape[0],
         n_steps=r.num_runoff_steps,
         n_substeps=r.num_routing_steps_per_runoff,
         vlateral=vlateral,
@@ -282,13 +285,13 @@ def dynamic_vlateral(
         boundary_new=boundary[1],
         q_t=q_t,
         discharge_array=discharge_array,
-        downstream_indices=r.downstream_indices,
-        alpha=r.alpha,
-        beta=r.beta,
-        x=r.x,
+        downstream_indices=r.network.downstream_indices,
+        alpha=r.network.alpha,
+        beta=r.network.beta,
+        x=r.network.x,
         dt_routing=np.float32(r.dt_routing),
         dt_runoff=np.float32(r.dt_runoff),
-        n_rivers=r.river_ids.shape[0],
+        n_rivers=r.network.river_ids.shape[0],
         n_steps=r.num_runoff_steps,
         n_substeps=r.num_routing_steps_per_runoff,
         vlateral=vlateral,
