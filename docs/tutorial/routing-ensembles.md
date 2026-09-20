@@ -10,7 +10,8 @@ routing is state handling:
 
 There are two common ways to run ensembles in `river-route`.
 
-Ensemble routing is supported by `RapidMuskingum` and `UnitMuskingum` (not the base `Muskingum`).
+Ensemble routing is available whenever there is forcing (e.g. `forcing: vlateral`); it is not
+meaningful for channel-only routing (`forcing: channel`). Set it with `runoff_processing_mode: ensemble`.
 
 1. Run each member in a separate job (loop, multiprocessing, cluster workers). This is easiest
    to parallelize and gives full control over member-specific output paths.
@@ -46,15 +47,15 @@ import xarray as xr
 import river_route as rr
 
 
-def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
-    # dates: datetime array for routed discharge rows
-    # discharge_array: routed flows with shape (time, river_id)
+def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file):
+    # router: the Router doing the routing, which provides river_ids and the configs options
+    # dates: datetime array for the columns of the discharge array
+    # discharge_array: routed flows, C-order with shape (river_id, time)
     # discharge_file: the path to the output file provided by your config file
     # runoff_file: the path to the runoff file used to produce this output, if you need it
 
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+    river_ids = router.network.river_ids
+    df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=river_ids)
 
     # you probably want to include the member number in the output file name which could come from the discharge or runoff file
     member_number = os.path.basename(runoff_file)
@@ -69,8 +70,8 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
 
     # continue with writing the full outputs
     ds_out = xr.Dataset(
-        data_vars={'Q': (('time', 'river_id'), discharge_array)},
-        coords={'time': pd.to_datetime(dates), 'river_id': river_ids}
+        data_vars={'Q': (('river_id', 'time'), discharge_array)},
+        coords={'river_id': river_ids, 'time': pd.to_datetime(dates)}
     )
     ds_out.to_netcdf(discharge_file)
     return
@@ -78,8 +79,8 @@ def custom_output_writer(dates, discharge_array, discharge_file, runoff_file):
 
 m = (
     rr
-    .RapidMuskingum('your_config_file.yaml')
-    .set_write_discharges(custom_output_writer)  # set the custom output writer function
+    .Router(rr.Configs.from_file('your_config_file.yaml'), forcing='vlateral')
+    .set_discharge_writer(custom_output_writer)  # set the custom output writer function
     .route()
 )
 

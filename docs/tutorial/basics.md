@@ -1,16 +1,14 @@
 ## Overview
 
-`river-route` routes catchment-scale runoff through a vector river network. Three routers are available:
+`river-route` routes catchment-scale runoff through a vector river network. All routing runs through the
+`Router` class, and the kind of routing it performs is chosen with the `forcing` config selector:
 
-- **`Muskingum`**: pure channel routing with no lateral inflows. Routes an existing discharge state forward in
-  time using only Muskingum channel equations. Requires an explicit initial state.
-- **`RapidMuskingum`**: routes runoff volumes or depths directly into river channel inlets at each timestep.
-  This is the most common starting point.
-- **`UnitMuskingum`**: same as `RapidMuskingum` but convolves each timestep of runoff with a unit hydrograph
-  kernel before adding it to the channel. See the
-  [Channel Routing with Runoff Transformation](unit-hydrograph-routing.md) tutorial.
+- **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
+  forward in time using only Muskingum channel equations. Requires an explicit initial state.
+- **`forcing: vlateral`**: routes runoff volumes or depths directly into river channel inlets at each
+  timestep. This is the most common starting point.
 
-This tutorial uses `RapidMuskingum`.
+This tutorial uses lateral-runoff routing (`forcing: vlateral`).
 
 ## Vocabulary
 
@@ -33,23 +31,25 @@ See the [File Schemas reference](../references/io-file-schema.md) for field name
 
 The routing parameters parquet must contain at minimum these columns:
 
-| Column                | Description                                                                |
-|-----------------------|----------------------------------------------------------------------------|
-| `river_id`            | Unique integer ID for each river segment                                   |
-| `downstream_river_id` | ID of the downstream segment (`-1` or `<0` at outlets)                     |
-| `k`                   | Muskingum K — travel time (seconds); typically channel length / wave speed |
-| `x`                   | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
+| Column          | Description                                                                |
+|-----------------|----------------------------------------------------------------------------|
+| `river_id`      | Unique integer ID for each river segment                                   |
+| `next_river_id` | ID of the downstream segment (`-1` or `<0` at outlets)                     |
+| `k`             | Muskingum K — travel time (seconds); typically channel length / wave speed |
+| `x`             | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
 
 Rows must be in **topological order**: all upstream segments before their downstream neighbors.
 
 ## Config File
 
-Config values can be passed as a YAML/JSON file, as keyword arguments, or both. Keyword arguments
-override values from the config file.
+Config values are held by a frozen `Configs` object. Build it from keyword arguments or read it from a YAML/JSON
+file with `Configs.from_file`, then pass it to `Router`. A `Router` takes its options from a `Configs` and
+nowhere else, and a `Configs` is set once when it is built, so an option is changed by building the `Configs` you
+want.
 
 ```yaml
 params_file: '/path/to/params.parquet'
-qlateral_files: '/path/to/catchment_runoff.nc'
+vlateral_files: '/path/to/catchment_runoff.nc'
 discharge_dir: '/path/to/output/'
 ```
 
@@ -58,24 +58,27 @@ discharge_dir: '/path/to/output/'
 ```python
 import river_route as rr
 
-rr.RapidMuskingum('config.yaml').route()
+configs = rr.Configs.from_file('config.yaml')
+rr.Router(configs).route()
 ```
 
-Or pass arguments directly without a config file:
+Or build the configs directly without a config file:
 
 ```python
 import river_route as rr
 
-(
-    rr
-    .RapidMuskingum(
-        params_file='params.parquet',
-        qlateral_files=['qlateral.nc', ],
-        discharge_dir='./output/',
-    )
-    .route()
+configs = rr.Configs(
+    params_file='params.parquet',
+    vlateral_files=['vlateral.nc', ],
+    discharge_dir='./output/',
+    forcing='vlateral',
 )
+rr.Router(configs).route()
 ```
+
+A `Configs` is set once, when it is built, and is frozen afterward. There is no method to copy one with an
+option changed: build the `Configs` you want. Use `configs.to_yaml(path)` or `configs.to_json(path)` to write the
+options to a file that `Configs.from_file` reads back, e.g. to prepare many jobs for a scheduler.
 
 ## Warm-Starting Channel State
 
@@ -83,7 +86,7 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 
 ```yaml
 params_file: 'params.parquet'
-qlateral_files: 'catchment_runoff.nc'
+vlateral_files: 'catchment_runoff.nc'
 discharge_dir: 'output/'
 channel_state_init_file: 'state.parquet'         # optional: initial channel state
 channel_state_final_file: 'new_state.parquet'    # optional: save final state for next run

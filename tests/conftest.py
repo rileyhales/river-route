@@ -1,13 +1,14 @@
 """Shared fixtures and helpers for the river-route test suite."""
+
 import os
 from dataclasses import dataclass
 from glob import glob
 from pathlib import Path
 
+import netCDF4 as nc
+import numpy as np
 import pandas as pd
-import xarray as xr
-
-import river_route as rr
+import pytest
 
 TESTS_DIR = Path(__file__).resolve().parent
 DATA_DIR = TESTS_DIR / 'data'
@@ -15,7 +16,7 @@ DATA_DIR = TESTS_DIR / 'data'
 # provided by the zip downloaded from s3
 ERA5_DIR = DATA_DIR / 'era5'
 DISCHARGE_DIR = DATA_DIR / 'discharge'
-QLATERAL_DIR = DATA_DIR / 'qlateral'
+VLATERAL_DIR = DATA_DIR / 'vlateral'
 # obtained from s3 based on which vpus are given as having solutions
 CONFIGS_DIR = DATA_DIR / 'routing-configs'
 HYDROGRAPHY_DIR = DATA_DIR / 'hydrography'
@@ -27,41 +28,31 @@ ERA5_KWARGS = dict(var_y='latitude', var_x='longitude', var_t='valid_time')
 @dataclass
 class RFSv2ConfigsData:
     """Per-VPU test data paths. All fields are required and paths should exist"""
+
     number: int
     configs_dir: Path
     hydrography_dir: Path
     discharge_dir: Path
-    qlateral_dir: Path
+    vlateral_dir: Path
     discharge_files: list[str] = None  # populated in __post_init__
-    qlateral_files: list[str] = None  # populated in __post_init__
+    vlateral_files: list[str] = None  # populated in __post_init__
 
     def __str__(self) -> str:
         return f'vpu={self.number}'
 
     def __post_init__(self) -> None:
         self.discharge_files = list(sorted(glob(str(self.discharge_dir / 'discharge*.nc'))))
-        self.qlateral_files = list(sorted(glob(str(self.qlateral_dir / 'qlateral_*.nc'))))
+        self.vlateral_files = list(sorted(glob(str(self.vlateral_dir / 'vlateral_*.nc'))))
 
     def prepare(self) -> None:
-        """Convert rfs v2 configs to river-route v2 formats. Call after valid() confirms files exist."""
+        """Convert rfs v2 configs to river-route v3 formats. Call after valid() confirms files exist."""
         pdf = pd.read_parquet(self.rr1_params_file)
         cdf = pd.read_parquet(self.rr1_connectivity_file)
         (
-            pdf
-            .merge(cdf, left_on='river_id', right_on='river_id', how='left')
-            .rename(columns={'ds_river_id': 'downstream_river_id'})
-            [['river_id', 'downstream_river_id', 'k', 'x']]
+            pdf.merge(cdf, left_on='river_id', right_on='river_id', how='left')
+            .rename(columns={'ds_river_id': 'next_river_id'})[['river_id', 'next_river_id', 'k', 'x']]
             .to_parquet(self.rr2_params_file, index=False)
         )
-        grid_weights = xr.open_dataset(self.grid_weights_file).to_dataframe()
-        kfactor = 5
-        tc = (pdf['k'] * kfactor).values
-        area = grid_weights.groupby('river_id')['area_sqm'].sum().sort_index().values
-        rr.uhkernels.SCSTriangular(
-            tc=tc,
-            area=area,
-            tr=3600,
-        ).save(self.configs_dir / f'kernel.scs_triangular.kfactor={kfactor}.tr=3600.npz')
 
     @property
     def rr2_params_file(self) -> Path:
@@ -89,7 +80,7 @@ class RFSv2ConfigsData:
 
     def valid(self) -> bool:
         """Check that all paths exist and file lists are non-empty."""
-        path_fields = ('configs_dir', 'discharge_dir', 'qlateral_dir', 'hydrography_dir')
+        path_fields = ('configs_dir', 'discharge_dir', 'vlateral_dir', 'hydrography_dir')
         for field in path_fields:
             value = getattr(self, field)
             if not value.exists():
@@ -99,8 +90,8 @@ class RFSv2ConfigsData:
         if not self.discharge_files:
             print(f'VPU {self.number}: no discharge files found in {self.discharge_dir}')
             return False
-        if not self.qlateral_files:
-            print(f'VPU {self.number}: no qlateral files found in {self.qlateral_dir}')
+        if not self.vlateral_files:
+            print(f'VPU {self.number}: no vlateral files found in {self.vlateral_dir}')
             return False
 
         if not self.rr1_params_file.exists():
@@ -132,7 +123,7 @@ def find_test_units() -> list[RFSv2ConfigsData]:
                 number=int(vpu.split('=')[1]),
                 configs_dir=CONFIGS_DIR / vpu,
                 discharge_dir=DISCHARGE_DIR / vpu,
-                qlateral_dir=QLATERAL_DIR / vpu,
+                vlateral_dir=VLATERAL_DIR / vpu,
                 hydrography_dir=HYDROGRAPHY_DIR / vpu,
             )
         )
@@ -140,6 +131,108 @@ def find_test_units() -> list[RFSv2ConfigsData]:
     for vpu in testable_sets:
         vpu.prepare()
     return testable_sets
+
+
+# ── synthetic networks: small, self-contained fixtures that need no downloaded data ──
+
+
+@dataclass
+class SyntheticNetwork:
+    """A small river network written to disk, used to exercise routing without the downloaded test data."""
+
+    directory: Path
+    n_rivers: int
+    k: float
+    x: float
+    n_steps: int
+    dt_runoff: int
+    params_file: Path
+    state_file: Path
+    vlateral_file: Path
+    inflow_volume: float
+
+    def path(self, name: str) -> str:
+        return str(self.directory / name)
+
+
+def write_params(path: Path, n_rivers: int = 5, k: float = 3600.0, x: float = 0.2, **columns) -> pd.DataFrame:
+    """Write a params file for a single chain of rivers, each flowing into the next, sorted upstream to down."""
+    df = pd.DataFrame(
+        {
+            'river_id': np.arange(1, n_rivers + 1, dtype=np.int64),
+            'next_river_id': np.append(np.arange(2, n_rivers + 1), -1).astype(np.int64),
+            'k': np.full(n_rivers, k, dtype=np.float64),
+            'x': np.full(n_rivers, x, dtype=np.float64),
+            **columns,
+        }
+    )
+    df.to_parquet(path, index=False)
+    return df
+
+
+def write_vlateral(path: Path, volumes: np.ndarray, river_ids: np.ndarray, dt: int = 3600) -> None:
+    """Write a lateral inflow netCDF with a CF encoded time axis, matching what RunoffGaussianGrid produces."""
+    volumes = np.asarray(volumes, dtype=np.float32)
+    with nc.Dataset(str(path), mode='w', format='NETCDF4') as ds:
+        ds.createDimension('time', volumes.shape[0])
+        ds.createDimension('river_id', volumes.shape[1])
+        time_var = ds.createVariable('time', 'f8', ('time',))
+        time_var.units = 'seconds since 2000-01-01 00:00:00'
+        time_var[:] = np.arange(volumes.shape[0]) * dt
+        id_var = ds.createVariable('river_id', 'i8', ('river_id',))
+        id_var[:] = river_ids
+        vlateral = ds.createVariable('vlateral', 'f4', ('time', 'river_id'))
+        vlateral[:] = volumes
+        vlateral.units = 'm3'
+    return
+
+
+def build_network(
+    directory: Path,
+    n_rivers: int = 5,
+    k: float = 3600.0,
+    x: float = 0.2,
+    n_steps: int = 240,
+    dt_runoff: int = 3600,
+    pulse_steps: int = 3,
+    pulse_rate: float = 10.0,
+) -> SyntheticNetwork:
+    """
+    Build a chain network plus a lateral inflow file holding a short pulse into the headwater river.
+
+    The default k and x are stable for the default dt_runoff: 2*k*x = 1440 <= 3600 <= 2*k*(1-x) = 5760.
+    The window is long enough for the pulse to drain completely so that mass balance can be checked.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    params_file = directory / 'params.parquet'
+    write_params(params_file, n_rivers=n_rivers, k=k, x=x)
+
+    state_file = directory / 'state_zero.parquet'
+    pd.DataFrame({'Q': np.zeros(n_rivers)}).to_parquet(state_file, index=False)
+
+    volumes = np.zeros((n_steps, n_rivers), dtype=np.float32)
+    volumes[:pulse_steps, 0] = pulse_rate * dt_runoff  # a constant rate held for pulse_steps, as a volume per step
+    vlateral_file = directory / 'vlateral.nc'
+    write_vlateral(vlateral_file, volumes, np.arange(1, n_rivers + 1), dt=dt_runoff)
+
+    return SyntheticNetwork(
+        directory=directory,
+        n_rivers=n_rivers,
+        k=k,
+        x=x,
+        n_steps=n_steps,
+        dt_runoff=dt_runoff,
+        params_file=params_file,
+        state_file=state_file,
+        vlateral_file=vlateral_file,
+        inflow_volume=float(volumes.sum()),
+    )
+
+
+@pytest.fixture
+def network(tmp_path: Path) -> SyntheticNetwork:
+    """A stable 5 river chain with a 3 hour pulse of lateral inflow and a 240 hour routing window."""
+    return build_network(tmp_path / 'network')
 
 
 # ── pytest hook: auto-parametrize tests with a `vpu` parameter ──────────────

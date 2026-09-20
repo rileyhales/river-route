@@ -1,0 +1,152 @@
+import os
+import shutil
+import tempfile
+
+import networkx as nx
+import numpy as np
+import pandas as pd
+import pytest
+import scipy.sparse as sp
+import xarray as xr
+from conftest import RFSv2ConfigsData
+
+from river_route.network.streams import adjacency_matrix, connectivity_to_digraph, subset_configs_to_river
+
+
+def _networkx_adjacency_matrix(params: pd.DataFrame) -> sp.csc_matrix:
+    graph = nx.DiGraph()
+    graph.add_edges_from(params[['river_id', 'next_river_id']].values)
+    nx_adj = nx.adjacency_matrix(graph, nodelist=params['river_id'].values).astype(np.float64)
+    return sp.csc_matrix(nx_adj).T
+
+
+def test_adjacency_matrix_matches_networkx(vpu: RFSv2ConfigsData):
+    params = pd.read_parquet(vpu.rr2_params_file)
+    nx_adj = _networkx_adjacency_matrix(params)
+    adj = adjacency_matrix(params['river_id'].values, params['next_river_id'].values)
+    diff = nx_adj - adj
+    assert diff.nnz == 0, 'adjacency matrix does not match NetworkX reference'
+
+
+def test_adjacency_matrix_shape(vpu: RFSv2ConfigsData):
+    params = pd.read_parquet(vpu.rr2_params_file)
+    n = len(params)
+    adj = adjacency_matrix(params['river_id'].values, params['next_river_id'].values)
+    assert adj.shape == (n, n)
+
+
+def test_adjacency_matrix_outlets_have_no_outgoing_edges(vpu: RFSv2ConfigsData):
+    params = pd.read_parquet(vpu.rr2_params_file)
+    adj = adjacency_matrix(params['river_id'].values, params['next_river_id'].values)
+    outlet_mask = params['next_river_id'].values == -1
+    outlet_indices = np.where(outlet_mask)[0]
+    # adj[downstream, upstream]=1, so an outlet's column (as upstream) should be all zeros
+    for idx in outlet_indices:
+        assert adj[:, idx].nnz == 0, f'Outlet at index {idx} has outgoing edges'
+
+
+def test_adjacency_matrix_rejects_unsorted():
+    # downstream index must be > upstream index (topological order)
+    river_ids = np.array([10, 20, 30])
+    downstream_ids = np.array([20, -1, 10])  # 30→10 violates order (index 2 → index 0)
+    with pytest.raises(ValueError, match='topologically sorted'):
+        adjacency_matrix(river_ids, downstream_ids)
+
+
+def test_adjacency_matrix_rejects_unknown_downstream():
+    river_ids = np.array([10, 20])
+    downstream_ids = np.array([-1, 999])  # 999 not in river_ids
+    with pytest.raises(ValueError, match='Unknown next_river_id'):
+        adjacency_matrix(river_ids, downstream_ids)
+
+
+def test_connectivity_to_digraph(vpu: RFSv2ConfigsData):
+    params = pd.read_parquet(vpu.rr2_params_file)
+    graph = connectivity_to_digraph(params['river_id'].values, params['next_river_id'].values)
+    assert isinstance(graph, nx.DiGraph)
+    assert graph.number_of_nodes() > 0
+    assert graph.number_of_edges() > 0
+
+
+def test_connectivity_to_digraph_simple():
+    river_ids = np.array([1, 2, 3])
+    downstream_ids = np.array([-1, 1, 1])
+    graph = connectivity_to_digraph(river_ids, downstream_ids)
+    assert graph.has_edge(2, 1)
+    assert graph.has_edge(3, 1)
+    assert graph.has_edge(1, -1)
+
+
+def test_subset_configs_to_river(vpu: RFSv2ConfigsData):
+    """Subset to a known river; verify the target becomes the outlet and upstream rivers are included."""
+    params = pd.read_parquet(vpu.rr2_params_file)
+    # Pick a river that has upstream tributaries (not a headwater)
+    target = params.loc[params['next_river_id'] == -1, 'river_id'].iloc[0]
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        out_params = os.path.join(tmpdir, 'subset.parquet')
+        subset_configs_to_river(target, str(vpu.rr2_params_file), out_params)
+
+        sub = pd.read_parquet(out_params)
+        assert target in sub['river_id'].values
+        # Target river should be the outlet in the subset
+        assert sub.loc[sub['river_id'] == target, 'next_river_id'].iloc[0] == -1
+        # All subset rivers should exist in the original
+        assert set(sub['river_id']).issubset(set(params['river_id']))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_subset_configs_to_river_with_weights(vpu: RFSv2ConfigsData):
+    """Subset both params and grid weights; verify weight river_ids are a subset of params river_ids."""
+    params = pd.read_parquet(vpu.rr2_params_file)
+    target = params.loc[params['next_river_id'] == -1, 'river_id'].iloc[0]
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        out_params = os.path.join(tmpdir, 'subset.parquet')
+        out_weights = os.path.join(tmpdir, 'subset_weights.nc')
+        subset_configs_to_river(
+            target, str(vpu.rr2_params_file), out_params, weights=str(vpu.grid_weights_file), out_weights=out_weights
+        )
+
+        sub = pd.read_parquet(out_params)
+        with xr.open_dataset(out_weights) as ds:
+            weight_river_ids = set(ds['river_id'].values.tolist())
+        assert weight_river_ids.issubset(set(sub['river_id'].values.tolist()))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_shreve_order():
+    """Headwaters are 1, a confluence sums its upstreams, and a chain keeps its magnitude."""
+    from river_route.network.streams import shreve_order
+
+    # 0 -> 2, 1 -> 2, 2 -> 3, 3 -> 6, 4 -> 5, 5 -> 6, 6 is the outlet; 7 is a lone basin
+    downstream = np.array([2, 2, 3, 6, 5, 6, -1, -1], dtype=np.int64)
+    np.testing.assert_array_equal(shreve_order(downstream), [1, 1, 2, 2, 1, 1, 3, 1])
+
+
+def test_assign_regions_by_shreve_is_safe_on_chains():
+    """
+    Claiming by Shreve magnitude must take a chain's most downstream river before any subtree inside it, since the
+    chain shares one magnitude; otherwise a region would be claimed inside another.
+    """
+    from river_route.network.streams import assign_regions, regions_to_layout
+
+    # chains 0-2 and 3-5 join at 6; 6 and chains 7-9 and 10-12 drain into outlet 13; 14 is a lone basin
+    downstream = np.array([1, 2, 6, 4, 5, 6, 13, 8, 9, 13, 11, 12, 13, -1, -1])
+    for threads in (2, 3, 4):
+        region, n_regions = assign_regions(downstream, threads=threads, granularity=1, measure='shreve')
+        layout = regions_to_layout(region, downstream)  # raises if any region is split or drains into another
+        assert layout['n_regions'] == n_regions
+
+
+def test_network_shreve_order(tmp_path):
+    import river_route as rr
+
+    pd.DataFrame(
+        {'river_id': [10, 11, 12, 13], 'next_river_id': [12, 12, 13, -1], 'k': [3600.0] * 4, 'x': [0.2] * 4}
+    ).to_parquet(tmp_path / 'params.parquet', index=False)
+    np.testing.assert_array_equal(rr.Network(tmp_path / 'params.parquet').shreve_order(), [1, 1, 2, 2])
