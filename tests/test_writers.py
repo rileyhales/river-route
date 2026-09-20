@@ -3,7 +3,6 @@ Tests for the premade discharge writers in river_route.router.writers, run on th
 """
 
 import os
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -38,32 +37,61 @@ def route_with_writer(network: SyntheticNetwork, out_name: str, writer=None, thr
     return out
 
 
-def test_netcdf_writer_is_the_default(network: SyntheticNetwork):
-    router = rr.Router(rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')]))
-    assert router._discharge_writer is writers.netcdf_writer
+def test_zarr_writer_is_the_default(network: SyntheticNetwork):
+    router = rr.Router(rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.zarr')]))
+    assert router._discharge_writer is writers.zarr_writer
 
 
-def test_zarr_writer_matches_netcdf_exactly(network: SyntheticNetwork):
-    """The zarr store holds exactly the netCDF discharge, in the same (time, river_id) layout and coordinates."""
-    netcdf_out = route_with_writer(network, 'q.nc')
+def test_zarr_writer_matches_netcdf_to_the_rounding(network: SyntheticNetwork):
+    """The zarr store holds the netCDF discharge rounded to ZARR_KEEPBITS mantissa bits, both (river_id, time)."""
+    netcdf_out = route_with_writer(network, 'q.nc', writer=writers.netcdf_writer)
     zarr_out = route_with_writer(network, 'q.zarr', writer=writers.zarr_writer)
     with xr.open_dataset(netcdf_out) as ds_nc, xr.open_zarr(zarr_out) as ds_zarr:
-        assert ds_zarr['Q'].dims == ('time', 'river_id')
+        assert ds_zarr['Q'].dims == ('river_id', 'time')  # both formats are river major
+        assert ds_nc['Q'].dims == ('river_id', 'time')
         assert ds_zarr['Q'].dtype == np.float32
         assert ds_nc['Q'].values.any()
-        np.testing.assert_array_equal(ds_zarr['Q'].values, ds_nc['Q'].values)
+        np.testing.assert_array_equal(ds_zarr['Q'].values, writers.bitround(ds_nc['Q'].values, writers.ZARR_KEEPBITS))
+        # the relative bound holds for normal floats; a subnormal has no implied leading bit to round against
+        normal = np.abs(ds_nc['Q'].values) >= np.finfo(np.float32).tiny
+        np.testing.assert_allclose(
+            ds_zarr['Q'].values[normal], ds_nc['Q'].values[normal], rtol=2 ** -(writers.ZARR_KEEPBITS + 1), atol=0
+        )
         np.testing.assert_array_equal(ds_zarr['river_id'].values, ds_nc['river_id'].values)
         np.testing.assert_array_equal(ds_zarr['time'].values, ds_nc['time'].values)
         assert ds_zarr.attrs['runoff_file'] == ds_nc.attrs['runoff_file']
         assert ds_zarr['Q'].attrs['units'] == 'm3 s-1'
 
 
-def test_zarr_writer_layout_is_uncompressed_with_whole_time_chunks(network: SyntheticNetwork):
+def test_zarr_writer_layout_is_whole_time_chunks_compressed(network: SyntheticNetwork):
     out = route_with_writer(network, 'q.zarr', writer=writers.zarr_writer)
     array = zarr.open_group(out, mode='r')['Q']
-    assert array.chunks == (array.shape[0], writers.ZARR_RIVERS_PER_CHUNK)
-    assert array.filters == ()
-    assert array.compressors == ()
+    assert array.chunks == (writers.ZARR_RIVERS_PER_CHUNK, array.shape[1])
+    assert array.filters == ()  # the rounding is done in numpy, not by a zarr filter
+    (stored,) = array.compressors  # zarr resolves typesize from the dtype, so compare what was asked for
+    assert (stored.cname, stored.clevel, stored.shuffle) == (
+        writers.ZARR_COMPRESSOR.cname,
+        writers.ZARR_COMPRESSOR.clevel,
+        writers.ZARR_COMPRESSOR.shuffle,
+    )
+
+
+def test_zarr_writer_rounds_without_touching_the_array_it_is_given(network: SyntheticNetwork):
+    """Rounding happens on the way out, so a caller's buffer is unchanged and the values stay within the bound."""
+    router = rr.Router(rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.zarr')]))
+    dates = pd.date_range('2000-01-01', periods=6, freq='h').to_numpy()
+    discharge = np.random.default_rng(0).random((network.n_rivers, 6), dtype=np.float32) * 1e4
+    given = discharge.copy()
+    out = network.path('rounded.zarr')
+
+    writers.zarr_writer(router, dates, discharge, out)
+
+    np.testing.assert_array_equal(discharge, given)
+    with xr.open_zarr(out) as ds:
+        stored = ds['Q'].transpose('river_id', 'time').values
+        assert stored.dtype == np.float32
+        np.testing.assert_allclose(stored, discharge, rtol=2 ** -(writers.ZARR_KEEPBITS + 1), atol=0)
+        assert not np.array_equal(stored, discharge), 'the low mantissa bits should have been dropped'
 
 
 def test_zarr_writer_splits_rivers_into_chunks(tmp_path):
@@ -76,8 +104,8 @@ def test_zarr_writer_splits_rivers_into_chunks(tmp_path):
         )
     )
     dates = pd.date_range('2000-01-01', periods=6, freq='h').to_numpy()
-    discharge = np.random.default_rng(0).random((6, n_rivers), dtype=np.float32)
-    discharge[:, : writers.ZARR_RIVERS_PER_CHUNK] = 0  # an all-zero chunk is still written, not skipped as empty
+    discharge = np.random.default_rng(0).random((n_rivers, 6), dtype=np.float32)
+    discharge[: writers.ZARR_RIVERS_PER_CHUNK] = 0  # an all-zero chunk is still written, not skipped as empty
     out = str(tmp_path / 'wide.zarr')
 
     writers.zarr_writer(router, dates, discharge, out)
@@ -86,7 +114,8 @@ def test_zarr_writer_splits_rivers_into_chunks(tmp_path):
     assert array.nchunks == 3
     assert array.nchunks_initialized == 3
     with xr.open_zarr(out) as ds:
-        np.testing.assert_array_equal(ds['Q'].values, discharge)
+        stored = ds['Q'].transpose('river_id', 'time').values
+        np.testing.assert_array_equal(stored, writers.bitround(discharge, writers.ZARR_KEEPBITS))
         np.testing.assert_array_equal(ds['river_id'].values, router.network.river_ids)
         np.testing.assert_array_equal(ds['time'].values, dates)
 
@@ -102,17 +131,18 @@ def test_zarr_writer_packs_chunks_into_shards(tmp_path, monkeypatch):
         )
     )
     dates = pd.date_range('2000-01-01', periods=6, freq='h').to_numpy()
-    discharge = np.random.default_rng(0).random((6, n_rivers), dtype=np.float32)
+    discharge = np.random.default_rng(0).random((n_rivers, 6), dtype=np.float32)
     out = str(tmp_path / 'sharded.zarr')
 
     writers.zarr_writer(router, dates, discharge, out)
 
     array = zarr.open_group(out, mode='r')['Q']
-    assert array.chunks == (6, writers.ZARR_RIVERS_PER_CHUNK)
-    assert array.shards == (6, writers.ZARR_RIVERS_PER_CHUNK * 2)
+    assert array.chunks == (writers.ZARR_RIVERS_PER_CHUNK, 6)
+    assert array.shards == (writers.ZARR_RIVERS_PER_CHUNK * 2, 6)
     assert sum(len(files) for _, _, files in os.walk(os.path.join(out, 'Q', 'c'))) == 2
     with xr.open_zarr(out) as ds:
-        np.testing.assert_array_equal(ds['Q'].values, discharge)
+        stored = ds['Q'].transpose('river_id', 'time').values
+        np.testing.assert_array_equal(stored, writers.bitround(discharge, writers.ZARR_KEEPBITS))
         np.testing.assert_array_equal(ds['river_id'].values, router.network.river_ids)
 
 
@@ -129,16 +159,7 @@ def test_zarr_writer_replaces_an_existing_store(network: SyntheticNetwork):
     route_with_writer(network, 'q.zarr', writer=writers.zarr_writer)
     assert not os.path.exists(os.path.join(out, 'stale'))
     with xr.open_zarr(out) as ds:
-        assert ds['Q'].shape == (ds.sizes['time'], network.n_rivers)
-
-
-def test_zarr_store_opens_without_warnings(network: SyntheticNetwork):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        out = route_with_writer(network, 'q.zarr', writer=writers.zarr_writer)
-        with xr.open_zarr(out) as ds:
-            assert ds['Q'].values.shape == (ds.sizes['time'], network.n_rivers)
-    assert not [str(w.message) for w in caught if 'zarr' in str(w.message).lower()]
+        assert ds['Q'].shape == (network.n_rivers, ds.sizes['time'])
 
 
 @pytest.mark.parametrize('writer', [writers.netcdf_writer, writers.zarr_writer, writers.parquet_writer])
@@ -146,9 +167,9 @@ def test_writers_reject_mismatched_shapes(network: SyntheticNetwork, writer):
     router = rr.Router(rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')]))
     dates = pd.date_range('2000-01-01', periods=4, freq='h').to_numpy()
     with pytest.raises(ValueError, match='dates for'):
-        writer(router, dates[:3], np.zeros((4, network.n_rivers), np.float32), network.path('a.out'))
-    with pytest.raises(ValueError, match='columns of discharge'):
-        writer(router, dates, np.zeros((4, network.n_rivers + 1), np.float32), network.path('b.out'))
+        writer(router, dates[:3], np.zeros((network.n_rivers, 4), np.float32), network.path('a.out'))
+    with pytest.raises(ValueError, match='rows of discharge'):
+        writer(router, dates, np.zeros((network.n_rivers + 1, 4), np.float32), network.path('b.out'))
 
 
 def read_parquet_discharge(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -159,13 +180,13 @@ def read_parquet_discharge(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarra
 
 def test_parquet_writer_matches_netcdf_exactly(network: SyntheticNetwork):
     """The parquet file holds exactly the netCDF discharge with one row per river and one column per time step."""
-    netcdf_out = route_with_writer(network, 'q.nc')
+    netcdf_out = route_with_writer(network, 'q.nc', writer=writers.netcdf_writer)
     parquet_out = route_with_writer(network, 'q.parquet', writer=writers.parquet_writer)
     discharge, river_ids, times = read_parquet_discharge(parquet_out)
     with xr.open_dataset(netcdf_out) as ds_nc:
         assert ds_nc['Q'].values.any()
         assert discharge.dtype == np.float32
-        np.testing.assert_array_equal(discharge, ds_nc['Q'].values)
+        np.testing.assert_array_equal(discharge, ds_nc['Q'].transpose('time', 'river_id').values)
         np.testing.assert_array_equal(river_ids, ds_nc['river_id'].values)
         np.testing.assert_array_equal(times, ds_nc['time'].values)
         metadata = pq.read_schema(parquet_out).metadata

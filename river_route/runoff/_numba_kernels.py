@@ -6,11 +6,6 @@ __all__ = ['aggregate_river', 'aggregate_to_rivers', 'cells_by_time']
 # change between the single-threaded and multithreaded cases. Disjoint ranges can run concurrently because each
 # writes only its own output columns, provided each is given its own scratch block.
 
-
-# The runoff is NaN free by the time it reaches these kernels: RunoffGaussianGrid replaces NaN with zero in the cell
-# series before aggregating, which is one pass over the cells rather than one over every river's series.
-
-
 @numba.njit(cache=True, nogil=True)
 def aggregate_river(
     runoff_by_cell,  # Array (n_cells, n_steps) of runoff depths, each cell's time series contiguous

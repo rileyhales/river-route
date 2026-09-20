@@ -16,6 +16,7 @@ import xarray as xr
 from shapely.geometry import box
 
 import river_route as rr
+from river_route.router import writers
 
 N_RIVERS = 4
 NX, NY, NT = 6, 5, 12
@@ -200,10 +201,10 @@ def test_route_from_grid_files(grid_case):
             log=False,
             progress_bar=False,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
 
     with xr.open_dataset(out) as ds:
-        q = ds['Q'].values
+        q = ds['Q'].transpose('time', 'river_id').values
         np.testing.assert_array_equal(ds['river_id'].values, np.arange(1, N_RIVERS + 1))
     assert q.shape == (NT, N_RIVERS)
     assert not np.isnan(q).any()
@@ -237,15 +238,20 @@ def test_route_from_grid_matches_route_from_vlateral(grid_case):
             discharge_files=[str(from_grid)],
             **shared,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     rr.Router(
         rr.Configs(
             forcing='vlateral', vlateral_files=[str(vlateral_file)], discharge_files=[str(from_vlateral)], **shared
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
 
     with xr.open_dataset(from_grid) as a, xr.open_dataset(from_vlateral) as b:
-        np.testing.assert_allclose(a['Q'].values, b['Q'].values, rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(
+            a['Q'].transpose('time', 'river_id').values,
+            b['Q'].transpose('time', 'river_id').values,
+            rtol=1e-5,
+            atol=1e-6,
+        )
 
 
 def test_unknown_runoff_units_raise(grid_case, tmp_path):
@@ -387,11 +393,15 @@ def test_route_with_thread_pool_matches_single_threaded(grid_case):
     )
     single = grid_case['directory'] / 'q_single.nc'
     threaded = grid_case['directory'] / 'q_threaded.nc'
-    rr.Router(rr.Configs(discharge_files=[str(single)], **shared)).route()
+    rr.Router(rr.Configs(discharge_files=[str(single)], **shared)).set_discharge_writer(writers.netcdf_writer).route()
     with ThreadPoolExecutor(2) as pool:
-        rr.Router(rr.Configs(discharge_files=[str(threaded)], **shared)).route(thread_pool=pool, threads=2)
+        rr.Router(rr.Configs(discharge_files=[str(threaded)], **shared)).set_discharge_writer(
+            writers.netcdf_writer
+        ).route(thread_pool=pool, threads=2)
     with xr.open_dataset(single) as a, xr.open_dataset(threaded) as b:
-        np.testing.assert_array_equal(a['Q'].values, b['Q'].values)
+        np.testing.assert_array_equal(
+            a['Q'].transpose('time', 'river_id').values, b['Q'].transpose('time', 'river_id').values
+        )
 
 
 @pytest.mark.parametrize('n_ranges', [1, 2, 3, 7, 50])
@@ -461,7 +471,7 @@ def test_router_builds_and_reuses_one_runoff(grid_case):
     """A Router given no RunoffGaussianGrid has none until it routes, then keeps the one the reader built."""
     router = rr.Router(grid_configs(grid_case, 'q_lazy.nc'))
     assert router.runoff is None
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
     assert isinstance(router.runoff, rr.RunoffGaussianGrid)
 
 
@@ -473,21 +483,23 @@ def test_router_takes_a_runoff_at_construction(grid_case):
     )
     router = rr.Router(configs, runoff=runoff)
     assert router.runoff is runoff
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
 
-    rr.Router(grid_configs(grid_case, 'q_built.nc')).route()
+    rr.Router(grid_configs(grid_case, 'q_built.nc')).set_discharge_writer(writers.netcdf_writer).route()
     with (
         xr.open_dataset(grid_case['directory'] / 'q_given.nc') as given,
         xr.open_dataset(grid_case['directory'] / 'q_built.nc') as built,
     ):
-        np.testing.assert_array_equal(given['Q'].values, built['Q'].values)
+        np.testing.assert_array_equal(
+            given['Q'].transpose('time', 'river_id').values, built['Q'].transpose('time', 'river_id').values
+        )
 
 
 def test_router_sets_as_volumes_on_a_given_runoff(grid_case):
     """Routing consumes volumes, so a RunoffGaussianGrid handed over as depths is switched, not silently wrong."""
     runoff = rr.RunoffGaussianGrid(grid_case['weights_file'], var_grid_runoff='ro', var_x='lon', var_y='lat')
     assert not runoff.as_volumes
-    rr.Router(grid_configs(grid_case, 'q_depths.nc'), runoff=runoff).route()
+    rr.Router(grid_configs(grid_case, 'q_depths.nc'), runoff=runoff).set_discharge_writer(writers.netcdf_writer).route()
     assert runoff.as_volumes
 
 
@@ -511,8 +523,8 @@ def dfs_ordered_tree(rng: np.random.Generator, n_rivers: int, n_outlets: int) ->
 @pytest.mark.parametrize('cumulative', [False, True])
 @pytest.mark.parametrize('force_positive', [False, True])
 def test_fused_grid_kernel_matches_aggregate_then_route(n_substeps, cumulative, force_positive):
-    """Aggregating and routing in one river-major pass must equal aggregating to vlateral and routing it."""
-    from river_route.router import _numba_kernels, _river_kernels
+    """Aggregating and routing in one pass must equal aggregating to a vlateral array and routing that."""
+    from river_route.router import _river_kernels
     from river_route.runoff import _numba_kernels as runoff_kernels
 
     rng = np.random.default_rng(3)
@@ -527,10 +539,6 @@ def test_fused_grid_kernel_matches_aggregate_then_route(n_substeps, cumulative, 
     c2 = ((dt_div_k + 2 * x) / denominator).astype(np.float32)
     c3 = ((2 * (1 - x) - dt_div_k) / denominator).astype(np.float32)
     c4_dt = ((c1 + c2) / dt_runoff).astype(np.float32)
-    has_downstream = downstream >= 0
-    downstream_c1 = np.where(has_downstream, c1[downstream], 0).astype(np.float32)
-    downstream_c2 = np.where(has_downstream, c2[downstream], 0).astype(np.float32)
-
     runoff_by_cell = rng.normal(RUNOFF_DEPTH, RUNOFF_DEPTH, (n_cells, n_steps)).astype(np.float32)
     if cumulative:
         runoff_by_cell = np.ascontiguousarray(np.cumsum(np.abs(runoff_by_cell), axis=1, dtype=np.float32))
@@ -554,29 +562,23 @@ def test_fused_grid_kernel_matches_aggregate_then_route(n_substeps, cumulative, 
         **aggregation,
     )
     q_expected = q_init.copy()
-    expected = np.empty((n_steps, n_rivers), dtype=np.float32)
-    _numba_kernels.static_vlateral(
+    expected = np.empty((n_rivers, n_steps), dtype=np.float32)
+    _river_kernels.static_vlateral(
         q_t=q_expected,
         discharge_array=expected,
         downstream_indices=downstream,
-        downstream_c1=downstream_c1,
-        downstream_c2=downstream_c2,
+        c1=c1,
+        c2=c2,
         c3=c3,
-        n_rivers=n_rivers,
-        n_steps=n_steps,
+        c4_dt=c4_dt,
         n_substeps=n_substeps,
         vlateral=vlateral,
-        c4_dt=c4_dt,
-        block_starts=np.array([0], np.int32),
-        block_stops=np.array([n_rivers], np.int32),
-        outlet=-1,
-        region=0,
-        cut_target=np.zeros(0, np.int32),
-        boundary=np.zeros((1, n_steps * n_substeps), np.float32),
+        by_river=False,
+        block=_river_kernels.BLOCK,
     )
 
     q_fused = q_init.copy()
-    fused = np.empty((n_steps, n_rivers), dtype=np.float32)
+    fused = np.empty((n_rivers, n_steps), dtype=np.float32)
     _river_kernels.static_grid(
         q_t=q_fused,
         discharge_array=fused,
@@ -616,7 +618,7 @@ def test_route_irregular_grid_falls_back_to_resampled_vlateral(grid_case, tmp_pa
     vlateral_file = tmp_path / 'vlateral_irregular.nc'
     prepare(grid_case, as_volumes=True).to_dataset(irregular).to_netcdf(vlateral_file)
 
-    shared = dict(params_file=str(grid_case['params_file']), routing_order='river', log=False, progress_bar=False)
+    shared = dict(params_file=str(grid_case['params_file']), log=False, progress_bar=False)
     from_grid = tmp_path / 'q_irregular_grid.nc'
     from_vlateral = tmp_path / 'q_irregular_vlateral.nc'
     rr.Router(
@@ -630,15 +632,17 @@ def test_route_irregular_grid_falls_back_to_resampled_vlateral(grid_case, tmp_pa
             var_y='lat',
             **shared,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     rr.Router(
         rr.Configs(
             forcing='vlateral', vlateral_files=[str(vlateral_file)], discharge_files=[str(from_vlateral)], **shared
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     with xr.open_dataset(from_grid) as a, xr.open_dataset(from_vlateral) as b:
-        assert a['Q'].shape == (7, N_RIVERS)
-        np.testing.assert_array_equal(a['Q'].values, b['Q'].values)
+        assert a['Q'].transpose('time', 'river_id').shape == (7, N_RIVERS)
+        np.testing.assert_array_equal(
+            a['Q'].transpose('time', 'river_id').values, b['Q'].transpose('time', 'river_id').values
+        )
 
 
 def test_nan_runoff_is_replaced_once_when_prepared(grid_case, tmp_path):

@@ -7,13 +7,14 @@ from pathlib import Path
 import river_route as rr
 
 if __name__ == '__main__':
+    # Amazon: 6020006540, Caribbean: 7020065090, Mississippi:
     parser = argparse.ArgumentParser()
     parser.add_argument('--region', default='6020006540')
     parser.add_argument('--regions-root', default=Path.home() / 'data' / 'v3TestData' / 'hydrography')
     parser.add_argument('--runoff-root', default=Path.home() / 'data' / 'era5_zarr_16x16_yearly')
     parser.add_argument('--dt-routing', type=int, default=3600)
     parser.add_argument('--network-conditioning', choices=('standard', 'stabilized'), default='standard')
-    parser.add_argument('--threads', type=int, default=12)
+    parser.add_argument('--threads', type=int, default=16)
     args = parser.parse_args()
 
     runoff_files = sorted(list(Path(args.runoff_root).glob('year=*/*.zarr')))
@@ -30,10 +31,9 @@ if __name__ == '__main__':
         discharge_files=null_outputs,
         forcing='vlateral',
         coeff='static',
-        routing_order='river',
+        discharge_dtype='float32',
         network_conditioning=args.network_conditioning,
         dt_routing=args.dt_routing,
-        runoff_processing_mode='sequential',
         var_grid_runoff='ro',
         var_x='longitude',
         var_y='latitude',

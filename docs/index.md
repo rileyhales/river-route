@@ -13,7 +13,6 @@ which together resolve to one compiled kernel.
 | `forcing`   | `'channel'` (channel routing only) or `'vlateral'` (route lateral inflow). One value only.                                             | `'channel'`  |
 | `transform` | `'uniform'` or `'unit_hydrograph'`. Only read when `forcing` is `'vlateral'`.                                                          | `'uniform'`  |
 | `network`   | `'standard'` (one reach per river).                                                                                                    | `'standard'` |
-| `routing_order` | `'time'` (every river per time step) or `'river'` (each river's whole series, several times faster). See [Routing Kernels](references/kernels.md). | `'river'` |
 
 An unimplemented combination raises `NotImplementedError` listing the ones that exist.
 

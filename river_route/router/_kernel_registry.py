@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..types import FloatArray
-from . import _numba_kernels as kernels
 from . import _river_kernels as river_kernels
 
 if TYPE_CHECKING:
@@ -17,40 +16,21 @@ if TYPE_CHECKING:
 
 __all__ = ['KERNEL_REGISTRY', 'resolve_kernel', 'dispatch', 'dispatch_grid']
 
-KERNEL_REGISTRY: dict[tuple[str, str, str, str, str], Callable[..., None]] = {}
+KERNEL_REGISTRY: dict[tuple[str, str, str, str], Callable[..., None]] = {}
 
 
-def _describe_kernel(coeff: str, forcing: str, transform: str, network_conditioning: str, routing_order: str) -> str:
-    return (
-        f'coeff={coeff}, forcing={forcing}, transform={transform}, network_conditioning={network_conditioning}, '
-        f'routing_order={routing_order}'
-    )
+def _describe_kernel(coeff: str, forcing: str, transform: str, network_conditioning: str) -> str:
+    return f'coeff={coeff}, forcing={forcing}, transform={transform}, network_conditioning={network_conditioning}'
 
 
-def register(
-    coeff: str,
-    forcing: str,
-    transform: str,
-    network_conditioning: str,
-    routing_order: str = 'time',
-    boundary_buffers: int = 1,
-):
-    """
-    Register the decorated function as the kernel-runner for one (coeff, forcing, transform, network_conditioning,
-    routing_order) combination.
-
-    ``boundary_buffers`` is how many (n_regions, n_routing_steps) arrays the kernel needs to hand each region's
-    outlet contribution to the sequential remainder. Static coefficients need one (the finished contribution);
-    dynamic coefficients need two, because the weights belong to the river being pushed into and are rebuilt
-    every substep, so the two discharges are handed over instead of the product.
-    """
-    key = (coeff, forcing, transform, network_conditioning, routing_order)
+def register(coeff: str, forcing: str, transform: str, network_conditioning: str):
+    """Register the decorated function as the kernel-runner for one (coeff, forcing, transform,
+    network_conditioning) combination."""
+    key = (coeff, forcing, transform, network_conditioning)
 
     def deco(run: Callable[..., None]):
         if key in KERNEL_REGISTRY:
             raise ValueError(f'Duplicate kernel registration for {_describe_kernel(*key)}')
-        run.boundary_buffers = boundary_buffers
-        run.routing_order = routing_order
         KERNEL_REGISTRY[key] = run
         return run
 
@@ -63,11 +43,9 @@ def _lookup_transform(forcing: str, transform: str) -> str:
     return 'uniform' if forcing == 'channel' else transform
 
 
-def resolve_kernel(
-    coeff: str, forcing: str, transform: str, network_conditioning: str, routing_order: str = 'time'
-) -> Callable[..., None]:
+def resolve_kernel(coeff: str, forcing: str, transform: str, network_conditioning: str) -> Callable[..., None]:
     """Look up the kernel-runner for a combination, or raise ``NotImplementedError`` listing what is implemented."""
-    key = (coeff, forcing, _lookup_transform(forcing, transform), network_conditioning, routing_order)
+    key = (coeff, forcing, _lookup_transform(forcing, transform), network_conditioning)
     kernel = KERNEL_REGISTRY.get(key)
     if kernel is None:
         available = '\n  '.join(sorted(_describe_kernel(*k) for k in KERNEL_REGISTRY))
@@ -101,12 +79,13 @@ def _check_kernel_arrays(
     substeps = router.substeps
     if substeps.shape[0] and (substeps.shape != (n_rivers,) or substeps.min() < 1):
         raise ValueError(f'substeps must be ({n_rivers},) counts of at least 1, or empty')
-    expected = {'q_t': ((n_states,), q_t.shape), 'discharge_array': ((n_steps, n_rivers), discharge_array.shape)}
+    expected = {'q_t': ((n_states,), q_t.shape), 'discharge_array': ((n_rivers, n_steps), discharge_array.shape)}
     if vlateral is not None:
         expected['vlateral'] = ((n_steps, n_rivers), vlateral.shape)
     for name, (want, got) in expected.items():
         if got != want:
             raise ValueError(f'{name} has shape {got}, expected {want} for {n_rivers} rivers and {n_steps} steps')
+    _check_discharge_dtype(discharge_array)
 
     per_river = {
         'downstream_indices': router.network.downstream_indices,
@@ -114,8 +93,6 @@ def _check_kernel_arrays(
         'c2': getattr(router, 'c2', None),
         'c3': getattr(router, 'c3', None),
         'c4_dt': getattr(router, 'c4_dt', None),
-        'downstream_c1': getattr(router, 'downstream_c1', None),
-        'downstream_c2': getattr(router, 'downstream_c2', None),
         'alpha': router.network.alpha,
         'beta': router.network.beta,
         'x': router.network.x,
@@ -125,6 +102,18 @@ def _check_kernel_arrays(
             raise ValueError(f'{name} has shape {array.shape}, expected ({n_rivers},)')
 
     _check_partition_arrays(router, n_rivers)
+    return
+
+
+def _check_discharge_dtype(discharge_array: FloatArray) -> None:
+    """
+    Check that the discharge array is one the kernels can store into: float32, or the uint16 bit patterns a narrowed
+    ``Configs.discharge_dtype`` fills, since numba has no float16 type. Router._discharge_buffer is what chooses
+    between them; this only catches an array that came from somewhere else, for which numba would compile a float
+    store as a numeric cast and silently write int(discharge).
+    """
+    if discharge_array.dtype not in (np.float32, np.uint16):
+        raise ValueError(f'discharge_array has dtype {discharge_array.dtype}, expected float32 or uint16')
     return
 
 
@@ -176,55 +165,37 @@ def dispatch(
         forcing=router.configs.forcing,
         transform=router.configs.transform,
         network_conditioning=router.configs.network_conditioning,
-        routing_order=router.configs.routing_order,
     )
     if router.configs.forcing == 'vlateral' and vlateral is None:
         raise ValueError('vlateral array must be provided for vlateral forcing')
     _check_kernel_arrays(router, q_t=q_t, discharge_array=discharge_array, vlateral=vlateral)
-    if vlateral is not None and kernel.routing_order == 'time':
-        vlateral = np.ascontiguousarray(vlateral)  # time order kernels read (time, river) rows in place
 
     forcing = {'vlateral': vlateral} if router.configs.forcing == 'vlateral' else {}
     _run_schedule(
-        router,
-        lambda **job: kernel(router, q_t=q_t, discharge_array=discharge_array, **forcing, **job),
-        kernel.boundary_buffers,
-        kernel.routing_order,
-        thread_pool,
+        router, lambda **job: kernel(router, q_t=q_t, discharge_array=discharge_array, **forcing, **job), thread_pool
     )
     return
 
 
-def _run_schedule(
-    router: Router,
-    run_pass: Callable[..., None],
-    boundary_buffers: int,
-    routing_order: str,
-    thread_pool: ThreadPoolExecutor | None,
-) -> None:
+def _run_schedule(router: Router, run_pass: Callable[..., None], thread_pool: ThreadPoolExecutor | None) -> None:
     """
     Run the Router's schedule: every region, concurrently on ``thread_pool`` when given, then the main stem, which
-    consumes the boundary buffers the regions filled.
+    consumes the boundary buffer the regions filled.
 
-    A time order buffer holds one value per routing step, and each region is its own pass. A river order buffer holds a
-    region outlet's whole series plus its initial state, and a river order pass takes many regions as blocks, each
-    with its own outlet, so the regions are packed longest first into one pass per thread. That keeps the per-pass
-    cost in Python and the buffers each pass allocates to once per thread rather than once per region.
+    A boundary row holds a region outlet's whole series plus its initial state. One pass takes many regions as
+    blocks, each with its own outlet, so the regions are packed longest first into one pass per thread. That keeps
+    the per-pass cost in python, and the buffers each pass allocates, to once per thread rather than once per region.
     """
     n_regions = len(router.routing_jobs) - 1
     n_routing_steps = router.num_runoff_steps * router.num_routing_steps_per_runoff
-    width = n_routing_steps + (1 if routing_order == 'river' else 0)
-    boundary = tuple(np.zeros((max(n_regions, 1), width), dtype=np.float32) for _ in range(boundary_buffers))
+    boundary = np.zeros((max(n_regions, 1), n_routing_steps + 1), dtype=np.float32)
     regions = router.routing_jobs[:-1]  # already ordered longest first by the Router
     stem_starts, stem_stops, _, _ = router.routing_jobs[-1]
-
-    if routing_order == 'river':
-        passes = _pack_regions(regions, router.threads if thread_pool is not None else 1)
-        stem = dict(block_outlet=np.full(stem_starts.shape[0], -1, dtype=np.int32))
-        stem['block_region'] = np.zeros(stem_starts.shape[0], dtype=np.int32)
-    else:
-        passes = [dict(block_starts=s, block_stops=e, outlet=o, region=r) for s, e, o, r in regions]
-        stem = dict(outlet=-1, region=0)
+    passes = _pack_regions(regions, router.threads if thread_pool is not None else 1)
+    stem = dict(
+        block_outlet=np.full(stem_starts.shape[0], -1, dtype=np.int32),
+        block_region=np.zeros(stem_starts.shape[0], dtype=np.int32),
+    )
 
     def run(job: dict) -> None:
         run_pass(cut_target=_NO_CUTS, boundary=boundary, **job)
@@ -276,13 +247,12 @@ def dispatch_grid(
     thread_pool: ThreadPoolExecutor | None = None,
 ) -> None:
     """
-    Aggregate gridded runoff and route it in river order with the fused kernel, which never builds a vlateral array,
-    concurrently across regions on ``thread_pool`` when given. Supports static coefficients on a standard network with
-    uniform lateral forcing only, on a standard or stabilized network; the Router chooses this path only for
-    routing_order='river' with that combination.
+    Aggregate gridded runoff and route it with the fused kernel, which never builds a vlateral array, concurrently
+    across regions on ``thread_pool`` when given. Supports static coefficients with uniform lateral forcing on a
+    standard or stabilized network; the Router chooses this path only for that combination.
     """
     _check_kernel_arrays(router, q_t=q_t, discharge_array=discharge_array, vlateral=None)
-    n_steps, n_rivers = discharge_array.shape
+    n_rivers, n_steps = discharge_array.shape
     grid = router.runoff
     if runoff.runoff_by_cell.ndim != 2 or runoff.runoff_by_cell.shape[1] < n_steps:
         raise ValueError(f'runoff_by_cell has shape {runoff.runoff_by_cell.shape}, expected (n_cells, >= {n_steps})')
@@ -315,125 +285,16 @@ def dispatch_grid(
             block=river_kernels.BLOCK,
             reach_indptr=router.reach_indptr,
             substeps=router.substeps,
-            **_river_pass(**job),
+            **job,
         )
 
-    _run_schedule(router, run_pass, 1, 'river', thread_pool)
+    _run_schedule(router, run_pass, thread_pool)
     return
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Kernel cells. Each runner reads persistent vectors off the router and takes the per-pass arrays as keywords.
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-@register('static', 'channel', 'uniform', 'standard')
-def static_channel(
-    r: Router,
-    *,
-    q_t: FloatArray,
-    discharge_array: FloatArray,
-    block_starts: FloatArray,
-    block_stops: FloatArray,
-    outlet: int,
-    region: int,
-    cut_target: FloatArray,
-    boundary: tuple[FloatArray, ...],
-) -> None:
-    kernels.static_channel(
-        block_starts=block_starts,
-        block_stops=block_stops,
-        outlet=outlet,
-        region=region,
-        cut_target=cut_target,
-        boundary=boundary[0],
-        q_t=q_t,
-        discharge_array=discharge_array,
-        downstream_indices=r.network.downstream_indices,
-        downstream_c1=r.downstream_c1,
-        downstream_c2=r.downstream_c2,
-        c3=r.c3,
-        n_rivers=r.network.river_ids.shape[0],
-        n_steps=r.num_runoff_steps,
-        n_substeps=r.num_routing_steps_per_runoff,
-    )
-
-
-@register('static', 'vlateral', 'uniform', 'standard')
-def static_vlateral(
-    r: Router,
-    *,
-    q_t: FloatArray,
-    discharge_array: FloatArray,
-    vlateral: FloatArray,
-    block_starts: FloatArray,
-    block_stops: FloatArray,
-    outlet: int,
-    region: int,
-    cut_target: FloatArray,
-    boundary: tuple[FloatArray, ...],
-) -> None:
-    kernels.static_vlateral(
-        block_starts=block_starts,
-        block_stops=block_stops,
-        outlet=outlet,
-        region=region,
-        cut_target=cut_target,
-        boundary=boundary[0],
-        q_t=q_t,
-        discharge_array=discharge_array,
-        downstream_indices=r.network.downstream_indices,
-        downstream_c1=r.downstream_c1,
-        downstream_c2=r.downstream_c2,
-        c3=r.c3,
-        n_rivers=r.network.river_ids.shape[0],
-        n_steps=r.num_runoff_steps,
-        n_substeps=r.num_routing_steps_per_runoff,
-        vlateral=vlateral,
-        c4_dt=r.c4_dt,
-    )
-
-
-@register('dynamic', 'vlateral', 'uniform', 'standard', boundary_buffers=2)
-def dynamic_vlateral(
-    r: Router,
-    *,
-    q_t: FloatArray,
-    discharge_array: FloatArray,
-    vlateral: FloatArray,
-    block_starts: FloatArray,
-    block_stops: FloatArray,
-    outlet: int,
-    region: int,
-    cut_target: FloatArray,
-    boundary: tuple[FloatArray, ...],
-) -> None:
-    kernels.dynamic_vlateral(
-        block_starts=block_starts,
-        block_stops=block_stops,
-        outlet=outlet,
-        region=region,
-        cut_target=cut_target,
-        boundary_old=boundary[0],
-        boundary_new=boundary[1],
-        q_t=q_t,
-        discharge_array=discharge_array,
-        downstream_indices=r.network.downstream_indices,
-        alpha=r.network.alpha,
-        beta=r.network.beta,
-        x=r.network.x,
-        dt_routing=np.float32(r.dt_routing),
-        dt_runoff=np.float32(r.dt_runoff),
-        n_rivers=r.network.river_ids.shape[0],
-        n_steps=r.num_runoff_steps,
-        n_substeps=r.num_routing_steps_per_runoff,
-        vlateral=vlateral,
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# River order kernel cells. The same pass contract as the time order cells, except that a region's boundary row holds
-# its outlet's whole series, so one buffer serves static and dynamic coefficients alike.
+# Kernel cells. Each runner reads persistent vectors off the router and takes the per-pass arrays as keywords. A
+# region's boundary row holds its outlet's whole series, so one buffer serves static and dynamic coefficients alike.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -448,13 +309,9 @@ def _river_layout(vlateral: FloatArray) -> tuple[FloatArray, bool]:
     return np.ascontiguousarray(vlateral), False
 
 
-def _river_pass(boundary: tuple[FloatArray, ...], **job) -> dict:
-    return dict(boundary=boundary[0], **job)
-
-
-@register('static', 'channel', 'uniform', 'stabilized', routing_order='river')
-@register('static', 'channel', 'uniform', 'standard', routing_order='river')
-def static_channel_river(r: Router, *, q_t: FloatArray, discharge_array: FloatArray, **job) -> None:
+@register('static', 'channel', 'uniform', 'stabilized')
+@register('static', 'channel', 'uniform', 'standard')
+def static_channel(r: Router, *, q_t: FloatArray, discharge_array: FloatArray, **job) -> None:
     river_kernels.static_channel(
         q_t=q_t,
         discharge_array=discharge_array,
@@ -466,15 +323,13 @@ def static_channel_river(r: Router, *, q_t: FloatArray, discharge_array: FloatAr
         block=river_kernels.BLOCK,
         reach_indptr=r.reach_indptr,
         substeps=r.substeps,
-        **_river_pass(**job),
+        **job,
     )
 
 
-@register('static', 'vlateral', 'uniform', 'stabilized', routing_order='river')
-@register('static', 'vlateral', 'uniform', 'standard', routing_order='river')
-def static_vlateral_river(
-    r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job
-) -> None:
+@register('static', 'vlateral', 'uniform', 'stabilized')
+@register('static', 'vlateral', 'uniform', 'standard')
+def static_vlateral(r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job) -> None:
     vlateral, by_river = _river_layout(vlateral)
     river_kernels.static_vlateral(
         q_t=q_t,
@@ -490,14 +345,12 @@ def static_vlateral_river(
         block=river_kernels.BLOCK,
         reach_indptr=r.reach_indptr,
         substeps=r.substeps,
-        **_river_pass(**job),
+        **job,
     )
 
 
-@register('dynamic', 'vlateral', 'uniform', 'standard', routing_order='river')
-def dynamic_vlateral_river(
-    r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job
-) -> None:
+@register('dynamic', 'vlateral', 'uniform', 'standard')
+def dynamic_vlateral(r: Router, *, q_t: FloatArray, discharge_array: FloatArray, vlateral: FloatArray, **job) -> None:
     vlateral, by_river = _river_layout(vlateral)
     river_kernels.dynamic_vlateral(
         q_t=q_t,
@@ -512,5 +365,5 @@ def dynamic_vlateral_river(
         vlateral=vlateral,
         by_river=by_river,
         block=river_kernels.BLOCK,
-        **_river_pass(**job),
+        **job,
     )

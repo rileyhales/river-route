@@ -45,7 +45,7 @@ class Configs:
     forcing: Literal['channel', 'vlateral'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
     network_conditioning: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
-    routing_order: Literal['time', 'river'] = 'river'  # sweep every river per step, or each river's whole series
+    discharge_dtype: Literal['float32', 'float16'] = 'float32'
 
     # Core Routing Files
     params_file: PathInput | None = None
@@ -61,7 +61,7 @@ class Configs:
     dt_runoff: int = 0
     start_datetime: str = '1970-01-01'
 
-    # For vlateral / runoff transformation - used by TransformMuskingum subclasses
+    # For vlateral / runoff transformation
     vlateral_files: PathList = field(default_factory=list)
     grid_runoff_files: PathList | None = field(default_factory=list)
     grid_weights_file: PathInput | None = None
@@ -89,6 +89,7 @@ class Configs:
     var_river_id: str = 'river_id'
     var_discharge: str = 'Q'
     var_grid_runoff: str = 'ro'
+    var_vlateral: str = 'vlateral'
     var_x: str = 'x'
     var_y: str = 'y'
     var_t: str = 'time'
@@ -248,7 +249,7 @@ class Configs:
             discharge_files = [os.path.join(d, f'discharge_{name}') for name in basenames]
         else:
             # Muskingum (no lateral inflow files)
-            discharge_files = [os.path.join(d, 'discharge.nc')]
+            discharge_files = [os.path.join(d, 'discharge.zarr')]
         object.__setattr__(self, 'discharge_files', discharge_files)
         return
 
@@ -285,6 +286,17 @@ class Configs:
             raise ValueError('params_file is required to route')
         if self._validated:
             return self
+        if (
+            self.discharge_dtype != 'float32'
+            and self.dt_discharge
+            and self.dt_runoff
+            and self.dt_discharge != self.dt_runoff
+        ):
+            raise ValueError(
+                f'discharge_dtype={self.discharge_dtype!r} cannot be averaged to dt_discharge={self.dt_discharge}'
+                f' from dt_runoff={self.dt_runoff}. Narrowed discharge is stored as bit patterns, which cannot be'
+                f' resampled. Use discharge_dtype="float32" or dt_discharge == dt_runoff.'
+            )
         self._verify_input_files_exist()
         self._verify_output_directories_exist()
         if self.forcing == 'channel':

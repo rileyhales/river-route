@@ -1,7 +1,8 @@
 import logging
 from collections.abc import Iterator
 from concurrent.futures import Executor
-from typing import Literal, NamedTuple, Self
+from dataclasses import KW_ONLY, dataclass, field, fields
+from typing import ClassVar, Literal, NamedTuple, Self
 
 import numpy as np
 import pandas as pd
@@ -26,9 +27,14 @@ class CellRunoff(NamedTuple):
     scale: FloatArray  # (n_rivers,) catchment areas that turn depths into volumes; EMPTY to keep depths
 
 
+@dataclass(eq=False, repr=False)
 class RunoffGaussianGrid(Runoff):
     """
     Prepares lateral inflow (vlateral) for routing from gridded runoff depths and a grid weight table.
+
+    Only ``grid_weights_file`` is required. Every option is named the same here as it is on ``Configs``, so
+    ``RunoffGaussianGrid.from_configs`` reads each one off a ``Configs`` by its own name, which is how a ``Router``
+    builds one.
 
     Reading and indexing the weight table is the same work for every runoff file, so it is done once when the
     RunoffGaussianGrid is created and reused for all of them. Each runoff file is read at the grid cells the table
@@ -36,89 +42,63 @@ class RunoffGaussianGrid(Runoff):
     C-order (time, river) array that the routing kernels read without a copy.
     """
 
-    # Weight table, in row order of the table which follows the routing params order
-    river_ids: IntArray  # (n_rivers,) river id of each vlateral column
-    x_index: IntArray  # (n_cells,) grid x index of each unique cell any catchment touches
-    y_index: IntArray  # (n_cells,) grid y index of each unique cell
-    indptr: IntArray  # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
-    cell: IntArray  # (n_weights,) position in x_index and y_index of the cell each weight applies to
-    proportion: FloatArray  # (n_weights,) share of the river's catchment area inside the cell
-    catchment_area: FloatArray  # (n_rivers,) total catchment area of each river in m²
+    grid_weights_file: PathInput  # weight table netCDF produced by ``river_route.runoff.grid_weights``
+    _: KW_ONLY
+    var_river_id: str = 'river_id'  # name of the river id variable in the weight table
+    var_grid_runoff: str = 'ro'  # name of the runoff variable in the gridded runoff files
+    var_x: str = 'x'  # name of the grid x coordinate variable
+    var_y: str = 'y'  # name of the grid y coordinate variable
+    var_t: str = 'time'  # name of the time coordinate variable
+    # ``incremental`` runoff per step, or ``cumulative`` totals to difference
+    grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
+    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
+    force_positive_runoff: bool = False  # clip negative runoff depths to zero
+    force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
+    as_volumes: bool = False  # prepare volumes (m3) instead of depths (m); routing always uses volumes
+
+    # Weight table read once by __post_init__, in row order of the table which follows the routing params order
+    river_ids: IntArray = field(init=False)  # (n_rivers,) river id of each vlateral column
+    x_index: IntArray = field(init=False)  # (n_cells,) grid x index of each unique cell any catchment touches
+    y_index: IntArray = field(init=False)  # (n_cells,) grid y index of each unique cell
+    # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
+    indptr: IntArray = field(init=False)
+    cell: IntArray = field(init=False)  # (n_weights,) position in x_index and y_index of the cell of each weight
+    proportion: FloatArray = field(init=False)  # (n_weights,) share of the river's catchment area inside the cell
+    catchment_area: FloatArray = field(init=False)  # (n_rivers,) total catchment area of each river in m²
+    _buffer: FloatArray = field(init=False)  # (time, n_rivers) reused output of vlateral(), grown to the longest file
 
     # Customizable/optimizable: 32 and 64 were benchmarked as near equivalents.
-    rivers_per_block: int = 64
-    _buffer: FloatArray  # (time, n_rivers) reused output of vlateral(), grown to the longest file seen
+    rivers_per_block: ClassVar[int] = 64
 
-    def __init__(
-        self,
-        grid_weights_file: PathInput,
-        *,
-        var_river_id: str = 'river_id',
-        var_grid_runoff: str = 'ro',
-        var_x: str = 'x',
-        var_y: str = 'y',
-        var_t: str = 'time',
-        grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental',
-        runoff_depth_unit: str | None = None,
-        force_positive_runoff: bool = False,
-        force_uniform_timesteps: bool = True,
-        as_volumes: bool = False,
-    ) -> None:
-        """
-        Build a RunoffGaussianGrid from the values it needs. ``RunoffGaussianGrid.from_configs`` builds the same thing
-        by reading these values off a ``Configs``, which is how a ``Router`` builds one.
-
-        Args:
-            grid_weights_file: weight table netCDF produced by ``river_route.runoff.grid_weights``
-            var_river_id: name of the river id variable in the weight table
-            var_grid_runoff: name of the runoff variable in the gridded runoff files
-            var_x: name of the grid x coordinate variable
-            var_y: name of the grid y coordinate variable
-            var_t: name of the time coordinate variable
-            grid_accumulation_type: ``incremental`` runoff per step, or ``cumulative`` totals to difference
-            runoff_depth_unit: unit of the runoff depths; None reads the file attributes, else meters
-            force_positive_runoff: clip negative runoff depths to zero
-            force_uniform_timesteps: resample runoff with irregular timesteps to the first timestep
-            as_volumes: prepare volumes (m3) instead of depths (m); routing always uses volumes
-        """
-        if grid_weights_file is None:
+    def __post_init__(self) -> None:
+        if self.grid_weights_file is None:
             raise ValueError('grid_weights_file is required to build a RunoffGaussianGrid')
-        self.var_runoff = var_grid_runoff
-        self.var_x = var_x
-        self.var_y = var_y
-        self.var_t = var_t
-        self.runoff_depth_unit = runoff_depth_unit
-        self.cumulative = grid_accumulation_type == 'cumulative'
-        self.force_positive_runoff = force_positive_runoff
-        self.force_uniform_timesteps = force_uniform_timesteps
-        self.as_volumes = as_volumes
-        self._read_weights(grid_weights_file, var_river_id)
+        self._read_weights()
         self._buffer = np.empty((0, self.river_ids.shape[0]), dtype=np.float32)
         return
+
+    @property
+    def var_runoff(self) -> str:
+        """The ``Runoff`` interface name for ``var_grid_runoff``, the runoff variable of the gridded files."""
+        return self.var_grid_runoff
+
+    @property
+    def cumulative(self) -> bool:
+        """Whether the runoff values are cumulative totals to difference rather than incremental per step."""
+        return self.grid_accumulation_type == 'cumulative'
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
         """Build a RunoffGaussianGrid from the runoff options on a ``Configs``. The configs are validated for runoff
-        before the weight table is read."""
+        before the weight table is read. Each option is read off the Configs by the field's own name, so a field with
+        no matching option raises AttributeError rather than silently keeping its default."""
         if not isinstance(configs, Configs):
             raise TypeError(
                 f'from_configs takes a Configs, got {type(configs).__name__}. '
                 f'Use Configs(...) or Configs.from_file(path).'
             )
         configs.validate_runoff()
-        return cls(
-            configs.grid_weights_file,
-            var_river_id=configs.var_river_id,
-            var_grid_runoff=configs.var_grid_runoff,
-            var_x=configs.var_x,
-            var_y=configs.var_y,
-            var_t=configs.var_t,
-            grid_accumulation_type=configs.grid_accumulation_type,
-            runoff_depth_unit=configs.runoff_depth_unit,
-            force_positive_runoff=configs.force_positive_runoff,
-            force_uniform_timesteps=configs.force_uniform_timesteps,
-            as_volumes=configs.as_volumes,
-        )
+        return cls(**{f.name: getattr(configs, f.name) for f in fields(cls) if f.init})
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}(n_rivers={self.river_ids.shape[0]}, n_cells={self.x_index.shape[0]})'
@@ -127,9 +107,10 @@ class RunoffGaussianGrid(Runoff):
     # Weight table
     ################################################
 
-    def _read_weights(self, grid_weights_file: PathInput, var_river_id: str) -> None:
-        """Read a weight table netCDF into the sparse arrays the aggregation kernel consumes."""
-        with xr.open_dataset(grid_weights_file) as ds:
+    def _read_weights(self) -> None:
+        """Read the weight table netCDF into the sparse arrays the aggregation kernel consumes."""
+        var_river_id = self.var_river_id
+        with xr.open_dataset(self.grid_weights_file) as ds:
             weight_df = ds[[var_river_id, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
         unique_indexes = (
             weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)

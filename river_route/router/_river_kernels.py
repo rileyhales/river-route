@@ -1,45 +1,113 @@
 import numba
 import numpy as np
+from llvmlite import ir
+from numba import types
+from numba.extending import intrinsic, overload
 
 from ..runoff._numba_kernels import aggregate_river
 
-__all__ = ['BLOCK', 'plan_inflow_rows', 'static_channel', 'static_vlateral', 'static_grid', 'dynamic_vlateral']
+__all__ = [
+    'BLOCK',
+    'TRANSPOSE_TILE',
+    'decode_discharge',
+    'to_time_major',
+    'plan_inflow_rows',
+    'static_channel',
+    'static_vlateral',
+    'static_grid',
+    'dynamic_vlateral',
+]
 
 BLOCK = 64  # rivers per block of the (time, river) transposes, the block size aggregate_to_rivers was tuned with
 
-# River order kernels: each river's whole time series is routed before the next river, instead of sweeping every river
-# once per time step as the time order kernels in _numba_kernels do. Selected with Configs(routing_order='river').
-#
-# Why it is faster. In DFS order a river's downstream is usually the next index, so the time order sweep is one chain
-# of dependent loads and stores: each iteration reads the value the previous one just added to. Muskingum couples a
-# river only to its upstreams at the same step and to itself at the previous step, so with every upstream index below
-# its downstream index the result is the same when rivers are routed one at a time:
-#
-#   Q_i(g) = c3_i Q_i(g-1) + c4dt_i vlateral_i(t) + c1_i U_i(g) + c2_i U_i(g-1),   U_i(g) = sum of upstream Q_u(g)
-#
-# where g counts routing steps and t is the runoff step that g falls in. Everything but c3_i Q_i(g-1) is known before
-# the step starts, and _recurrence advances it eight steps per serial multiply-add. The trade is that every step of a
-# river's forcing must be available when that river is routed.
-#
-# Passes. The network is routed in passes over blocks of rivers, the same partition the time order kernels use. A
-# region is a contiguous upstream-closed block; its outlet's whole unclamped series is written to its row of `boundary`
-# instead of an inflow row, so regions route concurrently. One pass may hold many regions as separate blocks, which
-# keeps per-pass overhead to once per thread. The main stem pass runs last and adds each boundary row in `cut_target`
-# into the inflow of the river it drains into before routing that river. One pass over the whole network with no
-# outlet and no cuts is the single threaded case.
-#
-# Inflow rows. U_i is accumulated in a row of `inflow` that river i's upstreams add their unclamped series into as they
-# are routed. Element 0 holds U_i(-1), the sum of the upstreams' initial states, and elements 1.. hold U_i(g). A row
-# is only live from when a river's first upstream is routed until the river itself is, so a small pool of rows sized
-# by plan_inflow_rows is reused rather than holding an (n_rivers, n_routing_steps) array. Two rows follow the pool: a
-# row of zeros that headwaters read as their inflow, and a sink that basin outlets write into.
-#
-# Layout. Rivers are handled in blocks so the (time, river) C-order arrays are read and written one short contiguous
-# run per time step rather than one strided element per river per step. Lateral inflow arrives one of three ways:
-#
-#   static_vlateral / dynamic_vlateral with by_river=False   (time, river) C-order, copied into a scratch block
-#   static_vlateral / dynamic_vlateral with by_river=True    (river, time) C-order, each river's row read in place
-#   static_grid                                               gridded runoff aggregated per block, no vlateral array
+# Discharge storage dtype. The routing math is always float32; only the stored copy is narrowed, so rounding never
+# feeds back into the recurrence. numba has no float16 type on the CPU, so a narrowed buffer is carried as uint16 bit
+# patterns the kernels fill through an LLVM fptrunc, and viewed as float16 by whoever reads it. float16 keeps 11
+# significand bits but only covers 6.1e-5 to 65,504, so it suits networks whose flows stay inside that range.
+
+
+@intrinsic
+def _f32_to_f16_bits(typingctx, x):
+    """float32 -> the 16 bits of its float16, as one native conversion instruction."""
+
+    def codegen(context, builder, signature, args):
+        return builder.bitcast(builder.fptrunc(args[0], ir.HalfType()), ir.IntType(16))
+
+    return types.uint16(types.float32), codegen
+
+
+def store_discharge(out, t, val):
+    """Store one float32 discharge value into out[t], narrowed to float16 bits when out is uint16."""
+    out[t] = val
+
+
+@overload(store_discharge, inline='always')
+def _store_discharge(out, t, val):
+    """
+    Compile the store for the dtype of the output array: a plain store for float, a narrowing one for uint16.
+
+    This dispatch is what keeps a narrowed buffer correct. numba would otherwise compile ``out[t] = val`` on a uint16
+    array as a NUMERIC cast, silently storing int(discharge).
+    """
+    if isinstance(out.dtype, types.Float):
+
+        def impl(out, t, val):
+            out[t] = val
+
+        return impl
+    if isinstance(out.dtype, types.Integer) and out.dtype.bitwidth == 16:
+
+        def impl(out, t, val):
+            out[t] = _f32_to_f16_bits(np.float32(val))
+
+        return impl
+    raise TypeError('discharge_array must hold float32, or uint16 for a narrowed dtype')
+
+
+def decode_discharge(stored):
+    """The stored discharge as the float dtype it holds: float32 passes through, uint16 is float16 bit patterns."""
+    return stored if stored.dtype == np.float32 else stored.view(np.float16)
+
+
+TRANSPOSE_TILE = 32  # rows and columns per tile of the discharge transpose, sized so a tile stays in cache
+
+
+@numba.njit(cache=True, nogil=True)
+def _transpose_tiles(by_river, out, tile):
+    """Copy a (river, time) array into a C-order (time, river) one, a square tile at a time."""
+    n_rivers, n_steps = by_river.shape
+    for r0 in range(0, n_rivers, tile):
+        r1 = min(r0 + tile, n_rivers)
+        for t0 in range(0, n_steps, tile):
+            t1 = min(t0 + tile, n_steps)
+            for t in range(t0, t1):
+                row = out[t]
+                for r in range(r0, r1):
+                    row[r] = by_river[r, t]
+
+
+def to_time_major(discharge_array):
+    """
+    A C-order (time, river) copy of a routed (river, time) discharge array, for a writer or consumer whose format
+    needs each time step's rivers contiguous.
+
+    The kernels always write (river, time), because that is the layout they solve in. Transposing is a scatter
+    however it is done, so this does it a tile at a time to keep both sides in cache rather than striding the whole
+    array per column. An array that is already the transpose of a C-order (time, river) buffer is returned as that
+    buffer's view, with nothing copied.
+    """
+    if discharge_array.T.flags.c_contiguous:
+        return discharge_array.T
+    by_river = np.ascontiguousarray(discharge_array)
+    n_rivers, n_steps = by_river.shape
+    out = np.empty((n_steps, n_rivers), dtype=by_river.dtype)
+    _transpose_tiles(by_river, out, TRANSPOSE_TILE)
+    return out
+
+
+# Routing kernels: each river's whole time series is routed before the next river. The recurrence they solve, how
+# passes and regions are scheduled, how inflow rows are pooled, and which layouts the lateral inflow may arrive in
+# are described in docs/references/kernels.md, under "How routing works".
 #
 # Inputs are NaN free: RunoffGaussianGrid and RunoffVlateral replace NaN with zero when they prepare the forcing.
 
@@ -143,15 +211,6 @@ def _read_block(vlateral, r0, r1, n_steps, scratch):
         source = vlateral[t]
         for b in range(r1 - r0):
             scratch[b, t] = source[r0 + b]
-
-
-@numba.njit(cache=True, nogil=True)
-def _write_block(out, r0, r1, discharge_array):
-    """Copy out rows into columns r0:r1 of the (time, river) discharge, one contiguous run per time step."""
-    for t in range(discharge_array.shape[0]):
-        destination = discharge_array[t]
-        for b in range(r1 - r0):
-            destination[r0 + b] = out[b, t]
 
 
 @numba.njit(cache=True, nogil=True, fastmath={'contract'})
@@ -272,7 +331,7 @@ def _route_static_river(
     if n_per_step == 1:
         for t in range(n_steps):
             val = work[t]
-            out[t] = val if val > zero else zero
+            store_discharge(out, t, val if val > zero else zero)
     else:
         inv_per_step = np.float32(1.0 / n_per_step)
         for t in range(n_steps):
@@ -280,7 +339,7 @@ def _route_static_river(
             for h in range(t * n_per_step, (t + 1) * n_per_step):
                 interval_sum += work[h]
             val = interval_sum * inv_per_step
-            out[t] = val if val > zero else zero
+            store_discharge(out, t, val if val > zero else zero)
     return
 
 
@@ -288,7 +347,7 @@ def _route_static_river(
 def _route_dynamic_river(q, alpha, beta, x, dt_routing, inv_dt_runoff, lateral, up, down, out, n_steps, n_substeps):
     """
     Nonlinear Muskingum for one river's whole series. The coefficients are rebuilt from the river's own discharge
-    every substep, as in _numba_kernels.dynamic_vlateral, and the upstream series is weighted by them.
+    every substep, and the upstream series is weighted by them.
     """
     zero = np.float32(0.0)
     qmin = np.float32(1e-6)
@@ -316,7 +375,7 @@ def _route_dynamic_river(q, alpha, beta, x, dt_routing, inv_dt_runoff, lateral, 
             g += 1
         val = interval_sum * inv_substeps
         # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
-        out[t] = val if val > zero else zero
+        store_discharge(out, t, val if val > zero else zero)
     return q
 
 
@@ -352,7 +411,6 @@ def _route_pass(
     cut_target,
     boundary,
     block,
-    discharge_by_river,
     reach_indptr,
     substeps,
 ):
@@ -362,15 +420,15 @@ def _route_pass(
     boundary row in ``cut_target`` is injected into its target river before that river is routed.
 
     ``lateral_source`` is 0 for none, 1 for (time, river) vlateral, 2 for (river, time) vlateral read in place, and 3
-    for gridded runoff aggregated per block. ``discharge_by_river`` means discharge_array is C-order (river, time) and
-    each river's series is written into its own row in place rather than transposed into (time, river) by block.
+    for gridded runoff aggregated per block. ``discharge_array`` is C-order (river, time): each river's series is
+    written into its own row in place.
 
     ``reach_indptr`` is empty on a standard network, where ``q_t`` holds one state per river. On a stabilized network
     river r is the static sub-reaches ``reach_indptr[r]:reach_indptr[r + 1]`` in series, and ``q_t`` holds one state
     per sub-reach. ``substeps`` is empty when no river is sub-cycled, and otherwise gives the steps each river takes
     per routing step.
     """
-    n_rivers, n_steps = discharge_array.shape if discharge_by_river else discharge_array.shape[::-1]
+    n_rivers, n_steps = discharge_array.shape
     n_routing = n_steps * n_substeps
     n_rows = plan_inflow_rows(downstream_indices, block_starts, block_stops, block_outlet, cut_target)
     first, span = _pass_span(block_starts, block_stops)
@@ -378,7 +436,6 @@ def _route_pass(
     cuts = _cuts_by_target(cut_target)
     next_cut = 0
     scratch = np.zeros((block if lateral_source in (0, 1, 3) else 0, n_steps), dtype=np.float32)
-    out = np.empty((0 if discharge_by_river else block, n_steps), dtype=np.float32)
     expanded = reach_indptr.shape[0] > 0
     cycled = substeps.shape[0] > 0
     most = substeps.max() if cycled else 1
@@ -418,7 +475,7 @@ def _route_pass(
                 else:
                     d = downstream_indices[r]
                     down = _downstream_row(d - first if d >= 0 else -1, inflow, slot_of, free, top)
-                series = discharge_array[r] if discharge_by_river else out[r - r0]
+                series = discharge_array[r]
                 lateral = vlateral[r] if lateral_source == 2 else scratch[r - r0]
                 if dynamic:
                     q_t[r] = _route_dynamic_river(
@@ -457,8 +514,6 @@ def _route_pass(
                         n_substeps,
                     )
                 _release_row(r - first, slot_of, free, top)
-            if not discharge_by_river:
-                _write_block(out, r0, r1, discharge_array)
     return
 
 
@@ -499,23 +554,12 @@ def _route(q_t, schedule: dict, **arguments) -> None:
         cut_target=schedule.get('cut_target', _NO_INTS),
         boundary=schedule.get('boundary', np.zeros((1, 0), dtype=np.float32)),
     )
-    discharge, by_river = _discharge_layout(arguments.pop('discharge_array'))
-    _route_pass(
-        q_t=q_t, discharge_array=discharge, discharge_by_river=by_river, **{**_UNUSED, **arguments}, **pass_arguments
-    )
-
-
-def _discharge_layout(discharge_array):
-    """
-    The array the kernel writes and whether it writes it by river. A (time, river) discharge array that is the
-    transpose of a C-order (river, time) buffer takes each river's series in place; a C-order (time, river) array is
-    written by block. Output is never copied, so any other layout is refused.
-    """
-    if discharge_array.flags.c_contiguous:
-        return discharge_array, False
-    if discharge_array.T.flags.c_contiguous:
-        return discharge_array.T, True
-    raise ValueError('discharge_array must be C-order (time, river) or the transpose of a C-order (river, time) array')
+    discharge = arguments.pop('discharge_array')
+    # each river's series is written into its own contiguous row, which is the layout the kernels solve in. Output
+    # is never copied, so any other layout is refused rather than transposed.
+    if not discharge.flags.c_contiguous:
+        raise ValueError('discharge_array must be a C-order (river, time) array')
+    _route_pass(q_t=q_t, discharge_array=discharge, **{**_UNUSED, **arguments}, **pass_arguments)
 
 
 def static_channel(

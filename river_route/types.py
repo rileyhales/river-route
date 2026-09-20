@@ -17,7 +17,8 @@ type VlateralGenerator = Generator[tuple[DatetimeArray, FloatArray, PathInput]]
 
 
 class WriteDischargesFn(Protocol):
-    """A discharge writer. It may also set ``discharge_layout = 'river'``; see river_route.router.writers."""
+    """A discharge writer. It is handed a C-order (river, time) array, the layout the kernels route in; see
+    river_route.router.writers."""
 
     def __call__(
         self,

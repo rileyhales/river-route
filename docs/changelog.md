@@ -4,6 +4,23 @@
 
 ### Unreleased
 
+- `RunoffGaussianGrid` is a dataclass. Its options are fields declared with their defaults and documented where
+  they are declared, so the constructor is a `__post_init__` that reads the weight table, and the call signature is
+  unchanged. Each field is named the same as the `Configs` option it comes from, so `from_configs` reads every one by
+  its own field name instead of listing them. `var_runoff` and `cumulative`, the names the `Runoff` base class uses,
+  are now properties derived from the `var_grid_runoff` and `grid_accumulation_type` fields rather than copies made in
+  the constructor. `rivers_per_block` is a class attribute, not a constructor argument, as before.
+- Added the `var_vlateral` config, the name of the lateral inflow variable in `vlateral_files`, default `vlateral`.
+  The name was read literally before, so a file that called it something else had to be rewritten to be routed.
+  `Runoff.to_netcdf` still writes `vlateral`, which is the name the file schema documents.
+- `RunoffVlateral` is a dataclass and names what it reads: `var_vlateral` and `var_t`, each defaulting to the name
+  the schema documents. It had no constructor before and read both names literally, which left the `var_runoff` and
+  `var_t` the `Runoff` base class declares unset on it. `var_runoff` is now a property over the `var_vlateral` field,
+  the same way `RunoffGaussianGrid` derives it from `var_grid_runoff`. `RunoffVlateral.from_configs` reads each field
+  off the `Configs` by its own name, and `Router` builds the reader for `vlateral_files` with it, or with a
+  `RunoffVlateral` given as `Router(configs, runoff=...)`, instead of a bare `RunoffVlateral()` that ignored both.
+  It does not call `Configs.validate_runoff`, which requires the `grid_weights_file` that routing from
+  `vlateral_files` does not use.
 - Added the `routing_order` config, `'river'` (the default) or `'time'` (the only order before). River order routes
   each river's whole time series before the next river, solving that series eight steps per serial operation, and is
   6 to 8 times faster than time order on one thread and on 12. It has static channel, static vlateral, and dynamic
@@ -11,9 +28,30 @@
   vlateral array. It routes concurrently on a `thread_pool` over the same regions as time order, packing the regions
   into one pass per thread. It reads vlateral in either `(time, river)` layout or, when handed the transpose of a
   `(river, time)` array, one contiguous row per river. See the new Routing Kernels reference.
-- A discharge writer may set `discharge_layout = 'river'` to be handed river order discharge as the transpose of a
-  `(river, time)` buffer, which river order writes without transposing. `zarr_writer` and `null_writer` declare it;
-  `netcdf_writer`, `parquet_writer`, and custom writers still receive C-order `(time, river)`.
+- A discharge writer is handed the routed discharge as a C-order `(river, time)` array, which is the layout the
+  kernels write in place, instead of the `(time, river)` array of earlier versions. `zarr_writer` and
+  `netcdf_writer` write it without transposing anything; `parquet_writer`, whose columns are time steps, transposes
+  it with `writers.to_time_major`, which a custom writer can call for the same reason. A custom writer that indexed
+  `discharge_array[time_index]` or built a frame with `index=dates` needs to transpose or be reindexed.
+- `zarr_writer` is now the default discharge writer, and both array formats store `(river_id, time)`: zarr as
+  chunks holding every time step of a block of rivers, netCDF as a variable dimensioned `(river_id, time)`. The
+  river dimension comes first because that is the layout the river order kernels write in place. On a year of the
+  Amazon this took a netCDF run from 7.87 s to 4.81 s with no change to the values, because the kernel no longer
+  transposes each block of rivers out into a `(time, river)` array. Anything reading these files by name, such as
+  `ds['Q'].transpose('time', 'river_id')`, is unaffected; anything assuming the axis order is not. `parquet_writer`
+  is unchanged: parquet is columnar, so its columns stay time steps and its rows stay rivers.
+- `zarr_writer` rounds discharge to `writers.ZARR_KEEPBITS` mantissa bits and compresses each chunk with
+  `writers.ZARR_COMPRESSOR`, Blosc lz4 with bitshuffle, where it wrote the values raw and uncompressed before. The
+  store is 2.71x smaller on a year of the Amazon and faster to write than the uncompressed one, since less of it
+  reaches the disk, at a relative error of at most `2^-13` per value. The rounding is done in numpy a chunk of
+  rivers at a time rather than by a zarr filter, so the array handed to the writer is never modified, and a
+  `float16` run is stored as it is because float16 holds fewer mantissa bits than the rounding keeps.
+- Added the `discharge_dtype` config, `'float32'` (the default) or `'float16'`, which narrows the discharge buffer
+  in memory. The routing math stays float32 and the channel state is never narrowed, so only the saved copy is
+  rounded, bounded by `2^-11` relative to each value. It needs `routing_order='river'` and cannot be combined with
+  a `dt_discharge` coarser than `dt_runoff`. zarr and parquet store float16 natively; netCDF has no half type, so
+  `netcdf_writer` widens to float32. float16 only covers 6.1e-5 to 65,504: on a year of the Amazon 0.07% of routed
+  values overflow to infinity on the main stem, so `route` warns whenever the option is used.
 - NaN runoff is set to zero once, when the cell series are prepared, instead of after each river's area weighted
   sum. A NaN cell now contributes nothing while the other cells of its catchment still count, where before the whole
   river got zero for that step. vlateral read from files has NaN set to zero too, so no routing kernel sees NaN. The
@@ -66,7 +104,7 @@
   `(dates, vlateral, source_file)` tuple per input and take only their input files, never a router or output paths.
 - Added `river_route.router.writers` with premade discharge writers for `Router.set_discharge_writer`:
   `netcdf_writer`, the
-  default, and `zarr_writer`, which writes uncompressed `(time, river_id)` discharge in chunks of 500 rivers that
+  default, and `zarr_writer`, which writes `(time, river_id)` discharge in chunks of 500 rivers that
   each span every time step, writing up to the `threads` given to `Router.route` chunks at once (optionally packed
   into shard files with `writers.ZARR_CHUNKS_PER_SHARD`), and `parquet_writer`, which writes one row per
   river and one column per time step, uncompressed and without dictionary encoding or statistics by default

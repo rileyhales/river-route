@@ -49,13 +49,13 @@ import river_route as rr
 
 def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file):
     # router: the Router doing the routing, which provides river_ids and the configs options
-    # dates: datetime array for routed discharge rows
-    # discharge_array: routed flows with shape (time, river_id)
+    # dates: datetime array for the columns of the discharge array
+    # discharge_array: routed flows, C-order with shape (river_id, time)
     # discharge_file: the path to the output file provided by your config file
     # runoff_file: the path to the runoff file used to produce this output, if you need it
 
     river_ids = router.network.river_ids
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+    df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=river_ids)
 
     # you probably want to include the member number in the output file name which could come from the discharge or runoff file
     member_number = os.path.basename(runoff_file)
@@ -70,8 +70,8 @@ def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_
 
     # continue with writing the full outputs
     ds_out = xr.Dataset(
-        data_vars={'Q': (('time', 'river_id'), discharge_array)},
-        coords={'time': pd.to_datetime(dates), 'river_id': river_ids}
+        data_vars={'Q': (('river_id', 'time'), discharge_array)},
+        coords={'river_id': river_ids, 'time': pd.to_datetime(dates)}
     )
     ds_out.to_netcdf(discharge_file)
     return

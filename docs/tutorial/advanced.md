@@ -35,7 +35,7 @@ graph TD
 ```
 
 `Router.route()` first validates the required config keys and inflow source for the selected
-`coeff`, `forcing`, `transform`, `network`, and `routing_order` before any routing data is read. It then builds its
+`coeff`, `forcing`, `transform`, and `network` before any routing data is read. It then builds its
 [`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
 vectors, and the concurrent routing partition, and derives the Muskingum coefficients from them. The
 numba kernel is resolved when it dispatches each routing pass (an unimplemented combination raises
@@ -88,9 +88,10 @@ m = rr.Router(configs).route()
 You can override the default function used by `river-route` when writing routed flows to disk.
 The default function, `river_route.router.writers.netcdf_writer`, writes discharge to netCDF.
 
-Premade writers are in `river_route.router.writers`. `zarr_writer` writes each output as an uncompressed zarr store with
-dimensions `(time, river_id)`, built to write as fast as possible. It writes up to the `threads` given to
-`Router.route` chunks at once. `parquet_writer` writes one row per river and one column per time step, with the
+Premade writers are in `river_route.router.writers`. `zarr_writer` writes each output as a zarr store with
+dimensions `(river_id, time)`, built to write as fast as possible. It writes up to the `threads` given to
+`Router.route` chunks at once, rounding each chunk to `writers.ZARR_KEEPBITS` mantissa bits and compressing it with
+`writers.ZARR_COMPRESSOR`. `parquet_writer` writes one row per river and one column per time step, with the
 pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
 
 ```python title="Write Routed Flows to Zarr"
@@ -112,8 +113,10 @@ Use the `set_discharge_writer` method to supply a custom writer function; it ret
 so you can chain it onto the constructor. The writer is called once per routed input file with 5 arguments:
 
 1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
-2. `dates`: datetime array for rows in the discharge array.
-3. `discharge_array`: routed discharge array with shape `(time, river_id)`.
+2. `dates`: datetime array for the columns of the discharge array.
+3. `discharge_array`: routed discharge array, C-order with shape `(river_id, time)`. The kernels route one river's
+   whole series at a time and write it into that river's row, so this is the layout every writer is handed. Use
+   `river_route.router.writers.to_time_major` if your format needs each time step's rivers contiguous instead.
 4. `discharge_file`: path to the output file.
 5. `runoff_file`: path to the runoff input used to produce this output.
 
@@ -128,7 +131,8 @@ import river_route as rr
 
 
 def custom_write_discharges(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.network.river_ids)
+    # discharge_array is (river_id, time), so transpose it for a frame indexed by time
+    df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=router.network.river_ids)
     df.to_parquet(discharge_file)
     return
 
@@ -172,7 +176,7 @@ import river_route as rr
 
 
 def save_partial_results(router, dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=router.network.river_ids)
+    df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=router.network.river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
     df.to_parquet(discharge_file)

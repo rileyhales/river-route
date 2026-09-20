@@ -1,11 +1,12 @@
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC, abstractclassmethod, abstractmethod
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from .._metadata import __version__
+from ..configs import Configs
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, VlateralGenerator
 
 __all__ = ['Runoff']
@@ -34,6 +35,12 @@ class Runoff(ABC):
     def reader(self, *args, **kwargs) -> VlateralGenerator:
         """
         Yield one (dates, vlateral, source_file) tuple per input.
+        """
+
+    @abstractclassmethod
+    def from_configs(cls, configs: Configs) -> Runoff:
+        """
+        Build a ``Runoff`` subclass from a ``Configs`` object.
         """
 
     def to_netcdf(self, path: PathInput, dates: DatetimeArray, vlateral: FloatArray, river_ids: IntArray) -> None:

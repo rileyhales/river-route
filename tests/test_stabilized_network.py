@@ -15,6 +15,7 @@ import xarray as xr
 from conftest import write_vlateral
 
 import river_route as rr
+from river_route.router import writers
 
 N_RIVERS = 300
 N_STEPS = 48
@@ -84,7 +85,6 @@ def configs(case: dict, out: Path, **kwargs) -> rr.Configs:
         channel_state_init_file=case['state_file'],
         discharge_files=[out],
         forcing='vlateral',
-        routing_order='river',
         dt_routing=DT,
         unstable_coefficients='ignore',
         log=False,
@@ -117,7 +117,7 @@ def sub_reach_case(case: dict) -> dict:
 
 def discharge(path: Path) -> np.ndarray:
     with xr.open_dataset(path) as ds:
-        return ds['Q'].values
+        return ds['Q'].transpose('time', 'river_id').values
 
 
 def test_stabilized_matches_sub_reaches_routed_as_rivers(case):
@@ -131,12 +131,12 @@ def test_stabilized_matches_sub_reaches_routed_as_rivers(case):
     final_expected = case['tmp_path'] / 'final_expected.parquet'
     rr.Router(
         configs({**case, **reference}, case['tmp_path'] / 'q_expected.nc', channel_state_final_file=final_expected)
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     final = case['tmp_path'] / 'final.parquet'
     router = rr.Router(
         configs(case, case['tmp_path'] / 'q.nc', network_conditioning='stabilized', channel_state_final_file=final)
     )
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
 
     np.testing.assert_array_equal(router.subdivisions, stable.subdivisions)
     expected = discharge(case['tmp_path'] / 'q_expected.nc')[:, stable.outlet_index]
@@ -151,7 +151,7 @@ def test_stabilized_matches_sub_reaches_routed_as_rivers(case):
 def test_stabilized_restarts_from_its_own_final_state(case):
     """Routing two halves through a per-sub-reach state file gives what one run over both gives."""
     whole = rr.Router(configs(case, case['tmp_path'] / 'q_whole.nc', network_conditioning='stabilized'))
-    whole.route()
+    whole.set_discharge_writer(writers.netcdf_writer).route()
 
     half = N_STEPS // 2
     first_file = case['tmp_path'] / 'first.nc'
@@ -167,7 +167,7 @@ def test_stabilized_restarts_from_its_own_final_state(case):
             network_conditioning='stabilized',
             channel_state_final_file=middle,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     assert pd.read_parquet(middle).shape[0] == int(whole.reach_indptr[-1])
     rr.Router(
         configs(
@@ -177,7 +177,7 @@ def test_stabilized_restarts_from_its_own_final_state(case):
             channel_state_init_file=middle,
             network_conditioning='stabilized',
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     joined = np.concatenate([discharge(case['tmp_path'] / 'q_first.nc'), discharge(case['tmp_path'] / 'q_second.nc')])
     expected = discharge(case['tmp_path'] / 'q_whole.nc')
     np.testing.assert_allclose(joined, expected, rtol=1e-5, atol=1e-5 * float(np.abs(expected).max()))
@@ -185,10 +185,10 @@ def test_stabilized_restarts_from_its_own_final_state(case):
 
 def test_stabilized_with_a_thread_pool_matches_single_threaded(case):
     single = rr.Router(configs(case, case['tmp_path'] / 'q_single.nc', network_conditioning='stabilized'))
-    single.route()
+    single.set_discharge_writer(writers.netcdf_writer).route()
     router = rr.Router(configs(case, case['tmp_path'] / 'q_threaded.nc', network_conditioning='stabilized'))
     with ThreadPoolExecutor(4) as pool:
-        router.route(thread_pool=pool, threads=4)
+        router.set_discharge_writer(writers.netcdf_writer).route(thread_pool=pool, threads=4)
     assert len(router.routing_jobs) > 2, 'the network should split into concurrent regions'
     expected = discharge(case['tmp_path'] / 'q_single.nc')
     np.testing.assert_allclose(
@@ -207,7 +207,7 @@ def test_standard_network_is_unchanged_by_the_option(case):
 
 
 def discharge_of(case: dict, name: str, **kwargs) -> np.ndarray:
-    rr.Router(configs(case, case['tmp_path'] / name, **kwargs)).route()
+    rr.Router(configs(case, case['tmp_path'] / name, **kwargs)).set_discharge_writer(writers.netcdf_writer).route()
     return discharge(case['tmp_path'] / name)
 
 
@@ -215,7 +215,7 @@ def test_stabilized_picks_the_largest_stable_dt(case):
     network = rr.Network(case['params_file'])
     assert network.largest_stable_dt(DT) == DT  # x = 0.2, so every river that is not too short can be split
     router = rr.Router(configs(case, case['tmp_path'] / 'q_auto.nc', network_conditioning='stabilized', dt_routing=0))
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
     assert router.dt_routing == DT
 
 
@@ -232,19 +232,14 @@ def test_largest_stable_dt_steps_down_when_a_window_holds_no_whole_count(tmp_pat
     assert not too_long.any() and not too_short.any()
 
 
-@pytest.mark.parametrize('routing_order,coeff', [('time', 'static'), ('river', 'dynamic')])
-def test_stabilized_needs_river_order_and_static_coefficients(case, routing_order, coeff):
+def test_stabilized_needs_static_coefficients(case):
     params = pd.read_parquet(case['params_file'])
     params['alpha'] = 1.0
     params['beta'] = 0.0
     params.to_parquet(case['params_file'], index=False)
-    router = rr.Router(
-        configs(
-            case, case['tmp_path'] / 'q.nc', network_conditioning='stabilized', routing_order=routing_order, coeff=coeff
-        )
-    )
+    router = rr.Router(configs(case, case['tmp_path'] / 'q.nc', network_conditioning='stabilized', coeff='dynamic'))
     with pytest.raises(NotImplementedError, match='network_conditioning=stabilized'):
-        router.route()
+        router.set_discharge_writer(writers.netcdf_writer).route()
 
 
 def test_network_conditioning_is_validated():
@@ -259,7 +254,7 @@ def write_params(path: Path, river_ids, next_river_ids, k, x) -> Path:
 
 def test_every_river_is_stable_once_conditioned(case):
     router = rr.Router(configs(case, case['tmp_path'] / 'q.nc', network_conditioning='stabilized'))
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
     assert router.substeps.shape[0] and router.substeps.max() > 1, 'some rivers should be sub-cycled'
     for name in ('c1', 'c2', 'c3'):
         assert getattr(router, name).min() >= -1e-6, f'{name} is negative for a conditioned river'
@@ -285,9 +280,11 @@ def test_sub_cycling_isolated_rivers_matches_routing_them_at_the_shorter_step(tm
     case = dict(params_file=params_file, vlateral_file=vlateral_file, state_file=state_file)
 
     router = rr.Router(configs(case, tmp_path / 'q_cycled.nc', network_conditioning='stabilized'))
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
     np.testing.assert_array_equal(router.substeps, 4)
-    rr.Router(configs(case, tmp_path / 'q_fine.nc', dt_routing=DT // 4)).route()
+    rr.Router(configs(case, tmp_path / 'q_fine.nc', dt_routing=DT // 4)).set_discharge_writer(
+        writers.netcdf_writer
+    ).route()
     expected = discharge(tmp_path / 'q_fine.nc')
     np.testing.assert_allclose(
         discharge(tmp_path / 'q_cycled.nc'), expected, rtol=1e-5, atol=1e-6 * float(np.abs(expected).max())
@@ -312,8 +309,10 @@ def test_sub_cycled_river_downstream_of_a_smooth_inflow_tracks_the_fine_step(tmp
 
     rr.Router(
         configs(case, tmp_path / 'q_cycled.nc', network_conditioning='stabilized', channel_state_init_file=None)
-    ).route()
-    rr.Router(configs(case, tmp_path / 'q_fine.nc', dt_routing=DT // 4, channel_state_init_file=None)).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
+    rr.Router(
+        configs(case, tmp_path / 'q_fine.nc', dt_routing=DT // 4, channel_state_init_file=None)
+    ).set_discharge_writer(writers.netcdf_writer).route()
     cycled = discharge(tmp_path / 'q_cycled.nc')[:, 1]
     fine = discharge(tmp_path / 'q_fine.nc')[:, 1]
     # the upstream river itself is routed at one hour in the first run and fifteen minutes in the second

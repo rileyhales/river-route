@@ -14,6 +14,7 @@ import xarray as xr
 from conftest import SyntheticNetwork, build_network, write_params, write_vlateral
 
 import river_route as rr
+from river_route.router import writers
 
 
 def route_vlateral(network: SyntheticNetwork, out_name: str = 'q.nc', threads: int = 1, **kwargs) -> np.ndarray:
@@ -23,11 +24,10 @@ def route_vlateral(network: SyntheticNetwork, out_name: str = 'q.nc', threads: i
     kwargs.setdefault('vlateral_files', [str(network.vlateral_file)])
     kwargs.setdefault('channel_state_init_file', str(network.state_file))
     kwargs.setdefault('dt_routing', network.dt_runoff)
-    rr.Router(rr.Configs(forcing='vlateral', discharge_files=[out], log=False, progress_bar=False, **kwargs)).route(
-        threads=threads
-    )
+    router = rr.Router(rr.Configs(forcing='vlateral', discharge_files=[out], log=False, progress_bar=False, **kwargs))
+    router.set_discharge_writer(writers.netcdf_writer).route(threads=threads)
     with xr.open_dataset(out) as ds:
-        return ds['Q'].values
+        return ds['Q'].transpose('time', 'river_id').values
 
 
 # ── numerics ────────────────────────────────────────────────────────────────
@@ -74,10 +74,10 @@ def test_channel_routing_decays_to_zero(tmp_path):
             log=False,
             progress_bar=False,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
 
     with xr.open_dataset(out) as ds:
-        q = ds['Q'].values
+        q = ds['Q'].transpose('time', 'river_id').values
     assert q.shape == (24 * 4, net.n_rivers)
     assert np.all(q >= 0)
     assert q[-1].sum() < q[0].sum()
@@ -104,7 +104,7 @@ def test_final_state_roundtrip(network: SyntheticNetwork):
             log=False,
             progress_bar=False,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
 
     state_between = network.path('state_between.parquet')
     rr.Router(
@@ -118,7 +118,7 @@ def test_final_state_roundtrip(network: SyntheticNetwork):
             log=False,
             progress_bar=False,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     rr.Router(
         rr.Configs(
             forcing='vlateral',
@@ -129,10 +129,15 @@ def test_final_state_roundtrip(network: SyntheticNetwork):
             log=False,
             progress_bar=False,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
 
     with xr.open_dataset(both[1]) as ds_all, xr.open_dataset(network.path('q_split_2.nc')) as ds_split:
-        np.testing.assert_allclose(ds_all['Q'].values, ds_split['Q'].values, rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(
+            ds_all['Q'].transpose('time', 'river_id').values,
+            ds_split['Q'].transpose('time', 'river_id').values,
+            rtol=1e-5,
+            atol=1e-6,
+        )
 
 
 def test_route_twice_is_repeatable(network: SyntheticNetwork):
@@ -148,9 +153,9 @@ def test_route_twice_is_repeatable(network: SyntheticNetwork):
             progress_bar=False,
         )
     )
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
     with xr.open_dataset(network.path('q_first.nc')) as ds:
-        first = ds['Q'].values.copy()
+        first = ds['Q'].transpose('time', 'river_id').values.copy()
 
     router.configs = rr.Configs(
         forcing='vlateral',
@@ -161,9 +166,9 @@ def test_route_twice_is_repeatable(network: SyntheticNetwork):
         log=False,
         progress_bar=False,
     )
-    router.route()
+    router.set_discharge_writer(writers.netcdf_writer).route()
     with xr.open_dataset(network.path('q_second.nc')) as ds:
-        second = ds['Q'].values
+        second = ds['Q'].transpose('time', 'river_id').values
 
     np.testing.assert_array_equal(first, second)
 
@@ -236,7 +241,7 @@ def test_dispatch_rejects_mismatched_arrays(network: SyntheticNetwork):
         dispatch(
             router,
             q_t=q_t,
-            discharge_array=np.zeros((4, network.n_rivers), dtype=np.float32),
+            discharge_array=np.zeros((network.n_rivers, 4), dtype=np.float32),
             vlateral=np.zeros((4, network.n_rivers), dtype=np.float32),
         )
 
@@ -255,7 +260,7 @@ def test_params_missing_column_raises(tmp_path):
                 log=False,
                 progress_bar=False,
             )
-        ).route()
+        ).set_discharge_writer(writers.netcdf_writer).route()
 
 
 def test_params_not_topologically_sorted_raises(tmp_path):
@@ -272,7 +277,7 @@ def test_params_not_topologically_sorted_raises(tmp_path):
                 log=False,
                 progress_bar=False,
             )
-        ).route()
+        ).set_discharge_writer(writers.netcdf_writer).route()
 
 
 # ── deep_validate: the file content checks, which only run when they are asked for ──
@@ -339,7 +344,9 @@ def test_route_does_not_deep_validate(tmp_path):
     net = build_network(tmp_path / 'net')
     bad = tmp_path / 'bad_x.parquet'
     write_params(bad, n_rivers=net.n_rivers, x=0.9)
-    rr.Router(configs_for_params(net, bad, unstable_coefficients='ignore')).route()
+    rr.Router(configs_for_params(net, bad, unstable_coefficients='ignore')).set_discharge_writer(
+        writers.netcdf_writer
+    ).route()
 
 
 def test_deep_validation_is_not_a_config(network: SyntheticNetwork):
@@ -367,7 +374,7 @@ def route_capturing_logs(net, log_file, **kwargs) -> str:
             progress_bar=False,
             **kwargs,
         )
-    ).route()
+    ).set_discharge_writer(writers.netcdf_writer).route()
     return log_file.read_text()
 
 
@@ -393,7 +400,7 @@ def test_unstable_coefficients_can_raise(tmp_path):
                 log=False,
                 progress_bar=False,
             )
-        ).route()
+        ).set_discharge_writer(writers.netcdf_writer).route()
 
 
 def test_stable_network_does_not_warn(tmp_path):
@@ -427,7 +434,7 @@ def test_invalid_threads_raise(network: SyntheticNetwork, threads):
         rr.Configs(params_file=str(network.params_file), discharge_files=[network.path('q.nc')], log=False)
     )
     with pytest.raises(ValueError, match='threads must be'):
-        router.route(threads=threads)
+        router.set_discharge_writer(writers.netcdf_writer).route(threads=threads)
 
 
 def test_threads_without_a_thread_pool_route_single_threaded(network: SyntheticNetwork):
@@ -452,13 +459,13 @@ def test_route_leaves_a_given_thread_pool_open(network: SyntheticNetwork):
         )
     )
     with ThreadPoolExecutor(2) as pool:
-        router.route(thread_pool=pool, threads=2)
+        router.set_discharge_writer(writers.netcdf_writer).route(thread_pool=pool, threads=2)
         assert pool.submit(lambda: 1).result() == 1
 
 
 def test_unknown_config_key_names_the_key(network: SyntheticNetwork):
     with pytest.raises(ValueError, match='Unrecognized config key'):
-        rr.Configs.from_mapping({'forcing': 'channel', 'params_file': str(network.params_file), 'var_vlateral': 'x'})
+        rr.Configs.from_mapping({'forcing': 'channel', 'params_file': str(network.params_file), 'not_an_option': 'x'})
 
 
 def test_unknown_config_key_suggests_a_close_match(network: SyntheticNetwork):
@@ -505,7 +512,7 @@ def test_configs_are_validated_once_when_routed(network: SyntheticNetwork):
         progress_bar=False,
     )
     assert not configs._validated
-    rr.Router(configs).route()
+    rr.Router(configs).set_discharge_writer(writers.netcdf_writer).route()
     assert configs._validated
     channel = rr.Configs(
         forcing='channel',
@@ -517,7 +524,7 @@ def test_configs_are_validated_once_when_routed(network: SyntheticNetwork):
         progress_bar=False,
     )
     with pytest.raises(ValueError, match='dt_routing is required for channel routing'):
-        rr.Router(channel).route()
+        rr.Router(channel).set_discharge_writer(writers.netcdf_writer).route()
 
 
 def test_example_config_template_loads(network: SyntheticNetwork, tmp_path):

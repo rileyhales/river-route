@@ -13,7 +13,7 @@ from ..network import Network
 from ..runoff import CellRunoff, Runoff, RunoffGaussianGrid, RunoffVlateral
 from ..types import DatetimeArray, FloatArray, IntArray, WriteDischargesFn
 from ._kernel_registry import dispatch, dispatch_grid
-from .writers import netcdf_writer
+from .writers import zarr_writer
 
 __all__ = ['Router']
 
@@ -24,20 +24,13 @@ class Router:
     - static or dynamic coefficients (e.g. muskingum vs muskingum-cunge style)
     - channel-only or volumetric lateral water inputs (forcing)
     - uniform or unit-hydrograph runoff transformation (transform)
-    - standard or stabilized networks (network_conditioning), where rivers too long for dt_routing are routed as
-      the fewest equal sub-reaches in series that are each stable
-
-    A Router owns one simulation: the coefficients derived from the network parameters and the time options, the
-    channel state, and the routing loop. The network itself -- the ids, the topology, the k and x vectors, the
-    concurrent partition, and the stability analysis over them -- belongs to ``Network``, which the Router holds
-    and reads through. That split is what makes the network work reusable: a Network parses and partitions a
-    parameter table once, and every simulation over it reuses the result.
+    - standard or stabilized networks forcing k and x within Muskingum valid ranges
     """
 
     configs: Configs
     logger: logging.Logger
     network: Network  # ids, topology, k, x, the partition, and the stability analysis
-    runoff: Runoff | None  # the weight table gridded runoff from the configs is aggregated with
+    runoff: Runoff  # the weight table gridded runoff from the configs is aggregated with
 
     # calculated muskingum coefficients - consumed by static kernels or modified by dynamic kernels
     c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
@@ -45,15 +38,11 @@ class Router:
     c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
     c4: FloatArray  # n x 1 - C4 values for each segment => f(k, x, dt_routing) - used if lateral inflow provided
     c4_dt: FloatArray  # n x 1 - c4 / dt_runoff, scales lateral inflow volumes to a rate
-    downstream_c1: FloatArray  # n x 1 - c1 of the downstream river, -1 positions left at zero
-    downstream_c2: FloatArray  # n x 1 - c2 of the downstream river, -1 positions left at zero
     subdivisions: IntArray  # n x 1 - equal sub-reaches each river is routed as, all 1 on a standard network
     reach_indptr: IntArray  # (n + 1,) offsets of each river's sub-reach states when stabilized, else empty
     substeps: IntArray  # n x 1 - steps each river takes per routing step when stabilized, else empty
 
-    # The schedule the kernels sweep, bound from the Network per route(). These are index ranges into the
-    # parameter table as given: no river vector is ever reordered and no forcing or discharge array is
-    # ever gathered.
+    # The parallelizable groups of rivers the kernels will solve
     routing_jobs: tuple[tuple[IntArray, IntArray, int, int], ...]  # (block_starts, block_stops, outlet, region)
     cut_target: IntArray  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
     threads: int = 1  # the threads passed to the most recent route(), read by writers such as zarr_writer
@@ -83,37 +72,36 @@ class Router:
                 object, so change them with ``Configs.replace`` and build a Router from the result.
             network: the network to route over. One is built from the params file the first time it is needed
                 when none is given, so pass one to reuse a parsed and partitioned network across Routers.
-            runoff: the RunoffGaussianGrid gridded runoff is aggregated with. One is built from the weight table the
-                first time it is needed when none is given, so pass one to reuse a read weight table, or to route
-                runoff a custom RunoffGaussianGrid prepares.
+            runoff: the Runoff the lateral inflow is prepared by. A RunoffGaussianGrid is built from the weight
+                table the first time it is needed when none is given, so pass one to reuse a read weight table, or
+                to route runoff a custom RunoffGaussianGrid prepares. Routing from vlateral_files reads them with a
+                RunoffVlateral given here, or with one built from the configs when none is.
         """
         if not isinstance(configs, Configs):
             raise TypeError('Router must be given an rr.Configs object')
         if not isinstance(network, Network) and network is not None:
             raise TypeError(f'network must be a Network or None, got {type(network).__name__}')
-        if not isinstance(runoff, RunoffGaussianGrid) and runoff is not None:
+        if not isinstance(runoff, Runoff) and runoff is not None:
             raise TypeError(f'runoff must be a RunoffGaussianGrid or None, got {type(runoff).__name__}')
 
         self.configs = configs
         self.network = network if network is not None else Network.from_configs(configs)
-        self.runoff = runoff
+        self.runoff = runoff if runoff is not None else Runoff.from_configs(configs)
 
         # configure logging - progress bar and info/debug logs are mutually exclusive
         self.logger = build_logger(self.configs, 'router')
         self.logger.debug('Logger initialized')
+        if self.configs.discharge_dtype == 'float16':
+            self.logger.warning('float16 max value is 65,504 m3 s-1, only use if your simulation is always below that')
 
         # default discharge writer; overridable via set_discharge_writer
-        self._discharge_writer = netcdf_writer
+        self._discharge_writer = zarr_writer
         self.reach_indptr = np.zeros(0, dtype=np.int64)
         self.substeps = np.zeros(0, dtype=np.int64)
         return
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}(params_file={self.configs.params_file!r})'
-
-    ################################################
-    # Initial and final state handling
-    ################################################
 
     def _read_initial_state(self) -> None:
         """Read the initial channel state from the config. Called on every route() so that repeated calls on
@@ -187,7 +175,7 @@ class Router:
         self.dt_routing = self.configs.dt_routing
         self.dt_total = self.configs.dt_total
         self.dt_discharge = self.configs.dt_discharge or self.dt_routing
-        self.dt_runoff = self.dt_discharge  # Assign to pass time validation. It is never used in channel routing
+        self.dt_runoff = self.dt_discharge  # Assigned to pass time validation. It is never used in channel routing
         self._validate_time_options()
         return
 
@@ -284,13 +272,6 @@ class Router:
             self.logger.debug(f'c3: {self.c3}')
             raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
 
-        # shuffling arrays to list coefficient of the downstream increases performance of kernel which can
-        # read sequentially when solving each river, rather than essentially randomly throughout the array
-        self.downstream_c1 = np.zeros(self.network.downstream_indices.shape[0], dtype=np.float32)
-        self.downstream_c2 = np.zeros(self.network.downstream_indices.shape[0], dtype=np.float32)
-        valid = self.network.downstream_indices >= 0
-        self.downstream_c1[valid] = self.c1[self.network.downstream_indices[valid]]
-        self.downstream_c2[valid] = self.c2[self.network.downstream_indices[valid]]
         self._fit_channel_state()
         return
 
@@ -372,7 +353,11 @@ class Router:
 
         total_files = len(self.configs.vlateral_files or self.configs.grid_runoff_files or [])
         if self.configs.vlateral_files:
-            runoff_iter = RunoffVlateral().reader(self.configs.vlateral_files)
+            # a RunoffVlateral given to the Router reads the vlateral files, so the names it was built with are used
+            vlateral = (
+                self.runoff if isinstance(self.runoff, RunoffVlateral) else RunoffVlateral.from_configs(self.configs)
+            )
+            runoff_iter = vlateral.reader(self.configs.vlateral_files)
         else:
             if self.runoff is None:
                 self.runoff = RunoffGaussianGrid.from_configs(self.configs)
@@ -431,14 +416,27 @@ class Router:
                 self._ensemble_member_states.append(q_t.copy())
 
             if self.dt_discharge > self.dt_runoff:
+                # todo support a coarser dt_discharge with a narrowed discharge_dtype. Nothing makes this impossible:
+                # numpy cannot mean the uint16 bit patterns, but decoding a block of rivers at a time the way
+                # netcdf_writer widens would work, and reducing inside the kernel would work better still. The kernel
+                # already narrows on store through the _f32_to_f16_bits intrinsic, and the widening mirror of it
+                # (bitcast i16 -> half, fpext half -> float) is known to compile. Reducing there also drops this
+                # resample pass and sizes the buffer to the output: 0.44 GB rather than 10.6 GB for a year of hourly
+                # routing on the Amazon, where the reshape-and-mean below costs 3.8 to 5.1 s on its own.
+                if self.configs.discharge_dtype != 'float32':
+                    raise ValueError(
+                        f'discharge_dtype={self.configs.discharge_dtype!r} cannot be averaged from '
+                        f'dt_runoff={self.dt_runoff} to dt_discharge={self.dt_discharge}: narrowed discharge is '
+                        f'stored as bit patterns. Use discharge_dtype="float32" or dt_discharge == dt_runoff.'
+                    )
                 self.logger.debug('Resampling dates and discharges to specified timestep')
                 q_array = q_array.reshape(
                     (
+                        self.network.river_ids.shape[0],
                         int(self.dt_total / self.dt_discharge),
                         int(self.dt_discharge / self.dt_runoff),
-                        self.network.river_ids.shape[0],
                     )
-                ).mean(axis=1)
+                ).mean(axis=2)
                 dates = dates[:: self.num_runoff_steps_per_discharge]
 
             self.logger.debug('Writing Discharge Array to File')
@@ -450,17 +448,11 @@ class Router:
         return
 
     def _discharge_buffer(self) -> FloatArray:
-        """
-        A zeroed (time, river) array for the routed discharge. River order kernels write each river's series in place
-        when the array is the transpose of a C-order (river, time) buffer, which skips transposing into (time, river),
-        so that layout is used whenever the discharge writer declares ``discharge_layout = 'river'`` (it reads that
-        layout at least as fast). Otherwise, and always for time order, the array is C-order (time, river).
-        """
-        shape = (self.num_runoff_steps, self.network.river_ids.shape[0])
-        river_layout = getattr(self._discharge_writer, 'discharge_layout', 'time') == 'river'
-        if self.configs.routing_order == 'river' and river_layout:
-            return np.zeros(shape[::-1], dtype=np.float32).T
-        return np.zeros(shape, dtype=np.float32)
+        """A zeroed C-order (river, time) array for the routed discharge."""
+        n_rivers = self.network.river_ids.shape[0]
+        # numba has no float16 type, using uint16 to store bit patterns is a workaround.
+        dtype = np.uint16 if self.configs.discharge_dtype == 'float16' else np.float32
+        return np.zeros((n_rivers, self.num_runoff_steps), dtype=dtype)
 
     def _fuses_grid_runoff(self) -> bool:
         """
@@ -469,8 +461,7 @@ class Router:
         coefficients on a standard network with uniform lateral forcing, so every other combination aggregates first.
         """
         return (
-            self.configs.routing_order == 'river'
-            and self.configs.coeff == 'static'
+            self.configs.coeff == 'static'
             and self.configs.transform == 'uniform'
             and self.configs.network_conditioning in ('standard', 'stabilized')
         )
