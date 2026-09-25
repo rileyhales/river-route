@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,8 @@ from .._metadata import __version__
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 
 if TYPE_CHECKING:
-    from ..network import Network
+    from ..configs.Configs import Configs
+    from ..network.Network import Network
 
 __all__ = ['Runoff', 'CATCHMENT_RUNOFF', 'CATCHMENT_AREA', 'VOLUME_UNITS']
 
@@ -25,25 +26,24 @@ logger = logging.getLogger(__name__)
 class Runoff(ABC):
     """
     Base class for the sources of catchment runoff, the runoff volume of each catchment before it is transformed into
-    lateral inflow to its river. Each subclass provides a ``reader`` that yields its catchment runoff arrays, and every
-    subclass writes them to disk with ``to_netcdf`` in the one format ``CatchmentRunoff`` reads.
+    lateral inflow to its river. Each subclass is built from a Configs with ``from_configs`` and provides a
+    ``generator`` that yields its runoff in the form routing reads, and every subclass writes catchment runoff to disk
+    with ``to_netcdf`` in the one format ``CatchmentRunoff`` reads.
     """
 
-    var_runoff: str
-    var_x: str
-    var_y: str
-    var_t: str
-    runoff_depth_unit: str | None
-    cumulative: bool
-    force_positive_runoff: bool
-    force_uniform_timesteps: bool
     as_volumes: bool = True  # whether the arrays are volumes (m³) rather than depths (m)
+
+    @classmethod
+    @abstractmethod
+    def from_configs(cls, configs: Configs) -> Self:
+        """Build this Runoff from the options on a Configs, as a Router does when it is not given one."""
 
     @abstractmethod
     def generator(self, runoff_files: PathList) -> RunoffGenerator:
         """
-        Yield one (dates, forcing, source_file) tuple per input, where forcing is what this class's routing kernel
-        reads: a C-order (n_rivers, time) catchment runoff array, or a form its kernel aggregates while it routes.
+        Yield one (dates, runoff, source_file) tuple per input, where runoff is what routing reads: its
+        CatchmentRunoffVolumes, or a GridCellRunoff that routing aggregates as it routes. Each checks its own arrays
+        with ``check`` and gives the runoff of its first steps with ``first_steps``.
         """
 
     def distribute(self, network: Network) -> None:
@@ -127,18 +127,16 @@ class Runoff(ABC):
 
     @staticmethod
     def _cumulative_to_incremental(df: pd.DataFrame) -> pd.DataFrame:
-        return pd.DataFrame(
-            np.vstack([df.values[0, :], np.diff(df.values, axis=0)]), index=df.index, columns=df.columns
-        )
+        values = df.to_numpy()
+        return pd.DataFrame(np.vstack([values[:1], np.diff(values, axis=0)]), index=df.index, columns=df.columns)
 
     @staticmethod
-    def _get_conversion_factor(unit: str | None) -> int | float:
+    def _get_conversion_factor(unit: str | None) -> float:
         if unit is None:
             logger.warning('No units attribute found. Assuming meters')
             return 1
         if unit in ('m', 'meters', 'kg m-2'):
             return 1
-        elif unit in ('mm', 'millimeters'):
+        if unit in ('mm', 'millimeters'):
             return 0.001
-        else:
-            raise ValueError(f'Unknown units: {unit}')
+        raise ValueError(f'Unknown units: {unit}')

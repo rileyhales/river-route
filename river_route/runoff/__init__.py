@@ -1,5 +1,5 @@
-from .CatchmentRunoff import CatchmentRunoff
-from .GaussianGridRunoff import CellRunoff, GaussianGridRunoff
+from .CatchmentRunoff import CatchmentRunoff, CatchmentRunoffVolumes
+from .GaussianGridRunoff import GaussianGridRunoff, GridCellRunoff
 from .ReducedGaussianGridRunoff import ReducedGaussianGridRunoff
 from .Runoff import Runoff
 from .weights import (
@@ -9,8 +9,8 @@ from .weights import (
     voronoi_diagram_from_regular_xy,
 )
 
-# the Runoff class that reads each Configs runoff_type
-RUNOFF_CLASS_FOR_RUNOFF_TYPE: dict[str, type[Runoff]] = {
+# the Runoff class that reads each Configs runoff_type, which Configs requires whenever forcing is runoff
+RUNOFF_CLASS_FOR_RUNOFF_TYPE: dict[str | None, type[Runoff]] = {
     'catchment': CatchmentRunoff,
     'gaussian_grid': GaussianGridRunoff,
     'reduced_gaussian_grid': ReducedGaussianGridRunoff,
@@ -18,7 +18,8 @@ RUNOFF_CLASS_FOR_RUNOFF_TYPE: dict[str, type[Runoff]] = {
 
 __all__ = [
     'RUNOFF_CLASS_FOR_RUNOFF_TYPE',
-    'CellRunoff',
+    'CatchmentRunoffVolumes',
+    'GridCellRunoff',
     'Runoff',
     'CatchmentRunoff',
     'GaussianGridRunoff',

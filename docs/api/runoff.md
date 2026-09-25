@@ -19,8 +19,9 @@ Every class subclasses the abstract `Runoff`, whose `to_netcdf` writes a catchme
 routed later with `runoff_type` catchment. Routing the grids directly is faster, because the aggregation then happens
 inside the routing kernel.
 
-Each class has a `reader` method that yields one `(dates, catchment_runoff, source_file)` tuple per input,
-so it can be used on its own or by a `Router`. See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
+Each class has a `generator` method that yields one `(dates, runoff, source_file)` tuple per input, with the runoff
+in the form routing reads: `CatchmentRunoffVolumes`, or a `GridCellRunoff` that routing
+aggregates as it routes. It can be used on its own or by a `Router`. See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
 
 ```python
 import river_route as rr

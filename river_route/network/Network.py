@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from ..configs import Configs
-from ..types import FloatArray, IntArray, PathInput
+from ..types import Float64Array, FloatArray, Int32Array, IntArray, PathInput
 from . import streams
 
 __all__ = ['Network', 'PARAMETER_DTYPES']
@@ -36,12 +36,14 @@ class Network:
     When instantiating this class, the network's parameters parquet file are eagerly read and the connectivity is set.
     This may make instantiation have a small but non-negligible time cost.
     """
+
     # inputs files
     params_file: PathInput | None  # the parquet file the vectors were read from, None when given a DataFrame
 
     # the contents of the parameter table
     _df: pd.DataFrame
-    _schedules: dict[int, tuple[tuple, IntArray]]  # threads -> (routing_jobs, cut_target)
+    downstream_indices: Int32Array  # (n,) index of each river's downstream river, -1 at a basin outlet
+    _schedules: dict[int, tuple[tuple, Int32Array]]  # threads -> (routing_jobs, cut_target)
 
     @property
     def size(self) -> int:
@@ -80,7 +82,7 @@ class Network:
         return self._df['parent_river_id'].to_numpy() if 'parent_river_id' in self._df.columns else None
 
     @property
-    def groups(self) -> IntArray | None:
+    def groups(self) -> Int32Array | None:
         return self._df['group'].to_numpy() if 'group' in self._df.columns else None
 
     @property
@@ -119,7 +121,7 @@ class Network:
         return cls(configs.params_file)
 
     def __repr__(self) -> str:
-        return f'{type(self).__name__}(n_rivers={len(self):,}, params_file={self.params_file!r})'
+        return f'{type(self).__name__}(n_rivers={self.size:,}, params_file={self.params_file!r})'
 
     ################################################
     # Reading the parameter table
@@ -128,20 +130,24 @@ class Network:
     def set_connectivity(self) -> None:
         """Build the index vectors describing network connectivity from river_ids and next_river_ids"""
         n = self.river_ids.shape[0]
+        table = self.params_file or 'the parameter table'
 
         # The lookup is a hash join, not a row at a time dict lookup: at several million rivers the loop it
-        # replaces is most of the cost of building a Network. _set_vectors has already rejected duplicate river
-        # ids, which is what get_indexer needs to resolve every id to exactly one row.
+        # replaces is most of the cost of building a Network. get_indexer needs unique ids to resolve every id to
+        # exactly one row, so duplicates are refused first.
+        river_index = pd.Index(self.river_ids)
+        if not river_index.is_unique:
+            raise ValueError(f'{table} has duplicate river_id values')
         has_downstream = self.next_river_ids != -1
         upstream_idx = np.flatnonzero(has_downstream)
-        downstream_idx = pd.Index(self.river_ids).get_indexer(self.next_river_ids[has_downstream])
+        downstream_idx = river_index.get_indexer(self.next_river_ids[has_downstream])
 
         missing = downstream_idx < 0  # get_indexer returns -1 for an id that is not in the river_id column
         if missing.any():
             unknown = self.next_river_ids[has_downstream][missing]
-            raise ValueError(f'{self.params_file} next_river_id {unknown[0]} is not in the river_id column')
+            raise ValueError(f'{table} next_river_id {unknown[0]} is not in the river_id column')
         if np.any(downstream_idx <= upstream_idx):
-            raise ValueError(f'{self.params_file} must be topologically sorted upstream to downstream')
+            raise ValueError(f'{table} must be topologically sorted upstream to downstream')
 
         # 1D array giving the index of the downstream river in the parameter arrays, -1 if none downstream
         self.downstream_indices = np.full(n, -1, dtype=np.int32)
@@ -152,10 +158,10 @@ class Network:
     # Concurrent routing schedule
     ################################################
 
-    def routing_schedule(self, threads: int = 1, concurrent: bool = True) -> tuple[tuple, IntArray]:
+    def routing_schedule(self, threads: int = 1, concurrent: bool = True) -> tuple[tuple, Int32Array]:
         """
-        Build the list of index ranges the kernels sweep. Derived once per thread count and cached, so repeated
-        simulations over this network never rebuild the partition.
+        Build the index ranges of the rivers each routing pass routes. Derived once per thread count and cached, so
+        repeated simulations over this network never rebuild the partition.
 
         The parameter table is always used in the order it is given. Nothing in the routing path reorders a river,
         so the forcing, the state and the routed discharge stay in parameter file order from end to end. Threaded
@@ -188,9 +194,9 @@ class Network:
             return single
 
         downstream_index = self.downstream_indices.astype(np.int64)
-        if self.groups is None:
-            self._df['group'] = self.recommend_compute_groups().astype(np.int32)
         region = self.groups
+        if region is None:
+            region = self._df['group'] = self.recommend_compute_groups().astype(np.int32)
         layout = streams.regions_to_layout(region, downstream_index)
 
         n_regions = layout['n_regions']
@@ -218,7 +224,7 @@ class Network:
     # Muskingum stability
     ################################################
 
-    def stability_window(self, subdivisions: IntArray | None = None) -> tuple[FloatArray, FloatArray]:
+    def stability_window(self, subdivisions: IntArray | None = None) -> tuple[Float64Array, Float64Array]:
         """
         The inclusive range of routing time steps each river is Muskingum-stable over, ``(2*k*x, 2*k*(1-x))``.
         A river is stable for dt exactly when ``dt`` falls inside its own window. With ``subdivisions`` the window
@@ -227,7 +233,7 @@ class Network:
         k = self.k.astype(np.float64)
         x = self.x.astype(np.float64)
         if subdivisions is not None:
-            k = k / subdivisions
+            k /= subdivisions
         return 2 * k * x, 2 * k * (1 - x)
 
     def unstable_mask(
@@ -324,22 +330,11 @@ class Network:
         period = int(period)
         if period <= 0:
             raise ValueError(f'period must be a positive integer, got {period}')
-        for dt in streams._divisors(period)[::-1]:
+        for dt in streams.divisors_of(period)[::-1]:
             _, _, resolvable = self.conditioning(float(dt))
             if resolvable.all():
                 return int(dt)
         return 1
-
-    def substeps_required(self, dt: float) -> IntArray:
-        """
-        How many times each river would have to be sub-cycled within ``dt`` for its own step to fall inside its
-        stability window. 1 means the river needs no temporal refinement. ``substeps`` gives the counts
-        ``Configs(network_type='stabilized')`` routes with.
-        """
-        _, upper = self.stability_window()
-        with np.errstate(divide='ignore', invalid='ignore'):
-            needed = np.ceil(np.where(upper > 0, dt / upper, np.inf))
-        return np.maximum(1, np.nan_to_num(needed, nan=1.0, posinf=np.iinfo(np.int32).max)).astype(np.int64)
 
     def check_stability(
         self,
@@ -369,7 +364,7 @@ class Network:
         if n_long == 0 and n_short == 0:
             return
         message = (
-            f'{n_long + n_short} of {len(self)} rivers are not Muskingum-stable for dt_routing={dt} s ({n_long} need '
+            f'{n_long + n_short} of {self.size} rivers are not Muskingum-stable for dt_routing={dt} s ({n_long} need '
             f'a larger dt_routing, {n_short} need a smaller one). Stability requires 2*k*x <= dt_routing <= '
             f'2*k*(1-x) for every river. Routed discharge for these rivers oscillates and negative values are clamped '
             f'to zero, which does not conserve mass. Use Network.unstable_mask to inspect the network or '
@@ -508,14 +503,17 @@ class Network:
             Path: the file written
         """
         if path is None:
+            if self.params_file is None:
+                raise ValueError('this Network was built from a DataFrame, so write_stabilized needs a path')
             params_file = Path(self.params_file)
             path = params_file.with_name(f'{params_file.stem}_stabilized{dt:g}.parquet')
         path = Path(path)
-        self.stabilize(dt, mode=mode, weights=weights).to_parquet().to_parquet(path, index=False)
+        self.stabilize(dt, mode=mode, weights=weights)
+        _enforce_dtypes(self._df).to_parquet(path, index=False)
         return path
 
     @staticmethod
-    def _pieces_at_target(k: FloatArray, k_hi: FloatArray, k_lo: FloatArray, n_sub: IntArray) -> FloatArray:
+    def _pieces_at_target(k: Float64Array, k_hi: Float64Array, k_lo: Float64Array, n_sub: IntArray) -> Float64Array:
         """
         Pieces of the largest stable travel time with the leftover as a shorter final piece.
 
@@ -532,7 +530,8 @@ class Network:
         even_out = np.repeat((k - (n_sub - 1) * np.where(np.isfinite(k_hi), k_hi, 0.0)) < k_lo, n_sub)
         return np.where(even_out, np.repeat(k / n_sub, n_sub), packed)
 
-    def _pieces_from_weights(self, weights: list, k: FloatArray) -> tuple[IntArray, FloatArray]:
+    @staticmethod
+    def _pieces_from_weights(weights: list, k: Float64Array) -> tuple[IntArray, Float64Array]:
         """Apportion each river's k over an explicit sequence of relative lengths."""
         n_rivers = k.shape[0]
         if len(weights) != n_rivers:

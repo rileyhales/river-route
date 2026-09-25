@@ -204,8 +204,8 @@ def zarr_writer(
                 with ThreadPoolExecutor(router.threads) as pool:
                     list(pool.map(write_chunk, starts))  # list() so a worker exception propagates
             else:
-                for r0 in starts:
-                    write_chunk(r0)
+                for chunk_start in starts:
+                    write_chunk(chunk_start)
         time_var = group.create_array(
             'time',
             shape=(n_steps,),

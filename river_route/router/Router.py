@@ -1,6 +1,7 @@
-import datetime
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
+from types import ModuleType
 from typing import Self
 
 import numpy as np
@@ -10,12 +11,16 @@ from tqdm import tqdm
 from .._logging import PROGRESS, build_logger
 from ..configs import Configs
 from ..network import Network
-from ..runoff import RUNOFF_CLASS_FOR_RUNOFF_TYPE, CellRunoff, Runoff
-from ..types import DatetimeArray, FloatArray, IntArray, WriteDischargesFn
-from ._dispatchers import resolve_dispatcher
+from ..runoff import RUNOFF_CLASS_FOR_RUNOFF_TYPE, Runoff
+from ..types import DatetimeArray, FloatArray, Int32Array, WriteDischargesFn
+from . import dynamic_muskingum, static_muskingum
+from ._routing_passes import Layout, route_network
 from .writers import zarr_writer
 
-__all__ = ['Router']
+__all__ = ['Router', 'ROUTING_METHOD_FOR_COEFFICIENTS']
+
+# the module of the routing method each coefficients config chooses; each routes one river with its own parameters
+ROUTING_METHOD_FOR_COEFFICIENTS: dict[str, ModuleType] = {'static': static_muskingum, 'dynamic': dynamic_muskingum}
 
 
 class Router:
@@ -29,21 +34,16 @@ class Router:
 
     configs: Configs
     network: Network  # ids, topology, k, x, the partition, and the stability analysis
-    runoff: Runoff  # the weight table gridded runoff from the configs is aggregated with
+    runoff: Runoff | None  # reads runoff_files, built from the configs the first time runoff is routed when None
 
-    # calculated muskingum coefficients - consumed by static kernels or modified by dynamic kernels
-    c1: FloatArray  # n x 1 - C1 values for each segment => f(k, x, dt_routing)
-    c2: FloatArray  # n x 1 - C2 values for each segment => f(k, x, dt_routing)
-    c3: FloatArray  # n x 1 - C3 values for each segment => f(k, x, dt_routing)
-    c4: FloatArray  # n x 1 - C4 values for each segment => f(k, x, dt_routing) - used if lateral inflow provided
-    c4_dt: FloatArray  # n x 1 - c4 / dt_runoff, turns catchment runoff volumes into a uniform lateral inflow rate
-    subdivisions: IntArray  # n x 1 - equal sub-reaches each river is routed as, all 1 on a standard network
-    reach_indptr: IntArray  # (n + 1,) offsets of each river's sub-reach states when stabilized, else empty
-    substeps: IntArray  # n x 1 - steps each river takes per routing step when stabilized, else empty
+    # the routing method the coefficients config chooses, and what it prepared for the current time steps
+    routing_method: ModuleType  # static_muskingum or dynamic_muskingum
+    routing_parameters: static_muskingum.StaticMuskingum | dynamic_muskingum.DynamicMuskingum  # per river
+    layout: Layout  # each river routed whole, or as sub-reaches and substeps on a stabilized network
 
     # The parallelizable groups of rivers the kernels will solve
-    routing_jobs: tuple[tuple[IntArray, IntArray, int, int], ...]  # (block_starts, block_stops, outlet, region)
-    cut_target: IntArray  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
+    routing_jobs: tuple[tuple[Int32Array, Int32Array, int, int], ...]  # (block_starts, block_stops, outlet, region)
+    cut_target: Int32Array  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
     threads: int = 1  # the threads passed to the most recent route(), read by writers such as zarr_writer
 
     # State variables
@@ -98,8 +98,6 @@ class Router:
 
         # default discharge writer; overridable via set_discharge_writer
         self._discharge_writer = zarr_writer
-        self.reach_indptr = np.zeros(0, dtype=np.int64)
-        self.substeps = np.zeros(0, dtype=np.int64)
         return
 
     def __repr__(self) -> str:
@@ -131,9 +129,9 @@ class Router:
         sub-reach on a stabilized one. Without an initial state file a stabilized network starts from zero in every
         sub-reach. A state file that does not match the layout raises; its values are never changed to fit.
         """
-        if not self.reach_indptr.shape[0]:
+        if not self.layout.reach_indptr.shape[0]:
             return
-        n_reaches = int(self.reach_indptr[-1])
+        n_reaches = int(self.layout.reach_indptr[-1])
         if not self.configs.channel_state_init_file:
             self.channel_state = np.zeros(n_reaches, dtype=np.float32)
             return
@@ -151,7 +149,8 @@ class Router:
             return
         self.logger.debug('Writing Final State to Parquet')
         ids = self.network.river_ids
-        ids = np.repeat(ids, np.diff(self.reach_indptr)) if self.reach_indptr.shape[0] else ids
+        reach_indptr = self.layout.reach_indptr
+        ids = np.repeat(ids, np.diff(reach_indptr)) if reach_indptr.shape[0] else ids
         pd.DataFrame({'river_id': ids, 'Q': self.channel_state}).to_parquet(self.configs.channel_state_final_file)
         return
 
@@ -160,8 +159,8 @@ class Router:
     ################################################
 
     def _set_routing_schedule(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> None:
-        """Bind the index ranges the kernels sweep, derived and cached by the Network so that repeated
-        simulations over one network never re-partition it."""
+        """Bind the index ranges of the rivers each routing pass routes, derived and cached by the Network so that
+        repeated simulations over one network never re-partition it."""
         self.routing_jobs, self.cut_target = self.network.routing_schedule(
             threads=threads, concurrent=thread_pool is not None
         )
@@ -219,55 +218,29 @@ class Router:
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         return
 
-    def _set_static_muskingum_coefficients(self):
-        """
-        implied dependency on having set time options and the network parameter vectors
-        """
-        self.logger.debug('Calculating Muskingum coefficients')
-        if self.configs.network_type == 'stabilized':
-            # a river too long for dt_routing is split into N sub-reaches that are each k/N long and take 1/N of its
-            # lateral inflow, so one set of coefficients serves all of them. A river too short for it is sub-cycled
-            # in m steps of dt_routing/m, so its coefficients are built for that step.
-            self.subdivisions, substeps, _ = self.network.conditioning(self.dt_routing)
-            self.reach_indptr = np.zeros(self.network.size + 1, dtype=np.int64)
-            np.cumsum(self.subdivisions, out=self.reach_indptr[1:])
-            self.substeps = substeps if np.any(substeps > 1) else np.zeros(0, dtype=np.int64)
-            k = (self.network.k / self.subdivisions).astype(np.float32)
-            dt_river = (self.dt_routing / substeps).astype(np.float32)  # float32 like the standard path's math
+    def _choose_routing_method(self) -> ModuleType:
+        """The module of the routing method the configs choose, or NotImplementedError for options no method routes."""
+        method = ROUTING_METHOD_FOR_COEFFICIENTS[self.configs.coefficients]
+        if self.configs.network_type not in method.NETWORK_TYPES:
+            raise NotImplementedError(
+                f'{self.configs.coefficients} coefficients cannot route a {self.configs.network_type} network yet'
+            )
+        if self.configs.forcing == 'runoff' and self.configs.transform != 'uniform':
+            raise NotImplementedError(f'the {self.configs.transform} transform is not implemented yet')
+        return method
+
+    def _prepare_routing_method(self) -> None:
+        """Lay out each river and build the routing method's parameters for the current dt_routing and dt_runoff."""
+        self.logger.debug('Preparing the routing method')
+        self.layout, self.routing_parameters = self.routing_method.prepare_routing(
+            self.network, self.configs.network_type, self.dt_routing, self.dt_runoff, self.configs.unstable_coefficients
+        )
+        reach_indptr, substeps = self.layout
+        if reach_indptr.shape[0]:
             self.logger.info(
-                f'Stabilized network: {self.network.size} rivers routed as {int(self.reach_indptr[-1])} sub-reaches '
+                f'Stabilized network: {self.network.size} rivers routed as {int(reach_indptr[-1])} sub-reaches '
                 f'at dt_routing={self.dt_routing} s, {int(np.count_nonzero(substeps > 1))} of them sub-cycled'
             )
-        else:
-            self.subdivisions = np.ones(self.network.size, dtype=np.int64)
-            self.reach_indptr = np.zeros(0, dtype=np.int64)
-            self.substeps = np.zeros(0, dtype=np.int64)
-            k = self.network.k
-            dt_river = self.dt_routing
-        dt_div_k = dt_river / k
-        denominator = dt_div_k + (2 * (1 - self.network.x))
-        _2x = 2 * self.network.x
-        # contiguous arrays iterate faster in kernels due to cpu and ram access patterns
-        self.c1 = np.ascontiguousarray((dt_div_k - _2x) / denominator, dtype=np.float32)
-        self.c2 = np.ascontiguousarray((dt_div_k + _2x) / denominator, dtype=np.float32)
-        self.c3 = np.ascontiguousarray(((2 * (1 - self.network.x)) - dt_div_k) / denominator, dtype=np.float32)
-        self.c4 = np.ascontiguousarray(self.c1 + self.c2, dtype=np.float32)
-        self.c4_dt = np.ascontiguousarray(self.c4 / self.dt_runoff, dtype=np.float32)
-        if self.reach_indptr.shape[0]:
-            self.c4_dt = np.ascontiguousarray(self.c4_dt / self.subdivisions, dtype=np.float32)
-        self.network.check_stability(
-            self.dt_routing,
-            action=self.configs.unstable_coefficients,
-            subdivisions=self.subdivisions if self.reach_indptr.shape[0] else None,
-            substeps=self.substeps if self.substeps.shape[0] else None,
-        )
-        if not np.allclose(self.c1 + self.c2 + self.c3, 1):
-            self.logger.warning('Muskingum coefficients do not sum to 1')
-            self.logger.debug(f'c1: {self.c1}')
-            self.logger.debug(f'c2: {self.c2}')
-            self.logger.debug(f'c3: {self.c3}')
-            raise ValueError('Muskingum coefficients do not sum to 1, check routing parameters and time step')
-
         self._check_channel_state()
         return
 
@@ -296,22 +269,21 @@ class Router:
         self.threads = threads
         # start timer
         self.logger.log(PROGRESS, 'Beginning routing')
-        t1 = datetime.datetime.now()
+        started = time.perf_counter()
         self.logger.debug('Validating configs')
         self.configs.validate_routing()
         self.logger.debug(self)
         # the Network parses and partitions the parameter table; both are cached there and reused across runs
-        self._set_routing_schedule(thread_pool, threads)  # index ranges the kernels sweep; no vector is reordered
+        self._set_routing_schedule(thread_pool, threads)  # which rivers each routing pass routes; nothing is reordered
         # read state, route, write state
         self._read_initial_state()
-        self._execute_routing(thread_pool, threads)
+        self._execute_routing(thread_pool)
         self._write_final_state()
-        # log total time
-        t2 = datetime.datetime.now()
-        self.logger.log(PROGRESS, f'Routing completed in {(t2 - t1).total_seconds()} seconds')
+        self.logger.log(PROGRESS, f'Routing completed in {time.perf_counter() - started:.3f} seconds')
         return self
 
-    def _execute_routing(self, thread_pool: ThreadPoolExecutor | None, threads: int) -> None:
+    def _execute_routing(self, thread_pool: ThreadPoolExecutor | None) -> None:
+        self.routing_method = self._choose_routing_method()  # raises before any runoff is read if none routes these
         # there are two types of loops, one for channel only, one if runoff forcing is provided.
         if self.configs.forcing == 'channel':
             self._execute_routing_channel(thread_pool)
@@ -321,16 +293,13 @@ class Router:
 
     def _execute_routing_channel(self, thread_pool: ThreadPoolExecutor | None) -> None:
         self.logger.info('-' * 60)
-        dispatcher = resolve_dispatcher(self.configs)
-
-        # channel routing time options and (static) coefficients
         self._set_channel_time_options()
-        self._set_static_muskingum_coefficients()
+        self._prepare_routing_method()
 
         self.logger.debug('Starting routing computation')
         q_t = self.channel_state.astype(np.float32, copy=True)
         discharge_array = self._new_discharge_buffer()
-        dispatcher(self, q_t, discharge_array, thread_pool)
+        route_network(self, q_t, discharge_array, None, thread_pool)
         self.channel_state = q_t
 
         # generate dates since they cannot be copied from an external forcing file
@@ -349,25 +318,24 @@ class Router:
     def _execute_routing_forced(self, thread_pool: ThreadPoolExecutor | None) -> None:
         self._ensemble_member_states = []
         runoff_files = self.configs.runoff_files
-        dispatcher = resolve_dispatcher(self.configs)  # raises before any runoff is read if there is no kernel
         if self.runoff is None:
             self.runoff = RUNOFF_CLASS_FOR_RUNOFF_TYPE[self.configs.runoff_type].from_configs(self.configs)
         if self.network.synthetic is not None:
             self.runoff.distribute(self.network)
-        runoff_iter = self.runoff.generator(runoff_files)  # yields what the runoff_type's kernel reads
+        runoff_iter = self.runoff.generator(runoff_files)  # yields the runoff routing reads, in its runoff_type's form
 
         total_files = len(runoff_files)
         file_iter = (
-            (dates, forcing, runoff_file, discharge_file)
-            for (dates, forcing, runoff_file), discharge_file in zip(
+            (dates, runoff, runoff_file, discharge_file)
+            for (dates, runoff, runoff_file), discharge_file in zip(
                 runoff_iter, self.configs.discharge_files, strict=True
             )
         )
         if self.configs.progress_bar:
             file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
 
-        coeff_dt: tuple[int, int] | None = None  # (dt_routing, dt_runoff) the static coefficients were built for
-        for dates, forcing, runoff_file, discharge_file in file_iter:
+        prepared_for_time_steps: tuple[int, int] | None = None  # (dt_routing, dt_runoff) of the routing parameters
+        for dates, runoff, runoff_file, discharge_file in file_iter:
             self.logger.info('-' * 60)
             self.logger.info(f'Routing catchment runoff: {runoff_file}')
             self._set_forced_time_options(dates)
@@ -379,17 +347,15 @@ class Router:
             if self.num_runoff_steps < dates.shape[0]:
                 self.logger.debug(f'Using the first {self.num_runoff_steps} of {dates.shape[0]} steps for dt_total')
                 dates = dates[: self.num_runoff_steps]
-                if not isinstance(forcing, CellRunoff):  # the fused kernel reads only the steps it routes
-                    forcing = forcing[:, : self.num_runoff_steps]
-            # static coefficients depend only on dt_routing/dt_runoff, so rebuild them only when those change
-            # across files (dynamic coefficients are rebuilt inside the kernel each substep)
-            if self.configs.coefficients != 'dynamic' and (self.dt_routing, self.dt_runoff) != coeff_dt:
-                self._set_static_muskingum_coefficients()
-                coeff_dt = (self.dt_routing, self.dt_runoff)
+                runoff = runoff.first_steps(self.num_runoff_steps)
+            # the routing parameters depend only on dt_routing and dt_runoff, so they are rebuilt only when those change
+            if (self.dt_routing, self.dt_runoff) != prepared_for_time_steps:
+                self._prepare_routing_method()
+                prepared_for_time_steps = (self.dt_routing, self.dt_runoff)
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
             q_array = self._new_discharge_buffer()
-            dispatcher(self, q_t, q_array, forcing, thread_pool)
+            route_network(self, q_t, q_array, runoff, thread_pool)
             if self.configs.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t

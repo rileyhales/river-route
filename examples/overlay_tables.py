@@ -18,5 +18,5 @@ if __name__ == '__main__':
 
     catchments_gdf = gpd.read_parquet(catchments)
     bounds = catchments_gdf.total_bounds
-    voronoi_gdf = voronoi_gdf.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]]
+    voronoi_gdf = voronoi_gdf.cx[bounds[0] : bounds[2], bounds[1] : bounds[3]]
     compute_voronoi_catchment_intersects(voronoi_gdf, catchments_gdf, grid_weights_save_path)

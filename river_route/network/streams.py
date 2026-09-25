@@ -37,6 +37,7 @@ from ..types import PathInput
 
 __all__ = [
     'connectivity_is_valid',
+    'divisors_of',
     'required_subreaches',
     'assign_stable_dt',
     'analyze_dt_assignment',
@@ -124,7 +125,7 @@ def required_subreaches(k: np.ndarray, x: np.ndarray, dt: float) -> tuple[np.nda
     return n_subreaches, resolvable
 
 
-def _divisors(n: int) -> np.ndarray:
+def divisors_of(n: int) -> np.ndarray:
     """All positive integer divisors of n, sorted ascending."""
     small = [d for d in range(1, int(n**0.5) + 1) if n % d == 0]
     return np.array(sorted(set(small + [n // d for d in small])), dtype=np.int64)
@@ -151,7 +152,7 @@ def assign_stable_dt(k: np.ndarray, x: np.ndarray, period: int = 3600) -> tuple[
     k = np.asarray(k, dtype=np.float64)
     x = np.asarray(x, dtype=np.float64)
 
-    divisors = _divisors(period)
+    divisors = divisors_of(period)
     window_lo = 2 * k * x
     window_hi = 2 * k * (1 - x)
 
@@ -226,7 +227,7 @@ def optimize_network_compute(k: np.ndarray, x: np.ndarray, period: int = 3600, c
     """
     k = np.asarray(k, dtype=np.float64)
     x = np.asarray(x, dtype=np.float64)
-    divisors = _divisors(period)
+    divisors = divisors_of(period)
     if cap is not None:
         divisors = divisors[divisors <= cap]
 
@@ -313,6 +314,8 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     Args:
         df: parameter table with river_id, next_river_id, k, x. If subdivisions/substeps columns are not
             present they are computed via stable_static_network(df, period, cap).
+        period: outer time step each per-river dt must divide (default 3600 s), passed to stable_static_network
+        cap: maximum subdivisions or substeps per river (default 10), passed to stable_static_network
 
     Returns a dict of arrays (n = expanded reach count, m = original river count):
         n_reaches      -- int, total expanded reaches
@@ -390,8 +393,8 @@ def expand_network(df: pd.DataFrame, period: int = 3600, cap: int = 10) -> dict:
     outlet_downstream = np.where(down_orig_index >= 0, group_start[np.clip(down_orig_index, 0, n_orig - 1)], -1)
     downstream_index[is_outlet] = outlet_downstream  # outlets are emitted in original order
 
-    # the kernel sweeps in array order and requires a topologically sorted DAG (each reach feeds a later one or -1);
-    # an unsorted input would silently push flow into an already-finalized reach and lose mass
+    # the kernel routes reaches in array order and requires a topologically sorted DAG (each reach feeds a later one
+    # or -1); an unsorted input would silently push flow into an already-finalized reach and lose mass
     if not np.all((downstream_index < 0) | (downstream_index > np.arange(total))):
         raise ValueError(
             'input rivers must be topologically sorted upstream-before-downstream '
@@ -563,8 +566,7 @@ def _subtree_extent(downstream_index: np.ndarray) -> tuple[np.ndarray, np.ndarra
         d = downstream_index[i]
         if d >= 0:
             size[d] += size[i]
-            if lowest[i] < lowest[d]:
-                lowest[d] = lowest[i]
+            lowest[d] = min(lowest[d], lowest[i])
     return size, lowest
 
 
@@ -625,7 +627,7 @@ def _claim_regions(size: np.ndarray, lowest: np.ndarray, order: np.ndarray, cap:
         1. regions are disjoint contiguous ranges, each holding every river upstream of its own outlet, so a
            region needs nothing from outside its range;
         2. a region's outlet always drains into unclaimed water, never into another region, so the only
-           cross-region write in a routing sweep is the single push at each region's outlet.
+           write a region makes outside itself while routing is the single push at its outlet.
 
     Returns the per-river region id (-1 for rivers left to the sequential main stem) and the region count.
     """
@@ -647,8 +649,8 @@ def _parallel_cost(region: np.ndarray, n_regions: int, threads: int) -> tuple[in
     Predict the cost of a partition as (parallel span, sequential main stem, speedup over one thread).
 
     Regions are packed onto ``threads`` workers longest-first, which is how a work-stealing pool schedules them
-    when the largest regions are submitted first. Cost is counted in rivers swept, since the kernel does a fixed
-    amount of work per river per sweep. The main stem is added whole because it runs single-threaded afterwards.
+    when the largest regions are submitted first. Cost is counted in rivers, since routing each river's series
+    takes about the same work. The main stem is added whole because it runs single-threaded afterwards.
     """
     counts = np.bincount(region[region >= 0], minlength=max(n_regions, 1))
     main_stem = int(np.count_nonzero(region < 0))
@@ -669,10 +671,7 @@ _CAP_MULTIPLIERS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0, 1.3, 1.6, 2.0)
 
 
 def assign_regions(
-    downstream_index: np.ndarray,
-    threads: int = 4,
-    granularity: int = 2,
-    cap_multiplier: float | None = None,
+    downstream_index: np.ndarray, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
 ) -> tuple[np.ndarray, int]:
     """
     Partition a DFS-ordered network into contiguous regions that can be routed concurrently (see _claim_regions).
@@ -701,7 +700,7 @@ def assign_regions(
     contiguous = lowest == (np.arange(n) - size + 1)
     if not contiguous.all():
         raise ValueError(
-            f'{int((~contiguous).sum()):,} of {n:,} rivers do not have a contiguous subtree, so the parameter '
+            f'{np.count_nonzero(~contiguous):,} of {n:,} rivers do not have a contiguous subtree, so the parameter '
             f'table is not in DFS computation order and cannot be split into concurrent ranges. Provide a '
             f'parameter table sorted in depth-first computation order, or route with threads=1, which places '
             f'no ordering requirement beyond upstream-before-downstream.'
@@ -711,14 +710,9 @@ def assign_regions(
     share = n / (threads * granularity)
 
     multipliers = _CAP_MULTIPLIERS if cap_multiplier is None else (cap_multiplier,)
-    best: tuple[float, np.ndarray, int] | None = None
-    for multiplier in multipliers:
-        region, n_regions = _claim_regions(size, lowest, order, max(1, int(share * multiplier)))
-        _, _, speedup = _parallel_cost(region, n_regions, threads)
-        if best is None or speedup > best[0]:
-            best = (speedup, region, n_regions)
-    _, region, n_regions = best
-    return region, n_regions
+    claims = (_claim_regions(size, lowest, order, max(1, int(share * multiplier))) for multiplier in multipliers)
+    # the claim with the best parallel speedup, the first of any tie
+    return max(claims, key=lambda claim: _parallel_cost(claim[0], claim[1], threads)[2])
 
 
 def partition_network(
@@ -803,8 +797,8 @@ def regions_to_layout(region: np.ndarray, downstream_index: np.ndarray) -> dict:
     Nothing is reordered. In DFS computation order each region is already a contiguous run of rows, so this only
     locates the run boundaries. The main stem is what is left between the regions, which is generally SEVERAL
     ranges rather than one: a main stem river sits between the tributary subtrees that feed it. The kernel
-    therefore takes a list of blocks and sweeps them in increasing index order, which is still a valid
-    topological sweep because the whole table is topologically sorted.
+    therefore takes a list of blocks and routes their rivers in increasing index order, which still routes every
+    river after all of its upstreams because the whole table is topologically sorted.
 
     Args:
         region: per-river region id from assign_regions, -1 for the sequential main stem
@@ -884,10 +878,10 @@ def subset_configs_to_river(
         out_weights: path to write the subsetted grid weights netCDF file (optional, required if weights is given)
     """
     pdf = pd.read_parquet(params)
-    if target_river not in set(pdf['river_id'].values.tolist()):
+    if target_river not in pdf['river_id'].to_numpy():
         raise ValueError(f'river_id {target_river} is not in the parameter table: {params}')
 
-    graph = connectivity_to_digraph(pdf['river_id'].values, pdf['next_river_id'].values)
+    graph = connectivity_to_digraph(pdf['river_id'].to_numpy(), pdf['next_river_id'].to_numpy())
     upstreams = list(nx.ancestors(graph, target_river))
     upstreams.append(target_river)
 

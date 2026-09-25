@@ -16,9 +16,10 @@
 - `RunoffGaussianGrid` is a dataclass. Its options are fields declared with their defaults and documented where
   they are declared, so the constructor is a `__post_init__` that reads the weight table, and the call signature is
   unchanged. Each field is named the same as the `Configs` option it comes from, so `from_configs` reads every one by
-  its own field name instead of listing them. `var_runoff` and `cumulative`, the names the `Runoff` base class uses,
-  are now properties derived from the `var_grid_runoff` and `grid_accumulation_type` fields rather than copies made in
-  the constructor. `rivers_per_block` is a class attribute, not a constructor argument, as before.
+  its own field name instead of listing them. `cumulative` is a property derived from the `grid_accumulation_type`
+  field rather than a copy made in the constructor, and `var_runoff` is removed: read `var_grid_runoff`. The `Runoff`
+  base class declares only `as_volumes` and the `from_configs` and `generator` every subclass provides.
+  `rivers_per_block` is a class attribute, not a constructor argument, as before.
 - Catchment runoff replaces vlateral: the runoff of each catchment before it is transformed into lateral inflow.
   `RunoffGaussianGrid.vlateral` is renamed `GaussianGridRunoff.catchment_runoff`. The catchment runoff file schema is
   fixed and the `var_vlateral` config is removed: a file holds a `catchment_runoff` variable with dimensions
@@ -34,31 +35,35 @@
   `GaussianGridRunoff` (was `RunoffGaussianGrid`), and `ReducedGaussianGridRunoff`, a placeholder that raises
   `NotImplementedError`. `RUNOFF_CLASS_FOR_RUNOFF_TYPE` maps each `runoff_type` to its class, and a Runoff
   passed to `Router` must be that class. The grid classes precompute a catchment runoff file with `aggregate_to_file`.
-- The kernel registry registers one dispatcher per kernel (`dispatch_channel`, `dispatch_catchment`,
-  `dispatch_gaussian_grid`), keyed by `coefficients`, `forcing`, `transform`, `runoff_type`, and `network_type`, and
-  `resolve_dispatcher` looks up the one for a `Configs`. A kernel that routes stabilized networks registers for both
-  network types rather than having a second kernel. Each Runoff class's `reader` yields what its kernel reads:
-  `GaussianGridRunoff.reader` is the former `cell_reader`, and the former `reader`, which yields aggregated arrays, is
-  `catchment_reader`. `CatchmentRunoff` raises `NotImplementedError` on a stabilized network. Dynamic coefficients
-  are routed only from catchment runoff on a standard network; gaussian grid runoff with dynamic coefficients, which
-  was aggregated to catchments before routing, now raises `NotImplementedError`. The kernels `static_vlateral` and
-  `dynamic_vlateral` are renamed `static_runoff` and `dynamic_runoff`.
-- Every dispatcher calls one numba pass, `route_scheduled_rivers`, with its inputs grouped into NamedTuples
-  (`StaticCoefficients`, `DynamicCoefficients`, `Layout`, `Schedule`), in place of the per-kernel wrappers
-  `static_channel`, `static_runoff`, `static_grid`, and `dynamic_runoff` and the ~30 loose arguments each re-listed.
-  `CellRunoff` carries the whole weight table it is aggregated with (`indptr`, `cell`, `cumulative`,
-  `force_positive`), so the gaussian grid kernel no longer reads it off the Router's Runoff. Inputs a pass does not
-  use are `None`, and the runoff is one argument whose type (`None`, `CatchmentByTime`, `CatchmentByRiver`, or
-  `CellRunoff`) chooses how the pass reads it through numba overloads, in place of the `lateral_source` code and
-  placeholder arrays. Routed discharge is bit identical and the kernel time is unchanged; channel routing is about
-  13% faster since it no longer adds zero runoff every step.
+- Each routing method is one module that routes a single river, chosen by the `coefficients` config through
+  `ROUTING_METHOD_FOR_COEFFICIENTS`: `router/static_muskingum.py` and `router/dynamic_muskingum.py`. A method module
+  holds its parameters as a NamedTuple (`StaticMuskingum`, `DynamicMuskingum`), the `NETWORK_TYPES` it routes, a
+  `prepare_routing` that lays out each river and builds its parameters for the time steps, and the routine that
+  routes one river. The Router keeps them as `routing_method`, `routing_parameters`, and `layout`, in place of `c1`,
+  `c2`, `c3`, `c4`, `c4_dt`, `subdivisions`, `reach_indptr`, and `substeps`. This replaces the kernel registry, its
+  dispatchers, and `resolve_dispatcher`; options no method routes yet raise `NotImplementedError` before any runoff is
+  read. Dynamic coefficients route channel, catchment, and gaussian grid runoff on a standard network. Each Runoff
+  class's `generator` yields what routing reads: `GaussianGridRunoff.generator` is the former `cell_reader`, and the
+  former `reader`, which yields aggregated arrays, is `catchment_reader`. `CatchmentRunoff` raises
+  `NotImplementedError` on a stabilized network. The kernels `static_vlateral` and `dynamic_vlateral` are renamed
+  `static_runoff` and `dynamic_runoff`.
+- One numba pass, `route_scheduled_rivers` in `router/_routing_passes.py`, routes every combination, in place of the
+  per-kernel wrappers `static_channel`, `static_runoff`, `static_grid`, and `dynamic_runoff` and the ~30 loose
+  arguments each re-listed. It takes each river through stages, finding its catchment runoff, transforming it, and
+  routing it, and each stage is a numba overload chosen by the type of its argument and registered next to that type.
+  The runoff is `None`, `CatchmentRunoffVolumes` (in `CatchmentRunoff.py`), or `GridCellRunoff` (in
+  `GaussianGridRunoff.py`), and each checks its own arrays with `check` and cuts itself to the routed steps with
+  `first_steps`. `GridCellRunoff` carries the whole weight table it is aggregated with
+  (`indptr`, `cell`, `cumulative`, `force_positive`), so the gaussian grid kernel no longer reads it off the Router's
+  Runoff. A custom Runoff yields catchment runoff as `CatchmentRunoffVolumes`. Routed discharge is bit identical and the kernel time is unchanged; channel routing is about 13%
+  faster since it no longer adds zero runoff every step.
 - Catchment runoff is river major end to end, like discharge. Catchment runoff files are `(river_id, time)`, and
   `CatchmentRunoff` refuses any other order. `Runoff.to_netcdf`, `GaussianGridRunoff.to_dataset`, `aggregate`,
   `catchment_runoff`, and `catchment_reader` produce C-order `(river, time)` arrays, and the aggregation kernel writes
   each river's series straight into its row instead of transposing blocks into a `(time, river)` array. The routing
   kernels read each river's catchment runoff row in place, so `CatchmentByTime` and the block gather are removed.
   `BLOCK` is removed: gaussian grid runoff is still aggregated 64 rivers at a time before they are routed, now
-  `_GRID_RIVERS_AGGREGATED_TOGETHER`, used only by the gaussian grid kernel, since neighboring catchments share grid
+  `_RIVERS_AGGREGATED_TOGETHER` in `GaussianGridRunoff.py`, since neighboring catchments share grid
   cells that are then reused from cache. `aggregate(out=...)` takes a flat buffer. Routed discharge is bit identical. On one year of the Amazon,
   aggregating to catchments is about 3x faster and routing catchment runoff about 2.5x faster.
 - Fixed the discharge of sub-cycled rivers on a stabilized network differing in the last bit depending on whether
@@ -109,9 +114,8 @@
   consumes. The network gains reaches rather than being divided up, hence `StabilizedNetwork`.
   `mode='uniform'` gives every sub-reach of a river the same travel time; `mode='nonuniform'` packs pieces of the
   largest stable travel time and leaves the remainder last; `weights=` apportions each river's travel time over an
-  explicit sequence of segment lengths. Rivers that are too short for `dt` are a known gap: subdivision cannot fix
-  them, `Network.substeps_required(dt)` reports the temporal refinement they would need, and no routing kernel
-  consumes it yet.
+  explicit sequence of segment lengths. Rivers that are too short for `dt` cannot be fixed by subdivision;
+  `Network.substeps(dt)` gives the sub-cycling they need, which `network_type='stabilized'` routes with.
 - `Router(configs, network=None, runoff=None)` takes its options from the `Configs` and nothing else.
   `Router(configs, **overrides)` is removed; build the `Configs` you want and pass it, so there is one way to
   set every option. `Configs.replace` is removed too: a Configs is set once when it is built and there is no

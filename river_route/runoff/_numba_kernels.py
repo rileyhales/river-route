@@ -6,6 +6,7 @@ __all__ = ['aggregate_river', 'aggregate_to_rivers', 'cells_by_time']
 # change between the single-threaded and multithreaded cases. Disjoint ranges can run concurrently because each
 # writes only its own output columns, provided each is given its own scratch block.
 
+
 @numba.njit(cache=True, nogil=True)
 def aggregate_river(
     runoff_by_cell,  # Array (n_cells, n_steps) of runoff depths, each cell's time series contiguous
@@ -38,8 +39,7 @@ def aggregate_river(
             row[t] -= row[t - 1]
     if force_positive:
         for t in range(n_steps):
-            if row[t] < zero:
-                row[t] = zero
+            row[t] = max(row[t], zero)  # an unconditional store vectorizes; a store behind an if does not
     if scale.shape[0]:
         s = scale[r]
         for t in range(n_steps):

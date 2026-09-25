@@ -43,8 +43,6 @@ if __name__ == '__main__':
         unstable_coefficients='ignore',
     )
 
-    # conf.validate_routing()
-    # conf.validate_runoff()
     # deep_validate() reads every input file and checks its contents. It is a one off check to run on inputs you
     # have not used before, not part of a run: routing never calls it, and it costs more than the routing does.
 

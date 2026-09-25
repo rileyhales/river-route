@@ -37,9 +37,9 @@ graph TD
 `Router.route()` first validates the required config keys and inflow source for the selected
 `coeff`, `forcing`, `transform`, and `network` before any routing data is read. It then builds its
 [`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
-vectors, and the concurrent routing partition, and derives the Muskingum coefficients from them. The
-numba kernel is resolved when it dispatches each routing pass (an unimplemented combination raises
-`NotImplementedError` at that point). The `Network` is built once and reused, so routing repeatedly
+vectors, and the concurrent routing partition, and the routing method chosen by `coefficients` builds its
+parameters from them. Options no routing method supports yet raise `NotImplementedError` before any runoff is
+read. The `Network` is built once and reused, so routing repeatedly
 on one `Router` re-reads and re-partitions nothing. When `forcing` is `'channel'`, time parameters are read directly from the config and a
 single channel-only routing pass runs over `dt_total`. Otherwise the router loops over the runoff
 input files (processed sequentially or as an ensemble), inferring time parameters from each file's

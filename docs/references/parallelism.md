@@ -58,8 +58,9 @@ solved rows $1, \ldots, i-1$. There is no way to compute row $i$ before its upst
 are known. This means the core solve cannot be split across threads or cores in a straightforward
 way.
 
-However, the routing kernels have been made about as minimal as possible: a single topological sweep per routing
-step, sparse connectivity instead of matrices, and JIT compiled numba code. In my experience, this is preferable to
+However, the routing kernels have been made about as minimal as possible: each river's whole time series is routed
+once, upstream rivers before downstream ones, with sparse connectivity instead of matrices, and JIT compiled numba
+code. In my experience, this is preferable to
 multiprocessing methods even though it uses an inherently sequential forward substitution algorithm. This approach is
 the best method in my experience using it on a wide range of scales up to global computations of hourly resolution
 discharge on millions of rivers and producing a 5 trillion data point simulation. It has the advantages that it:
@@ -75,8 +76,8 @@ What you control is how much work you ask that kernel to do.
    once and reuses them for every file with the same time steps. `coeff: dynamic` rebuilds them inside the kernel
    on every substep. Only pay for dynamic coefficients when the application needs them. See the
    [config file reference](config-files.md#routing-procedure-selectors).
-2. **Use the largest stable routing time step.** Every routing substep is a full sweep of the network, so
-   `dt_routing` directly sets the amount of work. Check stability with `Network.unstable_mask(dt)` rather than
+2. **Use the largest stable routing time step.** Every river is routed at every routing step, so halving
+   `dt_routing` doubles the work. Check stability with `Network.unstable_mask(dt)` rather than
    defaulting to a small step. See [Time Variables](time-options.md).
 3. **Only produce the output you will use.** A coarser `dt_discharge` averages results before they are written, and
    a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade

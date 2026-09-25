@@ -3,7 +3,7 @@ import logging
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import shapely.geometry
+import shapely
 import shapely.ops
 import xarray as xr
 
@@ -29,8 +29,8 @@ def cell_xy_from_regular_grid(
             raise KeyError(f'{x_var} must be a variable in {dataset}')
         if y_var not in ds.variables:
             raise KeyError(f'{y_var} must be a variable in {dataset}')
-        x = ds[x_var].values
-        y = ds[y_var].values
+        x = ds[x_var].to_numpy()
+        y = ds[y_var].to_numpy()
 
     if x.ndim != 1 or y.ndim != 1:
         raise ValueError('Regular grid requires 1D x/y coordinate arrays')
@@ -52,14 +52,13 @@ def voronoi_diagram_from_regular_xy(x: np.ndarray, y: np.ndarray, crs: int = 432
         raise ValueError('x and y must have the same number of points')
 
     logger.info('Creating Voronoi polygons')
-    regions = shapely.ops.voronoi_diagram(
-        shapely.geometry.MultiPoint([shapely.geometry.Point(xi, yi) for xi, yi in zip(x_grid, y_grid, strict=True)])
-    )
+    regions = shapely.ops.voronoi_diagram(shapely.multipoints(shapely.points(x_grid, y_grid)))
 
     logger.info('Adding attributes to voronoi polygons')
-    voronoi_gdf = gpd.GeoDataFrame(geometry=[region for region in regions.geoms], crs=crs)
-    voronoi_gdf['x'] = voronoi_gdf.geometry.apply(lambda geom: geom.centroid.x).astype(float)
-    voronoi_gdf['y'] = voronoi_gdf.geometry.apply(lambda geom: geom.centroid.y).astype(float)
+    voronoi_gdf = gpd.GeoDataFrame(geometry=list(regions.geoms), crs=crs)
+    centroids = shapely.centroid(voronoi_gdf.geometry.array)
+    voronoi_gdf['x'] = shapely.get_x(centroids)
+    voronoi_gdf['y'] = shapely.get_y(centroids)
     voronoi_gdf['x_index'] = voronoi_gdf['x'].apply(lambda value: np.argmin(np.abs(x - value))).astype(int)
     voronoi_gdf['y_index'] = voronoi_gdf['y'].apply(lambda value: np.argmin(np.abs(y - value))).astype(int)
     return voronoi_gdf.sort_values(by=['x', 'y']).reset_index(drop=True)
@@ -102,7 +101,7 @@ def compute_voronoi_catchment_intersects(
     df['proportion'] = df['area_sqm'] / df['area_sqm_total']
     # computed in float64 so proportions come from exact areas, then stored as float32 to halve the table and every
     # catchment runoff array aggregated from it
-    df = df.astype({column: np.float32 for column in ('x', 'y', 'area_sqm', 'area_sqm_total', 'proportion')})
+    df = df.astype(dict.fromkeys(('x', 'y', 'area_sqm', 'area_sqm_total', 'proportion'), np.float32))
 
     if save_path:
         (
@@ -163,7 +162,7 @@ def grid_weights(
     voronoi_gdf = voronoi_diagram_from_regular_xy(x_geo, y, crs=crs)
 
     # Map x_index back to original grid indices (for use by GaussianGridRunoff)
-    voronoi_gdf['x_index'] = sort_order[voronoi_gdf['x_index'].values]
+    voronoi_gdf['x_index'] = sort_order[voronoi_gdf['x_index'].to_numpy()]
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)
     catchments_gdf = gpd.read_parquet(catchments_path)
@@ -171,7 +170,7 @@ def grid_weights(
         voronoi_gdf,
         catchments_gdf,
         save_path=None,
-        attributes=dict(grid_path=str(grid_path), catchments_path=str(catchments_path)),
+        attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)},
         river_id_variable=var_river_id,
     )
 

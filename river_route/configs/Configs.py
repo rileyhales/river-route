@@ -34,7 +34,7 @@ class Configs:
     runoff_type: Literal['catchment', 'gaussian_grid', 'reduced_gaussian_grid'] | None = None
     network_type: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
-    
+
     # Network and routing descriptor
     params_file: PathInput | None = None
 
@@ -116,11 +116,10 @@ class Configs:
     @classmethod
     def from_json(cls, path: PathInput) -> Self:
         """Build Configs from a JSON file."""
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             raw = json.load(f)
         cls._check_keys(raw)
         return cls(**raw)
-
 
     def to_dict(self) -> dict[str, Any]:
         """Return a dict representation of the configs"""
@@ -132,7 +131,7 @@ class Configs:
 
     def to_json(self, path: PathInput) -> None:
         """Write every option to JSON"""
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
@@ -325,13 +324,13 @@ class Configs:
             raise ValueError(f'{self.params_file} missing k column')
         if 'x' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing x column')
-        if np.any(params_df[rid].isnull()):
+        if params_df[rid].isna().any():
             raise ValueError(f'{self.params_file} {rid} column contains null values')
         if not pd.api.types.is_integer_dtype(params_df[rid]):
             raise ValueError(f'{self.params_file} {rid} column must be integer type')
         if not params_df[rid].is_unique:
             raise ValueError(f'{self.params_file} {rid} column must be unique')
-        if np.any(params_df['next_river_id'].isnull()):
+        if params_df['next_river_id'].isna().any():
             raise ValueError(f'{self.params_file} next_river_id column contains null values')
         if not pd.api.types.is_integer_dtype(params_df['next_river_id']):
             raise ValueError(f'{self.params_file} next_river_id column must be integer type')
@@ -341,7 +340,7 @@ class Configs:
         river_ids = set(params_df[rid].unique())
         if not downstream_ids.issubset(river_ids.union({-1})):
             raise ValueError(f'{self.params_file} next_river_id values must exist in {rid} (except -1)')
-        if np.any(params_df['k'].isnull()) or np.any(params_df['x'].isnull()):
+        if params_df[['k', 'x']].isna().any(axis=None):
             raise ValueError(f'{self.params_file} k and x columns must not contain null values')
         if np.any(params_df['k'] <= 0):
             raise ValueError(f'{self.params_file} k column must be positive')
@@ -353,7 +352,7 @@ class Configs:
             for column in ('dynamicAlpha', 'dynamicBeta'):
                 if column not in params_df.columns:
                     raise ValueError(f'{self.params_file} missing {column} column required when coeff is dynamic')
-                if np.any(params_df[column].isnull()):
+                if params_df[column].isna().any():
                     raise ValueError(f'{self.params_file} {column} column contains null values')
                 if not pd.api.types.is_numeric_dtype(params_df[column]):
                     raise ValueError(f'{self.params_file} {column} column must be numeric type')
@@ -412,7 +411,7 @@ class Configs:
             raise ValueError('Error reading initial state file. Must be valid parquet file') from e
         if 'Q' not in state_df.columns:
             raise ValueError('Initial state file missing Q column')
-        if np.any(state_df['Q'].isnull()):
+        if state_df['Q'].isna().any():
             raise ValueError('Initial state file Q column contains null values')
         if not pd.api.types.is_numeric_dtype(state_df['Q']):
             raise ValueError('Initial state file Q column must be numeric type')
