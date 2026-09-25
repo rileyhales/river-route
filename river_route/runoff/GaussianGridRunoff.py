@@ -419,8 +419,9 @@ class GaussianGridRunoff(Runoff):
             df = df.cumsum().resample(rule=f'{timestep}s').interpolate(method='linear')
             df = self._cumulative_to_incremental(df)
             time_index = df.index.to_numpy()
-            # resampling works on (time, river) columns, so this rare path transposes back to (river, time) once
-            catchment_runoff = np.ascontiguousarray(df.to_numpy(dtype=np.float32).T)
+            # resampling works on (time, river) columns, so this rare path transposes back to (river, time) once. It is
+            # copied explicitly: pandas hands out a read-only view of its storage, whose transpose is already contiguous
+            catchment_runoff = np.array(df.to_numpy(dtype=np.float32).T, order='C')
             del df
             catchment_runoff[np.isnan(catchment_runoff)] = 0.0
             if self.as_volumes:

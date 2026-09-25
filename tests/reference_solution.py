@@ -17,7 +17,11 @@ output was made. Discharge is written by the default zarr writer with every floa
 rounded.
 
 numba compiles for the machine it runs on, so a package built on one CPU architecture may differ in the last bit on
-another, where fused multiply-adds are formed differently. The manifest records the machine it was built on.
+another, where fused multiply-adds are formed differently. The manifest records the machine it was built on, and the
+tests compare to ``TOLERANCE`` rather than bit for bit, so they hold on any machine.
+
+The module also holds what the tests share: ``assert_same`` for answers that should be identical, ``ArrayRunoff`` for
+runoff shaped in memory, and ``route`` for routing and keeping what the router hands its discharge writer.
 """
 
 import argparse
@@ -27,6 +31,7 @@ import platform
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -42,6 +47,120 @@ from river_route.router import writers
 PACKAGE = Path(__file__).parent / 'data' / 'reference_solution'
 GRID_NAMES = {'var_x': 'longitude', 'var_y': 'latitude', 'var_t': 'valid_time'}
 INPUT_PATH_OPTIONS = ('params_file', 'grid_weights_file', 'channel_state_init_file')
+TOLERANCE = 10e-4  # answers that should be identical may differ by this share of each river's largest value
+WILLAMETTE = 720184033  # the Willamette River where it joins the Columbia at Portland: 1,390 rivers
+
+
+@dataclass
+class Basin:
+    """A basin cut from the package: its params and weights, and its catchment runoff volumes for each month."""
+
+    params_file: Path
+    weights_file: Path
+    runoff_files: list[Path]  # the package's gridded runoff, one file per month
+    months: list[tuple[np.ndarray, np.ndarray]]  # (dates, (river, time) catchment runoff volumes) per runoff file
+    network: rr.Network  # for reading the topology; build a fresh one for anything that changes it
+
+    def gridded(self, months: int = 4) -> dict:
+        """Configs options that route the basin's first ``months`` of gridded runoff."""
+        return GRID_NAMES | {
+            'params_file': self.params_file,
+            'forcing': 'runoff',
+            'runoff_type': 'gaussian_grid',
+            'runoff_files': self.runoff_files[:months],
+            'grid_weights_file': self.weights_file,
+        }
+
+
+def assert_same(actual: np.ndarray, desired: np.ndarray, tolerance: float = TOLERANCE) -> None:
+    """
+    Require two answers that should be identical to agree within ``tolerance`` of each river's largest value: each row
+    of a (river, time) array is measured against its own largest value, and each value of a per river vector against
+    itself. A floor of a millionth of the largest value anywhere keeps values near zero from demanding exact equality.
+    """
+    actual, desired = np.asarray(actual, dtype=np.float64), np.asarray(desired, dtype=np.float64)
+    assert actual.shape == desired.shape, f'shapes differ: {actual.shape} and {desired.shape}'
+    if not desired.size:
+        return
+    magnitude = np.abs(desired)
+    scale = magnitude.max(axis=-1, keepdims=True) if desired.ndim > 1 else magnitude
+    difference = np.abs(actual - desired) / np.maximum(scale, magnitude.max() * 1e-6 or 1.0)
+    worst = np.unravel_index(np.argmax(difference), difference.shape)
+    assert difference[worst] <= tolerance, (
+        f'{np.count_nonzero(difference > tolerance)} of {difference.size} values differ by more than {tolerance} of '
+        f"their river's largest value; the worst, at {worst}, is {actual[worst]} against {desired[worst]}"
+    )
+
+
+class ArrayRunoff(rr.CatchmentRunoff):
+    """
+    Catchment runoff volumes held in memory as one (dates, (river, time) volumes) pair per runoff file, for tests that
+    shape the runoff themselves. The paths in ``runoff_files`` only have to exist; they are not read.
+    """
+
+    def __init__(self, files: list[tuple[np.ndarray, np.ndarray]]) -> None:
+        self.files = files
+
+    def generator(self, runoff_files):
+        for (dates, volumes), runoff_file in zip(self.files, runoff_files, strict=True):
+            yield dates, rr.runoff.CatchmentRunoffVolumes(np.ascontiguousarray(volumes, dtype=np.float32)), runoff_file
+
+
+@dataclass
+class Routed:
+    """What the router handed its discharge writer for each runoff file, and the channel state it ended with."""
+
+    dates: list[np.ndarray]
+    discharge: list[np.ndarray]  # (river, time) per runoff file
+    discharge_files: list[str]
+    final_state: np.ndarray
+    router: rr.Router
+
+
+def route(
+    directory: Path,
+    files: list[tuple[np.ndarray, np.ndarray]] | None = None,
+    *,
+    threads: int = 1,
+    network: rr.Network | None = None,
+    writer=None,
+    **options,
+) -> Routed:
+    """
+    Route and keep what the router hands its discharge writer. ``files`` are in-memory catchment runoff volumes, one
+    pair per runoff file, routed as ``runoff_type`` catchment; without them ``options`` name the runoff to read. Any
+    file the run writes goes to ``directory``. ``writer`` also writes the discharge when given.
+    """
+    runoff = None
+    if files is not None:
+        runoff = ArrayRunoff(files)
+        options |= {
+            'forcing': 'runoff',
+            'runoff_type': 'catchment',
+            'runoff_files': [options['params_file']] * len(files),
+        }
+    n_outputs = len(options.get('runoff_files', [])) or 1
+    defaults = {
+        'discharge_files': [directory / f'discharge_{i}.zarr' for i in range(n_outputs)],
+        'unstable_coefficients': 'ignore',
+        'log': False,
+        'progress_bar': False,
+    }
+    configs = rr.Configs(**(defaults | options))
+    routed = Routed([], [], [], np.zeros(0), None)
+
+    def keep_discharge(router, dates, discharge_array, discharge_file, runoff_file=''):
+        routed.dates.append(dates.copy())
+        routed.discharge.append(discharge_array.copy())
+        routed.discharge_files.append(Path(discharge_file).name)
+        if writer is not None:
+            writer(router, dates, discharge_array, discharge_file, runoff_file)
+
+    routed.router = rr.Router(configs, network=network, runoff=runoff).set_discharge_writer(keep_discharge)
+    with ThreadPoolExecutor(threads) if threads > 1 else contextlib.nullcontext() as pool:
+        routed.router.route(thread_pool=pool, threads=threads)
+    routed.final_state = np.asarray(routed.router.channel_state).copy()
+    return routed
 
 
 def reference_runs(params: str, weights: str, runoff: list[str], catchment_runoff: list[str]) -> dict[str, dict]:
