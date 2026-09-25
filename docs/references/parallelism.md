@@ -76,7 +76,7 @@ What you control is how much work you ask that kernel to do.
    on every substep. Only pay for dynamic coefficients when the application needs them. See the
    [config file reference](config-files.md#routing-procedure-selectors).
 2. **Use the largest stable routing time step.** Every routing substep is a full sweep of the network, so
-   `dt_routing` directly sets the amount of work. Check stability with `Network.stability_report(dt)` rather than
+   `dt_routing` directly sets the amount of work. Check stability with `Network.unstable_mask(dt)` rather than
    defaulting to a small step. See [Time Variables](time-options.md).
 3. **Only produce the output you will use.** A coarser `dt_discharge` averages results before they are written, and
    a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
@@ -95,14 +95,14 @@ concurrently, followed by the main stem on a single thread.
 
 `river-route` never creates threads on its own. Threads are a runtime resource, not a config, so pass a
 `ThreadPoolExecutor` and `threads`, the number of regions to split the network into, to `Router.route`. The same pool
-is used to aggregate gridded runoff when routing from `grid_runoff_files`.
+aggregates gaussian grid runoff, since that aggregation happens inside the routing passes.
 
 ```python title="Threaded Routing"
 from concurrent.futures import ThreadPoolExecutor
 
 import river_route as rr
 
-router = rr.Router(rr.Configs.from_file('config.yaml'))
+router = rr.Router(rr.Configs.from_json('config.json'))
 with ThreadPoolExecutor(max_workers=8) as pool:
     router.route(thread_pool=pool, threads=8)
 ```
@@ -144,9 +144,10 @@ output_files = ['discharges_member_1.nc',
 
 def route(input_file: str, output_file: str) -> None:
     configs = rr.Configs(
-        forcing='vlateral',
+        forcing='runoff',
+        runoff_type='catchment',
         params_file=params_file,
-        vlateral_files=[input_file, ],
+        runoff_files=[input_file, ],
         discharge_files=[output_file, ],
     )
     rr.Router(configs).route()

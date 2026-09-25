@@ -2,7 +2,7 @@ import logging
 from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import KW_ONLY, dataclass, field, fields
-from typing import ClassVar, Literal, NamedTuple, Self
+from typing import TYPE_CHECKING, Literal, NamedTuple, Self
 
 import numpy as np
 import pandas as pd
@@ -10,36 +10,46 @@ import scipy.sparse
 import xarray as xr
 
 from ..configs import Configs
-from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, VlateralGenerator
+from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
 from .Runoff import Runoff
 
-__all__ = ['CellRunoff', 'RunoffGaussianGrid']
+if TYPE_CHECKING:
+    from ..network import Network
+
+__all__ = ['CellRunoff', 'GaussianGridRunoff']
 
 logger = logging.getLogger(__name__)
 
 
 class CellRunoff(NamedTuple):
-    """One runoff file read at the weight table's cells, ready for the fused aggregate-and-route kernel."""
+    """
+    One runoff file read at the weight table's cells, with everything the gaussian grid kernel needs to aggregate it
+    onto the rivers as it routes them. The fields are in the order ``aggregate_river`` takes them.
+    """
 
     runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths, each cell's time series contiguous
+    indptr: IntArray  # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
+    cell: IntArray  # (n_weights,) row of runoff_by_cell each weight applies to
     weight: FloatArray  # (n_weights,) proportions already multiplied by the depth unit conversion factor
     scale: FloatArray  # (n_rivers,) catchment areas that turn depths into volumes; EMPTY to keep depths
+    cumulative: bool  # de-accumulate each river's series from cumulative to incremental
+    force_positive: bool  # clip negative runoff to zero
 
 
 @dataclass(eq=False, repr=False)
-class RunoffGaussianGrid(Runoff):
+class GaussianGridRunoff(Runoff):
     """
-    Prepares lateral inflow (vlateral) for routing from gridded runoff depths and a grid weight table.
+    Prepares catchment runoff for routing from gridded runoff depths and a grid weight table.
 
     Only ``grid_weights_file`` is required. Every option is named the same here as it is on ``Configs``, so
-    ``RunoffGaussianGrid.from_configs`` reads each one off a ``Configs`` by its own name, which is how a ``Router``
+    ``GaussianGridRunoff.from_configs`` reads each one off a ``Configs`` by its own name, which is how a ``Router``
     builds one.
 
     Reading and indexing the weight table is the same work for every runoff file, so it is done once when the
-    RunoffGaussianGrid is created and reused for all of them. Each runoff file is read at the grid cells the table
-    touches and aggregated onto rivers as area weighted depths or volumes in a single pass, written straight into a
-    C-order (time, river) array that the routing kernels read without a copy.
+    GaussianGridRunoff is created and reused for all of them. Each runoff file is read at the grid cells the table
+    touches and aggregated onto rivers as area weighted depths or volumes in a single pass, each river's series
+    written straight into its row of a C-order (river, time) array that the routing kernels read in place.
     """
 
     grid_weights_file: PathInput  # weight table netCDF produced by ``river_route.runoff.grid_weights``
@@ -57,7 +67,7 @@ class RunoffGaussianGrid(Runoff):
     as_volumes: bool = False  # prepare volumes (m3) instead of depths (m); routing always uses volumes
 
     # Weight table read once by __post_init__, in row order of the table which follows the routing params order
-    river_ids: IntArray = field(init=False)  # (n_rivers,) river id of each vlateral column
+    river_ids: IntArray = field(init=False)  # (n_rivers,) river id of each catchment runoff column
     x_index: IntArray = field(init=False)  # (n_cells,) grid x index of each unique cell any catchment touches
     y_index: IntArray = field(init=False)  # (n_cells,) grid y index of each unique cell
     # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
@@ -65,16 +75,13 @@ class RunoffGaussianGrid(Runoff):
     cell: IntArray = field(init=False)  # (n_weights,) position in x_index and y_index of the cell of each weight
     proportion: FloatArray = field(init=False)  # (n_weights,) share of the river's catchment area inside the cell
     catchment_area: FloatArray = field(init=False)  # (n_rivers,) total catchment area of each river in m²
-    _buffer: FloatArray = field(init=False)  # (time, n_rivers) reused output of vlateral(), grown to the longest file
-
-    # Customizable/optimizable: 32 and 64 were benchmarked as near equivalents.
-    rivers_per_block: ClassVar[int] = 64
+    _buffer: FloatArray = field(init=False)  # flat reused catchment_runoff() output, sized to the longest file
 
     def __post_init__(self) -> None:
         if self.grid_weights_file is None:
-            raise ValueError('grid_weights_file is required to build a RunoffGaussianGrid')
+            raise ValueError('grid_weights_file is required to build a GaussianGridRunoff')
         self._read_weights()
-        self._buffer = np.empty((0, self.river_ids.shape[0]), dtype=np.float32)
+        self._buffer = np.empty(0, dtype=np.float32)
         return
 
     @property
@@ -89,13 +96,13 @@ class RunoffGaussianGrid(Runoff):
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
-        """Build a RunoffGaussianGrid from the runoff options on a ``Configs``. The configs are validated for runoff
+        """Build a GaussianGridRunoff from the runoff options on a ``Configs``. The configs are validated for runoff
         before the weight table is read. Each option is read off the Configs by the field's own name, so a field with
         no matching option raises AttributeError rather than silently keeping its default."""
         if not isinstance(configs, Configs):
             raise TypeError(
                 f'from_configs takes a Configs, got {type(configs).__name__}. '
-                f'Use Configs(...) or Configs.from_file(path).'
+                f'Use Configs(...) or Configs.from_json(path).'
             )
         configs.validate_runoff()
         return cls(**{f.name: getattr(configs, f.name) for f in fields(cls) if f.init})
@@ -116,7 +123,7 @@ class RunoffGaussianGrid(Runoff):
             weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
         )
         # index already topo sorted
-        river_ids = weight_df[[var_river_id]].drop_duplicates().sort_index()[var_river_id].to_numpy()
+        river_ids = weight_df[[var_river_id]].drop_duplicates().sort_index()[var_river_id].to_numpy(dtype=np.int32)
 
         cells = weight_df[['x_index', 'y_index']].merge(unique_indexes, on=['x_index', 'y_index'], how='left')
         point_idx = cells['index'].values
@@ -134,11 +141,32 @@ class RunoffGaussianGrid(Runoff):
         self.catchment_area = weight_df.groupby(var_river_id)['area_sqm'].sum().reindex(river_ids).to_numpy()
         return
 
+    def distribute(self, network: Network) -> None:
+        """
+        Match the weight table to a stabilized network: each river's runoff volume is split evenly between every row
+        with it as parent_river_id, which is the river and the synthetic sub-reaches injected upstream of it. Does
+        nothing when the table already has a row per network row.
+        """
+        n = network.river_ids.shape[0]
+        if self.river_ids.shape[0] == n:
+            return
+        parent = pd.Index(self.river_ids).get_indexer(network.parent_river_ids)  # weight table row of each parent
+        if np.any(parent < 0):
+            raise ValueError(f'{self.grid_weights_file} is missing parent_river_id values of the network')
+        counts = np.diff(self.indptr)[parent]
+        indptr = np.concatenate(([0], np.cumsum(counts))).astype(self.indptr.dtype)
+        take = np.repeat(self.indptr[parent] - indptr[:-1], counts) + np.arange(indptr[-1])
+        self.indptr, self.cell, self.proportion = indptr, self.cell[take], self.proportion[take]
+        self.catchment_area = self.catchment_area[parent] / np.bincount(parent, minlength=len(self.river_ids))[parent]
+        self.river_ids = network.river_ids
+        self._buffer = np.empty(0, dtype=np.float32)
+        return
+
     ################################################
-    # Prepare vlateral from runoff
+    # Prepare catchment runoff from gridded runoff
     ################################################
 
-    def vlateral(
+    def catchment_runoff(
         self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
     ) -> tuple[FloatArray, DatetimeArray]:
         """
@@ -150,65 +178,68 @@ class RunoffGaussianGrid(Runoff):
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
-            tuple: (vlateral as a C-order (time, n_rivers) array, its time values). The array is a view of the
-                reused buffer and is overwritten by the next call.
+            tuple: (catchment runoff as a C-order (n_rivers, time) array, its time values). The array is a view of
+                the reused buffer and is overwritten by the next call.
         """
         runoff, time_index, conversion_factor = self.read_runoff(runoff_data)
-        if self._buffer.shape[0] < runoff.shape[0]:
-            self._buffer = np.empty((runoff.shape[0], self.river_ids.shape[0]), dtype=np.float32)
+        if self._buffer.shape[0] < runoff.shape[0] * self.river_ids.shape[0]:
+            self._buffer = np.empty(runoff.shape[0] * self.river_ids.shape[0], dtype=np.float32)
         return self.aggregate(
             runoff, time_index, conversion_factor, out=self._buffer, thread_pool=thread_pool, threads=threads
         )
 
-    def reader(
-        self, grid_runoff_files: PathList, thread_pool: Executor | None = None, threads: int = 1
-    ) -> VlateralGenerator:
+    def catchment_reader(
+        self, runoff_files: PathList, thread_pool: Executor | None = None, threads: int = 1
+    ) -> RunoffGenerator:
         """
-        Aggregate gridded runoff files into lateral inflow volumes, one file at a time, with the weight table this
-        instance already holds.
+        Aggregate gridded runoff files into catchment runoff volumes, one file at a time, with the weight table this
+        instance already holds. Routing does not use this: ``reader`` hands the gaussian grid kernel the grid cells to
+        aggregate as it routes.
 
         Every file is aggregated into one reused C-order buffer that the kernels read directly: no per-file allocation
         or copy. The yielded array is overwritten by the next file, so a consumer that needs to keep it must copy it.
 
         Args:
-            grid_runoff_files: gridded runoff files to aggregate
+            runoff_files: gridded runoff files to aggregate
             thread_pool: optional thread pool to aggregate on, used as given and never shut down here
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Yields:
-            tuple: (dates, vlateral, source_file) per input file
+            tuple: (dates, catchment_runoff, source_file) per input file
         """
-        self.as_volumes = True  # lateral inflow is a volume
-        for runoff_file in grid_runoff_files:
-            vlateral, dates = self.vlateral(runoff_file, thread_pool=thread_pool, threads=threads)
-            yield dates.astype('datetime64[s]'), vlateral.astype(np.float32, copy=False), runoff_file
+        self.as_volumes = True  # routing uses catchment runoff volumes
+        for runoff_file in runoff_files:
+            catchment_runoff, dates = self.catchment_runoff(runoff_file, thread_pool=thread_pool, threads=threads)
+            yield dates.astype('datetime64[s]'), catchment_runoff.astype(np.float32, copy=False), runoff_file
 
-    def cell_reader(
-        self, grid_runoff_files: PathList
-    ) -> Iterator[tuple[DatetimeArray, CellRunoff | FloatArray, PathInput]]:
+    def generator(self, runoff_files: PathList) -> Iterator[tuple[DatetimeArray, CellRunoff | FloatArray, PathInput]]:
         """
-        Read gridded runoff files for the fused kernel, which aggregates and routes in one pass, so no vlateral array
-        is built. A file whose timesteps must be resampled cannot be aggregated inside the routing sweep, so it is
-        aggregated here and yielded as a vlateral array instead.
+        Read gridded runoff files for the gaussian grid kernel, which aggregates and routes in one pass, so no
+        catchment runoff array is built. A file whose timesteps must be resampled cannot be aggregated inside the
+        routing sweep, so it is aggregated here and yielded as a catchment runoff array instead.
 
         Args:
-            grid_runoff_files: gridded runoff files to read
+            runoff_files: gridded runoff files to read
 
         Yields:
             tuple: (dates, forcing, source_file) per input file, where forcing is a CellRunoff, or a C-order
-                (time, n_rivers) vlateral array when the file was resampled
+                (n_rivers, time) catchment runoff array when the file was resampled
         """
-        self.as_volumes = True  # lateral inflow is a volume
-        for runoff_file in grid_runoff_files:
+        self.as_volumes = True  # routing uses catchment runoff volumes
+        for runoff_file in runoff_files:
             runoff, time_index, conversion_factor = self.read_runoff(runoff_file)
             if self._needs_resampling(time_index):
-                vlateral, time_index = self.aggregate(runoff, time_index, conversion_factor)
-                yield time_index.astype('datetime64[s]'), vlateral.astype(np.float32, copy=False), runoff_file
+                catchment_runoff, time_index = self.aggregate(runoff, time_index, conversion_factor)
+                yield time_index.astype('datetime64[s]'), catchment_runoff.astype(np.float32, copy=False), runoff_file
                 continue
             forcing = CellRunoff(
                 runoff_by_cell=self._by_cell(runoff),
+                indptr=self.indptr,
+                cell=self.cell,
                 weight=self._weight(conversion_factor),
                 scale=self.catchment_area if self.as_volumes else self.catchment_area[:0],
+                cumulative=self.cumulative,
+                force_positive=self.force_positive_runoff,
             )
             del runoff
             yield time_index.astype('datetime64[s]'), forcing, runoff_file
@@ -217,7 +248,8 @@ class RunoffGaussianGrid(Runoff):
         self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
     ) -> xr.Dataset:
         """
-        Read and aggregate runoff into a vlateral dataset that can be saved and routed with ``vlateral_files``.
+        Read and aggregate runoff into a catchment runoff dataset that can be saved and routed as ``runoff_files``
+        with ``runoff_type`` catchment.
 
         Args:
             runoff_data: path(s) to runoff files
@@ -225,15 +257,36 @@ class RunoffGaussianGrid(Runoff):
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
-            xr.Dataset: vlateral with dimensions ``time`` and ``river_id``.
-                Contains a single variable ``vlateral`` in meters or m³.
+            xr.Dataset: catchment runoff with dimensions ``time`` and ``river_id``. Contains ``catchment_runoff`` in
+                meters or m³ and ``catchment_area`` in m².
         """
         runoff, time_index, conversion_factor = self.read_runoff(runoff_data)
-        vlateral, time_index = self.aggregate(
+        catchment_runoff, time_index = self.aggregate(
             runoff, time_index, conversion_factor, thread_pool=thread_pool, threads=threads
         )
         del runoff
-        return self._vlateral_dataset(time_index, vlateral, self.river_ids)
+        return self._catchment_runoff_dataset(time_index, catchment_runoff, self.river_ids, self.catchment_area)
+
+    def aggregate_to_file(
+        self,
+        runoff_data: PathInput | list[PathInput],
+        path: PathInput,
+        thread_pool: Executor | None = None,
+        threads: int = 1,
+    ) -> None:
+        """
+        Precompute the catchment runoff of gridded runoff and write it to a netCDF file that is routed as
+        ``runoff_files`` with ``runoff_type`` catchment. Routing the grids directly aggregates inside the routing
+        kernel instead, which is faster than routing a precomputed file.
+
+        Args:
+            runoff_data: path(s) to runoff files
+            path: netCDF file to write
+            thread_pool: optional thread pool to aggregate on, used as given and never shut down here
+            threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
+        """
+        self.to_dataset(runoff_data, thread_pool=thread_pool, threads=threads).to_netcdf(path)
+        return
 
     def read_runoff(self, runoff_data: PathInput | list[PathInput]) -> tuple[FloatArray, DatetimeArray, int | float]:
         """
@@ -278,16 +331,16 @@ class RunoffGaussianGrid(Runoff):
             runoff: (time, n_cells) runoff depths at the weight table's cells, as returned by ``read_runoff``
             time_index: (time,) datetime64 values of the runoff steps
             conversion_factor: multiplier converting the runoff depth unit to meters
-            out: optional C-order array with at least as many rows as ``runoff`` and one column per river, used as
-                the output buffer. Not used when irregular timesteps are resampled.
+            out: optional flat buffer of at least n_rivers * time values, used as the output. Not used when irregular
+                timesteps are resampled.
             thread_pool: optional thread pool, used as given and never shut down here. The rivers are split into
                 ``threads`` ranges of similar work that the same kernel aggregates concurrently. Without a pool one
                 range covers every river.
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
-            tuple: (vlateral as a C-order (time, n_rivers) array, its time values). When ``out`` is used the array is
-                a view of its first rows.
+            tuple: (catchment runoff as a C-order (n_rivers, time) array, its time values). When ``out`` is used the
+                array is a view of its start.
         """
         n_steps, n_rivers = runoff.shape[0], self.river_ids.shape[0]
         runoff_by_cell = self._by_cell(runoff)
@@ -296,30 +349,31 @@ class RunoffGaussianGrid(Runoff):
         no_scale = self.catchment_area[:0]
 
         if self._needs_resampling(time_index):
-            vlateral = np.empty((n_steps, n_rivers), dtype=dtype)
-            self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, vlateral, thread_pool, threads)
+            catchment_runoff = np.empty((n_rivers, n_steps), dtype=dtype)
+            self._aggregate_over_ranges(runoff_by_cell, weight, no_scale, catchment_runoff, thread_pool, threads)
             timestep = int((time_index[1] - time_index[0]) / np.timedelta64(1, 's'))
             logger.warning(f'Time steps are not uniform, resampling to the first timestep: {timestep} seconds')
-            df = pd.DataFrame(vlateral, index=time_index, columns=self.river_ids)
+            df = pd.DataFrame(catchment_runoff.T, index=time_index, columns=self.river_ids)
             df = df.cumsum().resample(rule=f'{timestep}s').interpolate(method='linear')
             df = self._cumulative_to_incremental(df)
             time_index = df.index.values
-            # pandas 3 returns a read-only array from to_numpy, and the conversions below write in place
-            vlateral = df.to_numpy(dtype=np.float32, copy=True)
+            # resampling works on (time, river) columns, so this rare path transposes back to (river, time) once
+            catchment_runoff = np.ascontiguousarray(df.to_numpy(dtype=np.float32).T)
             del df
-            vlateral[np.isnan(vlateral)] = 0.0
+            catchment_runoff[np.isnan(catchment_runoff)] = 0.0
             if self.as_volumes:
-                vlateral *= self.catchment_area[np.newaxis, :]
-            return vlateral, time_index
+                catchment_runoff *= self.catchment_area[:, np.newaxis]
+            return catchment_runoff, time_index
 
         if out is None:
-            out = np.empty((n_steps, n_rivers), dtype=dtype)
-        elif out.ndim != 2 or out.shape[0] < n_steps or out.shape[1] != n_rivers or not out.flags.c_contiguous:
-            raise ValueError(f'out must be a C-order array of at least ({n_steps}, {n_rivers}), got shape {out.shape}')
-        vlateral = out[:n_steps]
+            catchment_runoff = np.empty((n_rivers, n_steps), dtype=dtype)
+        elif out.ndim != 1 or out.shape[0] < n_rivers * n_steps:
+            raise ValueError(f'out must be a flat buffer of at least {n_rivers * n_steps} values')
+        else:
+            catchment_runoff = out[: n_rivers * n_steps].reshape(n_rivers, n_steps)
         scale = self.catchment_area if self.as_volumes else no_scale
-        self._aggregate_over_ranges(runoff_by_cell, weight, scale, vlateral, thread_pool, threads)
-        return vlateral, time_index
+        self._aggregate_over_ranges(runoff_by_cell, weight, scale, catchment_runoff, thread_pool, threads)
+        return catchment_runoff, time_index
 
     @staticmethod
     def _by_cell(runoff: FloatArray) -> FloatArray:
@@ -356,7 +410,6 @@ class RunoffGaussianGrid(Runoff):
         concurrent ranges of similar work when a pool is given. The kernel is the same either way, so there is no
         separate serial code path to keep in sync.
         """
-        n_steps = runoff_by_cell.shape[1]
         dtype = np.result_type(runoff_by_cell.dtype, weight.dtype)
         bounds = self._river_ranges(self.indptr, threads if thread_pool is not None else 1)
 
@@ -373,7 +426,6 @@ class RunoffGaussianGrid(Runoff):
                 force_positive=self.force_positive_runoff,
                 r_start=r_start,
                 r_stop=r_stop,
-                scratch=np.empty((min(self.rivers_per_block, r_stop - r_start), n_steps), dtype=dtype),
                 out=out,
             )
 

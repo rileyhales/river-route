@@ -1,23 +1,27 @@
 ## Configuration File
 
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
-YAML/JSON file with `Configs.from_file`.
-All routing runs through `Router`. The procedure it runs is set by four selector keys (`coeff`, `forcing`,
-`transform`, `network_conditioning`), and the required config keys depend on which selections you make.
+JSON file with `Configs.from_json`.
+All routing runs through `Router`. The procedure it runs is set by the selector keys (`coeff`, `forcing`,
+`transform`, `runoff_type`, `network_type`), and the required config keys depend on which selections you make.
 
-`Router` takes a `Configs` and nothing else. `Network` and `RunoffGaussianGrid` take the options they need as ordinary
+`Router` takes a `Configs` and nothing else. `Network` and the Runoff classes take the options they need as ordinary
 arguments and each has a `from_configs` classmethod that reads those same values off a `Configs`; `Router` builds
-both that way. `examples/config.yaml` below groups every option under the class that reads it.
+them that way. `examples/config.json` below lists every option.
 
 ### Routing procedure selectors
 
 - `coeff` - `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha\*Q^beta
   from columns `alpha`, `beta`, `x`). Default `'static'`.
-- `forcing` - one of `'channel'` (channel routing only, no inflows) or `'vlateral'` (lateral runoff inflow).
+- `forcing` - one of `'channel'` (channel routing only, no inflows) or `'runoff'` (runoff enters the rivers in addition to routing).
   A single value. Default `'channel'`.
 - `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
-  Only read when `forcing` is `'vlateral'`. Default `'uniform'`.
-- `network_conditioning` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
+  Only read when `forcing` is `'runoff'`. Default `'uniform'`.
+- `runoff_type` - the form of `runoff_files`: `'catchment'` (already aggregated to catchments, read by
+  `CatchmentRunoff`), `'gaussian_grid'` (a grid with x and y dimensions, read by `GaussianGridRunoff`), or
+  `'reduced_gaussian_grid'` (a grid with one cell dimension, read by `ReducedGaussianGridRunoff`, not implemented yet).
+  Required when `forcing` is `'runoff'`, with no default.
+- `network_type` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
   `dt_routing` is routed as the fewest equal sub-reaches in series that are each Muskingum-stable, and each river
   too short for it is sub-cycled in the fewest equal steps of its own that are). Default `'standard'`.
   `'stabilized'` needs static coefficients, and multiplies the routing work by the average
@@ -26,8 +30,8 @@ both that way. `examples/config.yaml` below groups every option under the class 
   be made stable. The state files then hold one value per sub-reach, each
   river's sub-reaches upstream to downstream; a state file with one value per river seeds all of its sub-reaches.
 
-The four keys together resolve to one compiled kernel. A combination with no kernel raises `NotImplementedError`
-listing the ones that are implemented.
+The selectors together name one kernel; see [kernels](kernels.md). A combination with no kernel yet raises
+`NotImplementedError` naming it and listing those that exist.
 
 ## Minimum Required Inputs
 
@@ -48,10 +52,11 @@ Beyond the always-required keys above, additional keys are required depending on
 - `dt_routing` - routing timestep in seconds
 - `dt_total` - total simulation duration in seconds
 
-**`forcing: vlateral`** also requires a water input source:
+**`forcing: runoff`** also requires a water input source:
 
-- `vlateral_files`, or
-- `grid_runoff_files` plus `grid_weights_file`
+- `runoff_files` and `runoff_type`
+- `grid_weights_file` when `runoff_type` is `gaussian_grid` or `reduced_gaussian_grid`. It must not be set for
+  `catchment`.
 
   Time keys for forced procedures (`dt_total`, `dt_discharge`, `dt_runoff`, `dt_routing`, `start_datetime`)
   are resolved from the inputs where possible; see the [time options](time-options.md).
@@ -74,9 +79,8 @@ The following table lists where each remaining key applies.
 | `discharge_dir`            | Directory for output  files      | _Option 1_                                             |
 | `discharge_files`          | Explicit output paths            | _Option 2_                                             |
 | **input data**             |                                  |                                                        |
-| `vlateral_files`           | Per-catchment runoff time series | `forcing: vlateral`, _Option 1_                         |
-| `grid_runoff_files`        | Gridded runoff depths            | `forcing: vlateral`, _Option 2_                         |
-| `grid_weights_file`        | Converts depth grids to vlateral | `forcing: vlateral`, _Option 2_                         |
+| `runoff_files`             | Runoff read as the `runoff_type` | `forcing: runoff`                                      |
+| `grid_weights_file`        | Aggregates grids to catchments   | `runoff_type` a grid                                   |
 | **unit hydrograph**        |                                  |                                                        |
 | `uh_kernel_file`           | Unit hydrograph kernel (npz)     | `transform: unit_hydrograph`                           |
 | `uh_state_init_file`       | Initial unit hydrograph state    | optional                                               |
@@ -93,9 +97,9 @@ The following table lists where each remaining key applies.
 | Config Key               | Description                                            | Default                                       |
 |--------------------------|--------------------------------------------------------|-----------------------------------------------|
 | `coeff`                  | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
-| `forcing`                | Inflow forcing: `'channel'`, `'vlateral'`              | `'channel'`                                   |
+| `forcing`                | Inflow forcing: `'channel'`, `'runoff'`                | `'channel'`                                   |
 | `transform`              | Runoff transform: `'uniform'`, `'unit_hydrograph'`     | `'uniform'`                                   |
-| `network_conditioning`   | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |
+| `network_type`           | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |
 | `log`                    | Enable or disable logging                              | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                 | `True`                                        |
 | `log_level`              | Logger level, defaults to between INFO and WARNING     | `'PROGRESS'`                                  |
@@ -103,24 +107,24 @@ The following table lists where each remaining key applies.
 | `log_format`             | Python logging format string                           | `'%(levelname)s - %(asctime)s - %(message)s'` |
 | `var_river_id`           | River ID dimension name in files                       | `'river_id'`                                  |
 | `var_discharge`          | Discharge variable name in output                      | `'Q'`                                         |
-| `var_grid_runoff`        | Runoff variable name in `grid_runoff_files`            | `'ro'`                                        |
-| `var_vlateral`           | Inflow variable name in `vlateral_files`               | `'vlateral'`                                  |
-| `var_x`                  | X-dimension name in depth grids                        | `'x'`                                         |
-| `var_y`                  | Y-dimension name in depth grids                        | `'y'`                                         |
+| `var_grid_runoff`        | Runoff variable name in grid `runoff_files`            | `'ro'`                                        |
+| `var_x`                  | X-dimension name in gaussian grids                     | `'x'`                                         |
+| `var_y`                  | Y-dimension name in gaussian grids                     | `'y'`                                         |
+| `var_cell`               | Cell dimension name in reduced gaussian grids          | `'cell'`                                      |
 | `var_t`                  | Time dimension name in depth grids                     | `'time'`                                      |
 | `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`       | `'incremental'`                               |
 | `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs       | `'sequential'`                                |
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
 | `force_uniform_timesteps` | Resample irregular grid runoff to the first timestep  | `True`                                        |
-| `as_volumes`             | `RunoffGaussianGrid` prepares volumes instead of depths            | `False`                                       |
+| `as_volumes`             | `GaussianGridRunoff` prepares volumes instead of depths            | `False`                                       |
 | `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
 
 ## Validation
 
 `Router.route()` validates the configs with `Configs.validate_routing` before it computes anything, and
-`RunoffGaussianGrid.from_configs` validates them with `Configs.validate_runoff` before it reads the weight table. Configs are
-frozen, so once they pass they are not checked again. A `RunoffGaussianGrid` built directly, without a `Configs`, has nothing
+`GaussianGridRunoff.from_configs` validates them with `Configs.validate_runoff` before it reads the weight table. Configs are
+frozen, so once they pass they are not checked again. A `GaussianGridRunoff` built directly, without a `Configs`, has nothing
 to validate and so runs neither.
 
 `Configs.deep_validate()` reads the params file, grid weights, and initial state and checks their columns,
@@ -129,22 +133,22 @@ types, and value ranges, that the network is topologically sorted, and that the 
 about to do. Run it once on inputs you have not checked before:
 
 ```python
-rr.Configs.from_file('config.yaml').deep_validate()
+rr.Configs.from_json('config.json').deep_validate()
 ```
 
 `unstable_coefficients` controls what happens when a river's parameters are not Muskingum-stable for the
 routing timestep, which requires `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window the solution for
 that river oscillates and negative discharges are clamped to zero, which does not conserve mass. The
 default `'warn'` logs how many rivers are affected; `'raise'` refuses to route; `'ignore'` is silent. `Router`
-applies it by calling `Network.check_stability`. Use `Network.stability_report(dt)` to inspect a network before
+applies it by calling `Network.check_stability`. Use `Network.unstable_mask(dt)` to inspect a network before
 routing it, and `Network.stabilize(dt)` to build the stabilized network, which adds sub-reaches until every
 one routes stably at that dt. `network_conditioning='stabilized'` routes that network, and sub-cycles the rivers
 too short for `dt_routing`, which splitting cannot fix, in `Network.substeps(dt)` steps each.
 
-## Example Configuration YAMLs
+## Example Configuration
 
-The general template in YAML format lists all keys with comments.
+The general template lists every key.
 
-```yaml title="config.yaml"
---8<-- "examples/config.yaml"
+```json title="config.json"
+--8<-- "examples/config.json"
 ```

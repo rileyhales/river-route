@@ -10,7 +10,7 @@ routing is state handling:
 
 There are two common ways to run ensembles in `river-route`.
 
-Ensemble routing is available whenever there is forcing (e.g. `forcing: vlateral`); it is not
+Ensemble routing is available whenever there is forcing (e.g. `forcing: runoff`); it is not
 meaningful for channel-only routing (`forcing: channel`). Set it with `runoff_processing_mode: ensemble`.
 
 1. Run each member in a separate job (loop, multiprocessing, cluster workers). This is easiest
@@ -79,7 +79,7 @@ def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_
 
 m = (
     rr
-    .Router(rr.Configs.from_file('your_config_file.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('your_config_file.json'), forcing='runoff')
     .set_discharge_writer(custom_output_writer)  # set the custom output writer function
     .route()
 )

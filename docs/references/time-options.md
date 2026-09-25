@@ -20,7 +20,7 @@ The following rules apply:
 ## Router Defaults
 
 - Channel-only routing (`forcing: channel`): requires `dt_total` and `dt_routing`; `dt_discharge` defaults to `dt_routing`.
-- Routing with forcing (e.g. `forcing: vlateral`):
+- Routing with forcing (e.g. `forcing: runoff`):
     - `dt_runoff` defaults to the runoff-file timestep.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
@@ -28,7 +28,7 @@ The following rules apply:
 
 ## Required Relationships
 
-For routing with forcing (e.g. `forcing: vlateral`):
+For routing with forcing (e.g. `forcing: runoff`):
 
 ```
 dt_total >= dt_discharge >= dt_runoff >= dt_routing

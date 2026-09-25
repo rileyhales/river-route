@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import netCDF4 as nc
+import numba
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -12,8 +13,6 @@ import zarr
 from zarr.codecs import BloscCodec
 
 from ..types import DatetimeArray, FloatArray, PathInput
-from . import _river_kernels as river_kernels
-from ._river_kernels import to_time_major
 
 if TYPE_CHECKING:
     from .Router import Router
@@ -22,15 +21,43 @@ __all__ = ['null_writer', 'netcdf_writer', 'zarr_writer', 'parquet_writer', 'to_
 
 ZARR_RIVERS_PER_CHUNK = 500
 ZARR_CHUNKS_PER_SHARD: int | None = None
-ZARR_KEEPBITS = 12
+ZARR_KEEPBITS = 15
 ZARR_COMPRESSOR = BloscCodec(cname='lz4', clevel=5, shuffle='bitshuffle')
 PARQUET_WRITE_OPTIONS = {'compression': 'none', 'use_dictionary': False, 'write_statistics': False}
-NETCDF_RIVERS_PER_WRITE = 1024
+TRANSPOSE_TILE = 32  # rows and columns per tile of the discharge transpose, sized so a tile stays in cache
 
 
-def _decoded(discharge_array: FloatArray) -> FloatArray:
-    """The discharge as the float dtype it holds: float32 passes through, a narrowed uint16 buffer is float16."""
-    return river_kernels.decode_discharge(discharge_array)
+@numba.njit(cache=True, nogil=True)
+def _transpose_tiles(by_river, out, tile):
+    """Copy a (river, time) array into a C-order (time, river) one, a square tile at a time."""
+    n_rivers, n_steps = by_river.shape
+    for r0 in range(0, n_rivers, tile):
+        r1 = min(r0 + tile, n_rivers)
+        for t0 in range(0, n_steps, tile):
+            t1 = min(t0 + tile, n_steps)
+            for t in range(t0, t1):
+                row = out[t]
+                for r in range(r0, r1):
+                    row[r] = by_river[r, t]
+
+
+def to_time_major(discharge_array: FloatArray) -> FloatArray:
+    """
+    A C-order (time, river) copy of a routed (river, time) discharge array, for a writer or consumer whose format
+    needs each time step's rivers contiguous.
+
+    The kernels always write (river, time), because that is the layout they solve in. Transposing is a scatter
+    however it is done, so this does it a tile at a time to keep both sides in cache rather than striding the whole
+    array per column. An array that is already the transpose of a C-order (time, river) buffer is returned as that
+    buffer's view, with nothing copied.
+    """
+    if discharge_array.T.flags.c_contiguous:
+        return discharge_array.T
+    by_river = np.ascontiguousarray(discharge_array)
+    n_rivers, n_steps = by_river.shape
+    out = np.empty((n_steps, n_rivers), dtype=by_river.dtype)
+    _transpose_tiles(by_river, out, TRANSPOSE_TILE)
+    return out
 
 
 def bitround(values: FloatArray, keepbits: int) -> FloatArray:
@@ -51,17 +78,21 @@ def bitround(values: FloatArray, keepbits: int) -> FloatArray:
 
 
 def _check_discharge_shape(router: Router, dates: DatetimeArray, discharge_array: FloatArray, path: PathInput) -> None:
-    """Check the (river, time) discharge against the network and the dates it is written with."""
-    if discharge_array.shape[0] != router.network.river_ids.shape[0]:
-        raise ValueError(
-            f'Cannot write {path}: {discharge_array.shape[0]} rows of discharge for '
-            f'{router.network.river_ids.shape[0]} rivers'
-        )
+    """Check the (river, time) discharge against the original rivers and the dates it is written with."""
+    n_rivers = _river_ids(router).shape[0]
+    if discharge_array.shape[0] != n_rivers:
+        raise ValueError(f'Cannot write {path}: {discharge_array.shape[0]} rows of discharge for {n_rivers} rivers')
     if dates.shape[0] != discharge_array.shape[1]:
         raise ValueError(
             f'Cannot write {path}: {dates.shape[0]} dates for {discharge_array.shape[1]} columns of discharge'
         )
     return
+
+
+def _river_ids(router: Router) -> np.ndarray:
+    """The ids of the original rivers, the only ones discharge is written for."""
+    synthetic = router.network.synthetic
+    return router.network.river_ids if synthetic is None else router.network.river_ids[~synthetic]
 
 
 def null_writer(*args, **kwargs) -> None:
@@ -89,11 +120,6 @@ def netcdf_writer(
     nothing transposed. Writing (time, river_id) instead costs about twice the kernel time on a large network,
     because each river's series then has to be transposed out in blocks.
 
-    The variable is always float32, because netCDF has no half precision type. A ``discharge_dtype='float16'`` run
-    is widened a block of ``NETCDF_RIVERS_PER_WRITE`` rivers at a time, so only a bounded float32 block is allocated,
-    but the file is the same size as a float32 run and the widening costs time. Use ``zarr_writer`` or
-    ``parquet_writer`` to keep float16 on disk.
-
     Args:
         router: the Router that routed the discharge
         dates: datetime array corresponding to the discharge columns
@@ -112,15 +138,9 @@ def netcdf_writer(
         time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
         time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
         id_var = ds.createVariable(rid, 'i4', rid)
-        id_var[:] = router.network.river_ids
+        id_var[:] = _river_ids(router)
         flow_var = ds.createVariable(router.configs.var_discharge, 'f4', (rid, 'time'))
-        if discharge_array.dtype == np.float32:
-            flow_var[:] = discharge_array  # one call: nothing to widen, and blocking the write only slows it down
-        else:  # netCDF has no half type, so a float16 buffer is widened a block of rivers at a time
-            decoded = _decoded(discharge_array)
-            for r0 in range(0, n_rivers, NETCDF_RIVERS_PER_WRITE):
-                r1 = min(r0 + NETCDF_RIVERS_PER_WRITE, n_rivers)
-                flow_var[r0:r1] = decoded[r0:r1].astype(np.float32)
+        flow_var[:] = discharge_array  # one call: blocking the write only slows it down
         flow_var.long_name = 'Discharge at catchment outlet'
         flow_var.standard_name = 'discharge'
         flow_var.aggregation_method = 'mean'
@@ -138,18 +158,6 @@ def zarr_writer(
     """
     Write routed discharge to a zarr store with dimensions (river_id, time), replacing anything already at the path.
     This is the default writer.
-
-    The river dimension comes first so that each chunk is a contiguous span of the routed buffer, copied out without
-    a transpose. Chunks hold ``ZARR_RIVERS_PER_CHUNK`` rivers and span every time step of the file.
-
-    Values are rounded to ``ZARR_KEEPBITS`` mantissa bits and compressed with ``ZARR_COMPRESSOR``, which on a year of
-    the Amazon is 2.71x smaller than the raw array and faster to write than storing it uncompressed. The rounding is
-    done here in numpy rather than by a zarr filter, a block of rivers at a time so nothing the size of the whole
-    array is allocated and the array handed in is never modified. A narrowed ``discharge_dtype`` is stored as it is,
-    since float16 has fewer mantissa bits than the rounding would keep.
-
-    Setting ``ZARR_CHUNKS_PER_SHARD`` packs that many chunks into each shard file instead of writing one file per
-    chunk. The store opens with ``xarray.open_zarr``.
 
     Args:
         router: the Router that routed the discharge
@@ -169,7 +177,7 @@ def zarr_writer(
             shape=(n_rivers, n_steps),
             chunks=(ZARR_RIVERS_PER_CHUNK, -1),
             shards=(ZARR_RIVERS_PER_CHUNK * ZARR_CHUNKS_PER_SHARD, -1) if ZARR_CHUNKS_PER_SHARD else None,
-            dtype=_decoded(discharge_array).dtype,
+            dtype=discharge_array.dtype,
             filters=None,
             compressors=ZARR_COMPRESSOR,
             config={'write_empty_chunks': True},  # skips comparing every chunk to the fill value before writing it
@@ -181,14 +189,13 @@ def zarr_writer(
                 'units': 'm3 s-1',
             },
         )
-        by_river = _decoded(discharge_array)  # (river, time), C-order as the kernels wrote it
-        if by_river.dtype != np.float32 or ZARR_KEEPBITS >= 23:
-            flow[:] = by_river
+        if ZARR_KEEPBITS >= 23:
+            flow[:] = discharge_array
         else:  # round a chunk of rivers at a time, so the copy this makes stays the size of one chunk
 
             def write_chunk(r0: int) -> None:
                 r1 = min(r0 + ZARR_RIVERS_PER_CHUNK, n_rivers)
-                flow[r0:r1] = bitround(by_river[r0:r1], ZARR_KEEPBITS)
+                flow[r0:r1] = bitround(discharge_array[r0:r1], ZARR_KEEPBITS)
 
             starts = range(0, n_rivers, ZARR_RIVERS_PER_CHUNK)
             if router.threads > 1:
@@ -210,8 +217,8 @@ def zarr_writer(
             },
         )
         time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
-        id_var = group.create_array(rid, shape=(n_rivers,), dtype='int64', dimension_names=(rid,))
-        id_var[:] = router.network.river_ids
+        id_var = group.create_array(rid, shape=(n_rivers,), dtype='int32', dimension_names=(rid,))
+        id_var[:] = _river_ids(router)
         zarr.consolidate_metadata(str(discharge_file))
     return
 
@@ -242,9 +249,9 @@ def parquet_writer(
         runoff_file: path to the lateral inflow used to generate the discharge values, if applicable
     """
     _check_discharge_shape(router, dates, discharge_array, discharge_file)
-    by_step = _decoded(to_time_major(discharge_array))  # parquet needs each step's rivers contiguous
+    by_step = to_time_major(discharge_array)  # parquet needs each step's rivers contiguous
     names = [router.configs.var_river_id, *pd.DatetimeIndex(dates).strftime('%Y-%m-%dT%H:%M:%S')]
-    columns = [pa.array(router.network.river_ids), *(pa.array(row) for row in by_step)]
+    columns = [pa.array(_river_ids(router)), *(pa.array(row) for row in by_step)]
     metadata = {'runoff_file': str(runoff_file), 'variable': router.configs.var_discharge, 'units': 'm3 s-1'}
     table = pa.table(columns, names=names).replace_schema_metadata(metadata)
     pq.write_table(table, str(discharge_file), **PARQUET_WRITE_OPTIONS)

@@ -33,7 +33,6 @@ dependencies = [
     "numpy==2.5.3",
     "pandas==3.0.6",
     "pyarrow>=25.0.1",
-    "pyyaml>=6.0,<7",
     "scipy==1.18.1",
     "shapely>=2.0,<3",
     "tqdm==4.70.1",

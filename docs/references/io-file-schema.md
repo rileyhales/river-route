@@ -4,8 +4,10 @@ You can get example inputs from the GEOGLOWS River Forecast System available on 
 
 ### Routing Parameters
 
-```yaml
-params_file: '/path/to/params.parquet'
+```json
+{
+  "params_file": "/path/to/params.parquet"
+}
 ```
 
 The routing parameters file is a parquet file. It has 1 row per river in the watershed.
@@ -28,10 +30,11 @@ These routing parameters typically come from preprocessing and calibration workf
 
 ## Catchment Runoff Files
 
-You need a time series of per-catchment runoff to be routed. There are 2 ways to provide it:
+You need a time series of per-catchment runoff to be routed. It is given as `runoff_files`, read as the `runoff_type`:
 
-1. Pre-aggregated catchment files (`vlateral_files`)
-2. Gridded runoff depths with a weight table (`grid_runoff_files` + `grid_weights_file`)
+1. `catchment`: files already aggregated to catchments
+2. `gaussian_grid`: gridded runoff depths with x and y dimensions, aggregated with a weight table (`grid_weights_file`)
+3. `reduced_gaussian_grid`: gridded runoff depths with one cell dimension (`var_cell`), not implemented yet
 
 !!! warning "Runoff Depths Warning"
     There are many projections for grid cells, different names of variables, various file formats, and units of the
@@ -40,27 +43,45 @@ You need a time series of per-catchment runoff to be routed. There are 2 ways to
 
 ### Pre-aggregated Catchment Files (recommended)
 
-```yaml
-vlateral_files:
-  - '/path/to/catchment_runoff.nc'
+```json
+{
+  "runoff_type": "catchment",
+  "runoff_files": [
+    "/path/to/catchment_runoff.nc"
+  ]
+}
 ```
 
 !!! note "Ordering River IDs"
     The `river_id` values **must** be the same values and order as in the routing parameters
 
-Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
-exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
-should have 1 data variable named `vlateral` which is an array of shape `(time, river_id)` of dtype float.
-Lateral forcing (`forcing: vlateral`) expects runoff volumes (m³). The inflow variable name can be overridden with
-`var_vlateral` and the time dimension name with `var_t`. `Runoff.to_netcdf` always writes the defaults.
+Catchment runoff is given as netcdf with 2 dimensions, `river_id` and `time`, in that order, so each river's series is
+contiguous and is read straight into the river major arrays the router works in. The `river_id` dimension **must**
+contain exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters
+file. The names and the order are fixed and cannot be configured:
+
+| Variable           | Dimensions           | Description                                                                 |
+|--------------------|----------------------|-----------------------------------------------------------------------------|
+| `catchment_runoff` | `(river_id, time)`   | Incremental runoff of each catchment per step, as a volume or a depth       |
+| `catchment_area`   | `(river_id,)`        | Area of each catchment in m², the factor between depths and volumes         |
+
+The `units` attribute of `catchment_runoff` is required and says which form it takes: `m3` for volumes, or a depth unit
+(`m` or `mm`). Depths and volumes are equivalent: routing uses volumes, so depths are converted to meters and
+multiplied by `catchment_area` when they are read. `catchment_runoff` names the area variable with the CF attribute
+`cell_measures = "area: catchment_area"`. `Runoff.to_netcdf` writes this schema, and the grid runoff classes write it
+from their grids with `aggregate_to_file`.
 
 ### Gridded Runoff Depths
 
-```yaml
-grid_runoff_files:
-  - '/path/to/grid1.nc'
-  - '/path/to/grid2.nc'
-grid_weights_file: '/path/to/weight_table.nc'
+```json
+{
+  "runoff_type": "gaussian_grid",
+  "runoff_files": [
+    "/path/to/grid1.nc",
+    "/path/to/grid2.nc"
+  ],
+  "grid_weights_file": "/path/to/weight_table.nc"
+}
 ```
 
 !!! note "Ordering River IDs"
@@ -93,9 +114,7 @@ float32, chunked so that each chunk holds every time step of a block of rivers.
 
 The values are rounded to `writers.ZARR_KEEPBITS` mantissa bits, a relative error of at most `2^-13`, and each chunk
 is compressed with `writers.ZARR_COMPRESSOR`, Blosc lz4 with bitshuffle. On a year of the Amazon that is 2.71x
-smaller than the raw array and faster to write than storing it uncompressed, since less of it reaches the disk. A
-`float16` run is stored as it is, without rounding, because float16 holds fewer mantissa bits than the rounding
-keeps.
+smaller than the raw array and faster to write than storing it uncompressed, since less of it reaches the disk.
 
 The river dimension comes first in every array format, because that is the layout the kernels write in place: each
 river's whole series is contiguous. That is also the layout a writer is handed, as a C-order `(river, time)` array,
@@ -106,13 +125,3 @@ on a large network, since each river's series then has to be transposed out in b
 `river_route.router.writers.parquet_writer` writes a parquet file with a `river_id` column followed by one column per
 time step, named `YYYY-MM-DDTHH:MM:SS`. Parquet is columnar, so a river major file would need one column per river,
 which is hundreds of thousands of columns on a real network; its rows are rivers instead.
-
-`Configs.discharge_dtype` may be set to `float16` to halve the memory the discharge buffer takes while routing. The
-routing math is always float32 and the channel state is never narrowed, so this rounds the saved values only, bounded
-by `2^-11` relative to each value.
-
-float16 only covers 6.1e-5 to 65,504. Flows above that overflow to infinity and flows below it lose most of their
-precision, so it suits smaller networks rather than the largest basins. On one year of the Amazon (303,097 rivers,
-hourly) 0.07% of the routed values, 1.85 million of them, overflow to infinity on the main stem, and `route` logs a
-warning whenever the option is used. zarr and parquet store float16 natively, so their files halve as well. netCDF has no half precision type, so
-`netcdf_writer` widens to float32 and its file is the same size as a float32 run.

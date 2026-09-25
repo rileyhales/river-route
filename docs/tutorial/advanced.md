@@ -15,7 +15,7 @@ graph TD
 
     E -->|lateral| K[loop: runoff input files generator]
     K --> L[set time params from dates]
-    L --> M[prepare vlateral]
+    L --> M[prepare catchment runoff]
     M --> N[set coefficients]
     N --> O[route with lateral inflow]
     O --> P{dt_discharge > dt_runoff?}
@@ -54,8 +54,8 @@ Depending on your preference, you may want to generate many config files in adva
 future use.
 
 The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword
-arguments to a `Configs`, which is then given to the `Router`. You could alternatively write the inputs to a YAML
-or JSON file and use that config file instead.
+arguments to a `Configs`, which is then given to the `Router`. You could alternatively write the inputs to a JSON
+file and use that config file instead.
 
 ```python
 import glob
@@ -75,9 +75,10 @@ outputs = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(outputs, exist_ok=True)
 
 configs = rr.Configs(
-    forcing='vlateral',
+    forcing='runoff',
+    runoff_type='catchment',
     params_file=params_file,
-    vlateral_files=runoff_files,
+    runoff_files=runoff_files,
     discharge_dir=outputs,
 )
 m = rr.Router(configs).route()
@@ -99,7 +100,7 @@ import river_route as rr
 
 (
     rr
-    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('config.json'), forcing='runoff')
     .set_discharge_writer(rr.router.writers.zarr_writer)
     .route()
 )
@@ -121,8 +122,8 @@ so you can chain it onto the constructor. The writer is called once per routed i
 5. `runoff_file`: path to the runoff input used to produce this output.
 
 As an example, you might want to write output as Parquet instead. The snippets below focus on the
-writer override; for `.route()` to actually run, the config must select `forcing: vlateral` and supply a
-water source (`vlateral_files`, or `grid_runoff_files` plus `grid_weights_file`).
+writer override; for `.route()` to actually run, the config must select `forcing: runoff` and supply a
+water source (`runoff_files` and `runoff_type`, plus `grid_weights_file` for the grid runoff types).
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
@@ -139,7 +140,7 @@ def custom_write_discharges(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router(rr.Configs.from_file('../../examples/config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('../../examples/config.json'), forcing='runoff')
     .set_discharge_writer(custom_write_discharges)
     .route()
 )
@@ -163,7 +164,7 @@ def append_to_existing_file(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('config.json'), forcing='runoff')
     .set_discharge_writer(append_to_existing_file)
     .route()
 )
@@ -185,7 +186,7 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 (
     rr
-    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('config.json'), forcing='runoff')
     .set_discharge_writer(save_partial_results)
     .route()
 )
@@ -193,18 +194,20 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 ## Customizing Runoff Inputs
 
-Routing reads the runoff the config names: `vlateral_files` with `RunoffVlateral`, or `grid_runoff_files` aggregated
-with `grid_weights_file` by `RunoffGaussianGrid`. The runoff classes prepare the lateral inflow, so pass a
-`RunoffGaussianGrid` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
-the inflow is prepared.
+Routing reads `runoff_files` with the Runoff class for the `runoff_type`: `CatchmentRunoff` for `catchment`, or
+`GaussianGridRunoff` for `gaussian_grid`, which aggregates the grids to catchments with `grid_weights_file`. Pass a
+`GaussianGridRunoff` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
+the catchment runoff is prepared. A Runoff passed to the `Router` must be the class for the `runoff_type`.
 
 ```python title="Pass a Prepared Runoff"
 import river_route as rr
 
-configs = rr.Configs.from_file('config.yaml')
-runoff = rr.RunoffGaussianGrid.from_configs(configs)
+configs = rr.Configs.from_json('config.json')
+runoff = rr.GaussianGridRunoff.from_configs(configs)
 rr.Router(configs, runoff=runoff).route()
 ```
 
 Runoff in a format or a place this package does not read can be written to netCDF with `Runoff.to_netcdf` and
-routed from `vlateral_files`.
+routed as `runoff_files` with `runoff_type` catchment. The grid classes precompute that file from their grids with
+`aggregate_to_file`, although routing the grids directly is faster: the aggregation then happens inside the routing
+kernel.

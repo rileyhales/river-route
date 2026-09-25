@@ -26,13 +26,13 @@ if __name__ == '__main__':
     # ── 1. Configs: every option, frozen, in one object ──────────────────────
     conf = rr.Configs(
         params_file=params_file,
-        grid_runoff_files=runoff_files,
+        runoff_files=runoff_files,
+        runoff_type='gaussian_grid',
         grid_weights_file=grid_weights_file,
         discharge_files=null_outputs,
-        forcing='vlateral',
-        coeff='static',
-        discharge_dtype='float32',
-        network_conditioning=args.network_conditioning,
+        forcing='runoff',
+        coefficients='static',
+        network_type=args.network_conditioning,
         dt_routing=args.dt_routing,
         var_grid_runoff='ro',
         var_x='longitude',

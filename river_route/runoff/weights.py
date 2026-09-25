@@ -101,7 +101,7 @@ def compute_voronoi_catchment_intersects(
     df = df.merge(total_area, left_on=river_id_variable, right_index=True, how='left')
     df['proportion'] = df['area_sqm'] / df['area_sqm_total']
     # computed in float64 so proportions come from exact areas, then stored as float32 to halve the table and every
-    # vlateral array aggregated from it
+    # catchment runoff array aggregated from it
     df = df.astype({column: np.float32 for column in ('x', 'y', 'area_sqm', 'area_sqm_total', 'proportion')})
 
     if save_path:
@@ -162,7 +162,7 @@ def grid_weights(
 
     voronoi_gdf = voronoi_diagram_from_regular_xy(x_geo, y, crs=crs)
 
-    # Map x_index back to original grid indices (for use by RunoffGaussianGrid)
+    # Map x_index back to original grid indices (for use by GaussianGridRunoff)
     voronoi_gdf['x_index'] = sort_order[voronoi_gdf['x_index'].values]
     if save_voronoi_path:
         voronoi_gdf.to_parquet(save_voronoi_path)

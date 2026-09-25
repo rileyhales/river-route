@@ -13,20 +13,6 @@ simulations run over it.
       show_root_heading: true
       show_source: false
 
-::: river_route.StabilityReport
-    handler: python
-    options:
-      members_order: source
-      show_root_heading: true
-      show_source: false
-
-::: river_route.StabilizedNetwork
-    handler: python
-    options:
-      members_order: source
-      show_root_heading: true
-      show_source: false
-
 ## Streams
 
 The static analysis and graph utilities a `Network` is built on, usable on a parameter table directly:

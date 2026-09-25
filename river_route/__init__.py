@@ -3,7 +3,7 @@ from ._metadata import __author__, __url__, __version__
 from .configs import Configs
 from .network import Network
 from .router import Router
-from .runoff import RunoffGaussianGrid, RunoffVlateral
+from .runoff import CatchmentRunoff, GaussianGridRunoff, ReducedGaussianGridRunoff
 
 __all__ = [
     # configuration, the object every other class is built from
@@ -13,8 +13,9 @@ __all__ = [
     # routing
     'Router',
     # runoff preparation
-    'RunoffGaussianGrid',
-    'RunoffVlateral',
+    'CatchmentRunoff',
+    'GaussianGridRunoff',
+    'ReducedGaussianGridRunoff',
     # modules
     'network',
     'router',

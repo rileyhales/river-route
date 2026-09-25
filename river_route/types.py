@@ -13,7 +13,7 @@ type PathList = list[PathInput]
 type FloatArray = NDArray[np.float32]
 type IntArray = NDArray[np.int64]
 type DatetimeArray = NDArray[np.datetime64]
-type VlateralGenerator = Generator[tuple[DatetimeArray, FloatArray, PathInput]]
+type RunoffGenerator = Generator[tuple[DatetimeArray, FloatArray, PathInput]]
 
 
 class WriteDischargesFn(Protocol):
@@ -30,4 +30,12 @@ class WriteDischargesFn(Protocol):
     ) -> None: ...
 
 
-__all__ = ['PathInput', 'PathList', 'FloatArray', 'IntArray', 'DatetimeArray', 'VlateralGenerator', 'WriteDischargesFn']
+__all__ = [
+    'PathInput',
+    'PathList',
+    'FloatArray',
+    'IntArray',
+    'DatetimeArray',
+    'RunoffGenerator',
+    'WriteDischargesFn',
+]
