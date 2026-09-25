@@ -95,6 +95,14 @@ def test_configs_refuse_inconsistent_options(changes, error, message, willamette
         rr.Configs(**(routing_options(willamette, tmp_path) | changes(willamette, tmp_path))).validate_routing()
 
 
+def test_discharge_dir_names_outputs_for_the_default_writer(tmp_path: Path) -> None:
+    configs = rr.Configs(discharge_dir=tmp_path, runoff_files=['runoff/2020.nc', 'runoff/2021.zarr'])
+    assert configs.discharge_files == [str(tmp_path / 'discharge_2020.zarr'), str(tmp_path / 'discharge_2021.zarr')]
+    assert rr.Configs(discharge_dir=tmp_path).discharge_files == [str(tmp_path / 'discharge.zarr')]
+    with pytest.raises(ValueError, match='same output file'):
+        rr.Configs(discharge_dir=tmp_path, runoff_files=['a/2020.nc', 'b/2020.zarr'])
+
+
 def test_configs_round_trip_through_json(willamette: Basin, tmp_path: Path) -> None:
     configs = rr.Configs(**routing_options(willamette, tmp_path))
     configs.to_json(tmp_path / 'configs.json')
@@ -407,19 +415,6 @@ def test_the_netcdf_writer_round_trips(willamette: Basin, march_discharge, tmp_p
     with xr.open_dataset(tmp_path / 'q.nc') as discharge:
         np.testing.assert_array_equal(discharge['Q'].to_numpy(), march_discharge.discharge[0])
         np.testing.assert_array_equal(discharge['river_id'].to_numpy(), willamette.network.river_ids)
-
-
-def test_the_parquet_writer_round_trips(willamette: Basin, march_discharge, tmp_path: Path) -> None:
-    writers.parquet_writer(
-        march_discharge.router, march_discharge.dates[0], march_discharge.discharge[0], tmp_path / 'q.parquet'
-    )
-    table = pd.read_parquet(tmp_path / 'q.parquet')
-    np.testing.assert_array_equal(table['river_id'].to_numpy(), willamette.network.river_ids)
-    np.testing.assert_array_equal(table.drop(columns='river_id').to_numpy(), march_discharge.discharge[0])
-
-
-def test_to_time_major_is_the_transpose(march_discharge) -> None:
-    np.testing.assert_array_equal(writers.to_time_major(march_discharge.discharge[0]), march_discharge.discharge[0].T)
 
 
 ################################################

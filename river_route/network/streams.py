@@ -741,12 +741,13 @@ def partition_network(
 
     Returns:
         A copy of df with one added column:
-            region -- int32, the concurrent region a river belongs to, or -1 if it is routed in the sequential
-                      main stem after the barrier
+            group -- int32, the concurrent region a river belongs to, or -1 if it is routed in the sequential
+                     main stem after the barrier. This is the column ``Network.groups`` reads, so a table written
+                     with it is routed on this partition instead of one sized for the thread count at run time.
     """
     region, _ = assign_regions(_downstream_indices(df), threads, granularity, cap_multiplier)
     out = df.copy()
-    out['region'] = region.astype(np.int32)
+    out['group'] = region.astype(np.int32)
     return out
 
 

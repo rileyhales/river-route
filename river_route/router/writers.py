@@ -4,11 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import netCDF4 as nc
-import numba
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 import zarr
 from zarr.codecs import BloscCodec
 
@@ -17,47 +14,12 @@ from ..types import DatetimeArray, FloatArray, PathInput
 if TYPE_CHECKING:
     from .Router import Router
 
-__all__ = ['null_writer', 'netcdf_writer', 'zarr_writer', 'parquet_writer', 'to_time_major', 'bitround']
+__all__ = ['null_writer', 'netcdf_writer', 'zarr_writer', 'bitround']
 
 ZARR_RIVERS_PER_CHUNK = 500
 ZARR_CHUNKS_PER_SHARD: int | None = None
-ZARR_KEEPBITS = 15
+ZARR_KEEPBITS = 12
 ZARR_COMPRESSOR = BloscCodec(cname='lz4', clevel=5, shuffle='bitshuffle')
-PARQUET_WRITE_OPTIONS = {'compression': 'none', 'use_dictionary': False, 'write_statistics': False}
-TRANSPOSE_TILE = 32  # rows and columns per tile of the discharge transpose, sized so a tile stays in cache
-
-
-@numba.njit(cache=True, nogil=True)
-def _transpose_tiles(by_river, out, tile):
-    """Copy a (river, time) array into a C-order (time, river) one, a square tile at a time."""
-    n_rivers, n_steps = by_river.shape
-    for r0 in range(0, n_rivers, tile):
-        r1 = min(r0 + tile, n_rivers)
-        for t0 in range(0, n_steps, tile):
-            t1 = min(t0 + tile, n_steps)
-            for t in range(t0, t1):
-                row = out[t]
-                for r in range(r0, r1):
-                    row[r] = by_river[r, t]
-
-
-def to_time_major(discharge_array: FloatArray) -> FloatArray:
-    """
-    A C-order (time, river) copy of a routed (river, time) discharge array, for a writer or consumer whose format
-    needs each time step's rivers contiguous.
-
-    The kernels always write (river, time), because that is the layout they solve in. Transposing is a scatter
-    however it is done, so this does it a tile at a time to keep both sides in cache rather than striding the whole
-    array per column. An array that is already the transpose of a C-order (time, river) buffer is returned as that
-    buffer's view, with nothing copied.
-    """
-    if discharge_array.T.flags.c_contiguous:
-        return discharge_array.T
-    by_river = np.ascontiguousarray(discharge_array)
-    n_rivers, n_steps = by_river.shape
-    out = np.empty((n_steps, n_rivers), dtype=by_river.dtype)
-    _transpose_tiles(by_river, out, TRANSPOSE_TILE)
-    return out
 
 
 def bitround(values: FloatArray, keepbits: int) -> FloatArray:
@@ -220,39 +182,4 @@ def zarr_writer(
         id_var = group.create_array(rid, shape=(n_rivers,), dtype='int32', dimension_names=(rid,))
         id_var[:] = _river_ids(router)
         zarr.consolidate_metadata(str(discharge_file))
-    return
-
-
-def parquet_writer(
-    router: Router,
-    dates: DatetimeArray,
-    discharge_array: FloatArray,
-    discharge_file: PathInput,
-    runoff_file: PathInput = '',
-) -> None:
-    """
-    Write routed discharge to a parquet file with one row per river and one column per time step.
-
-    The first column holds the river ids and every other column is named by its time step as
-    ``YYYY-MM-DDTHH:MM:SS``. Parquet is columnar, so this is the one writer that needs the transpose of what the
-    kernels produce: ``to_time_major`` turns the routed ``(river, time)`` buffer into a C-order ``(time, river)``
-    one, and each time step column is then a row of that array, which pyarrow wraps without a copy.
-
-    ``PARQUET_WRITE_OPTIONS`` is passed to ``pyarrow.parquet.write_table`` and sets the compression. pyarrow writes a
-    parquet file on one thread, so the ``threads`` given to ``Router.route`` does not apply.
-
-    Args:
-        router: the Router that routed the discharge
-        dates: datetime array corresponding to the discharge columns
-        discharge_array: routed discharge values, C-order with shape (river, time)
-        discharge_file: path of the parquet file to write
-        runoff_file: path to the lateral inflow used to generate the discharge values, if applicable
-    """
-    _check_discharge_shape(router, dates, discharge_array, discharge_file)
-    by_step = to_time_major(discharge_array)  # parquet needs each step's rivers contiguous
-    names = [router.configs.var_river_id, *pd.DatetimeIndex(dates).strftime('%Y-%m-%dT%H:%M:%S')]
-    columns = [pa.array(_river_ids(router)), *(pa.array(row) for row in by_step)]
-    metadata = {'runoff_file': str(runoff_file), 'variable': router.configs.var_discharge, 'units': 'm3 s-1'}
-    table = pa.table(columns, names=names).replace_schema_metadata(metadata)
-    pq.write_table(table, str(discharge_file), **PARQUET_WRITE_OPTIONS)
     return

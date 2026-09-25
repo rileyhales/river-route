@@ -87,26 +87,25 @@ m = rr.Router(configs).route()
 ## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disk.
-The default function, `river_route.router.writers.netcdf_writer`, writes discharge to netCDF.
+The default function, `river_route.router.writers.zarr_writer`, writes each output as a zarr store with dimensions
+`(river_id, time)`, built to write as fast as possible. It writes up to the `threads` given to `Router.route` chunks at
+once, rounding each chunk to `writers.ZARR_KEEPBITS` mantissa bits and compressing it with `writers.ZARR_COMPRESSOR`.
 
-Premade writers are in `river_route.router.writers`. `zarr_writer` writes each output as a zarr store with
-dimensions `(river_id, time)`, built to write as fast as possible. It writes up to the `threads` given to
-`Router.route` chunks at once, rounding each chunk to `writers.ZARR_KEEPBITS` mantissa bits and compressing it with
-`writers.ZARR_COMPRESSOR`. `parquet_writer` writes one row per river and one column per time step, with the
-pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
+Premade writers are in `river_route.router.writers`. `netcdf_writer` writes the same `(river_id, time)` layout to an
+uncompressed netCDF file, with every value unrounded.
 
-```python title="Write Routed Flows to Zarr"
+```python title="Write Routed Flows to netCDF"
 import river_route as rr
 
 (
     rr
-    .Router(rr.Configs.from_json('config.json'), forcing='runoff')
-    .set_discharge_writer(rr.router.writers.zarr_writer)
+    .Router(rr.Configs.from_json('config.json'))
+    .set_discharge_writer(rr.router.writers.netcdf_writer)
     .route()
 )
 ```
 
-A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
+A zarr store is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
@@ -116,8 +115,7 @@ so you can chain it onto the constructor. The writer is called once per routed i
 1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
 2. `dates`: datetime array for the columns of the discharge array.
 3. `discharge_array`: routed discharge array, C-order with shape `(river_id, time)`. The kernels route one river's
-   whole series at a time and write it into that river's row, so this is the layout every writer is handed. Use
-   `river_route.router.writers.to_time_major` if your format needs each time step's rivers contiguous instead.
+   whole series at a time and write it into that river's row, so this is the layout every writer is handed.
 4. `discharge_file`: path to the output file.
 5. `runoff_file`: path to the runoff input used to produce this output.
 

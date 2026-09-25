@@ -110,8 +110,7 @@ it. That measured 2-3% faster than aggregating one river at a time on the Amazon
 
 A custom Runoff must yield catchment runoff as `CatchmentRunoffVolumes`: a `(river, time)` array of volumes whose rows
 are contiguous. Discharge is always written `(river, time)`, and that C-order array is what a discharge writer
-receives; `writers.to_time_major` transposes it only for a format that needs each time step's rivers contiguous, as
-`parquet_writer` does.
+receives.
 
 Inputs are NaN free by the time they reach a kernel: gridded runoff has NaN cells set to zero before it is aggregated,
 so a missing cell contributes nothing while the other cells of its catchment still count, and catchment runoff read from

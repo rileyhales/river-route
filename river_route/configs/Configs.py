@@ -12,9 +12,15 @@ import xarray as xr
 from river_route._logging import build_logger
 from river_route.types import PathInput, PathList
 
-__all__ = ['Configs']
+__all__ = ['Configs', 'is_dev_null']
 
 _PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
+_DEV_NULL: frozenset[str] = frozenset({os.devnull, '/dev/null'})
+
+
+def is_dev_null(path: PathInput) -> bool:
+    """True for the null device, which always counts as a path that exists and discards whatever is written."""
+    return str(path) in _DEV_NULL
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -90,6 +96,8 @@ class Configs:
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
+    # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
+    _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -155,12 +163,12 @@ class Configs:
         """Convert all relative path fields to absolute paths in-place."""
         for key in self._SINGLE_PATH_FIELDS:
             val = getattr(self, key, None)
-            if val:
+            if val and not is_dev_null(val):
                 object.__setattr__(self, key, os.path.abspath(val))
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key, [])
             if val:
-                object.__setattr__(self, key, [os.path.abspath(p) for p in val])
+                object.__setattr__(self, key, [p if is_dev_null(p) else os.path.abspath(p) for p in val])
         return
 
     def _verify_input_files_exist(self) -> None:
@@ -185,19 +193,25 @@ class Configs:
             raise ValueError('Provide discharge_dir or discharge_files, not both')
 
         d = self.discharge_dir
+        if is_dev_null(d):
+            # every output is discarded, so one null device per input rather than names under a directory
+            object.__setattr__(self, 'discharge_files', [d] * (len(self.runoff_files) or 1))
+            return
+
         input_files = self.runoff_files
         if input_files:
-            basenames = [os.path.basename(f) for f in input_files]
-            duplicates = sorted({name for name in basenames if basenames.count(name) > 1})
+            # each output is named for its input but takes the writer's extension, not the extension of the input
+            stems = [os.path.splitext(os.path.basename(f))[0] for f in input_files]
+            duplicates = sorted({stem for stem in stems if stems.count(stem) > 1})
             if duplicates:
                 raise ValueError(
                     f'Input files with duplicate names would resolve to the same output file in discharge_dir: '
                     f'{", ".join(duplicates)}. Use discharge_files to give explicit output paths.'
                 )
-            discharge_files = [os.path.join(d, f'discharge_{name}') for name in basenames]
+            discharge_files = [os.path.join(d, f'discharge_{stem}{self._DISCHARGE_SUFFIX}') for stem in stems]
         else:
             # Muskingum (no lateral inflow files)
-            discharge_files = [os.path.join(d, 'discharge.zarr')]
+            discharge_files = [os.path.join(d, f'discharge{self._DISCHARGE_SUFFIX}')]
         object.__setattr__(self, 'discharge_files', discharge_files)
         return
 
@@ -211,12 +225,14 @@ class Configs:
         for key in self._OUTPUT_FILE_LISTS:
             paths.extend(getattr(self, key, []))
         for path in paths:
+            if is_dev_null(path):  # devnull is a special case that is allowed to take outputs
+                continue
             d = os.path.dirname(path)
             if not os.path.exists(d):
                 raise NotADirectoryError(f'Directory not found for specified output: {path}')
         for key in self._OUTPUT_DIRS:
             val = getattr(self, key, None)
-            if val and not os.path.isdir(val):
+            if val and not is_dev_null(val) and not os.path.isdir(val):
                 raise NotADirectoryError(f'Output directory not found: {val}')
         return
 
@@ -236,6 +252,10 @@ class Configs:
             return self
         self._verify_input_files_exist()
         self._verify_output_directories_exist()
+        # the Router picks the null writer for the whole job, so a mix of discarded and written outputs has no meaning
+        null_outputs = [is_dev_null(f) for f in self.discharge_files]
+        if any(null_outputs) and not all(null_outputs):
+            raise ValueError('discharge_files mixes the null device with real paths; use one or the other')
         if self.forcing == 'channel':
             if not self.discharge_files:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
@@ -262,7 +282,8 @@ class Configs:
                 raise ValueError(f'grid_weights_file is required with runoff_type {self.runoff_type}')
             if len(self.discharge_files) != len(self.runoff_files):
                 raise ValueError('Number of resolved discharge output files must match number of input files')
-            if len(set(self.discharge_files)) != len(self.discharge_files):
+            outputs = [f for f in self.discharge_files if not is_dev_null(f)]
+            if len(set(outputs)) != len(outputs):
                 raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
         object.__setattr__(self, '_validated', True)
         return self

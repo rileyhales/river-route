@@ -173,6 +173,12 @@ class Network:
         with the main stem last. That orders the work queue only; the rivers inside each block keep their file
         positions. A single-threaded schedule is one job spanning the whole network.
 
+        The regions come from the params file's ``group`` column when it has one, and otherwise from
+        ``streams.assign_regions``, which sizes them for ``threads``: it searches a range of caps on the largest
+        region and keeps whichever partition packs onto that many workers fastest. A thread-independent cut such as
+        ``recommend_compute_groups`` puts a hard floor under the wall clock -- one oversized region no thread count
+        can split -- so the partition has to be rebuilt per thread count rather than derived once from topology.
+
         Args:
             threads: worker count the partition is sized for
             concurrent: False forces the single-job schedule regardless of ``threads``, for a caller that has no
@@ -196,8 +202,10 @@ class Network:
         downstream_index = self.downstream_indices.astype(np.int64)
         region = self.groups
         if region is None:
-            region = self._df['group'] = self.recommend_compute_groups().astype(np.int32)
-        layout = streams.regions_to_layout(region, downstream_index)
+            # sized for this thread count; nothing is cached on the frame, so a later call for a different thread
+            # count is free to cut the network differently
+            region, _ = streams.assign_regions(downstream_index, threads=threads)
+        layout = streams.regions_to_layout(np.ascontiguousarray(region, dtype=np.int32), downstream_index)
 
         n_regions = layout['n_regions']
         if not n_regions:
@@ -215,8 +223,9 @@ class Network:
     def recommend_compute_groups(self) -> IntArray:
         """
         Recommend a group for every river from the topology alone: the tributary of a basin's main stem it belongs
-        to, and -1 on the main stem, as ``streams.tributary_groups`` finds them. Used when the params file has no
-        group column.
+        to, and -1 on the main stem, as ``streams.tributary_groups`` finds them. Offered for writing a ``group``
+        column into a params file; routing does not call it, since these groups are the same however many threads
+        route them and a network's largest tributary is far too big to be one worker's share.
         """
         return streams.tributary_groups(self.downstream_indices)
 

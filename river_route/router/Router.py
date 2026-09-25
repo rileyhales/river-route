@@ -9,13 +9,13 @@ import pandas as pd
 from tqdm import tqdm
 
 from .._logging import PROGRESS, build_logger
-from ..configs import Configs
+from ..configs import Configs, is_dev_null
 from ..network import Network
 from ..runoff import RUNOFF_CLASS_FOR_RUNOFF_TYPE, Runoff
 from ..types import DatetimeArray, FloatArray, Int32Array, WriteDischargesFn
 from . import dynamic_muskingum, static_muskingum
 from ._routing_passes import Layout, route_network
-from .writers import zarr_writer
+from .writers import null_writer, zarr_writer
 
 __all__ = ['Router', 'ROUTING_METHOD_FOR_COEFFICIENTS']
 
@@ -272,6 +272,7 @@ class Router:
         started = time.perf_counter()
         self.logger.debug('Validating configs')
         self.configs.validate_routing()
+        self._select_discharge_writer()
         self.logger.debug(self)
         # the Network parses and partitions the parameter table; both are cached there and reused across runs
         self._set_routing_schedule(thread_pool, threads)  # which rivers each routing pass routes; nothing is reordered
@@ -281,6 +282,16 @@ class Router:
         self._write_final_state()
         self.logger.log(PROGRESS, f'Routing completed in {time.perf_counter() - started:.3f} seconds')
         return self
+
+    def _select_discharge_writer(self) -> None:
+        """Swap in null_writer when every discharge output is the null device, so that a job meant to discard its
+        discharge does not fail in a writer after routing. Called by route() once the configs validate, which is
+        where a mix of null device and real outputs is rejected."""
+        if not all(is_dev_null(f) for f in self.configs.discharge_files):
+            return
+        self.logger.warning('Discharge output is the null device: discharge will be routed and then discarded')
+        self._discharge_writer = null_writer
+        return
 
     def _execute_routing(self, thread_pool: ThreadPoolExecutor | None) -> None:
         self.routing_method = self._choose_routing_method()  # raises before any runoff is read if none routes these
@@ -392,6 +403,7 @@ class Router:
     ################################################
 
     def set_discharge_writer(self, func: WriteDischargesFn) -> Self:
-        """Set how discharge results are saved to disc. See ._discharge_writer for function signature."""
+        """Set how discharge results are saved to disc. See ._discharge_writer for function signature. route()
+        replaces it with null_writer when every discharge output is the null device."""
         self._discharge_writer = func
         return self

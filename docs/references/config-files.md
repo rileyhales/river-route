@@ -39,7 +39,9 @@ Every routing procedure requires the following 2 configuration options:
 
 - `params_file` - path to the [routing parameters file](io-file-schema.md#routing-parameters) (parquet)
 - One of two options for specifying where the [routed discharge](io-file-schema.md#routed-discharge) output is written
-    - `discharge_dir` - a string path to a directory where outputs are saved based on the names of the inputs
+    - `discharge_dir` - a string path to a directory where outputs are saved based on the names of the inputs. Each
+      output is named `discharge_<input name>.zarr`, or `discharge.zarr` for channel routing, the zarr store that the
+      default writer writes. Give `discharge_files` to name outputs for another writer.
     - `discharge_files` - list of explicit paths for each output file, one per input file required.
 
 ## Required config keys by selection

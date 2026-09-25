@@ -4,6 +4,12 @@
 
 ### Unreleased
 
+- Removed `writers.parquet_writer` and the transpose that served it: `writers.to_time_major`,
+  `writers.TRANSPOSE_TILE`, and `writers.PARQUET_WRITE_OPTIONS`. Write parquet with a custom writer, transposing the
+  `(river, time)` discharge array yourself.
+- Outputs named from `discharge_dir` take the `.zarr` extension of the store the default writer writes, as
+  `discharge_<input name>.zarr`, instead of keeping the extension of the runoff file they were routed from: an input
+  `runoff_2020.nc` now writes `discharge_runoff_2020.zarr`, not a zarr store named `discharge_runoff_2020.nc`.
 - The `forcing` option for routing with inflows is renamed from `vlateral` to `runoff`. The options are now
   `channel` (channel routing only) and `runoff` (runoff enters the rivers in addition to routing).
 - `Network.write_stabilized(dt)` writes the stabilized network as a parameter table, by default

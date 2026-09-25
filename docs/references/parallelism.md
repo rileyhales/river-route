@@ -112,8 +112,9 @@ The speedup is limited by the rivers left in the sequential main stem and by mem
 kernel is largely bound by. Use `river_route.network.streams.analyze_partitioning` to see how a network splits and the upper
 bound on speedup before committing to it. The partition depends only on connectivity and `threads`, never on the
 forcing, dt, or coefficients, so the `Network` derives it once and caches it per thread count: every simulation
-over one `Network` reuses it. `river_route.network.streams.partition_network` can also store it as a `region` column in
-the parameter file, which a `Network` reuses as-is instead of deriving one at all.
+over one `Network` reuses it. `river_route.network.streams.partition_network` can also store it as a `group` column in
+the parameter file, which a `Network` reuses as-is instead of deriving one at all. A stored partition is
+fixed at the thread count it was built for, so only store one if you always route with that many threads.
 
 **Conclusion**: Meaningful speedup is possible with multiple threads but only if you sort the network into
 independent but ordered subgraphs. This is an optional addition to a job that is already efficient single threaded.
@@ -139,8 +140,8 @@ import river_route as rr
 params_file = 'routing_parameters.parquet'
 runoff_files = ['catchment_runoff_member_1.nc',
                 'catchment_runoff_member_2.nc', ]
-output_files = ['discharges_member_1.nc',
-                'discharges_member_2.nc', ]
+output_files = ['discharges_member_1.zarr',
+                'discharges_member_2.zarr', ]
 
 
 def route(input_file: str, output_file: str) -> None:

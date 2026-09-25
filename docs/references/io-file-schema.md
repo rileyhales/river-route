@@ -122,6 +122,3 @@ so nothing is transposed on the way to the file. Writing `(time, river_id)` inst
 on a large network, since each river's series then has to be transposed out in blocks.
 
 `river_route.router.writers.netcdf_writer` writes the same `(river_id, time)` layout to an uncompressed netCDF file.
-`river_route.router.writers.parquet_writer` writes a parquet file with a `river_id` column followed by one column per
-time step, named `YYYY-MM-DDTHH:MM:SS`. Parquet is columnar, so a river major file would need one column per river,
-which is hundreds of thousands of columns on a real network; its rows are rivers instead.

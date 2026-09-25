@@ -23,7 +23,7 @@ Three files are needed for a routing run:
 
 1. **Routing parameters** (`params.parquet`) — river network topology and Muskingum coefficients.
 2. **Lateral inflow** (`catchment_runoff.nc`) — per-catchment runoff time series.
-3. **Routed discharge** (`discharge.nc`) — output path where results will be written.
+3. **Routed discharge** (`discharge.zarr`) — output path where results will be written.
 
 See the [File Schemas reference](../references/io-file-schema.md) for field names and formats.
 
@@ -106,13 +106,13 @@ as the routing params.
 
 ## Reading the Output
 
-The routed discharge output is a netCDF file with dimensions `time` and `river_id`:
+The routed discharge output is a zarr store with dimensions `river_id` and `time`:
 
 ```python
 import xarray as xr
 
 river_of_interest = 123456789
-ds = xr.open_dataset('discharge.nc')
+ds = xr.open_zarr('discharge.zarr')
 series = ds['Q'].sel(river_id=river_of_interest).to_pandas()
 
 # Save to CSV
