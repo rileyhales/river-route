@@ -11,7 +11,7 @@ from tqdm import tqdm
 from .._logging import PROGRESS, build_logger
 from ..configs import Configs, is_dev_null
 from ..network import Network
-from ..runoff import RUNOFF_CLASS_FOR_RUNOFF_TYPE, Runoff
+from ..runoff import RUNOFF_CLASS_FOR_FORCING, Runoff
 from ..types import DatetimeArray, FloatArray, Int32Array, WriteDischargesFn
 from . import dynamic_muskingum, static_muskingum
 from ._routing_passes import Layout, route_network
@@ -72,7 +72,7 @@ class Router:
             network: the network to route over. One is built from the params file the first time it is needed
                 when none is given, so pass one to reuse a parsed and partitioned network across Routers.
             runoff: the Runoff that aggregates ``runoff_files`` to catchments. It must be the class for the
-                ``runoff_type`` config. One is built from the configs the first time it is needed when none is given,
+                ``forcing`` config. One is built from the configs the first time it is needed when none is given,
                 so pass one to reuse a read weight table across Routers.
         """
         if not isinstance(configs, Configs):
@@ -81,11 +81,11 @@ class Router:
             raise TypeError(f'network must be a Network or None, got {type(network).__name__}')
         if not isinstance(runoff, Runoff) and runoff is not None:
             raise TypeError(f'runoff must be a Runoff or None, got {type(runoff).__name__}')
-        if runoff is not None and configs.forcing == 'runoff':
-            expected = RUNOFF_CLASS_FOR_RUNOFF_TYPE[configs.runoff_type]
+        if runoff is not None and configs.forcing != 'channel':
+            expected = RUNOFF_CLASS_FOR_FORCING[configs.forcing]
             if not isinstance(runoff, expected):
                 raise TypeError(
-                    f'runoff_type {configs.runoff_type!r} is read by {expected.__name__}, got {type(runoff).__name__}'
+                    f'forcing {configs.forcing!r} is read by {expected.__name__}, got {type(runoff).__name__}'
                 )
 
         self.configs = configs
@@ -225,7 +225,7 @@ class Router:
             raise NotImplementedError(
                 f'{self.configs.coefficients} coefficients cannot route a {self.configs.network_type} network yet'
             )
-        if self.configs.forcing == 'runoff' and self.configs.transform != 'uniform':
+        if self.configs.forcing != 'channel' and self.configs.transform != 'uniform':
             raise NotImplementedError(f'the {self.configs.transform} transform is not implemented yet')
         return method
 
@@ -330,10 +330,10 @@ class Router:
         self._ensemble_member_states = []
         runoff_files = self.configs.runoff_files
         if self.runoff is None:
-            self.runoff = RUNOFF_CLASS_FOR_RUNOFF_TYPE[self.configs.runoff_type].from_configs(self.configs)
+            self.runoff = RUNOFF_CLASS_FOR_FORCING[self.configs.forcing].from_configs(self.configs)
         if self.network.synthetic is not None:
             self.runoff.distribute(self.network)
-        runoff_iter = self.runoff.generator(runoff_files)  # yields the runoff routing reads, in its runoff_type's form
+        runoff_iter = self.runoff.generator(runoff_files)  # yields the runoff routing reads, in its forcing's form
 
         total_files = len(runoff_files)
         file_iter = (

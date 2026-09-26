@@ -32,12 +32,12 @@ class Configs:
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
 
-    # Routing procedure selectors — the Router chooses the kernel dispatcher from forcing, transform, and runoff_type
+    # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
     coefficients: Literal['static', 'dynamic'] = 'static'
-    forcing: Literal['channel', 'runoff'] = 'channel'
+    # channel routing only, or the form of the runoff_files routed into the rivers: catchment runoff, or gridded runoff
+    # aggregated to catchments with grid_weights_file
+    forcing: Literal['channel', 'catchment', 'gaussian_grid', 'reduced_gaussian_grid'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
-    # the form runoff_files take, required when forcing is runoff
-    runoff_type: Literal['catchment', 'gaussian_grid', 'reduced_gaussian_grid'] | None = None
     network_type: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
@@ -59,7 +59,7 @@ class Configs:
     as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
 
     # Runoff sources: catchment runoff files, or gridded runoff aggregated to catchments with a weight table
-    runoff_files: PathList = field(default_factory=list)  # read as the runoff_type
+    runoff_files: PathList = field(default_factory=list)  # read as the forcing names
     grid_weights_file: PathInput | None = None  # required for the grid runoff types
 
     # For runoff transform by unit hydrograph
@@ -102,17 +102,13 @@ class Configs:
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
     _LIST_PATH_FIELDS: ClassVar[frozenset[str]]
-    _VALID_VALUES: ClassVar[dict[str, frozenset[str | None]]]
+    _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
 
     def __post_init__(self) -> None:
         for name, allowed in self._VALID_VALUES.items():
             value = getattr(self, name)
             if value not in allowed:
-                raise ValueError(f'{name} must be one of {sorted(allowed, key=str)}, got {value!r}')
-        if self.forcing == 'runoff' and self.runoff_type is None:
-            raise ValueError(
-                'runoff_type is required for runoff forcing: catchment, gaussian_grid, or reduced_gaussian_grid'
-            )
+                raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
         # turn off progress bar if logging was turned off but progress was left at default on
         object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
         self._coerce_path_list_fields()
@@ -262,7 +258,7 @@ class Configs:
             for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
                 if not getattr(self, key, None):
                     raise ValueError(f'{key} is required for channel routing')
-            runoff_source = [key for key in ('runoff_files', 'runoff_type', 'grid_weights_file') if getattr(self, key)]
+            runoff_source = [key for key in ('runoff_files', 'grid_weights_file') if getattr(self, key)]
             if runoff_source:
                 build_logger(self, 'configs').warning(
                     f'forcing is channel, so {", ".join(runoff_source)} will be ignored and no runoff is routed'
@@ -276,10 +272,10 @@ class Configs:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             if not self.runoff_files:
                 raise ValueError('runoff_files is required for runoff forcing')
-            if self.runoff_type == 'catchment' and self.grid_weights_file:
-                raise ValueError('grid_weights_file is not used with runoff_type catchment')
-            if self.runoff_type != 'catchment' and not self.grid_weights_file:
-                raise ValueError(f'grid_weights_file is required with runoff_type {self.runoff_type}')
+            if self.forcing == 'catchment' and self.grid_weights_file:
+                raise ValueError('grid_weights_file is not used with forcing catchment')
+            if self.forcing != 'catchment' and not self.grid_weights_file:
+                raise ValueError(f'grid_weights_file is required with forcing {self.forcing}')
             if len(self.discharge_files) != len(self.runoff_files):
                 raise ValueError('Number of resolved discharge output files must match number of input files')
             outputs = [f for f in self.discharge_files if not is_dev_null(f)]
@@ -443,17 +439,11 @@ class Configs:
         return
 
 
-def _derive_valid_values(cls: type) -> dict[str, frozenset[str | None]]:
+def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
     result = {}
     for name, hint in get_type_hints(cls).items():
-        if name.startswith('_'):
-            continue
-        if get_origin(hint) is Literal:
+        if not name.startswith('_') and get_origin(hint) is Literal:
             result[name] = frozenset(get_args(hint))
-        elif get_origin(hint) is types.UnionType:  # an optional selector, Literal[...] | None
-            literals = [a for a in get_args(hint) if get_origin(a) is Literal]
-            if literals and type(None) in get_args(hint):
-                result[name] = frozenset(get_args(literals[0])) | {None}
     return result
 
 

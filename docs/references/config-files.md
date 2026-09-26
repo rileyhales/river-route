@@ -3,7 +3,7 @@
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
 JSON file with `Configs.from_json`.
 All routing runs through `Router`. The procedure it runs is set by the selector keys (`coeff`, `forcing`,
-`transform`, `runoff_type`, `network_type`), and the required config keys depend on which selections you make.
+`transform`, `network_type`), and the required config keys depend on which selections you make.
 
 `Router` takes a `Configs` and nothing else. `Network` and the Runoff classes take the options they need as ordinary
 arguments and each has a `from_configs` classmethod that reads those same values off a `Configs`; `Router` builds
@@ -13,14 +13,13 @@ them that way. `examples/config.json` below lists every option.
 
 - `coeff` - `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha\*Q^beta
   from columns `alpha`, `beta`, `x`). Default `'static'`.
-- `forcing` - one of `'channel'` (channel routing only, no inflows) or `'runoff'` (runoff enters the rivers in addition to routing).
-  A single value. Default `'channel'`.
+- `forcing` - `'channel'` (channel routing only, no inflows), or the form of the `runoff_files` whose runoff enters the
+  rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
+  `'gaussian_grid'` (a grid with x and y dimensions, read by `GaussianGridRunoff`), or `'reduced_gaussian_grid'` (a grid
+  with one cell dimension, read by `ReducedGaussianGridRunoff`, not implemented yet). A single value. Default
+  `'channel'`.
 - `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
-  Only read when `forcing` is `'runoff'`. Default `'uniform'`.
-- `runoff_type` - the form of `runoff_files`: `'catchment'` (already aggregated to catchments, read by
-  `CatchmentRunoff`), `'gaussian_grid'` (a grid with x and y dimensions, read by `GaussianGridRunoff`), or
-  `'reduced_gaussian_grid'` (a grid with one cell dimension, read by `ReducedGaussianGridRunoff`, not implemented yet).
-  Required when `forcing` is `'runoff'`, with no default.
+  Only read when `forcing` is not `'channel'`. Default `'uniform'`.
 - `network_type` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
   `dt_routing` is routed as the fewest equal sub-reaches in series that are each Muskingum-stable, and each river
   too short for it is sub-cycled in the fewest equal steps of its own that are). Default `'standard'`.
@@ -54,10 +53,10 @@ Beyond the always-required keys above, additional keys are required depending on
 - `dt_routing` - routing timestep in seconds
 - `dt_total` - total simulation duration in seconds
 
-**`forcing: runoff`** also requires a water input source:
+**`forcing: catchment`, `gaussian_grid`, or `reduced_gaussian_grid`** also requires a water input source:
 
-- `runoff_files` and `runoff_type`
-- `grid_weights_file` when `runoff_type` is `gaussian_grid` or `reduced_gaussian_grid`. It must not be set for
+- `runoff_files`
+- `grid_weights_file` when `forcing` is `gaussian_grid` or `reduced_gaussian_grid`. It must not be set for
   `catchment`.
 
   Time keys for forced procedures (`dt_total`, `dt_discharge`, `dt_runoff`, `dt_routing`, `start_datetime`)
@@ -81,8 +80,8 @@ The following table lists where each remaining key applies.
 | `discharge_dir`            | Directory for output  files      | _Option 1_                                             |
 | `discharge_files`          | Explicit output paths            | _Option 2_                                             |
 | **input data**             |                                  |                                                        |
-| `runoff_files`             | Runoff read as the `runoff_type` | `forcing: runoff`                                      |
-| `grid_weights_file`        | Aggregates grids to catchments   | `runoff_type` a grid                                   |
+| `runoff_files`             | Runoff read as the `forcing`     | `forcing` not `channel`                                |
+| `grid_weights_file`        | Aggregates grids to catchments   | `forcing` a grid                                       |
 | **unit hydrograph**        |                                  |                                                        |
 | `uh_kernel_file`           | Unit hydrograph kernel (npz)     | `transform: unit_hydrograph`                           |
 | `uh_state_init_file`       | Initial unit hydrograph state    | optional                                               |
@@ -99,7 +98,7 @@ The following table lists where each remaining key applies.
 | Config Key               | Description                                            | Default                                       |
 |--------------------------|--------------------------------------------------------|-----------------------------------------------|
 | `coeff`                  | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
-| `forcing`                | Inflow forcing: `'channel'`, `'runoff'`                | `'channel'`                                   |
+| `forcing`                | Channel routing, or the form of the runoff files       | `'channel'`                                   |
 | `transform`              | Runoff transform: `'uniform'`, `'unit_hydrograph'`     | `'uniform'`                                   |
 | `network_type`           | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |
 | `log`                    | Enable or disable logging                              | `True`                                        |

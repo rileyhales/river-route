@@ -10,10 +10,10 @@ takes care of the network, the runoff, and the threads for every method, so a me
 is routed. Options no method routes yet raise `NotImplementedError` before any runoff is read. Every combination
 routes concurrently on a `thread_pool` by splitting the network into regions.
 
-| `coefficients` | Module                     | `forcing`           | `runoff_type`                | `network_type`           |
-|----------------|----------------------------|---------------------|------------------------------|--------------------------|
-| `static`       | `router/static_muskingum`  | `channel`, `runoff` | `catchment`, `gaussian_grid` | `standard`, `stabilized` |
-| `dynamic`      | `router/dynamic_muskingum` | `channel`, `runoff` | `catchment`, `gaussian_grid` | `standard`               |
+| `coefficients` | Module                     | `forcing`                               | `network_type`           |
+|----------------|----------------------------|-----------------------------------------|--------------------------|
+| `static`       | `router/static_muskingum`  | `channel`, `catchment`, `gaussian_grid` | `standard`, `stabilized` |
+| `dynamic`      | `router/dynamic_muskingum` | `channel`, `catchment`, `gaussian_grid` | `standard`               |
 
 There is no routing yet for `reduced_gaussian_grid` runoff or the `unit_hydrograph` transform. A stabilized network is
 described by the `Layout` the pass hands each river, so a method routes one by following the layout rather than by

@@ -2,7 +2,6 @@
   "coeff": "static",
   "forcing": "channel",
   "transform": "uniform",
-  "runoff_type": null,
   "params_file": "",
   "runoff_files": [],
   "grid_weights_file": "",

@@ -30,7 +30,7 @@ if __name__ == '__main__':
         network_type=args.network_conditioning,
         # primary modeling choices
         coefficients='static',
-        forcing='runoff',
+        forcing='gaussian_grid',
         transform='uniform',
         dt_routing=args.dt_routing,
         # model state files
@@ -39,7 +39,6 @@ if __name__ == '__main__':
         # where to place the results
         discharge_dir=discharge_dir,
         # the runoff forcing data and how to read it
-        runoff_type='gaussian_grid',
         runoff_files=runoff_files,
         grid_weights_file=grid_weights_file,
         var_grid_runoff='ro',

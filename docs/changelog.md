@@ -19,8 +19,9 @@
 - Outputs named from `discharge_dir` take the `.zarr` extension of the store the default writer writes, as
   `discharge_<input name>.zarr`, instead of keeping the extension of the runoff file they were routed from: an input
   `runoff_2020.nc` now writes `discharge_runoff_2020.zarr`, not a zarr store named `discharge_runoff_2020.nc`.
-- The `forcing` option for routing with inflows is renamed from `vlateral` to `runoff`. The options are now
-  `channel` (channel routing only) and `runoff` (runoff enters the rivers in addition to routing).
+- `forcing` names what is routed: `channel` (channel routing only), or the form of the `runoff_files` whose runoff
+  enters the rivers, `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`, replacing `vlateral`. There is no
+  separate option for the form of the runoff.
 - `Network.write_stabilized(dt)` writes the stabilized network as a parameter table, by default
   `<params stem>_stabilized<dt>.parquet` next to the params file. Every reach has its own `river_id`: an outlet
   reach keeps its river's id and added reaches are numbered down from -1,000,000. The `synthetic` column marks the
@@ -42,13 +43,12 @@
   `cell_measures = "area: catchment_area"`. The `units` attribute of `catchment_runoff` is required and marks it as
   volumes (`m3`) or depths (`m`, `mm`); depths are multiplied by the catchment area when read, since routing uses
   volumes. `Runoff.to_netcdf` takes the catchment areas and writes this schema.
-- Runoff is given as `runoff_files` with a `runoff_type` of `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`,
-  replacing `vlateral_files` and `grid_runoff_files`. `runoff_type` is required when `forcing` is `runoff` and has no
-  default. `grid_weights_file` is required for the grid types and refused for `catchment`. The `var_cell` config names
+- Runoff is given as `runoff_files` in the form `forcing` names, replacing `vlateral_files` and `grid_runoff_files`.
+  `grid_weights_file` is required for the grid forcings and refused for `catchment`. The `var_cell` config names
   the cell dimension of a reduced gaussian grid.
 - The Runoff classes are named for what they aggregate to catchments: `CatchmentRunoff` (was `RunoffVlateral`),
   `GaussianGridRunoff` (was `RunoffGaussianGrid`), and `ReducedGaussianGridRunoff`, a placeholder that raises
-  `NotImplementedError`. `RUNOFF_CLASS_FOR_RUNOFF_TYPE` maps each `runoff_type` to its class, and a Runoff
+  `NotImplementedError`. `RUNOFF_CLASS_FOR_FORCING` maps each `forcing` that routes runoff to its class, and a Runoff
   passed to `Router` must be that class. The grid classes precompute a catchment runoff file with `aggregate_to_file`.
 - Each routing method is one module that routes a single river, chosen by the `coefficients` config through
   `ROUTING_METHOD_FOR_COEFFICIENTS`: `router/static_muskingum.py` and `router/dynamic_muskingum.py`. A method module

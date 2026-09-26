@@ -40,10 +40,10 @@ def routing_options(basin: Basin, directory: Path) -> dict:
 ################################################
 
 REFUSED_CONFIGS = {
-    'runoff forcing needs a runoff type': (
-        lambda basin, d: {'runoff_type': None},
+    'forcing names the form of its runoff': (
+        lambda basin, d: {'forcing': 'runoff'},
         ValueError,
-        'runoff_type is required',
+        'forcing must be one of',
     ),
     'selectors take only their values': (
         lambda basin, d: {'coefficients': 'sideways'},
@@ -51,7 +51,7 @@ REFUSED_CONFIGS = {
         'coefficients must be one of',
     ),
     'catchment runoff takes no grid weights': (
-        lambda basin, d: {'runoff_type': 'catchment'},
+        lambda basin, d: {'forcing': 'catchment'},
         ValueError,
         'grid_weights_file is not used',
     ),
@@ -331,7 +331,7 @@ UNSUPPORTED_OPTIONS = {
         lambda basin: {'transform': 'unit_hydrograph', 'uh_kernel_file': basin.params_file},
         'transform is not implemented',
     ),
-    'reduced gaussian grid runoff': (lambda basin: {'runoff_type': 'reduced_gaussian_grid'}, 'not implemented yet'),
+    'reduced gaussian grid runoff': (lambda basin: {'forcing': 'reduced_gaussian_grid'}, 'not implemented yet'),
 }
 
 
@@ -349,7 +349,7 @@ def test_threads_must_be_a_positive_integer(threads, willamette: Basin, tmp_path
 
 
 def test_a_runoff_of_the_wrong_class_is_refused(willamette: Basin, tmp_path: Path) -> None:
-    options = routing_options(willamette, tmp_path) | {'runoff_type': 'catchment', 'grid_weights_file': None}
+    options = routing_options(willamette, tmp_path) | {'forcing': 'catchment', 'grid_weights_file': None}
     with pytest.raises(TypeError, match='is read by CatchmentRunoff'):
         rr.Router(rr.Configs(**options), runoff=grid(willamette))
 

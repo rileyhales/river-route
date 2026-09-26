@@ -146,8 +146,7 @@ output_files = ['discharges_member_1.zarr',
 
 def route(input_file: str, output_file: str) -> None:
     configs = rr.Configs(
-        forcing='runoff',
-        runoff_type='catchment',
+        forcing='catchment',
         params_file=params_file,
         runoff_files=[input_file, ],
         discharge_files=[output_file, ],

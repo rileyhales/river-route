@@ -11,13 +11,12 @@ Muskingum-family routing at watershed scale.
 All routing runs through `Router`. The routing procedure is described by config selector keys,
 which together choose the kernel:
 
-| Key           | Options                                                                                                                           |
-|---------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| `coeff`       | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = alpha*Q^beta from `alpha`,`beta`,`x`). Default `static`. |
-| `forcing`     | `channel` (channel routing only, the default) or `runoff` (runoff enters the rivers in addition to routing). One value only.      |
-| `transform`   | `uniform` (the default) or `unit_hydrograph`. Only read when `forcing` is `runoff`.                                               |
-| `runoff_type` | `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`, the form of `runoff_files`. Required when `forcing` is `runoff`.        |
-| `network`     | `standard` (one reach per river, the default).                                                                                    |
+| Key         | Options                                                                                                                                                            |
+|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `coeff`     | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = alpha*Q^beta from `alpha`,`beta`,`x`). Default `static`.                                  |
+| `forcing`   | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`. |
+| `transform` | `uniform` (the default) or `unit_hydrograph`. Only read when `forcing` is not `channel`.                                                                           |
+| `network`   | `standard` (one reach per river, the default).                                                                                                                     |
 
 A combination with no kernel yet raises `NotImplementedError` naming it and listing those that exist.
 
@@ -80,7 +79,7 @@ router.route()
 Core required inputs are:
 
 - `params_file` (network topology and Muskingum parameters)
-- `runoff_files` and `runoff_type` when using `runoff` forcing, plus `grid_weights_file` for the grid runoff types
+- `runoff_files` when `forcing` is not `channel`, plus `grid_weights_file` for the grid forcings
 - `discharge_dir` (or explicit `discharge_files`)
 
 ## CLI

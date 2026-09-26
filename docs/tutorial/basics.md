@@ -5,10 +5,11 @@
 
 - **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
-- **`forcing: runoff`**: routes runoff volumes or depths directly into river channel inlets at each
-  timestep. This is the most common starting point.
+- **`forcing: catchment`**, **`gaussian_grid`**, or **`reduced_gaussian_grid`**: routes the runoff volumes or
+  depths of `runoff_files`, in that form, directly into river channel inlets at each timestep. This is the most
+  common starting point.
 
-This tutorial uses lateral-runoff routing (`forcing: runoff`).
+This tutorial routes catchment runoff (`forcing: catchment`).
 
 ## Vocabulary
 
@@ -50,8 +51,7 @@ want.
 ```json
 {
   "params_file": "/path/to/params.parquet",
-  "forcing": "runoff",
-  "runoff_type": "catchment",
+  "forcing": "catchment",
   "runoff_files": "/path/to/catchment_runoff.nc",
   "discharge_dir": "/path/to/output/"
 }
@@ -75,8 +75,7 @@ configs = rr.Configs(
     params_file='params.parquet',
     runoff_files=['catchment_runoff.nc', ],
     discharge_dir='./output/',
-    forcing='runoff',
-    runoff_type='catchment',
+    forcing='catchment',
 )
 rr.Router(configs).route()
 ```
@@ -92,8 +91,7 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 ```json
 {
   "params_file": "params.parquet",
-  "forcing": "runoff",
-  "runoff_type": "catchment",
+  "forcing": "catchment",
   "runoff_files": "catchment_runoff.nc",
   "discharge_dir": "output/",
   "channel_state_init_file": "state.parquet",

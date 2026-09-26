@@ -30,7 +30,7 @@ These routing parameters typically come from preprocessing and calibration workf
 
 ## Catchment Runoff Files
 
-You need a time series of per-catchment runoff to be routed. It is given as `runoff_files`, read as the `runoff_type`:
+You need a time series of per-catchment runoff to be routed. It is given as `runoff_files`, read in the form `forcing` names:
 
 1. `catchment`: files already aggregated to catchments
 2. `gaussian_grid`: gridded runoff depths with x and y dimensions, aggregated with a weight table (`grid_weights_file`)
@@ -45,7 +45,7 @@ You need a time series of per-catchment runoff to be routed. It is given as `run
 
 ```json
 {
-  "runoff_type": "catchment",
+  "forcing": "catchment",
   "runoff_files": [
     "/path/to/catchment_runoff.nc"
   ]
@@ -75,7 +75,7 @@ from their grids with `aggregate_to_file`.
 
 ```json
 {
-  "runoff_type": "gaussian_grid",
+  "forcing": "gaussian_grid",
   "runoff_files": [
     "/path/to/grid1.nc",
     "/path/to/grid2.nc"

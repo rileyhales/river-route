@@ -1,9 +1,9 @@
 # Runoff
 
-The Runoff classes aggregate runoff to catchments. There is one per `runoff_type`, and
-`RUNOFF_CLASS_FOR_RUNOFF_TYPE[configs.runoff_type]` is the class the `runoff_type` of a `Configs` names:
+The Runoff classes aggregate runoff to catchments. There is one for each `forcing` that routes runoff, and
+`RUNOFF_CLASS_FOR_FORCING[configs.forcing]` is the class the `forcing` of a `Configs` names:
 
-| `runoff_type`           | Class                       | Aggregates                                                                    |
+| `forcing`               | Class                       | Aggregates                                                                    |
 |-------------------------|-----------------------------|-------------------------------------------------------------------------------|
 | `catchment`             | `CatchmentRunoff`           | nothing: its files are already aggregated to catchments, as volumes or depths |
 | `gaussian_grid`         | `GaussianGridRunoff`        | grids with x and y dimensions, with a weight table                            |
@@ -16,7 +16,7 @@ Only `from_configs` validates, since a directly built `GaussianGridRunoff` has n
 
 Every class subclasses the abstract `Runoff`, whose `to_netcdf` writes a catchment runoff array in the format
 `CatchmentRunoff` reads. The grid classes precompute that file from their grids with `aggregate_to_file`, so it can be
-routed later with `runoff_type` catchment. Routing the grids directly is faster, because the aggregation then happens
+routed later with `forcing` catchment. Routing the grids directly is faster, because the aggregation then happens
 inside the routing kernel.
 
 Each class has a `generator` method that yields one `(dates, runoff, source_file)` tuple per input, with the runoff

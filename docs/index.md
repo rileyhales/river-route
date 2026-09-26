@@ -7,13 +7,12 @@
 All routing runs through `rr.Router`. You describe the routing procedure with config selector keys,
 which together choose the kernel.
 
-| Selector      | Options                                                                                                                                | Default      |
-|---------------|----------------------------------------------------------------------------------------------------------------------------------------|--------------|
-| `coeff`       | `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha*Q^beta from columns `alpha`, `beta`, `x`). | `'static'`   |
-| `forcing`     | `'channel'` (channel routing only) or `'runoff'` (runoff enters the rivers in addition to routing). One value only.                    | `'channel'`  |
-| `transform`   | `'uniform'` or `'unit_hydrograph'`. Only read when `forcing` is `'runoff'`.                                                            | `'uniform'`  |
-| `runoff_type` | `'catchment'`, `'gaussian_grid'`, or `'reduced_gaussian_grid'`, the form of `runoff_files`. Required when `forcing` is `'runoff'`.     | none         |
-| `network`     | `'standard'` (one reach per river).                                                                                                    | `'standard'` |
+| Selector    | Options                                                                                                                                                       | Default      |
+|-------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| `coeff`     | `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha*Q^beta from columns `alpha`, `beta`, `x`).                        | `'static'`   |
+| `forcing`   | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'gaussian_grid'`, or `'reduced_gaussian_grid'`. | `'channel'`  |
+| `transform` | `'uniform'` or `'unit_hydrograph'`. Only read when `forcing` is not `'channel'`.                                                                              | `'uniform'`  |
+| `network`   | `'standard'` (one reach per river).                                                                                                                           | `'standard'` |
 
 A combination with no kernel yet raises `NotImplementedError` naming it and listing those that exist.
 
@@ -47,8 +46,7 @@ import river_route as rr
 
 configs = rr.Configs(
     params_file="/path/to/params.parquet",
-    forcing="runoff",
-    runoff_type="catchment",
+    forcing="catchment",
     runoff_files=["/path/to/catchment_runoff.nc"],
     discharge_dir="/path/to/output/",
 )

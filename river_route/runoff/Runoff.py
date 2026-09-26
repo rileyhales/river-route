@@ -66,7 +66,7 @@ class Runoff(ABC):
     ) -> None:
         """
         Write a catchment runoff array to a netCDF file that ``CatchmentRunoff`` reads, routed as ``runoff_files``
-        with ``runoff_type`` catchment.
+        with ``forcing`` catchment.
 
         Args:
             path: netCDF file to write

@@ -306,7 +306,7 @@ class GaussianGridRunoff(Runoff):
     ) -> xr.Dataset:
         """
         Read and aggregate runoff into a catchment runoff dataset that can be saved and routed as ``runoff_files``
-        with ``runoff_type`` catchment.
+        with ``forcing`` catchment.
 
         Args:
             runoff_data: path(s) to runoff files
@@ -333,7 +333,7 @@ class GaussianGridRunoff(Runoff):
     ) -> None:
         """
         Precompute the catchment runoff of gridded runoff and write it to a netCDF file that is routed as
-        ``runoff_files`` with ``runoff_type`` catchment. Routing the grids directly aggregates inside the routing
+        ``runoff_files`` with ``forcing`` catchment. Routing the grids directly aggregates inside the routing
         kernel instead, which is faster than routing a precomputed file.
 
         Args:

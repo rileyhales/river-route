@@ -75,8 +75,7 @@ outputs = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(outputs, exist_ok=True)
 
 configs = rr.Configs(
-    forcing='runoff',
-    runoff_type='catchment',
+    forcing='catchment',
     params_file=params_file,
     runoff_files=runoff_files,
     discharge_dir=outputs,
@@ -120,8 +119,8 @@ so you can chain it onto the constructor. The writer is called once per routed i
 5. `runoff_file`: path to the runoff input used to produce this output.
 
 As an example, you might want to write output as Parquet instead. The snippets below focus on the
-writer override; for `.route()` to actually run, the config must select `forcing: runoff` and supply a
-water source (`runoff_files` and `runoff_type`, plus `grid_weights_file` for the grid runoff types).
+writer override; for `.route()` to actually run, the config must select a `forcing` that routes runoff, such as
+`catchment`, and supply `runoff_files`, plus `grid_weights_file` for the grid forcings.
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
@@ -138,7 +137,7 @@ def custom_write_discharges(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router(rr.Configs.from_json('../../examples/config.json'), forcing='runoff')
+    .Router(rr.Configs.from_json('../../examples/config.json'))
     .set_discharge_writer(custom_write_discharges)
     .route()
 )
@@ -162,7 +161,7 @@ def append_to_existing_file(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router(rr.Configs.from_json('config.json'), forcing='runoff')
+    .Router(rr.Configs.from_json('config.json'))
     .set_discharge_writer(append_to_existing_file)
     .route()
 )
@@ -184,7 +183,7 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 (
     rr
-    .Router(rr.Configs.from_json('config.json'), forcing='runoff')
+    .Router(rr.Configs.from_json('config.json'))
     .set_discharge_writer(save_partial_results)
     .route()
 )
@@ -192,10 +191,10 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 ## Customizing Runoff Inputs
 
-Routing reads `runoff_files` with the Runoff class for the `runoff_type`: `CatchmentRunoff` for `catchment`, or
+Routing reads `runoff_files` with the Runoff class for the `forcing`: `CatchmentRunoff` for `catchment`, or
 `GaussianGridRunoff` for `gaussian_grid`, which aggregates the grids to catchments with `grid_weights_file`. Pass a
 `GaussianGridRunoff` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
-the catchment runoff is prepared. A Runoff passed to the `Router` must be the class for the `runoff_type`.
+the catchment runoff is prepared. A Runoff passed to the `Router` must be the class for the `forcing`.
 
 ```python title="Pass a Prepared Runoff"
 import river_route as rr
@@ -206,6 +205,6 @@ rr.Router(configs, runoff=runoff).route()
 ```
 
 Runoff in a format or a place this package does not read can be written to netCDF with `Runoff.to_netcdf` and
-routed as `runoff_files` with `runoff_type` catchment. The grid classes precompute that file from their grids with
+routed as `runoff_files` with `forcing` catchment. The grid classes precompute that file from their grids with
 `aggregate_to_file`, although routing the grids directly is faster: the aggregation then happens inside the routing
 kernel.
