@@ -11,7 +11,7 @@ import numba
 import numpy as np
 from numba.extending import overload
 
-from ._routing_passes import STANDARD_LAYOUT, Layout, is_argument_type, route_river
+from ._routing_passes import STANDARD_LAYOUT, Layout, add_catchment_runoff, is_argument_type, route_river
 
 if TYPE_CHECKING:
     from ..network.Network import Network
@@ -143,7 +143,7 @@ def _route_river_with_static_coefficients(
     ``q_t[p0:p0 + n_pieces]``: one piece on a standard network, and as many as stability needs on a stabilized one.
     The last piece's unclamped series is added into ``downstream_inflow`` and its clamped per-step mean is written into
     ``discharge``; the states are updated in place. ``catchment_runoff`` is None for channel routing, and every piece
-    takes an equal share of it through ``c4_dt``.
+    takes an equal share of it through ``c4_dt``, added into the piece's forcing by add_catchment_runoff.
 
     ``m`` sub-cycles the river: each routing step is taken as m equal steps of its own, which is how a river too short
     for the routing step is kept stable. The upstream series arrives once per routing step and is interpolated
@@ -179,14 +179,7 @@ def _route_river_with_static_coefficients(
             for h in range(n_fine):
                 work[h] = c1 * piece_inflow[h + 1] + c2 * piece_inflow[h]
         if catchment_runoff is not None:
-            if n_per_step == 1:
-                for t in range(n_steps):
-                    work[t] += c4_dt * np.float32(catchment_runoff[t])
-            else:
-                for t in range(n_steps):
-                    external = c4_dt * np.float32(catchment_runoff[t])
-                    for h in range(t * n_per_step, (t + 1) * n_per_step):
-                        work[h] += external
+            add_catchment_runoff(catchment_runoff, c4_dt, n_steps, n_per_step, work)
 
         # every step of the piece's inflow has been read, so the chain row can take this piece's series in its place
         q = q_t[p0 + j]

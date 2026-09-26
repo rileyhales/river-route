@@ -1,12 +1,14 @@
 """
 How a network is routed. A pass routes the rivers of a schedule's blocks one at a time, each river's whole series before
 the next, and takes every river through three stages: finding its catchment runoff, transforming that runoff, and
-routing it with the routing method. The stages are the functions without a body below. Each is implemented by a numba
-overload registered in the module that defines the type of argument it reads, so numba compiles one version of
-route_scheduled_rivers for each combination of argument types it is given:
+routing it with the routing method, which adds the catchment runoff into its forcing with add_catchment_runoff. The
+stages are the functions without a body below. Each is implemented by a numba overload registered in the module that
+defines the type of argument it reads, so numba compiles one version of route_scheduled_rivers for each combination of
+argument types it is given:
 
-    runoff     None for channel routing (here), CatchmentRunoffVolumes (runoff/CatchmentRunoff.py), or
-               GridCellRunoff (runoff/GaussianGridRunoff.py)
+    runoff     None for channel routing (here), CatchmentRunoffVolumes (runoff/CatchmentRunoff.py), whose rows are the
+               rivers' catchment runoff series, or GridCellRunoff (runoff/GaussianGridRunoff.py), whose grid cells are
+               read directly into each river's forcing as the river is routed
     transform  None for the uniform transform, which changes nothing, so the stage is removed at compile time
     method     StaticMuskingum (router/static_muskingum.py) or DynamicMuskingum (router/dynamic_muskingum.py)
 
@@ -39,10 +41,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     # the stages a routing pass takes each river through, implemented next to the types they read
-    'count_rivers_prepared_together',
-    'prepare_runoff_of_rivers',
     'get_river_catchment_runoff',
     'transform_catchment_runoff',
+    'add_catchment_runoff',
     'route_river',
     'is_argument_type',
     # what a pass reads, the pass, and running the passes over a Router's schedule
@@ -59,21 +60,19 @@ __all__ = [
 ################################################
 
 
-def count_rivers_prepared_together(runoff):
-    """How many rivers' runoff is prepared at once in scratch rows before they are routed, 0 when read in place."""
-
-
-def prepare_runoff_of_rivers(runoff, first_river, stop_river, scratch):
-    """Prepare the runoff of rivers first_river:stop_river in the scratch rows before they are routed."""
-
-
-def get_river_catchment_runoff(runoff, r, first_river, scratch):
-    """River r's catchment runoff volume in each runoff step, or None for channel routing. first_river is the first
-    river whose runoff was prepared in scratch."""
+def get_river_catchment_runoff(runoff, r):
+    """River r's catchment runoff, in the form add_catchment_runoff reads, or None for channel routing."""
 
 
 def transform_catchment_runoff(transform, catchment_runoff, r, out):
     """River r's catchment runoff volume in each runoff step after the runoff transform, which may write it into out."""
+
+
+def add_catchment_runoff(catchment_runoff, multiplier, n_steps, n_per_step, work):
+    """
+    Add ``multiplier`` times a river's catchment runoff volume in each of the first ``n_steps`` runoff steps into each
+    of the ``n_per_step`` steps of ``work`` that the runoff step spans.
+    """
 
 
 def route_river(method, layout, q_t, r, catchment_runoff, inflow, downstream_inflow, discharge, work, chain):
@@ -90,22 +89,10 @@ def is_argument_type(numba_type, kind: type) -> bool:
     return getattr(numba_type, 'instance_class', None) is kind
 
 
-@overload(count_rivers_prepared_together)
-def _channel_routing_prepares_no_runoff(runoff):
-    if isinstance(runoff, types.NoneType):
-        return lambda runoff: 0
-
-
-@overload(prepare_runoff_of_rivers)
-def _channel_routing_has_no_runoff_to_prepare(runoff, first_river, stop_river, scratch):
-    if isinstance(runoff, types.NoneType):
-        return lambda runoff, first_river, stop_river, scratch: None
-
-
 @overload(get_river_catchment_runoff)
-def _channel_routing_has_no_catchment_runoff(runoff, r, first_river, scratch):
+def _channel_routing_has_no_catchment_runoff(runoff, r):
     if isinstance(runoff, types.NoneType):
-        return lambda runoff, r, first_river, scratch: None
+        return lambda runoff, r: None
 
 
 ################################################
@@ -254,9 +241,6 @@ def route_scheduled_rivers(
     Route every river in the blocks of ``schedule``, river by river, through the stages: its catchment runoff from
     ``runoff``, transformed by ``transform``, and routed with the routing ``method``'s parameters. ``discharge_array``
     is C-order (river, time): each river's series is written into its own row in place.
-
-    Rivers are routed in groups whose runoff is prepared together first. Neighboring catchments share grid cells, so
-    aggregating gridded runoff for a group back to back reads each shared cell's series while it is still in cache.
     """
     n_steps = discharge_array.shape[1]
     n_routing = n_steps * n_substeps
@@ -266,8 +250,6 @@ def route_scheduled_rivers(
     inflow_rows, slot_of, free, top = allocate_inflow_row_pool(span, n_rows, n_routing)
     cuts = sort_region_cuts_by_target_river(cut_target)
     next_cut = 0
-    rivers_prepared_together = count_rivers_prepared_together(runoff)
-    runoff_scratch = np.zeros((rivers_prepared_together, n_steps), dtype=np.float32)
     transform_scratch = np.empty(0 if transform is None else n_steps, dtype=np.float32)
     expanded = layout.reach_indptr.shape[0] > 0
     most = layout.substeps.max() if layout.substeps.shape[0] > 0 else 1
@@ -278,34 +260,29 @@ def route_scheduled_rivers(
 
     for b in range(block_starts.shape[0]):
         outlet = block_outlet[b]
-        start, stop = block_starts[b], block_stops[b]
-        group_size = rivers_prepared_together or max(stop - start, 1)
-        for group_start in range(start, stop, group_size):
-            group_stop = min(group_start + group_size, stop)
-            prepare_runoff_of_rivers(runoff, group_start, group_stop, runoff_scratch)
-            for r in range(group_start, group_stop):
-                while next_cut < cuts.shape[0] and cut_target[cuts[next_cut]] == r:
-                    injected = get_or_open_downstream_inflow_row(r - first, inflow_rows, slot_of, free, top)
-                    region_outlet_series = boundary[cuts[next_cut]]
-                    for g in range(injected.shape[0]):  # a loop, not +=; see the module docstring
-                        injected[g] += region_outlet_series[g]
-                    next_cut += 1
-                inflow = get_upstream_inflow_row(r - first, inflow_rows, slot_of)
-                if r == outlet:
-                    downstream_inflow = boundary[block_region[b]]
-                    downstream_inflow[:] = 0.0
-                else:
-                    d = downstream_indices[r]
-                    downstream_inflow = get_or_open_downstream_inflow_row(
-                        d - first if d >= 0 else -1, inflow_rows, slot_of, free, top
-                    )
-                row = out_row[r] if renumbered else r
-                discharge = discharge_array[row] if row >= 0 else discarded
-                catchment_runoff = get_river_catchment_runoff(runoff, r, group_start, runoff_scratch)
-                if transform is not None:
-                    catchment_runoff = transform_catchment_runoff(transform, catchment_runoff, r, transform_scratch)
-                route_river(method, layout, q_t, r, catchment_runoff, inflow, downstream_inflow, discharge, work, chain)
-                release_inflow_row_to_pool(r - first, slot_of, free, top)
+        for r in range(block_starts[b], block_stops[b]):
+            while next_cut < cuts.shape[0] and cut_target[cuts[next_cut]] == r:
+                injected = get_or_open_downstream_inflow_row(r - first, inflow_rows, slot_of, free, top)
+                region_outlet_series = boundary[cuts[next_cut]]
+                for g in range(injected.shape[0]):  # a loop, not +=; see the module docstring
+                    injected[g] += region_outlet_series[g]
+                next_cut += 1
+            inflow = get_upstream_inflow_row(r - first, inflow_rows, slot_of)
+            if r == outlet:
+                downstream_inflow = boundary[block_region[b]]
+                downstream_inflow[:] = 0.0
+            else:
+                d = downstream_indices[r]
+                downstream_inflow = get_or_open_downstream_inflow_row(
+                    d - first if d >= 0 else -1, inflow_rows, slot_of, free, top
+                )
+            row = out_row[r] if renumbered else r
+            discharge = discharge_array[row] if row >= 0 else discarded
+            catchment_runoff = get_river_catchment_runoff(runoff, r)
+            if transform is not None:
+                catchment_runoff = transform_catchment_runoff(transform, catchment_runoff, r, transform_scratch)
+            route_river(method, layout, q_t, r, catchment_runoff, inflow, downstream_inflow, discharge, work, chain)
+            release_inflow_row_to_pool(r - first, slot_of, free, top)
     return
 
 

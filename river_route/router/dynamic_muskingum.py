@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 import numpy as np
 from numba.extending import overload
 
-from ._routing_passes import STANDARD_LAYOUT, Layout, is_argument_type, route_river
+from ._routing_passes import STANDARD_LAYOUT, Layout, add_catchment_runoff, is_argument_type, route_river
 
 if TYPE_CHECKING:
     from ..network.Network import Network
@@ -53,8 +53,8 @@ def _route_river_with_dynamic_coefficients(
 ):
     """
     Nonlinear Muskingum for river r's whole series. The coefficients are rebuilt from the river's own discharge every
-    routing step, and the upstream series is weighted by them. The layout is always standard, so ``work`` and
-    ``chain`` go unused.
+    routing step, and the upstream series is weighted by them. The layout is always standard, so ``chain`` goes unused,
+    and ``work`` holds the river's catchment runoff series, which each step reads as it is routed.
     """
     alpha = method.alpha[r]
     beta = method.beta[r]
@@ -68,6 +68,10 @@ def _route_river_with_dynamic_coefficients(
     n_steps = discharge.shape[0]
     n_substeps = (inflow.shape[0] - 1) // n_steps  # an inflow row holds the level before the first step and every step
     inv_substeps = np.float32(1.0 / n_substeps)
+    if catchment_runoff is not None:
+        for t in range(n_steps):
+            work[t] = zero
+        add_catchment_runoff(catchment_runoff, np.float32(1.0), n_steps, 1, work)
     q = q_t[r]
     u_prev = inflow[0]
     downstream_inflow[0] += q
@@ -75,7 +79,7 @@ def _route_river_with_dynamic_coefficients(
     for t in range(n_steps):
         external = zero
         if catchment_runoff is not None:
-            external = np.float32(catchment_runoff[t]) * inv_dt_runoff
+            external = work[t] * inv_dt_runoff
         interval_sum = zero
         for _ in range(n_substeps):
             k = alpha * max(qmin, q) ** beta

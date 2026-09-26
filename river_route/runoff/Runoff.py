@@ -42,7 +42,7 @@ class Runoff(ABC):
     def generator(self, runoff_files: PathList) -> RunoffGenerator:
         """
         Yield one (dates, runoff, source_file) tuple per input, where runoff is what routing reads: its
-        CatchmentRunoffVolumes, or a GridCellRunoff that routing aggregates as it routes. Each checks its own arrays
+        CatchmentRunoffVolumes, or a GridCellRunoff whose grid cells routing reads as it routes. Each checks its arrays
         with ``check`` and gives the runoff of its first steps with ``first_steps``.
         """
 

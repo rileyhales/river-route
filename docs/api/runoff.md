@@ -20,8 +20,8 @@ routed later with `runoff_type` catchment. Routing the grids directly is faster,
 inside the routing kernel.
 
 Each class has a `generator` method that yields one `(dates, runoff, source_file)` tuple per input, with the runoff
-in the form routing reads: `CatchmentRunoffVolumes`, or a `GridCellRunoff` that routing
-aggregates as it routes. It can be used on its own or by a `Router`. See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
+in the form routing reads: `CatchmentRunoffVolumes`, or a `GridCellRunoff` whose grid cells
+routing reads as it routes each river. It can be used on its own or by a `Router`. See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
 
 ```python
 import river_route as rr

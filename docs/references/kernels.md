@@ -32,6 +32,9 @@ passes, with the runoff read from a warm page cache. "Write" is a real file on d
 
 The kernel scales about 8.7x from 1 thread to 12, which leaves the writer as most of the job.
 
+Since each river's grid cells are read directly as it is routed (see [Layout](#layout)), the kernel takes 2.22 s on 1
+thread and 0.25 s on 12, from 2.80 s and 0.32 s measured the same way before: the average of 2 passes after a first.
+
 Reading the year's runoff adds about 0.18 s warm, or 2 to 3 s from cold storage, and the transpose that prepares the
 cell series adds 0.07 s. Both are outside the kernel and writer columns above.
 
@@ -84,22 +87,23 @@ or out. The runoff arrives one of three ways:
 |--------------------------|-------------------------|----------------------------------------------------------------------------------|
 | `None`                   |                         | none, channel routing only                                                       |
 | `CatchmentRunoffVolumes` | `CatchmentRunoff.py`    | `(river, time)` C-order catchment runoff volumes, each river's row read in place |
-| `GridCellRunoff`         | `GaussianGridRunoff.py` | gridded runoff aggregated for 64 rivers at a time into scratch, then routed      |
+| `GridCellRunoff`         | `GaussianGridRunoff.py` | each river's grid cells read directly into its forcing as the river is routed    |
 
 The one numba pass, `route_scheduled_rivers`, takes each river through stages: finding its catchment runoff,
-transforming it, and routing it with the routing method's parameters (`StaticMuskingum` or `DynamicMuskingum`). Each
-stage is a function without a body, implemented by numba overloads registered next to the type of argument they read,
-so numba compiles a version of the pass for each combination of argument types. A new kind of runoff is a new type
-and its overloads of `count_rivers_prepared_together`, `prepare_runoff_of_rivers`, and `get_river_catchment_runoff`.
-A new routing method is a new module with its parameters, `NETWORK_TYPES`, `prepare_routing`, and its overload of
-`route_river`.
+transforming it, and routing it with the routing method's parameters (`StaticMuskingum` or `DynamicMuskingum`), which
+adds the catchment runoff into the river's forcing. Each stage is a function without a body, implemented by numba
+overloads registered next to the type of argument they read, so numba compiles a version of the pass for each
+combination of argument types. A new kind of runoff is a new type and its overloads of `get_river_catchment_runoff`
+and `add_catchment_runoff`. A new routing method is a new module with its parameters, `NETWORK_TYPES`,
+`prepare_routing`, and its overload of `route_river`.
 
-`route_scheduled_rivers` routes each schedule block in groups of rivers whose runoff is prepared together before they
-are routed.
-Gridded runoff is aggregated for groups of 64 consecutive rivers (`_RIVERS_AGGREGATED_TOGETHER`); any other runoff
-needs no preparing, so its whole block is one group. Neighboring catchments share grid cells, so aggregating them back
-to back reads each shared cell's series while it is still in cache; routing a river between each aggregation evicts
-it. That measured 2-3% faster than aggregating one river at a time on the Amazon.
+Gridded runoff is never summed into a catchment runoff series before routing. As each river is routed, every one of its
+weights adds its cell's runoff depths, read straight from the cell's row, times the volume a unit depth gives the
+river, precombined in float32 when the file is read. jsrr, the browser port of river-route, routes this way in C, and
+doing the same in numba routed the Columbia about 1.4 times faster than aggregating the runoff of 64 rivers at a time
+into scratch rows and reading those as each river was routed. A file whose catchment runoff must be resampled,
+de-accumulated, or clipped at zero needs each river's whole series first, so it is aggregated when it is read and
+routed as catchment runoff.
 
 ## Runoff
 

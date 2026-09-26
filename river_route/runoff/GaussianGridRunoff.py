@@ -11,12 +11,7 @@ import xarray as xr
 from numba.extending import overload
 
 from ..configs import Configs
-from ..router._routing_passes import (
-    count_rivers_prepared_together,
-    get_river_catchment_runoff,
-    is_argument_type,
-    prepare_runoff_of_rivers,
-)
+from ..router._routing_passes import add_catchment_runoff, get_river_catchment_runoff, is_argument_type
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
 from .CatchmentRunoff import CatchmentRunoffVolumes
@@ -32,17 +27,16 @@ logger = logging.getLogger(__name__)
 
 class GridCellRunoff(NamedTuple):
     """
-    One file of gridded runoff depths read at the weight table's grid cells, with the weights that aggregate them onto
-    the rivers as routing routes them. The fields are in the order ``aggregate_river`` takes them.
+    One file of gridded runoff depths read at the weight table's grid cells, with the weights that turn them into each
+    river's catchment runoff volume as routing routes it.
     """
 
     runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths, each cell's time series contiguous
     indptr: IntArray  # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
     cell: IntArray  # (n_weights,) row of runoff_by_cell each weight applies to
-    weight: FloatArray  # (n_weights,) proportions already multiplied by the depth unit conversion factor
-    scale: FloatArray  # (n_rivers,) catchment areas that turn depths into volumes; EMPTY to keep depths
-    cumulative: bool  # de-accumulate each river's series from cumulative to incremental
-    force_positive: bool  # clip negative runoff to zero
+    # (n_weights,) float32 volume (m³) a unit of the cell's runoff depth gives the river: the weight's proportion of the
+    # river's catchment area, times that area, times the factor converting the depth unit to meters
+    weight: FloatArray
 
     def check(self, n_rivers: int, n_steps: int) -> None:
         """Raise ValueError unless the weight table describes n_rivers rivers and the runoff has n_steps steps."""
@@ -54,53 +48,54 @@ class GridCellRunoff(NamedTuple):
             raise ValueError(f'the weight table does not describe the {n_rivers} rivers being routed')
         if self.cell.size and self.cell.max() >= self.runoff_by_cell.shape[0]:
             raise ValueError(f'the weight table references cells beyond the {self.runoff_by_cell.shape[0]} read')
-        if self.scale.shape[0] not in (0, n_rivers):
-            raise ValueError(f'scale has shape {self.scale.shape}, expected ({n_rivers},) or (0,)')
 
     def first_steps(self, n_steps: int) -> GridCellRunoff:
-        """Itself, since routing aggregates only the steps it routes."""
+        """Itself, since routing reads only the steps it routes."""
         return self
 
 
-# Neighboring catchments share grid cells, so aggregating a group of rivers back to back reads each shared cell's series
-# while it is still in cache, where routing a river between each aggregation evicts it. Groups of 64 measured 2-3%
-# faster than aggregating one river at a time on the Amazon.
-_RIVERS_AGGREGATED_TOGETHER = 64
+class RiverGridCells(NamedTuple):
+    """The grid cells of one river's catchment: the runoff of every cell, and the cell and weight of each of its own."""
 
-
-def _aggregate_runoff_of_rivers(runoff, first_river, stop_river, scratch):
-    """Aggregate the gridded runoff of rivers first_river:stop_river into scratch rows 0:stop_river - first_river."""
-    for r in range(first_river, stop_river):
-        kernels.aggregate_river(
-            runoff.runoff_by_cell,
-            runoff.indptr,
-            runoff.cell,
-            runoff.weight,
-            runoff.scale,
-            np.float32(0.0),
-            runoff.cumulative,
-            runoff.force_positive,
-            r,
-            scratch[r - first_river],
-        )
-
-
-@overload(count_rivers_prepared_together)
-def _grid_cell_runoff_is_aggregated_in_groups(runoff):
-    if is_argument_type(runoff, GridCellRunoff):
-        return lambda runoff: _RIVERS_AGGREGATED_TOGETHER
-
-
-@overload(prepare_runoff_of_rivers, jit_options={'nogil': True})
-def _grid_cell_runoff_is_aggregated_before_routing(runoff, first_river, stop_river, scratch):
-    if is_argument_type(runoff, GridCellRunoff):
-        return _aggregate_runoff_of_rivers
+    runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths
+    cell: IntArray  # (n_river_weights,) row of runoff_by_cell each of the river's weights applies to
+    weight: FloatArray  # (n_river_weights,) volume a unit of the cell's runoff depth gives the river
 
 
 @overload(get_river_catchment_runoff)
-def _grid_cell_runoff_aggregated_for_river(runoff, r, first_river, scratch):
+def _grid_cells_of_river(runoff, r):
     if is_argument_type(runoff, GridCellRunoff):
-        return lambda runoff, r, first_river, scratch: scratch[r - first_river]
+        return lambda runoff, r: RiverGridCells(
+            runoff.runoff_by_cell,
+            runoff.cell[runoff.indptr[r] : runoff.indptr[r + 1]],
+            runoff.weight[runoff.indptr[r] : runoff.indptr[r + 1]],
+        )
+
+
+def _add_runoff_of_river_grid_cells(catchment_runoff, multiplier, n_steps, n_per_step, work):
+    """
+    Add multiplier times the river's catchment runoff volume into its steps of work a cell at a time, each cell's
+    runoff depths read straight from its row, so no catchment runoff series is built first. The C kernel of jsrr, the
+    browser port of river-route, reads the cells this way, and doing the same routed the Columbia about 1.4 times faster
+    than aggregating the runoff of 64 rivers at a time into scratch rows and reading those as each river was routed.
+    """
+    for k in range(catchment_runoff.cell.shape[0]):
+        series = catchment_runoff.runoff_by_cell[catchment_runoff.cell[k]]
+        forcing = multiplier * catchment_runoff.weight[k]
+        if n_per_step == 1:
+            for t in range(n_steps):
+                work[t] += forcing * series[t]
+        else:
+            for t in range(n_steps):
+                external = forcing * series[t]
+                for h in range(t * n_per_step, (t + 1) * n_per_step):
+                    work[h] += external
+
+
+@overload(add_catchment_runoff, jit_options={'nogil': True, 'fastmath': {'contract'}})
+def _river_grid_cells_are_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
+    if is_argument_type(catchment_runoff, RiverGridCells):
+        return _add_runoff_of_river_grid_cells
 
 
 @dataclass(eq=False, repr=False)
@@ -114,8 +109,9 @@ class GaussianGridRunoff(Runoff):
 
     Reading and indexing the weight table is the same work for every runoff file, so it is done once when the
     GaussianGridRunoff is created and reused for all of them. Each runoff file is read at the grid cells the table
-    touches and aggregated onto rivers as area weighted depths or volumes in a single pass, each river's series
-    written straight into its row of a C-order (river, time) array that the routing kernels read in place.
+    touches. Routing reads each river's cells directly as it routes the river, and ``aggregate`` sums them onto rivers
+    as area weighted depths or volumes in a single pass, each river's series written straight into its row of a C-order
+    (river, time) array.
     """
 
     grid_weights_file: PathInput  # weight table netCDF produced by ``river_route.runoff.grid_weights``
@@ -275,33 +271,32 @@ class GaussianGridRunoff(Runoff):
 
     def generator(self, runoff_files: PathList) -> RunoffGenerator:
         """
-        Read gridded runoff files for routing, which aggregates and routes in one pass, so no catchment runoff array is
-        built. A file whose timesteps must be resampled cannot be aggregated while it is routed, so it is
-        aggregated here and yielded as catchment runoff instead.
+        Read gridded runoff files for routing, which reads each river's grid cells as it routes the river, so no
+        catchment runoff array is built. A file whose timesteps must be resampled, or whose catchment runoff must be
+        de-accumulated or clipped at zero, needs each river's whole catchment runoff series first, so it is aggregated
+        here and yielded as catchment runoff instead.
 
         Args:
             runoff_files: gridded runoff files to read
 
         Yields:
             tuple: (dates, runoff, source_file) per input file, where runoff is a GridCellRunoff, or
-                CatchmentRunoffVolumes when the file was resampled
+                CatchmentRunoffVolumes when the file was aggregated here
         """
         self.as_volumes = True  # routing uses catchment runoff volumes
         for runoff_file in runoff_files:
             runoff, time_index, conversion_factor = self.read_runoff(runoff_file)
-            if self._needs_resampling(time_index):
+            if self._needs_resampling(time_index) or self.cumulative or self.force_positive_runoff:
                 catchment_runoff, time_index = self.aggregate(runoff, time_index, conversion_factor)
-                resampled = CatchmentRunoffVolumes(catchment_runoff.astype(np.float32, copy=False))
-                yield time_index.astype('datetime64[s]'), resampled, runoff_file
+                aggregated = CatchmentRunoffVolumes(catchment_runoff.astype(np.float32, copy=False))
+                yield time_index.astype('datetime64[s]'), aggregated, runoff_file
                 continue
+            volume_of_depth = self._weight(conversion_factor) * np.repeat(self.catchment_area, np.diff(self.indptr))
             forcing = GridCellRunoff(
                 runoff_by_cell=self._by_cell(runoff),
                 indptr=self.indptr,
                 cell=self.cell,
-                weight=self._weight(conversion_factor),
-                scale=self.catchment_area if self.as_volumes else self.catchment_area[:0],
-                cumulative=self.cumulative,
-                force_positive=self.force_positive_runoff,
+                weight=volume_of_depth.astype(np.float32),
             )
             del runoff
             yield time_index.astype('datetime64[s]'), forcing, runoff_file

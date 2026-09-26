@@ -4,6 +4,15 @@
 
 ### Unreleased
 
+- Routing reads each river's grid cells directly into its forcing as the river is routed, as the C kernel of jsrr
+  does, instead of first aggregating the runoff of 64 rivers at a time into scratch rows. One year of hourly ERA5 over
+  region 6020006540 (303,097 rivers) routes in 2.22 s on 1 thread and 0.25 s on 12, from 2.80 s and 0.32 s. A
+  `GridCellRunoff`'s `weight` is now each weight's volume per unit of its cell's runoff depth in float32, with the
+  catchment area in it, and its `scale`, `cumulative`, and `force_positive` fields are removed: a file whose runoff
+  is cumulative or clipped at zero is aggregated when it is read and routed as `CatchmentRunoffVolumes`, as a
+  resampled file already was. The pass stages `count_rivers_prepared_together` and `prepare_runoff_of_rivers` are
+  removed, `get_river_catchment_runoff` takes only the runoff and the river, and a new stage, `add_catchment_runoff`,
+  adds a river's catchment runoff into its forcing.
 - Removed `writers.parquet_writer` and the transpose that served it: `writers.to_time_major`,
   `writers.TRANSPOSE_TILE`, and `writers.PARQUET_WRITE_OPTIONS`. Write parquet with a custom writer, transposing the
   `(river, time)` discharge array yourself.
