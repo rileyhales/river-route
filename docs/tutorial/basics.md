@@ -5,10 +5,11 @@
 
 - **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
-- **`forcing: vlateral`**: routes runoff volumes or depths directly into river channel inlets at each
-  timestep. This is the most common starting point.
+- **`forcing: catchment`**, **`gaussian_grid`**, or **`reduced_gaussian_grid`**: routes the runoff volumes or
+  depths of `runoff_files`, in that form, directly into river channel inlets at each timestep. This is the most
+  common starting point.
 
-This tutorial uses lateral-runoff routing (`forcing: vlateral`).
+This tutorial routes catchment runoff (`forcing: catchment`).
 
 ## Vocabulary
 
@@ -23,7 +24,7 @@ Three files are needed for a routing run:
 
 1. **Routing parameters** (`params.parquet`) — river network topology and Muskingum coefficients.
 2. **Lateral inflow** (`catchment_runoff.nc`) — per-catchment runoff time series.
-3. **Routed discharge** (`discharge.nc`) — output path where results will be written.
+3. **Routed discharge** (`discharge.zarr`) — output path where results will be written.
 
 See the [File Schemas reference](../references/io-file-schema.md) for field names and formats.
 
@@ -42,15 +43,18 @@ Rows must be in **topological order**: all upstream segments before their downst
 
 ## Config File
 
-Config values are held by a frozen `Configs` object. Build it from keyword arguments or read it from a YAML/JSON
-file with `Configs.from_file`, then pass it to `Router`. A `Router` takes its options from a `Configs` and
+Config values are held by a frozen `Configs` object. Build it from keyword arguments or read it from a JSON
+file with `Configs.from_json`, then pass it to `Router`. A `Router` takes its options from a `Configs` and
 nowhere else, and a `Configs` is set once when it is built, so an option is changed by building the `Configs` you
 want.
 
-```yaml
-params_file: '/path/to/params.parquet'
-vlateral_files: '/path/to/catchment_runoff.nc'
-discharge_dir: '/path/to/output/'
+```json
+{
+  "params_file": "/path/to/params.parquet",
+  "forcing": "catchment",
+  "runoff_files": "/path/to/catchment_runoff.nc",
+  "discharge_dir": "/path/to/output/"
+}
 ```
 
 ## First Routing Run
@@ -58,7 +62,7 @@ discharge_dir: '/path/to/output/'
 ```python
 import river_route as rr
 
-configs = rr.Configs.from_file('config.yaml')
+configs = rr.Configs.from_json('config.json')
 rr.Router(configs).route()
 ```
 
@@ -69,27 +73,30 @@ import river_route as rr
 
 configs = rr.Configs(
     params_file='params.parquet',
-    vlateral_files=['vlateral.nc', ],
+    runoff_files=['catchment_runoff.nc', ],
     discharge_dir='./output/',
-    forcing='vlateral',
+    forcing='catchment',
 )
 rr.Router(configs).route()
 ```
 
 A `Configs` is set once, when it is built, and is frozen afterward. There is no method to copy one with an
-option changed: build the `Configs` you want. Use `configs.to_yaml(path)` or `configs.to_json(path)` to write the
-options to a file that `Configs.from_file` reads back, e.g. to prepare many jobs for a scheduler.
+option changed: build the `Configs` you want. Use `configs.to_json(path)` to write the
+options to a file that `Configs.from_json` reads back, e.g. to prepare many jobs for a scheduler.
 
 ## Warm-Starting Channel State
 
 By default, the channel starts at zero discharge. Provide a state file to initialize from a previous run:
 
-```yaml
-params_file: 'params.parquet'
-vlateral_files: 'catchment_runoff.nc'
-discharge_dir: 'output/'
-channel_state_init_file: 'state.parquet'         # optional: initial channel state
-channel_state_final_file: 'new_state.parquet'    # optional: save final state for next run
+```json
+{
+  "params_file": "params.parquet",
+  "forcing": "catchment",
+  "runoff_files": "catchment_runoff.nc",
+  "discharge_dir": "output/",
+  "channel_state_init_file": "state.parquet",
+  "channel_state_final_file": "new_state.parquet"
+}
 ```
 
 The state file is a parquet with a single column `Q` and one row per river segment, in the same order
@@ -97,13 +104,13 @@ as the routing params.
 
 ## Reading the Output
 
-The routed discharge output is a netCDF file with dimensions `time` and `river_id`:
+The routed discharge output is a zarr store with dimensions `river_id` and `time`:
 
 ```python
 import xarray as xr
 
 river_of_interest = 123456789
-ds = xr.open_dataset('discharge.nc')
+ds = xr.open_zarr('discharge.zarr')
 series = ds['Q'].sel(river_id=river_of_interest).to_pandas()
 
 # Save to CSV

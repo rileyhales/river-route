@@ -3,52 +3,52 @@ site_name = "River Route"
 site_url = "https://river-route.code.hales.app"
 copyright = "Copyright &copy; 2023-2026 Dr Riley Hales. All rights reserved."
 nav = [
-  { "Home" = "index.md" },
-  { "License" = "terms.md" },
-  { "Changelog" = "changelog.md" },
-  { "API Docs" = [
-    { "Configs" = "api/configs.md" },
-    { "Network" = "api/network.md" },
-    { "Runoff" = "api/runoff.md" },
-    { "Router" = "api/router.md" },
-    { "Writers" = "api/writers.md" },
-    { "Metrics" = "api/metrics.md" },
-  ] },
-  { "References" = [
-    { "The Config File" = "references/config-files.md" },
-    { "File Schemas" = "references/io-file-schema.md" },
-    { "Time Variables" = "references/time-options.md" },
-    { "Math Derivations" = "references/math.md" },
-    { "Parallelism" = "references/parallelism.md" },
-    { "Routing Kernels" = "references/kernels.md" },
-  ] },
-  { "Tutorials" = [
-    { "Basics" = "tutorial/basics.md" },
-    { "Routing Runoff Ensemble" = "tutorial/routing-ensembles.md" },
-    { "Advanced Uses" = "tutorial/advanced.md" },
-  ] },
-  { "Migration Guides" = [
-    { "v1 to v2" = "migrating/v1-to-v2.md" },
-  ] },
+    { "Home" = "index.md" },
+    { "License" = "terms.md" },
+    { "Changelog" = "changelog.md" },
+    { "API Docs" = [
+        { "Configs" = "api/configs.md" },
+        { "Network" = "api/network.md" },
+        { "Runoff" = "api/runoff.md" },
+        { "Router" = "api/router.md" },
+        { "Writers" = "api/writers.md" },
+        { "Metrics" = "api/metrics.md" },
+    ] },
+    { "References" = [
+        { "The Config File" = "references/config-files.md" },
+        { "File Schemas" = "references/io-file-schema.md" },
+        { "Time Variables" = "references/time-options.md" },
+        { "Math Derivations" = "references/math.md" },
+        { "Parallelism" = "references/parallelism.md" },
+        { "Routing Kernels" = "references/kernels.md" },
+    ] },
+    { "Tutorials" = [
+        { "Basics" = "tutorial/basics.md" },
+        { "Routing Runoff Ensemble" = "tutorial/routing-ensembles.md" },
+        { "Advanced Uses" = "tutorial/advanced.md" },
+    ] },
+    { "Migration Guides" = [
+        { "v1 to v2" = "migrating/v1-to-v2.md" },
+    ] },
 ]
 extra_javascript = [
-  "https://unpkg.com/katex@0/dist/katex.min.js",
-  "https://unpkg.com/katex@0/dist/contrib/auto-render.min.js",
-  "static/js/katex.js",
+    "https://unpkg.com/katex@0/dist/katex.min.js",
+    "https://unpkg.com/katex@0/dist/contrib/auto-render.min.js",
+    "static/js/katex.js",
 ]
 extra_css = [
-  "https://unpkg.com/katex@0/dist/katex.min.css",
-  "static/css/custom.css",
+    "https://unpkg.com/katex@0/dist/katex.min.css",
+    "static/css/custom.css",
 ]
 
 [project.theme]
 features = [
-  "content.code.copy",
-  "content.code.select",
-  "navigation.expand",
-  "navigation.path",
-  "navigation.footer",
-  "toc.follow",
+    "content.code.copy",
+    "content.code.select",
+    "navigation.expand",
+    "navigation.path",
+    "navigation.footer",
+    "toc.follow",
 ]
 
 [[project.theme.palette]]
@@ -90,5 +90,5 @@ generic = true
 
 [project.markdown_extensions."pymdownx.superfences"]
 custom_fences = [
-  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+    { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]

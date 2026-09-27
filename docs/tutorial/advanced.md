@@ -15,7 +15,7 @@ graph TD
 
     E -->|lateral| K[loop: runoff input files generator]
     K --> L[set time params from dates]
-    L --> M[prepare vlateral]
+    L --> M[prepare catchment runoff]
     M --> N[set coefficients]
     N --> O[route with lateral inflow]
     O --> P{dt_discharge > dt_runoff?}
@@ -37,9 +37,9 @@ graph TD
 `Router.route()` first validates the required config keys and inflow source for the selected
 `coeff`, `forcing`, `transform`, and `network` before any routing data is read. It then builds its
 [`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
-vectors, and the concurrent routing partition, and derives the Muskingum coefficients from them. The
-numba kernel is resolved when it dispatches each routing pass (an unimplemented combination raises
-`NotImplementedError` at that point). The `Network` is built once and reused, so routing repeatedly
+vectors, and the concurrent routing partition, and the routing method chosen by `coefficients` builds its
+parameters from them. Options no routing method supports yet raise `NotImplementedError` before any runoff is
+read. The `Network` is built once and reused, so routing repeatedly
 on one `Router` re-reads and re-partitions nothing. When `forcing` is `'channel'`, time parameters are read directly from the config and a
 single channel-only routing pass runs over `dt_total`. Otherwise the router loops over the runoff
 input files (processed sequentially or as an ensemble), inferring time parameters from each file's
@@ -54,8 +54,8 @@ Depending on your preference, you may want to generate many config files in adva
 future use.
 
 The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword
-arguments to a `Configs`, which is then given to the `Router`. You could alternatively write the inputs to a YAML
-or JSON file and use that config file instead.
+arguments to a `Configs`, which is then given to the `Router`. You could alternatively write the inputs to a JSON
+file and use that config file instead.
 
 ```python
 import glob
@@ -75,9 +75,9 @@ outputs = os.path.join(root_dir, 'outputs', vpu_name)
 os.makedirs(outputs, exist_ok=True)
 
 configs = rr.Configs(
-    forcing='vlateral',
+    forcing='catchment',
     params_file=params_file,
-    vlateral_files=runoff_files,
+    runoff_files=runoff_files,
     discharge_dir=outputs,
 )
 m = rr.Router(configs).route()
@@ -86,26 +86,25 @@ m = rr.Router(configs).route()
 ## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disk.
-The default function, `river_route.router.writers.netcdf_writer`, writes discharge to netCDF.
+The default function, `river_route.router.writers.zarr_writer`, writes each output as a zarr store with dimensions
+`(river_id, time)`, built to write as fast as possible. It writes up to the `threads` given to `Router.route` chunks at
+once, rounding each chunk to `writers.ZARR_KEEPBITS` mantissa bits and compressing it with `writers.ZARR_COMPRESSOR`.
 
-Premade writers are in `river_route.router.writers`. `zarr_writer` writes each output as a zarr store with
-dimensions `(river_id, time)`, built to write as fast as possible. It writes up to the `threads` given to
-`Router.route` chunks at once, rounding each chunk to `writers.ZARR_KEEPBITS` mantissa bits and compressing it with
-`writers.ZARR_COMPRESSOR`. `parquet_writer` writes one row per river and one column per time step, with the
-pyarrow write options in `writers.PARQUET_WRITE_OPTIONS`.
+Premade writers are in `river_route.router.writers`. `netcdf_writer` writes the same `(river_id, time)` layout to an
+uncompressed netCDF file, with every value unrounded.
 
-```python title="Write Routed Flows to Zarr"
+```python title="Write Routed Flows to netCDF"
 import river_route as rr
 
 (
     rr
-    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
-    .set_discharge_writer(rr.router.writers.zarr_writer)
+    .Router(rr.Configs.from_json('config.json'))
+    .set_discharge_writer(rr.router.writers.netcdf_writer)
     .route()
 )
 ```
 
-A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
+A zarr store is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
@@ -115,14 +114,13 @@ so you can chain it onto the constructor. The writer is called once per routed i
 1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
 2. `dates`: datetime array for the columns of the discharge array.
 3. `discharge_array`: routed discharge array, C-order with shape `(river_id, time)`. The kernels route one river's
-   whole series at a time and write it into that river's row, so this is the layout every writer is handed. Use
-   `river_route.router.writers.to_time_major` if your format needs each time step's rivers contiguous instead.
+   whole series at a time and write it into that river's row, so this is the layout every writer is handed.
 4. `discharge_file`: path to the output file.
 5. `runoff_file`: path to the runoff input used to produce this output.
 
 As an example, you might want to write output as Parquet instead. The snippets below focus on the
-writer override; for `.route()` to actually run, the config must select `forcing: vlateral` and supply a
-water source (`vlateral_files`, or `grid_runoff_files` plus `grid_weights_file`).
+writer override; for `.route()` to actually run, the config must select a `forcing` that routes runoff, such as
+`catchment`, and supply `runoff_files`, plus `grid_weights_file` for the grid forcings.
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
@@ -139,7 +137,7 @@ def custom_write_discharges(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router(rr.Configs.from_file('../../examples/config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('../../examples/config.json'))
     .set_discharge_writer(custom_write_discharges)
     .route()
 )
@@ -163,7 +161,7 @@ def append_to_existing_file(router, dates, discharge_array, discharge_file: str,
 
 (
     rr
-    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('config.json'))
     .set_discharge_writer(append_to_existing_file)
     .route()
 )
@@ -185,7 +183,7 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 (
     rr
-    .Router(rr.Configs.from_file('config.yaml'), forcing='vlateral')
+    .Router(rr.Configs.from_json('config.json'))
     .set_discharge_writer(save_partial_results)
     .route()
 )
@@ -193,18 +191,20 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 
 ## Customizing Runoff Inputs
 
-Routing reads the runoff the config names: `vlateral_files` with `RunoffVlateral`, or `grid_runoff_files` aggregated
-with `grid_weights_file` by `RunoffGaussianGrid`. The runoff classes prepare the lateral inflow, so pass a
-`RunoffGaussianGrid` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
-the inflow is prepared.
+Routing reads `runoff_files` with the Runoff class for the `forcing`: `CatchmentRunoff` for `catchment`, or
+`GaussianGridRunoff` for `gaussian_grid`, which aggregates the grids to catchments with `grid_weights_file`. Pass a
+`GaussianGridRunoff` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
+the catchment runoff is prepared. A Runoff passed to the `Router` must be the class for the `forcing`.
 
 ```python title="Pass a Prepared Runoff"
 import river_route as rr
 
-configs = rr.Configs.from_file('config.yaml')
-runoff = rr.RunoffGaussianGrid.from_configs(configs)
+configs = rr.Configs.from_json('config.json')
+runoff = rr.GaussianGridRunoff.from_configs(configs)
 rr.Router(configs, runoff=runoff).route()
 ```
 
 Runoff in a format or a place this package does not read can be written to netCDF with `Runoff.to_netcdf` and
-routed from `vlateral_files`.
+routed as `runoff_files` with `forcing` catchment. The grid classes precompute that file from their grids with
+`aggregate_to_file`, although routing the grids directly is faster: the aggregation then happens inside the routing
+kernel.

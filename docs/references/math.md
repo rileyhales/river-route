@@ -279,7 +279,7 @@ $$
 Because $L_{ii} = 1$, no division is needed. Each unknown $x_i$ depends only on previously
 solved values $x_1, \ldots, x_{i-1}$, so the system is solved sequentially from the first
 row to the last. Specifically, `river-route` does not store the matrix $L$ at all. It uses a
-push-based forward-substitution sweep over a single `downstream_indices` vector. Each river is
+push-based forward substitution over a single `downstream_indices` vector. Each river is
 visited once in topological order; once a river's discharge is known, its contribution is pushed
 forward onto the right-hand side of its single downstream river using pre-gathered coefficients.
 
@@ -294,9 +294,9 @@ for j = 1, 2, ..., n:
 
 In the actual v3 kernels (`river_route/router/_numba_kernels.py`, e.g. `static_channel`), there is no
 matrix and no CSC arrays. Each river's right-hand side is first seeded with its own $c_3\, Q_t$ term (plus
-any lateral forcing). The kernel then sweeps the rivers in topological order, and once a river's new
+any lateral forcing). The kernel then visits the rivers in topological order, and once a river's new
 discharge is known it pushes that contribution forward onto its single downstream river using the
-pre-gathered `downstream_c1` / `downstream_c2` coefficients (built in `Router.py`). Conceptually the sweep is:
+pre-gathered `downstream_c1` / `downstream_c2` coefficients (built in `Router.py`). Conceptually, one routing step is:
 
 ```python
 for i in range(n_rivers):              # topological order: upstream before downstream
@@ -308,7 +308,7 @@ for i in range(n_rivers):              # topological order: upstream before down
         rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
 ```
 
-*Listing 2: Push-based forward-substitution sweep over downstream indices, matching `static_channel` in `_numba_kernels.py`.*
+*Listing 2: Push-based forward substitution over downstream indices for one routing step, matching `static_channel` in `_numba_kernels.py`.*
 
 - **Time:** $O(n + m)$ where $n$ is the number of river segments and $m$ is the number of edges
   (upstream-downstream connections). For tree-structured river networks, $m = n - 1$.

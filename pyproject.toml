@@ -33,7 +33,6 @@ dependencies = [
     "numpy==2.5.3",
     "pandas==3.0.6",
     "pyarrow>=25.0.1",
-    "pyyaml>=6.0,<7",
     "scipy==1.18.1",
     "shapely>=2.0,<3",
     "tqdm==4.70.1",
@@ -88,6 +87,11 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not benchmark'"
+markers = [
+    "slow: checks that take a minute or more, such as compiling every kernel from an empty numba cache",
+    "benchmark: kernel timing against the baseline stored in the reference solution; run with pytest -m benchmark",
+]
 
 [tool.hatch.version]
 path = "river_route/_metadata.py"

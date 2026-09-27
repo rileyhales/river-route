@@ -4,23 +4,89 @@
 
 ### Unreleased
 
+- Routing reads each river's grid cells directly into its forcing as the river is routed, as the C kernel of jsrr
+  does, instead of first aggregating the runoff of 64 rivers at a time into scratch rows. One year of hourly ERA5 over
+  region 6020006540 (303,097 rivers) routes in 2.22 s on 1 thread and 0.25 s on 12, from 2.80 s and 0.32 s. A
+  `GridCellRunoff`'s `weight` is now each weight's volume per unit of its cell's runoff depth in float32, with the
+  catchment area in it, and its `scale`, `cumulative`, and `force_positive` fields are removed: a file whose runoff
+  is cumulative or clipped at zero is aggregated when it is read and routed as `CatchmentRunoffVolumes`, as a
+  resampled file already was. The pass stages `count_rivers_prepared_together` and `prepare_runoff_of_rivers` are
+  removed, `get_river_catchment_runoff` takes only the runoff and the river, and a new stage, `add_catchment_runoff`,
+  adds a river's catchment runoff into its forcing.
+- Removed `writers.parquet_writer` and the transpose that served it: `writers.to_time_major`,
+  `writers.TRANSPOSE_TILE`, and `writers.PARQUET_WRITE_OPTIONS`. Write parquet with a custom writer, transposing the
+  `(river, time)` discharge array yourself.
+- Outputs named from `discharge_dir` take the `.zarr` extension of the store the default writer writes, as
+  `discharge_<input name>.zarr`, instead of keeping the extension of the runoff file they were routed from: an input
+  `runoff_2020.nc` now writes `discharge_runoff_2020.zarr`, not a zarr store named `discharge_runoff_2020.nc`.
+- `forcing` names what is routed: `channel` (channel routing only), or the form of the `runoff_files` whose runoff
+  enters the rivers, `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`, replacing `vlateral`. There is no
+  separate option for the form of the runoff.
+- `Network.write_stabilized(dt)` writes the stabilized network as a parameter table, by default
+  `<params stem>_stabilized<dt>.parquet` next to the params file. Every reach has its own `river_id`: an outlet
+  reach keeps its river's id and added reaches are numbered down from -1,000,000. The `synthetic` column marks the
+  added reaches and `parent_river_id` maps each reach to the river it was split from.
+- Config files are JSON only. Removed `Configs.from_file`, `Configs.from_yaml`, and `Configs.to_yaml`; read a
+  config with `Configs.from_json` and write one with `Configs.to_json`. `rr route` takes a JSON config, the
+  template is now `examples/config.json`, and `pyyaml` is no longer a dependency.
 - `RunoffGaussianGrid` is a dataclass. Its options are fields declared with their defaults and documented where
   they are declared, so the constructor is a `__post_init__` that reads the weight table, and the call signature is
   unchanged. Each field is named the same as the `Configs` option it comes from, so `from_configs` reads every one by
-  its own field name instead of listing them. `var_runoff` and `cumulative`, the names the `Runoff` base class uses,
-  are now properties derived from the `var_grid_runoff` and `grid_accumulation_type` fields rather than copies made in
-  the constructor. `rivers_per_block` is a class attribute, not a constructor argument, as before.
-- Added the `var_vlateral` config, the name of the lateral inflow variable in `vlateral_files`, default `vlateral`.
-  The name was read literally before, so a file that called it something else had to be rewritten to be routed.
-  `Runoff.to_netcdf` still writes `vlateral`, which is the name the file schema documents.
-- `RunoffVlateral` is a dataclass and names what it reads: `var_vlateral` and `var_t`, each defaulting to the name
-  the schema documents. It had no constructor before and read both names literally, which left the `var_runoff` and
-  `var_t` the `Runoff` base class declares unset on it. `var_runoff` is now a property over the `var_vlateral` field,
-  the same way `RunoffGaussianGrid` derives it from `var_grid_runoff`. `RunoffVlateral.from_configs` reads each field
-  off the `Configs` by its own name, and `Router` builds the reader for `vlateral_files` with it, or with a
-  `RunoffVlateral` given as `Router(configs, runoff=...)`, instead of a bare `RunoffVlateral()` that ignored both.
-  It does not call `Configs.validate_runoff`, which requires the `grid_weights_file` that routing from
-  `vlateral_files` does not use.
+  its own field name instead of listing them. `cumulative` is a property derived from the `grid_accumulation_type`
+  field rather than a copy made in the constructor, and `var_runoff` is removed: read `var_grid_runoff`. The `Runoff`
+  base class declares only `as_volumes` and the `from_configs` and `generator` every subclass provides.
+  `rivers_per_block` is a class attribute, not a constructor argument, as before.
+- Catchment runoff replaces vlateral: the runoff of each catchment before it is transformed into lateral inflow.
+  `RunoffGaussianGrid.vlateral` is renamed `GaussianGridRunoff.catchment_runoff`. The catchment runoff file schema is
+  fixed and the `var_vlateral` config is removed: a file holds a `catchment_runoff` variable with dimensions
+  (time, river_id) and a `catchment_area` variable (m²) with dimension river_id, linked by the CF attribute
+  `cell_measures = "area: catchment_area"`. The `units` attribute of `catchment_runoff` is required and marks it as
+  volumes (`m3`) or depths (`m`, `mm`); depths are multiplied by the catchment area when read, since routing uses
+  volumes. `Runoff.to_netcdf` takes the catchment areas and writes this schema.
+- Runoff is given as `runoff_files` in the form `forcing` names, replacing `vlateral_files` and `grid_runoff_files`.
+  `grid_weights_file` is required for the grid forcings and refused for `catchment`. The `var_cell` config names
+  the cell dimension of a reduced gaussian grid.
+- The Runoff classes are named for what they aggregate to catchments: `CatchmentRunoff` (was `RunoffVlateral`),
+  `GaussianGridRunoff` (was `RunoffGaussianGrid`), and `ReducedGaussianGridRunoff`, a placeholder that raises
+  `NotImplementedError`. `RUNOFF_CLASS_FOR_FORCING` maps each `forcing` that routes runoff to its class, and a Runoff
+  passed to `Router` must be that class. The grid classes precompute a catchment runoff file with `aggregate_to_file`.
+- Each routing method is one module that routes a single river, chosen by the `coefficients` config through
+  `ROUTING_METHOD_FOR_COEFFICIENTS`: `router/static_muskingum.py` and `router/dynamic_muskingum.py`. A method module
+  holds its parameters as a NamedTuple (`StaticMuskingum`, `DynamicMuskingum`), the `NETWORK_TYPES` it routes, a
+  `prepare_routing` that lays out each river and builds its parameters for the time steps, and the routine that
+  routes one river. The Router keeps them as `routing_method`, `routing_parameters`, and `layout`, in place of `c1`,
+  `c2`, `c3`, `c4`, `c4_dt`, `subdivisions`, `reach_indptr`, and `substeps`. This replaces the kernel registry, its
+  dispatchers, and `resolve_dispatcher`; options no method routes yet raise `NotImplementedError` before any runoff is
+  read. Dynamic coefficients route channel, catchment, and gaussian grid runoff on a standard network. Each Runoff
+  class's `generator` yields what routing reads: `GaussianGridRunoff.generator` is the former `cell_reader`, and the
+  former `reader`, which yields aggregated arrays, is `catchment_reader`. `CatchmentRunoff` raises
+  `NotImplementedError` on a stabilized network. The kernels `static_vlateral` and `dynamic_vlateral` are renamed
+  `static_runoff` and `dynamic_runoff`.
+- One numba pass, `route_scheduled_rivers` in `router/_routing_passes.py`, routes every combination, in place of the
+  per-kernel wrappers `static_channel`, `static_runoff`, `static_grid`, and `dynamic_runoff` and the ~30 loose
+  arguments each re-listed. It takes each river through stages, finding its catchment runoff, transforming it, and
+  routing it, and each stage is a numba overload chosen by the type of its argument and registered next to that type.
+  The runoff is `None`, `CatchmentRunoffVolumes` (in `CatchmentRunoff.py`), or `GridCellRunoff` (in
+  `GaussianGridRunoff.py`), and each checks its own arrays with `check` and cuts itself to the routed steps with
+  `first_steps`. `GridCellRunoff` carries the whole weight table it is aggregated with
+  (`indptr`, `cell`, `cumulative`, `force_positive`), so the gaussian grid kernel no longer reads it off the Router's
+  Runoff. A custom Runoff yields catchment runoff as `CatchmentRunoffVolumes`. Routed discharge is bit identical and the kernel time is unchanged; channel routing is about 13%
+  faster since it no longer adds zero runoff every step.
+- Catchment runoff is river major end to end, like discharge. Catchment runoff files are `(river_id, time)`, and
+  `CatchmentRunoff` refuses any other order. `Runoff.to_netcdf`, `GaussianGridRunoff.to_dataset`, `aggregate`,
+  `catchment_runoff`, and `catchment_reader` produce C-order `(river, time)` arrays, and the aggregation kernel writes
+  each river's series straight into its row instead of transposing blocks into a `(time, river)` array. The routing
+  kernels read each river's catchment runoff row in place, so `CatchmentByTime` and the block gather are removed.
+  `BLOCK` is removed: gaussian grid runoff is still aggregated 64 rivers at a time before they are routed, now
+  `_RIVERS_AGGREGATED_TOGETHER` in `GaussianGridRunoff.py`, since neighboring catchments share grid
+  cells that are then reused from cache. `aggregate(out=...)` takes a flat buffer. Routed discharge is bit identical. On one year of the Amazon,
+  aggregating to catchments is about 3x faster and routing catchment runoff about 2.5x faster.
+- Fixed the discharge of sub-cycled rivers on a stabilized network differing in the last bit depending on whether
+  the kernels had just been compiled or were loaded from the numba cache: the fused multiply-adds of the upstream
+  interpolation were contracted differently by each. That interpolation is now compiled without contraction, and
+  the result is the same either way.
+- Fixed list path configs (`runoff_files`, `discharge_files`) never being detected as paths: they were not made
+  absolute, checked to exist, or accepted as a single string, because `PathList` is a `type` alias.
 - Added the `routing_order` config, `'river'` (the default) or `'time'` (the only order before). River order routes
   each river's whole time series before the next river, solving that series eight steps per serial operation, and is
   6 to 8 times faster than time order on one thread and on 12. It has static channel, static vlateral, and dynamic
@@ -44,21 +110,11 @@
   `writers.ZARR_COMPRESSOR`, Blosc lz4 with bitshuffle, where it wrote the values raw and uncompressed before. The
   store is 2.71x smaller on a year of the Amazon and faster to write than the uncompressed one, since less of it
   reaches the disk, at a relative error of at most `2^-13` per value. The rounding is done in numpy a chunk of
-  rivers at a time rather than by a zarr filter, so the array handed to the writer is never modified, and a
-  `float16` run is stored as it is because float16 holds fewer mantissa bits than the rounding keeps.
-- Added the `discharge_dtype` config, `'float32'` (the default) or `'float16'`, which narrows the discharge buffer
-  in memory. The routing math stays float32 and the channel state is never narrowed, so only the saved copy is
-  rounded, bounded by `2^-11` relative to each value. It needs `routing_order='river'` and cannot be combined with
-  a `dt_discharge` coarser than `dt_runoff`. zarr and parquet store float16 natively; netCDF has no half type, so
-  `netcdf_writer` widens to float32. float16 only covers 6.1e-5 to 65,504: on a year of the Amazon 0.07% of routed
-  values overflow to infinity on the main stem, so `route` warns whenever the option is used.
+  rivers at a time rather than by a zarr filter, so the array handed to the writer is never modified.
 - NaN runoff is set to zero once, when the cell series are prepared, instead of after each river's area weighted
   sum. A NaN cell now contributes nothing while the other cells of its catchment still count, where before the whole
   river got zero for that step. vlateral read from files has NaN set to zero too, so no routing kernel sees NaN. The
   `replace_nan` argument of the aggregation kernels is removed.
-- `streams.shreve_order` and `Network.shreve_order()` give each river's Shreve magnitude, and
-  `streams.assign_regions(..., measure='shreve')` claims concurrent regions by it instead of by river count. On a
-  network where confluences join two rivers the two measures give the same partition.
 - Added `river_route.Network`, which owns the river network: the ids, topology, and Muskingum parameters read from
   the params file, the connectivity vectors, and the concurrent routing partition. A `Router` builds one from its
   `Configs` and reuses it, so the params file is parsed and the network partitioned once per `Network` instead of
@@ -68,17 +124,13 @@
   discharge writer that read `router.river_ids` needs the new spelling. `Router._set_vectors_from_params`,
   `_set_connectivity_vectors`, `_set_region_schedule`, `_check_coefficient_stability`, and `_check_river_alignment`
   are removed; the equivalents are `Network.routing_schedule` and `Network.check_stability`.
-- `Network.stability_report(dt)` returns a `StabilityReport` counting how many rivers are Muskingum-stable at a
-  routing time step, how many are too long or too short for it, and how much bigger a fixed network would be.
-  Reports at the same dt add together, so a sweep over many parameter files accumulates into one total.
 - `Network.stabilize(dt)` builds, in memory only, the stabilized network: every reach too long for `dt` is
   replaced by sub-reaches in series that each route stably at it, returned as the flat CSR arrays a kernel
   consumes. The network gains reaches rather than being divided up, hence `StabilizedNetwork`.
   `mode='uniform'` gives every sub-reach of a river the same travel time; `mode='nonuniform'` packs pieces of the
   largest stable travel time and leaves the remainder last; `weights=` apportions each river's travel time over an
-  explicit sequence of segment lengths. Rivers that are too short for `dt` are a known gap: subdivision cannot fix
-  them, `Network.substeps_required(dt)` reports the temporal refinement they would need, and no routing kernel
-  consumes it yet.
+  explicit sequence of segment lengths. Rivers that are too short for `dt` cannot be fixed by subdivision;
+  `Network.substeps(dt)` gives the sub-cycling they need, which `network_type='stabilized'` routes with.
 - `Router(configs, network=None, runoff=None)` takes its options from the `Configs` and nothing else.
   `Router(configs, **overrides)` is removed; build the `Configs` you want and pass it, so there is one way to
   set every option. `Configs.replace` is removed too: a Configs is set once when it is built and there is no

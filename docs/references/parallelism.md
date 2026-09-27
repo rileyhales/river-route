@@ -58,8 +58,9 @@ solved rows $1, \ldots, i-1$. There is no way to compute row $i$ before its upst
 are known. This means the core solve cannot be split across threads or cores in a straightforward
 way.
 
-However, the routing kernels have been made about as minimal as possible: a single topological sweep per routing
-step, sparse connectivity instead of matrices, and JIT compiled numba code. In my experience, this is preferable to
+However, the routing kernels have been made about as minimal as possible: each river's whole time series is routed
+once, upstream rivers before downstream ones, with sparse connectivity instead of matrices, and JIT compiled numba
+code. In my experience, this is preferable to
 multiprocessing methods even though it uses an inherently sequential forward substitution algorithm. This approach is
 the best method in my experience using it on a wide range of scales up to global computations of hourly resolution
 discharge on millions of rivers and producing a 5 trillion data point simulation. It has the advantages that it:
@@ -75,8 +76,8 @@ What you control is how much work you ask that kernel to do.
    once and reuses them for every file with the same time steps. `coeff: dynamic` rebuilds them inside the kernel
    on every substep. Only pay for dynamic coefficients when the application needs them. See the
    [config file reference](config-files.md#routing-procedure-selectors).
-2. **Use the largest stable routing time step.** Every routing substep is a full sweep of the network, so
-   `dt_routing` directly sets the amount of work. Check stability with `Network.stability_report(dt)` rather than
+2. **Use the largest stable routing time step.** Every river is routed at every routing step, so halving
+   `dt_routing` doubles the work. Check stability with `Network.unstable_mask(dt)` rather than
    defaulting to a small step. See [Time Variables](time-options.md).
 3. **Only produce the output you will use.** A coarser `dt_discharge` averages results before they are written, and
    a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
@@ -95,14 +96,14 @@ concurrently, followed by the main stem on a single thread.
 
 `river-route` never creates threads on its own. Threads are a runtime resource, not a config, so pass a
 `ThreadPoolExecutor` and `threads`, the number of regions to split the network into, to `Router.route`. The same pool
-is used to aggregate gridded runoff when routing from `grid_runoff_files`.
+aggregates gaussian grid runoff, since that aggregation happens inside the routing passes.
 
 ```python title="Threaded Routing"
 from concurrent.futures import ThreadPoolExecutor
 
 import river_route as rr
 
-router = rr.Router(rr.Configs.from_file('config.yaml'))
+router = rr.Router(rr.Configs.from_json('config.json'))
 with ThreadPoolExecutor(max_workers=8) as pool:
     router.route(thread_pool=pool, threads=8)
 ```
@@ -111,8 +112,9 @@ The speedup is limited by the rivers left in the sequential main stem and by mem
 kernel is largely bound by. Use `river_route.network.streams.analyze_partitioning` to see how a network splits and the upper
 bound on speedup before committing to it. The partition depends only on connectivity and `threads`, never on the
 forcing, dt, or coefficients, so the `Network` derives it once and caches it per thread count: every simulation
-over one `Network` reuses it. `river_route.network.streams.partition_network` can also store it as a `region` column in
-the parameter file, which a `Network` reuses as-is instead of deriving one at all.
+over one `Network` reuses it. `river_route.network.streams.partition_network` can also store it as a `group` column in
+the parameter file, which a `Network` reuses as-is instead of deriving one at all. A stored partition is
+fixed at the thread count it was built for, so only store one if you always route with that many threads.
 
 **Conclusion**: Meaningful speedup is possible with multiple threads but only if you sort the network into
 independent but ordered subgraphs. This is an optional addition to a job that is already efficient single threaded.
@@ -138,15 +140,15 @@ import river_route as rr
 params_file = 'routing_parameters.parquet'
 runoff_files = ['catchment_runoff_member_1.nc',
                 'catchment_runoff_member_2.nc', ]
-output_files = ['discharges_member_1.nc',
-                'discharges_member_2.nc', ]
+output_files = ['discharges_member_1.zarr',
+                'discharges_member_2.zarr', ]
 
 
 def route(input_file: str, output_file: str) -> None:
     configs = rr.Configs(
-        forcing='vlateral',
+        forcing='catchment',
         params_file=params_file,
-        vlateral_files=[input_file, ],
+        runoff_files=[input_file, ],
         discharge_files=[output_file, ],
     )
     rr.Router(configs).route()

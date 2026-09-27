@@ -6,6 +6,7 @@ __all__ = ['aggregate_river', 'aggregate_to_rivers', 'cells_by_time']
 # change between the single-threaded and multithreaded cases. Disjoint ranges can run concurrently because each
 # writes only its own output columns, provided each is given its own scratch block.
 
+
 @numba.njit(cache=True, nogil=True)
 def aggregate_river(
     runoff_by_cell,  # Array (n_cells, n_steps) of runoff depths, each cell's time series contiguous
@@ -38,8 +39,7 @@ def aggregate_river(
             row[t] -= row[t - 1]
     if force_positive:
         for t in range(n_steps):
-            if row[t] < zero:
-                row[t] = zero
+            row[t] = max(row[t], zero)  # an unconditional store vectorizes; a store behind an if does not
     if scale.shape[0]:
         s = scale[r]
         for t in range(n_steps):
@@ -60,26 +60,14 @@ def aggregate_to_rivers(
     force_positive,  # bool, clip negative values to zero
     r_start,  # first river index this call aggregates
     r_stop,  # one past the last river index this call aggregates
-    scratch,  # Array (rivers_per_block, n_steps) of working space owned by this call
-    out,  # Array (n_steps, n_rivers) C-order vlateral to write columns r_start:r_stop into
+    out,  # Array (n_rivers, n_steps) C-order catchment runoff to write rows r_start:r_stop into
 ):
     """
-    Aggregate every river in r_start:r_stop with aggregate_river into a scratch block of rivers small enough to
-    stay in cache, then write each finished block into the C-order (time, river) output one short contiguous run
-    per row.
+    Aggregate every river in r_start:r_stop with aggregate_river straight into its own row of the C-order
+    (river, time) output. Each river's series is contiguous, so nothing is transposed.
     """
-    n_steps = runoff_by_cell.shape[1]
-    block = scratch.shape[0]
-    for r0 in range(r_start, r_stop, block):
-        r1 = min(r0 + block, r_stop)
-        for r in range(r0, r1):
-            aggregate_river(
-                runoff_by_cell, indptr, cell, weight, scale, zero, cumulative, force_positive, r, scratch[r - r0]
-            )
-        for t in range(n_steps):
-            destination = out[t]
-            for b in range(r1 - r0):
-                destination[r0 + b] = scratch[b, t]
+    for r in range(r_start, r_stop):
+        aggregate_river(runoff_by_cell, indptr, cell, weight, scale, zero, cumulative, force_positive, r, out[r])
     return
 
 

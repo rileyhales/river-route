@@ -1,58 +1,71 @@
-import difflib
 import json
 import os
 import types
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any, ClassVar, Literal, Self, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, Self, TypeAliasType, get_args, get_origin, get_type_hints
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-import yaml
 
+from river_route._logging import build_logger
 from river_route.types import PathInput, PathList
 
-__all__ = ['Configs']
+__all__ = ['Configs', 'is_dev_null']
 
 _PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
+_DEV_NULL: frozenset[str] = frozenset({os.devnull, '/dev/null'})
+
+
+def is_dev_null(path: PathInput) -> bool:
+    """True for the null device, which always counts as a path that exists and discards whatever is written."""
+    return str(path) in _DEV_NULL
 
 
 @dataclass(kw_only=True, frozen=True)
 class Configs:
     """
-    Frozen configuration options. Build one from keyword arguments with ``Configs(...)`` or from a file with
-    ``Configs.from_file``, then pass it to ``Router`` or ``RunoffGaussianGrid``. Building a Configs normalizes it: file
-    paths are made absolute, discharge_files are derived from discharge_dir, and selector values are checked. The
-    options are validated when they are used: ``Router.route`` calls ``validate_routing`` and ``RunoffGaussianGrid``
-    calls ``validate_runoff``.
-    Either one checks that the required options are set, that input paths exist, and that output paths are in
-    existing directories, and then marks the Configs as validated so it is not checked again.
-
-    ``deep_validate`` reads the input files and checks their contents. Nothing calls it for you: it is the one
-    validation that costs as much as the read it repeats, so it is a method to run once on inputs you have not
-    checked before, not something a route pays for every time.
-
-    A Configs is set once and never changed. There is no method to copy one with an option altered: build the
-    Configs you want. ``to_json`` and ``to_yaml`` write the options to a file that ``from_file`` reads back.
+    Accepts and validates every possible option that can be passed to a computation job.
     """
 
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
 
-    # Routing procedure selectors — describe the procedure resolved to a kernel by router._kernel_registry
-    coeff: Literal['static', 'dynamic'] = 'static'
-    forcing: Literal['channel', 'vlateral'] = 'channel'
+    # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
+    coefficients: Literal['static', 'dynamic'] = 'static'
+    # channel routing only, or the form of the runoff_files routed into the rivers: catchment runoff, or gridded runoff
+    # aggregated to catchments with grid_weights_file
+    forcing: Literal['channel', 'catchment', 'gaussian_grid', 'reduced_gaussian_grid'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
-    network_conditioning: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
-    discharge_dtype: Literal['float32', 'float16'] = 'float32'
+    network_type: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
+    unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
+
+    # Network and routing descriptor
+    params_file: PathInput | None = None
 
     # Core Routing Files
-    params_file: PathInput | None = None
     discharge_dir: PathInput | None = None
     discharge_files: PathList = field(default_factory=list)  # optional override for explicit output paths
     channel_state_init_file: PathInput | None = None
     channel_state_final_file: PathInput | None = None
+
+    # Types of runoff data handling
+    grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
+    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
+    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
+    force_positive_runoff: bool = False  # clip negative runoff depths to zero
+    force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
+    as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
+
+    # Runoff sources: catchment runoff files, or gridded runoff aggregated to catchments with a weight table
+    runoff_files: PathList = field(default_factory=list)  # read as the forcing names
+    grid_weights_file: PathInput | None = None  # required for the grid runoff types
+
+    # For runoff transform by unit hydrograph
+    uh_kernel_file: PathInput | None = None
+    uh_state_init_file: PathInput | None = None
+    uh_state_final_file: PathInput | None = None
 
     # Time options
     dt_routing: int = 0
@@ -60,25 +73,6 @@ class Configs:
     dt_discharge: int = 0
     dt_runoff: int = 0
     start_datetime: str = '1970-01-01'
-
-    # For vlateral / runoff transformation
-    vlateral_files: PathList = field(default_factory=list)
-    grid_runoff_files: PathList | None = field(default_factory=list)
-    grid_weights_file: PathInput | None = None
-    grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
-    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
-    uh_kernel_file: PathInput | None = None
-    uh_state_init_file: PathInput | None = None
-    uh_state_final_file: PathInput | None = None
-
-    # Gridded runoff preparation (RunoffGaussianGrid)
-    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
-    force_positive_runoff: bool = False  # clip negative runoff depths to zero
-    force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
-    as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
-
-    # Validation behavior
-    unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
     # Misc behavior that users may want to override
     log: bool = True
@@ -89,9 +83,9 @@ class Configs:
     var_river_id: str = 'river_id'
     var_discharge: str = 'Q'
     var_grid_runoff: str = 'ro'
-    var_vlateral: str = 'vlateral'
-    var_x: str = 'x'
-    var_y: str = 'y'
+    var_x: str = 'x'  # gaussian_grid x dimension
+    var_y: str = 'y'  # gaussian_grid y dimension
+    var_cell: str = 'cell'  # reduced_gaussian_grid cell dimension
     var_t: str = 'time'
 
     # False until validate_routing or validate_runoff passes
@@ -102,7 +96,8 @@ class Configs:
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
-    # where the runoff the router routes comes from, which only the runoff classes' readers take from these options
+    # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
+    _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -116,56 +111,22 @@ class Configs:
                 raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
         # turn off progress bar if logging was turned off but progress was left at default on
         object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
-        # normalize paths given as strings to lists. make paths absolute.
         self._coerce_path_list_fields()
         self._absolutize_paths()
-        # derive discharge_files from discharge_dir + input files when not explicitly provided
         self._resolve_discharge_dir()
         return
 
     # --- construction, copying, and serialization ---
     @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any]) -> Self:
-        """
-        Build Configs from a mapping, reporting unrecognized keys by name instead of raising the
-        dataclass TypeError. Suggests the closest valid key name for likely typos.
-
-        Args:
-            raw: mapping of config key to value, e.g. parsed from a YAML or JSON config file
-
-        Raises:
-            ValueError: if the mapping contains any key that is not a config option
-        """
+    def from_json(cls, path: PathInput) -> Self:
+        """Build Configs from a JSON file."""
+        with open(path, encoding='utf-8') as f:
+            raw = json.load(f)
         cls._check_keys(raw)
         return cls(**raw)
 
-    @classmethod
-    def from_file(cls, path: PathInput) -> Self:
-        """Build Configs from a .json, .yml, or .yaml file."""
-        path = str(path)
-        if path.endswith('.json'):
-            return cls.from_json(path)
-        if path.endswith(('.yml', '.yaml')):
-            return cls.from_yaml(path)
-        raise ValueError(f'Unrecognized config file type: {path}. Must be .json, .yml, or .yaml')
-
-    @classmethod
-    def from_json(cls, path: PathInput) -> Self:
-        """Build Configs from a JSON file."""
-        with open(path) as f:
-            return cls.from_mapping(json.load(f))
-
-    @classmethod
-    def from_yaml(cls, path: PathInput) -> Self:
-        """Build Configs from a YAML file."""
-        with open(path) as f:
-            return cls.from_mapping(yaml.safe_load(f) or {})
-
     def to_dict(self) -> dict[str, Any]:
-        """
-        Every option as a mapping that ``from_mapping`` builds the same Configs from. Discharge files derived from
-        ``discharge_dir`` are left out so that the directory and the files are not both set.
-        """
+        """Return a dict representation of the configs"""
         values = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
         values = {key: list(value) if isinstance(value, list) else value for key, value in values.items()}
         if self.discharge_dir:
@@ -173,25 +134,16 @@ class Configs:
         return values
 
     def to_json(self, path: PathInput) -> None:
-        """Write every option to a JSON file that ``from_file`` reads back."""
-        with open(path, 'w') as f:
+        """Write every option to JSON"""
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)
-
-    def to_yaml(self, path: PathInput) -> None:
-        """Write every option to a YAML file that ``from_file`` reads back."""
-        with open(path, 'w') as f:
-            yaml.safe_dump(self.to_dict(), f, sort_keys=False)
 
     @classmethod
     def _check_keys(cls, raw: Mapping[str, Any]) -> None:
         known = {f.name for f in fields(cls) if f.init}
         unknown = sorted(set(raw) - known)
         if unknown:
-            described = []
-            for key in unknown:
-                close = difflib.get_close_matches(key, sorted(known), n=1)
-                described.append(f'{key!r}' + (f' (did you mean {close[0]!r}?)' if close else ''))
-            raise ValueError(f'Unrecognized config key(s): {", ".join(described)}')
+            raise ValueError(f'Unrecognized config key(s): {", ".join(map(repr, unknown))}')
         return
 
     # --- path normalization and verification ---
@@ -207,12 +159,12 @@ class Configs:
         """Convert all relative path fields to absolute paths in-place."""
         for key in self._SINGLE_PATH_FIELDS:
             val = getattr(self, key, None)
-            if val:
+            if val and not is_dev_null(val):
                 object.__setattr__(self, key, os.path.abspath(val))
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key, [])
             if val:
-                object.__setattr__(self, key, [os.path.abspath(p) for p in val])
+                object.__setattr__(self, key, [p if is_dev_null(p) else os.path.abspath(p) for p in val])
         return
 
     def _verify_input_files_exist(self) -> None:
@@ -237,19 +189,25 @@ class Configs:
             raise ValueError('Provide discharge_dir or discharge_files, not both')
 
         d = self.discharge_dir
-        input_files = self.vlateral_files or self.grid_runoff_files or []
+        if is_dev_null(d):
+            # every output is discarded, so one null device per input rather than names under a directory
+            object.__setattr__(self, 'discharge_files', [d] * (len(self.runoff_files) or 1))
+            return
+
+        input_files = self.runoff_files
         if input_files:
-            basenames = [os.path.basename(f) for f in input_files]
-            duplicates = sorted({name for name in basenames if basenames.count(name) > 1})
+            # each output is named for its input but takes the writer's extension, not the extension of the input
+            stems = [os.path.splitext(os.path.basename(f))[0] for f in input_files]
+            duplicates = sorted({stem for stem in stems if stems.count(stem) > 1})
             if duplicates:
                 raise ValueError(
                     f'Input files with duplicate names would resolve to the same output file in discharge_dir: '
                     f'{", ".join(duplicates)}. Use discharge_files to give explicit output paths.'
                 )
-            discharge_files = [os.path.join(d, f'discharge_{name}') for name in basenames]
+            discharge_files = [os.path.join(d, f'discharge_{stem}{self._DISCHARGE_SUFFIX}') for stem in stems]
         else:
             # Muskingum (no lateral inflow files)
-            discharge_files = [os.path.join(d, 'discharge.zarr')]
+            discharge_files = [os.path.join(d, f'discharge{self._DISCHARGE_SUFFIX}')]
         object.__setattr__(self, 'discharge_files', discharge_files)
         return
 
@@ -263,12 +221,14 @@ class Configs:
         for key in self._OUTPUT_FILE_LISTS:
             paths.extend(getattr(self, key, []))
         for path in paths:
+            if is_dev_null(path):  # devnull is a special case that is allowed to take outputs
+                continue
             d = os.path.dirname(path)
             if not os.path.exists(d):
                 raise NotADirectoryError(f'Directory not found for specified output: {path}')
         for key in self._OUTPUT_DIRS:
             val = getattr(self, key, None)
-            if val and not os.path.isdir(val):
+            if val and not is_dev_null(val) and not os.path.isdir(val):
                 raise NotADirectoryError(f'Output directory not found: {val}')
         return
 
@@ -286,25 +246,23 @@ class Configs:
             raise ValueError('params_file is required to route')
         if self._validated:
             return self
-        if (
-            self.discharge_dtype != 'float32'
-            and self.dt_discharge
-            and self.dt_runoff
-            and self.dt_discharge != self.dt_runoff
-        ):
-            raise ValueError(
-                f'discharge_dtype={self.discharge_dtype!r} cannot be averaged to dt_discharge={self.dt_discharge}'
-                f' from dt_runoff={self.dt_runoff}. Narrowed discharge is stored as bit patterns, which cannot be'
-                f' resampled. Use discharge_dtype="float32" or dt_discharge == dt_runoff.'
-            )
         self._verify_input_files_exist()
         self._verify_output_directories_exist()
+        # the Router picks the null writer for the whole job, so a mix of discarded and written outputs has no meaning
+        null_outputs = [is_dev_null(f) for f in self.discharge_files]
+        if any(null_outputs) and not all(null_outputs):
+            raise ValueError('discharge_files mixes the null device with real paths; use one or the other')
         if self.forcing == 'channel':
             if not self.discharge_files:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
                 if not getattr(self, key, None):
                     raise ValueError(f'{key} is required for channel routing')
+            runoff_source = [key for key in ('runoff_files', 'grid_weights_file') if getattr(self, key)]
+            if runoff_source:
+                build_logger(self, 'configs').warning(
+                    f'forcing is channel, so {", ".join(runoff_source)} will be ignored and no runoff is routed'
+                )
             if len(self.discharge_files) != 1:
                 raise ValueError('Channel routing requires exactly one entry in discharge_files')
         else:
@@ -312,16 +270,16 @@ class Configs:
                 raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
             if not self.discharge_files:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
-            vlateral = self.vlateral_files
-            grids = self.grid_runoff_files and self.grid_weights_file
-            if vlateral and grids:
-                raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file, not both')
-            if not vlateral and not grids:
-                raise ValueError('Provide vlateral_files or grid_runoff_files with grid_weights_file')
-            n_inputs = len(vlateral) + len(self.grid_runoff_files or [])
-            if len(self.discharge_files) != n_inputs:
+            if not self.runoff_files:
+                raise ValueError('runoff_files is required for runoff forcing')
+            if self.forcing == 'catchment' and self.grid_weights_file:
+                raise ValueError('grid_weights_file is not used with forcing catchment')
+            if self.forcing != 'catchment' and not self.grid_weights_file:
+                raise ValueError(f'grid_weights_file is required with forcing {self.forcing}')
+            if len(self.discharge_files) != len(self.runoff_files):
                 raise ValueError('Number of resolved discharge output files must match number of input files')
-            if len(set(self.discharge_files)) != len(self.discharge_files):
+            outputs = [f for f in self.discharge_files if not is_dev_null(f)]
+            if len(set(outputs)) != len(outputs):
                 raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
         object.__setattr__(self, '_validated', True)
         return self
@@ -329,7 +287,7 @@ class Configs:
     def validate_runoff(self) -> Self:
         """
         Validate the options for preparing gridded runoff: grid_weights_file is set and every input path exists.
-        Called by RunoffGaussianGrid. Returns immediately once the Configs has been validated. The contents of the
+        Called by GaussianGridRunoff. Returns immediately once the Configs has been validated. The contents of the
         input files are not read; call deep_validate for that.
 
         Raises:
@@ -383,13 +341,13 @@ class Configs:
             raise ValueError(f'{self.params_file} missing k column')
         if 'x' not in params_df.columns:
             raise ValueError(f'{self.params_file} missing x column')
-        if np.any(params_df[rid].isnull()):
+        if params_df[rid].isna().any():
             raise ValueError(f'{self.params_file} {rid} column contains null values')
         if not pd.api.types.is_integer_dtype(params_df[rid]):
             raise ValueError(f'{self.params_file} {rid} column must be integer type')
         if not params_df[rid].is_unique:
             raise ValueError(f'{self.params_file} {rid} column must be unique')
-        if np.any(params_df['next_river_id'].isnull()):
+        if params_df['next_river_id'].isna().any():
             raise ValueError(f'{self.params_file} next_river_id column contains null values')
         if not pd.api.types.is_integer_dtype(params_df['next_river_id']):
             raise ValueError(f'{self.params_file} next_river_id column must be integer type')
@@ -399,24 +357,24 @@ class Configs:
         river_ids = set(params_df[rid].unique())
         if not downstream_ids.issubset(river_ids.union({-1})):
             raise ValueError(f'{self.params_file} next_river_id values must exist in {rid} (except -1)')
-        if np.any(params_df['k'].isnull()) or np.any(params_df['x'].isnull()):
+        if params_df[['k', 'x']].isna().any(axis=None):
             raise ValueError(f'{self.params_file} k and x columns must not contain null values')
         if np.any(params_df['k'] <= 0):
             raise ValueError(f'{self.params_file} k column must be positive')
         if np.any(params_df['x'] < 0) or np.any(params_df['x'] > 0.5):
             raise ValueError(f'{self.params_file} x column must be in the range [0, 0.5]')
 
-        # dynamic coefficients are rebuilt in the kernel from K = alpha * Q ** beta
-        if self.coeff == 'dynamic':
-            for column in ('alpha', 'beta'):
+        # dynamic coefficients are rebuilt in the kernel from K = dynamicAlpha * Q ** dynamicBeta
+        if self.coefficients == 'dynamic':
+            for column in ('dynamicAlpha', 'dynamicBeta'):
                 if column not in params_df.columns:
                     raise ValueError(f'{self.params_file} missing {column} column required when coeff is dynamic')
-                if np.any(params_df[column].isnull()):
+                if params_df[column].isna().any():
                     raise ValueError(f'{self.params_file} {column} column contains null values')
                 if not pd.api.types.is_numeric_dtype(params_df[column]):
                     raise ValueError(f'{self.params_file} {column} column must be numeric type')
-            if np.any(params_df['alpha'] <= 0):
-                raise ValueError(f'{self.params_file} alpha column must be strictly positive')
+            if np.any(params_df['dynamicAlpha'] <= 0):
+                raise ValueError(f'{self.params_file} dynamicAlpha column must be strictly positive')
 
         # check topological sort: every next_river_id must appear later in the table than its upstream
         river_id_index = {int(river_id): i for i, river_id in enumerate(params_df[rid])}
@@ -470,7 +428,7 @@ class Configs:
             raise ValueError('Error reading initial state file. Must be valid parquet file') from e
         if 'Q' not in state_df.columns:
             raise ValueError('Initial state file missing Q column')
-        if np.any(state_df['Q'].isnull()):
+        if state_df['Q'].isna().any():
             raise ValueError('Initial state file Q column contains null values')
         if not pd.api.types.is_numeric_dtype(state_df['Q']):
             raise ValueError('Initial state file Q column must be numeric type')
@@ -484,11 +442,14 @@ class Configs:
 def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
     result = {}
     for name, hint in get_type_hints(cls).items():
-        if name.startswith('_'):
-            continue
-        if get_origin(hint) is Literal:
+        if not name.startswith('_') and get_origin(hint) is Literal:
             result[name] = frozenset(get_args(hint))
     return result
+
+
+def _unalias(hint: Any) -> Any:
+    """The type a ``type X = ...`` alias names, such as list[PathInput] for PathList, whose origin is otherwise None."""
+    return hint.__value__ if isinstance(hint, TypeAliasType) else hint
 
 
 def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
@@ -496,6 +457,7 @@ def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
     for name, hint in get_type_hints(cls).items():
         if name.startswith('_'):
             continue
+        hint = _unalias(hint)
         origin = get_origin(hint)
         if origin is list:
             args = get_args(hint)
@@ -503,7 +465,7 @@ def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
                 continue  # selector list (e.g. forcing), not a list of file paths
             lists.add(name)
         elif origin is types.UnionType:
-            non_none = [a for a in get_args(hint) if a is not type(None)]
+            non_none = [_unalias(a) for a in get_args(hint) if a is not type(None)]
             if len(non_none) == 1 and get_origin(non_none[0]) is list:
                 lists.add(name)  # PathList | None
             elif set(get_args(hint)) >= _PATH_INPUT_TYPES:
