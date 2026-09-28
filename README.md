@@ -14,7 +14,7 @@ which together choose the kernel:
 | Key         | Options                                                                                                                                                            |
 |-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `coeff`     | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = alpha*Q^beta from `alpha`,`beta`,`x`). Default `static`.                                  |
-| `forcing`   | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`. |
+| `forcing`   | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                     |
 | `transform` | `uniform` (the default) or `unit_hydrograph`. Only read when `forcing` is not `channel`.                                                                           |
 | `network`   | `standard` (one reach per river, the default).                                                                                                                     |
 
@@ -51,18 +51,18 @@ Configuration is held by a frozen `Configs` object, built from:
 
 `Configs.to_json` writes the options to a file that `Configs.from_json` reads back. A
 `Configs` is set once when it is built and is frozen afterward, with no copy-with-changes: build the one you
-want. `Router` takes a `Configs`, and optionally a `Network` and a `GaussianGridRunoff`. `Network` and `GaussianGridRunoff` take the
+want. `Router` takes a `Configs`, and optionally a `Network` and a `GridRunoff`. `Network` and `GridRunoff` take the
 options they need directly and each has a `from_configs` classmethod that reads those same values off a
 `Configs`. `examples/config.json` lists every option.
 
 ## Classes
 
-| Class                | Owns                                                                                                  |
-|----------------------|-------------------------------------------------------------------------------------------------------|
-| `Configs`            | Every option, frozen. Built once and passed to the classes below.                                     |
-| `Network`            | The river network: ids, topology, k and x, the concurrent partition, stability analysis, subdivision. |
-| `Router`             | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.         |
-| `GaussianGridRunoff` | Gridded runoff to lateral inflow, reusing one weight table across many runoff files.                  |
+| Class        | Owns                                                                                                  |
+|--------------|-------------------------------------------------------------------------------------------------------|
+| `Configs`    | Every option, frozen. Built once and passed to the classes below.                                     |
+| `Network`    | The river network: ids, topology, k and x, the concurrent partition, stability analysis, subdivision. |
+| `Router`     | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.         |
+| `GridRunoff` | Gridded runoff to lateral inflow, reusing one weight table across many runoff files.                  |
 
 A `Network` parses and partitions a parameter table once and every simulation over it reuses the result, so it can
 be built directly and handed to a `Router` when many runs share one network:

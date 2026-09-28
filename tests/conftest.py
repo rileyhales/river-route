@@ -36,6 +36,6 @@ def willamette(package: Path, manifest: dict, tmp_path_factory: pytest.TempPathF
         WILLAMETTE, package / configs['params_file'], params_file, package / configs['grid_weights_file'], weights_file
     )
     runoff_files = [package / path for path in configs['runoff_files']]
-    grid = rr.GaussianGridRunoff(weights_file, **GRID_NAMES)
+    grid = rr.GridRunoff(weights_file, **GRID_NAMES)
     months = [(dates, volumes.copy()) for dates, volumes, _ in grid.catchment_reader(runoff_files)]
     return Basin(params_file, weights_file, runoff_files, months, rr.Network(params_file))

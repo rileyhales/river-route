@@ -33,8 +33,8 @@ These routing parameters typically come from preprocessing and calibration workf
 You need a time series of per-catchment runoff to be routed. It is given as `runoff_files`, read in the form `forcing` names:
 
 1. `catchment`: files already aggregated to catchments
-2. `gaussian_grid`: gridded runoff depths with x and y dimensions, aggregated with a weight table (`grid_weights_file`)
-3. `reduced_gaussian_grid`: gridded runoff depths with one cell dimension (`var_cell`), not implemented yet
+2. `grid`: gridded runoff depths with x and y dimensions, aggregated with a weight table (`grid_weights_file`)
+3. `ecmwf_grib`: ECMWF GRIB files of runoff depths on a reduced gaussian grid, aggregated with a weight table
 
 !!! warning "Runoff Depths Warning"
     There are many projections for grid cells, different names of variables, various file formats, and units of the
@@ -75,7 +75,7 @@ from their grids with `aggregate_to_file`.
 
 ```json
 {
-  "forcing": "gaussian_grid",
+  "forcing": "grid",
   "runoff_files": [
     "/path/to/grid1.nc",
     "/path/to/grid2.nc"
@@ -103,6 +103,35 @@ The grid weights netCDF has the following variables:
 | `y`          | float     | The y coordinate of the runoff grid cell                                       |
 | `area_sqm`   | float     | Area of the grid cell–catchment overlap in square meters                       |
 | `proportion` | float     | Fraction of catchment area covered by this grid cell, sums to 1.0 per river_id |
+
+### Reduced Gaussian Grid Runoff Depths
+
+```json
+{
+  "forcing": "ecmwf_grib",
+  "runoff_files": [
+    "/path/to/ro_20260927_00z_cf.grib"
+  ],
+  "grid_weights_file": "/path/to/gridweights_O1280.nc",
+  "grid_accumulation_type": "cumulative"
+}
+```
+
+Runoff depths are given as ECMWF GRIB files on a global reduced gaussian grid, such as the octahedral O1280 grid
+of the IFS. This forcing is specialized to that format; runoff in any other form must be prepared as `catchment` or
+`grid` forcing. Every message whose shortName is
+`var_grid_runoff` (default `'ro'`) is read with eccodes as one time step, in the order of the files and of their
+messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the weight table
+and the routing is left to the caller. IFS forecast runoff accumulates from the start of the forecast, so it is
+routed with `grid_accumulation_type` cumulative.
+
+`river_route.runoff.ReducedGaussianGrid.from_grib` reads the grid of a file from its metadata: `N` and the number of
+cells on each row. Its `cell_polygons` are the area each cell represents, one polygon per cell of the
+world in cell order: a box of longitude and latitude halfway to the cells beside it and between latitude edges that
+give each row of cells the area of its gaussian quadrature weight, in two parts on either edge of the map for the
+cells centered on 180 degrees. `river_route.runoff.reduced_grid_weights` intersects those boxes with the catchments,
+and `examples/reduced_grid_weights.py` saves the cells of the world and builds the weight table of every region. Its weight table has the columns of the table above with `cell_index`, the position of the cell in the
+values of a GRIB message, in place of `x_index` and `y_index`.
 
 ## Output Files
 

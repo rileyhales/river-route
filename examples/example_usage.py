@@ -30,7 +30,7 @@ if __name__ == '__main__':
         network_type=args.network_conditioning,
         # primary modeling choices
         coefficients='static',
-        forcing='gaussian_grid',
+        forcing='grid',
         transform='uniform',
         dt_routing=args.dt_routing,
         # model state files

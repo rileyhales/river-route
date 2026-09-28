@@ -257,7 +257,7 @@ class Router:
             thread_pool: optional pool to route and aggregate gridded runoff concurrently on. It is used as given and
                 never shut down here, so it can be shared and closed by the caller's with block. Without one,
                 routing is single-threaded regardless of ``threads``.
-            threads: number of regions the network is split into when ``thread_pool`` is given. Gaussian grid
+            threads: number of regions the network is split into when ``thread_pool`` is given. Grid
                 runoff is aggregated inside those regions' routing passes. Also the concurrency limit of writers
                 that follow it, like zarr_writer.
 

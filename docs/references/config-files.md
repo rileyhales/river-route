@@ -15,9 +15,8 @@ them that way. `examples/config.json` below lists every option.
   from columns `alpha`, `beta`, `x`). Default `'static'`.
 - `forcing` - `'channel'` (channel routing only, no inflows), or the form of the `runoff_files` whose runoff enters the
   rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
-  `'gaussian_grid'` (a grid with x and y dimensions, read by `GaussianGridRunoff`), or `'reduced_gaussian_grid'` (a grid
-  with one cell dimension, read by `ReducedGaussianGridRunoff`, not implemented yet). A single value. Default
-  `'channel'`.
+  `'grid'` (a grid with x and y dimensions, read by `GridRunoff`), or `'ecmwf_grib'` (ECMWF GRIB
+  files on a reduced gaussian grid, read by `ECMWFGribReducedGrid`). A single value. Default `'channel'`.
 - `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
   Only read when `forcing` is not `'channel'`. Default `'uniform'`.
 - `network_type` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
@@ -53,10 +52,10 @@ Beyond the always-required keys above, additional keys are required depending on
 - `dt_routing` - routing timestep in seconds
 - `dt_total` - total simulation duration in seconds
 
-**`forcing: catchment`, `gaussian_grid`, or `reduced_gaussian_grid`** also requires a water input source:
+**`forcing: catchment`, `grid`, or `ecmwf_grib`** also requires a water input source:
 
 - `runoff_files`
-- `grid_weights_file` when `forcing` is `gaussian_grid` or `reduced_gaussian_grid`. It must not be set for
+- `grid_weights_file` when `forcing` is `grid` or `ecmwf_grib`. It must not be set for
   `catchment`.
 
   Time keys for forced procedures (`dt_total`, `dt_discharge`, `dt_runoff`, `dt_routing`, `start_datetime`)
@@ -118,14 +117,14 @@ The following table lists where each remaining key applies.
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
 | `force_uniform_timesteps` | Resample irregular grid runoff to the first timestep  | `True`                                        |
-| `as_volumes`             | `GaussianGridRunoff` prepares volumes instead of depths            | `False`                                       |
+| `as_volumes`             | `GridRunoff` prepares volumes instead of depths        | `False`                                       |
 | `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
 
 ## Validation
 
 `Router.route()` validates the configs with `Configs.validate_routing` before it computes anything, and
-`GaussianGridRunoff.from_configs` validates them with `Configs.validate_runoff` before it reads the weight table. Configs are
-frozen, so once they pass they are not checked again. A `GaussianGridRunoff` built directly, without a `Configs`, has nothing
+`GridRunoff.from_configs` validates them with `Configs.validate_runoff` before it reads the weight table. Configs are
+frozen, so once they pass they are not checked again. A `GridRunoff` built directly, without a `Configs`, has nothing
 to validate and so runs neither.
 
 `Configs.deep_validate()` reads the params file, grid weights, and initial state and checks their columns,

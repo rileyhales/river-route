@@ -1,8 +1,8 @@
 # Configs
 
 Every option for routing and for preparing gridded runoff is held by a frozen `Configs` object. Build one from keyword
-arguments or read one from a JSON file with `Configs.from_json`, then pass it to `Router` or `GaussianGridRunoff`.
-`Router.route` validates it with `validate_routing` and `GaussianGridRunoff` validates it with `validate_runoff`.
+arguments or read one from a JSON file with `Configs.from_json`, then pass it to `Router` or `GridRunoff`.
+`Router.route` validates it with `validate_routing` and `GridRunoff` validates it with `validate_runoff`.
 
 ```python
 import river_route as rr

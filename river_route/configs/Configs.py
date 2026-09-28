@@ -28,17 +28,14 @@ class Configs:
     """
     Accepts and validates every possible option that can be passed to a computation job.
     """
-
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
 
     # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
     coefficients: Literal['static', 'dynamic'] = 'static'
-    # channel routing only, or the form of the runoff_files routed into the rivers: catchment runoff, or gridded runoff
-    # aggregated to catchments with grid_weights_file
-    forcing: Literal['channel', 'catchment', 'gaussian_grid', 'reduced_gaussian_grid'] = 'channel'
+    forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
     transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
-    network_type: Literal['standard', 'stabilized'] = 'standard'  # route rivers as given, or split long ones
+    network_type: Literal['standard', 'stabilized'] = 'standard'        # route as given, or add substeps/subcycles
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
     # Network and routing descriptor
@@ -61,6 +58,13 @@ class Configs:
     # Runoff sources: catchment runoff files, or gridded runoff aggregated to catchments with a weight table
     runoff_files: PathList = field(default_factory=list)  # read as the forcing names
     grid_weights_file: PathInput | None = None  # required for the grid runoff types
+    var_river_id: str = 'river_id'
+    var_discharge: str = 'Q'
+    var_grid_runoff: str = 'ro'
+    var_x: str = 'x'        # grid x dimension
+    var_y: str = 'y'        # grid y dimension
+    var_cell: str = 'cell'  # ecmwf_grib cell dimension
+    var_t: str = 'time'
 
     # For runoff transform by unit hydrograph
     uh_kernel_file: PathInput | None = None
@@ -68,10 +72,10 @@ class Configs:
     uh_state_final_file: PathInput | None = None
 
     # Time options
-    dt_routing: int = 0
-    dt_total: int = 0
-    dt_discharge: int = 0
-    dt_runoff: int = 0
+    dt_routing: int = 0      # Interval in seconds between calculating discharges, <= dt_runoff
+    dt_runoff: int = 0       # Interval in seconds between forcing values, >= dt_routing
+    dt_discharge: int = 0    # Interval in seconds between discharge outputs, >= dt_runoff
+    dt_total: int = 0        # Interval in seconds between total outputs, >= dt_discharge
     start_datetime: str = '1970-01-01'
 
     # Misc behavior that users may want to override
@@ -80,13 +84,6 @@ class Configs:
     log_level: Literal['DEBUG', 'INFO', 'PROGRESS', 'WARNING', 'ERROR', 'CRITICAL'] = 'PROGRESS'
     log_stream: str = 'stdout'
     log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
-    var_river_id: str = 'river_id'
-    var_discharge: str = 'Q'
-    var_grid_runoff: str = 'ro'
-    var_x: str = 'x'  # gaussian_grid x dimension
-    var_y: str = 'y'  # gaussian_grid y dimension
-    var_cell: str = 'cell'  # reduced_gaussian_grid cell dimension
-    var_t: str = 'time'
 
     # False until validate_routing or validate_runoff passes
     _validated: bool = field(default=False, init=False, repr=False, compare=False)
@@ -287,7 +284,7 @@ class Configs:
     def validate_runoff(self) -> Self:
         """
         Validate the options for preparing gridded runoff: grid_weights_file is set and every input path exists.
-        Called by GaussianGridRunoff. Returns immediately once the Configs has been validated. The contents of the
+        Called by the grid runoff classes. Returns immediately once the Configs has been validated. The contents of the
         input files are not read; call deep_validate for that.
 
         Raises:
@@ -386,13 +383,15 @@ class Configs:
         return params_df
 
     def _deep_validate_grid_weights_file(self, grid_weights_file: PathInput, params_df: pd.DataFrame | None) -> None:
-        # weights should be netcdf with variables river_id, x_index, y_index, x, y, area_sqm, proportion.
+        # weights should be netcdf with variables river_id, the cell index columns, x, y, area_sqm, proportion.
+        # A reduced grid locates its cells with cell_index, a grid with x_index and y_index.
         rid = self.var_river_id
         try:
             ds = xr.load_dataset(grid_weights_file)
         except Exception as e:
             raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
-        expected_variables = (rid, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'proportion')
+        cell_columns = ('cell_index',) if self.forcing == 'ecmwf_grib' else ('x_index', 'y_index')
+        expected_variables = (rid, *cell_columns, 'x', 'y', 'area_sqm', 'proportion')
         for variable in expected_variables:
             if variable not in ds:
                 raise ValueError(f'Grid weights file missing {variable} variable')

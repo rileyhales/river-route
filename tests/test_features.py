@@ -233,8 +233,8 @@ def march(willamette: Basin) -> tuple[np.ndarray, np.ndarray, float]:
     return np.nan_to_num(cells), time_index, factor
 
 
-def grid(basin: Basin, **options) -> rr.GaussianGridRunoff:
-    return rr.GaussianGridRunoff(basin.weights_file, **GRID_NAMES, **options)
+def grid(basin: Basin, **options) -> rr.GridRunoff:
+    return rr.GridRunoff(basin.weights_file, **GRID_NAMES, **options)
 
 
 def test_depth_units_are_converted(willamette: Basin) -> None:
@@ -331,7 +331,6 @@ UNSUPPORTED_OPTIONS = {
         lambda basin: {'transform': 'unit_hydrograph', 'uh_kernel_file': basin.params_file},
         'transform is not implemented',
     ),
-    'reduced gaussian grid runoff': (lambda basin: {'forcing': 'reduced_gaussian_grid'}, 'not implemented yet'),
 }
 
 

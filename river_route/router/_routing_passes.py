@@ -6,9 +6,9 @@ stages are the functions without a body below. Each is implemented by a numba ov
 defines the type of argument it reads, so numba compiles one version of route_scheduled_rivers for each combination of
 argument types it is given:
 
-    runoff     None for channel routing (here), CatchmentRunoffVolumes (runoff/CatchmentRunoff.py), whose rows are the
-               rivers' catchment runoff series, or GridCellRunoff (runoff/GaussianGridRunoff.py), whose grid cells are
-               read directly into each river's forcing as the river is routed
+    runoff     None for channel routing (here), CatchmentRunoffVolumes (runoff/bases.py), whose rows are the rivers'
+               catchment runoff series, or GridCellRunoff (runoff/bases.py), whose grid cells are read directly into
+               each river's forcing as the river is routed
     transform  None for the uniform transform, which changes nothing, so the stage is removed at compile time
     method     StaticMuskingum (router/static_muskingum.py) or DynamicMuskingum (router/dynamic_muskingum.py)
 
@@ -20,7 +20,7 @@ stage chooses between types by overload, and a branch on None only skips a stage
 identity overload for it measured 2% slower on the Amazon, since each call passes and returns arrays.
 
 route_network runs the passes over a Router's schedule. The recurrence, the regions, and the inflow row pool are
-described in docs/references/kernels.md under "How routing works". Inputs are NaN free: GaussianGridRunoff and
+described in docs/references/kernels.md under "How routing works". Inputs are NaN free: the grid runoff classes and
 CatchmentRunoff replace NaN with zero when they read the runoff.
 """
 

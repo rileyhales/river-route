@@ -1,59 +1,20 @@
-from typing import NamedTuple, Self
+"""
+``CatchmentRunoff`` reads files of runoff already aggregated to catchments, the forcing catchment, and yields each as
+``CatchmentRunoffVolumes`` (bases.py), whose rows routing reads in place with the overloads of
+get_river_catchment_runoff and add_catchment_runoff registered there. It defines no form of runoff or overload of its
+own.
+"""
+
+from typing import Self
 
 import numpy as np
 import xarray as xr
-from numba import types
-from numba.extending import overload
 
 from ..configs import Configs
-from ..router._routing_passes import add_catchment_runoff, get_river_catchment_runoff, is_argument_type
-from ..types import FloatArray, PathList, RunoffGenerator
-from .Runoff import CATCHMENT_AREA, CATCHMENT_RUNOFF, VOLUME_UNITS, Runoff
+from ..types import PathList, RunoffGenerator
+from .bases import CATCHMENT_AREA, CATCHMENT_RUNOFF, VOLUME_UNITS, CatchmentRunoffVolumes, Runoff
 
-__all__ = ['CatchmentRunoffVolumes', 'CatchmentRunoff']
-
-
-class CatchmentRunoffVolumes(NamedTuple):
-    """Each river's catchment runoff volume (m³) in every runoff step, as a C-order (river, time) array whose rows
-    routing reads in place."""
-
-    runoff: FloatArray  # (n_rivers, n_steps) float32 volumes (m³)
-
-    def check(self, n_rivers: int, n_steps: int) -> None:
-        """Raise ValueError unless it is (n_rivers, n_steps) with each river's row contiguous."""
-        if self.runoff.ndim != 2 or self.runoff.strides[1] != self.runoff.itemsize:
-            raise ValueError('catchment runoff must be a (river, time) array with each river row contiguous')
-        if self.runoff.shape != (n_rivers, n_steps):
-            raise ValueError(f'catchment runoff has shape {self.runoff.shape}, expected {(n_rivers, n_steps)}')
-
-    def first_steps(self, n_steps: int) -> CatchmentRunoffVolumes:
-        """The runoff of the first n_steps steps, a view whose rows stay contiguous."""
-        return CatchmentRunoffVolumes(self.runoff[:, :n_steps])
-
-
-@overload(get_river_catchment_runoff)
-def _catchment_runoff_of_river(runoff, r):
-    if is_argument_type(runoff, CatchmentRunoffVolumes):
-        return lambda runoff, r: runoff.runoff[r]
-
-
-def _add_catchment_runoff_series(catchment_runoff, multiplier, n_steps, n_per_step, work):
-    """Add multiplier times each step of a river's catchment runoff series, read in place, into its steps of work."""
-    if n_per_step == 1:
-        for t in range(n_steps):
-            work[t] += multiplier * np.float32(catchment_runoff[t])
-    else:
-        for t in range(n_steps):
-            external = multiplier * np.float32(catchment_runoff[t])
-            for h in range(t * n_per_step, (t + 1) * n_per_step):
-                work[h] += external
-
-
-# a series is the form of a CatchmentRunoffVolumes row, and of any catchment runoff a transform gives
-@overload(add_catchment_runoff, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _catchment_runoff_series_is_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
-    if isinstance(catchment_runoff, types.Array) and catchment_runoff.ndim == 1:
-        return _add_catchment_runoff_series
+__all__ = ['CatchmentRunoff']
 
 
 class CatchmentRunoff(Runoff):

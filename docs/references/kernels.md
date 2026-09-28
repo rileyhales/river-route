@@ -10,12 +10,12 @@ takes care of the network, the runoff, and the threads for every method, so a me
 is routed. Options no method routes yet raise `NotImplementedError` before any runoff is read. Every combination
 routes concurrently on a `thread_pool` by splitting the network into regions.
 
-| `coefficients` | Module                     | `forcing`                               | `network_type`           |
-|----------------|----------------------------|-----------------------------------------|--------------------------|
-| `static`       | `router/static_muskingum`  | `channel`, `catchment`, `gaussian_grid` | `standard`, `stabilized` |
-| `dynamic`      | `router/dynamic_muskingum` | `channel`, `catchment`, `gaussian_grid` | `standard`               |
+| `coefficients` | Module                     | `forcing`                                      | `network_type`           |
+|----------------|----------------------------|------------------------------------------------|--------------------------|
+| `static`       | `router/static_muskingum`  | `channel`, `catchment`, `grid`, `ecmwf_grib`   | `standard`, `stabilized` |
+| `dynamic`      | `router/dynamic_muskingum` | `channel`, `catchment`, `grid`, `ecmwf_grib`   | `standard`               |
 
-There is no routing yet for `reduced_gaussian_grid` runoff or the `unit_hydrograph` transform. A stabilized network is
+There is no routing yet for the `unit_hydrograph` transform. A stabilized network is
 described by the `Layout` the pass hands each river, so a method routes one by following the layout rather than by
 being a second method. Each Runoff class's `generator` yields the runoff in the form the pass reads.
 
@@ -86,8 +86,8 @@ or out. The runoff arrives one of three ways:
 | Runoff                   | Defined in              | How the pass reads it                                                            |
 |--------------------------|-------------------------|----------------------------------------------------------------------------------|
 | `None`                   |                         | none, channel routing only                                                       |
-| `CatchmentRunoffVolumes` | `CatchmentRunoff.py`    | `(river, time)` C-order catchment runoff volumes, each river's row read in place |
-| `GridCellRunoff`         | `GaussianGridRunoff.py` | each river's grid cells read directly into its forcing as the river is routed    |
+| `CatchmentRunoffVolumes` | `runoff/bases.py`       | `(river, time)` C-order catchment runoff volumes, each river's row read in place |
+| `GridCellRunoff`         | `runoff/bases.py`       | each river's grid cells read directly into its forcing as the river is routed    |
 
 The one numba pass, `route_scheduled_rivers`, takes each river through stages: finding its catchment runoff,
 transforming it, and routing it with the routing method's parameters (`StaticMuskingum` or `DynamicMuskingum`), which

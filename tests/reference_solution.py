@@ -65,7 +65,7 @@ class Basin:
         """Configs options that route the basin's first ``months`` of gridded runoff."""
         return GRID_NAMES | {
             'params_file': self.params_file,
-            'forcing': 'gaussian_grid',
+            'forcing': 'grid',
             'runoff_files': self.runoff_files[:months],
             'grid_weights_file': self.weights_file,
         }
@@ -164,7 +164,7 @@ def reference_runs(params: str, weights: str, runoff: list[str], catchment_runof
     since later runs read the catchment runoff files and the standard run's final state.
     """
     common = {'params_file': params, 'dt_routing': 3600, 'unstable_coefficients': 'ignore'}
-    grid = common | GRID_NAMES | {'forcing': 'gaussian_grid', 'runoff_files': runoff, 'grid_weights_file': weights}
+    grid = common | GRID_NAMES | {'forcing': 'grid', 'runoff_files': runoff, 'grid_weights_file': weights}
     stabilized = grid | {'network_type': 'stabilized'}
     catchment = common | {'forcing': 'catchment', 'runoff_files': catchment_runoff}
     channel = common | {
@@ -208,7 +208,7 @@ def route_run(package: Path, run: dict, discharge_files: list[Path], final_state
 
 def write_catchment_runoff(package: Path, catchment_runoff: dict, runoff_file: str, path: Path) -> None:
     """Aggregate one of the package's gridded runoff files into a catchment runoff file with ``aggregate_to_file``."""
-    runoff = rr.GaussianGridRunoff(
+    runoff = rr.GridRunoff(
         package / catchment_runoff['grid_weights_file'], as_volumes=catchment_runoff['as_volumes'], **GRID_NAMES
     )
     runoff.aggregate_to_file(package / runoff_file, path)

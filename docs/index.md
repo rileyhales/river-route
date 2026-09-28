@@ -10,7 +10,7 @@ which together choose the kernel.
 | Selector    | Options                                                                                                                                                       | Default      |
 |-------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
 | `coeff`     | `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha*Q^beta from columns `alpha`, `beta`, `x`).                        | `'static'`   |
-| `forcing`   | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'gaussian_grid'`, or `'reduced_gaussian_grid'`. | `'channel'`  |
+| `forcing`   | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`. | `'channel'`  |
 | `transform` | `'uniform'` or `'unit_hydrograph'`. Only read when `forcing` is not `'channel'`.                                                                              | `'uniform'`  |
 | `network`   | `'standard'` (one reach per river).                                                                                                                           | `'standard'` |
 
@@ -61,9 +61,9 @@ rr.Router(configs).route()
 | `Configs` | Every option, frozen. Built once and given to the classes below.                                        |
 | `Network` | The river network: ids, topology, `k` and `x`, the concurrent partition, stability analysis, subdivision. |
 | `Router`  | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.            |
-| `GaussianGridRunoff`  | Gridded runoff to lateral inflow, reusing one weight table across many runoff files.                     |
+| `GridRunoff` | Gridded runoff to lateral inflow, reusing one weight table across many runoff files.                 |
 
-`Router` takes a `Configs` and nothing else, and builds its `Network` and `GaussianGridRunoff` from it. `Network` and `GaussianGridRunoff`
+`Router` takes a `Configs` and nothing else, and builds its `Network` and `GridRunoff` from it. `Network` and `GridRunoff`
 take the options they need as ordinary arguments and each has a `from_configs` classmethod that reads those same
 values off a `Configs`. `examples/config.json` lists every option.
 

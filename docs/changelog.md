@@ -4,6 +4,27 @@
 
 ### Unreleased
 
+- `ECMWFGribReducedGrid` routes GRIB files on a reduced gaussian grid, such as the octahedral O1280 grid of the
+  ECMWF IFS, reading each message with eccodes and keeping only the weight table's cells. At the 18,721 cells of the
+  Columbia in a 145 step O1280 forecast that reads in 0.72 s with memory for one message, where xarray and cfgrib took
+  5.8 s and 4 GB. `cfgrib` is a dependency, and eccodes with it. `ReducedGaussianGrid.from_grib` reads a file's grid
+  (`N` and the cells on each row) from its metadata, `ReducedGaussianGrid.cell_polygons` gives the area each
+  cell represents, one polygon per cell of the world, and `reduced_grid_weights` builds a weight table that locates
+  each cell by its `cell_index`. Every part of a cell is a rectangle in the cylindrical equal-area projection, so the
+  catchments are clipped to the cells with GEOS rectangle clipping there instead of a general polygon overlay: the
+  Columbia's table builds in 6 s rather than 40 s, the Amazon's in 25 s, and each catchment's cell areas sum to its own
+  area to within 1e-7. `examples/reduced_grid_weights.py` saves the cells of the world and builds the weight tables of
+  every region. The grid classes are named for their grids: `GridRunoff` (was `GaussianGridRunoff`, in
+  `runoff/GridRunoff.py`) for grids with x and y dimensions and `ECMWFGribReducedGrid` (was
+  `ReducedGaussianGridRunoff`, in `runoff/ECMWFGribReducedGrid.py`), read with the forcings `grid` and `ecmwf_grib`
+  (were `gaussian_grid` and `reduced_gaussian_grid`). Both subclass `BaseGridRunoff`, and each names the weight table
+  columns that locate a cell and the dimensions of its own options (`var_x` and `var_y`, or `var_cell`) with
+  `cell_dimensions`, so `GridRunoff.x_index` and `y_index` are now `cell_indexes['x_index']` and
+  `cell_indexes['y_index']`.
+- The abstract bases of the runoff classes, `Runoff` and `BaseGridRunoff`, are in `runoff/bases.py` with the forms of
+  runoff routing reads, `CatchmentRunoffVolumes` and `GridCellRunoff`, and their overloads of the routing stages
+  `get_river_catchment_runoff` and `add_catchment_runoff`. `runoff/Runoff.py` is removed, and `CatchmentRunoff`,
+  `GridRunoff`, and `ECMWFGribReducedGrid` each have a module of their own.
 - Routing reads each river's grid cells directly into its forcing as the river is routed, as the C kernel of jsrr
   does, instead of first aggregating the runoff of 64 rivers at a time into scratch rows. One year of hourly ERA5 over
   region 6020006540 (303,097 rivers) routes in 2.22 s on 1 thread and 0.25 s on 12, from 2.80 s and 0.32 s. A
@@ -20,7 +41,7 @@
   `discharge_<input name>.zarr`, instead of keeping the extension of the runoff file they were routed from: an input
   `runoff_2020.nc` now writes `discharge_runoff_2020.zarr`, not a zarr store named `discharge_runoff_2020.nc`.
 - `forcing` names what is routed: `channel` (channel routing only), or the form of the `runoff_files` whose runoff
-  enters the rivers, `catchment`, `gaussian_grid`, or `reduced_gaussian_grid`, replacing `vlateral`. There is no
+  enters the rivers, `catchment`, `grid`, or `ecmwf_grib`, replacing `vlateral`. There is no
   separate option for the form of the runoff.
 - `Network.write_stabilized(dt)` writes the stabilized network as a parameter table, by default
   `<params stem>_stabilized<dt>.parquet` next to the params file. Every reach has its own `river_id`: an outlet
@@ -37,7 +58,7 @@
   base class declares only `as_volumes` and the `from_configs` and `generator` every subclass provides.
   `rivers_per_block` is a class attribute, not a constructor argument, as before.
 - Catchment runoff replaces vlateral: the runoff of each catchment before it is transformed into lateral inflow.
-  `RunoffGaussianGrid.vlateral` is renamed `GaussianGridRunoff.catchment_runoff`. The catchment runoff file schema is
+  `RunoffGaussianGrid.vlateral` is renamed `GridRunoff.catchment_runoff`. The catchment runoff file schema is
   fixed and the `var_vlateral` config is removed: a file holds a `catchment_runoff` variable with dimensions
   (time, river_id) and a `catchment_area` variable (m²) with dimension river_id, linked by the CF attribute
   `cell_measures = "area: catchment_area"`. The `units` attribute of `catchment_runoff` is required and marks it as
@@ -47,8 +68,7 @@
   `grid_weights_file` is required for the grid forcings and refused for `catchment`. The `var_cell` config names
   the cell dimension of a reduced gaussian grid.
 - The Runoff classes are named for what they aggregate to catchments: `CatchmentRunoff` (was `RunoffVlateral`),
-  `GaussianGridRunoff` (was `RunoffGaussianGrid`), and `ReducedGaussianGridRunoff`, a placeholder that raises
-  `NotImplementedError`. `RUNOFF_CLASS_FOR_FORCING` maps each `forcing` that routes runoff to its class, and a Runoff
+  `GridRunoff` (was `RunoffGaussianGrid`), and `ECMWFGribReducedGrid`. `RUNOFF_CLASS_FOR_FORCING` maps each `forcing` that routes runoff to its class, and a Runoff
   passed to `Router` must be that class. The grid classes precompute a catchment runoff file with `aggregate_to_file`.
 - Each routing method is one module that routes a single river, chosen by the `coefficients` config through
   `ROUTING_METHOD_FOR_COEFFICIENTS`: `router/static_muskingum.py` and `router/dynamic_muskingum.py`. A method module
@@ -57,8 +77,8 @@
   routes one river. The Router keeps them as `routing_method`, `routing_parameters`, and `layout`, in place of `c1`,
   `c2`, `c3`, `c4`, `c4_dt`, `subdivisions`, `reach_indptr`, and `substeps`. This replaces the kernel registry, its
   dispatchers, and `resolve_dispatcher`; options no method routes yet raise `NotImplementedError` before any runoff is
-  read. Dynamic coefficients route channel, catchment, and gaussian grid runoff on a standard network. Each Runoff
-  class's `generator` yields what routing reads: `GaussianGridRunoff.generator` is the former `cell_reader`, and the
+  read. Dynamic coefficients route channel, catchment, and grid runoff on a standard network. Each Runoff
+  class's `generator` yields what routing reads: `GridRunoff.generator` is the former `cell_reader`, and the
   former `reader`, which yields aggregated arrays, is `catchment_reader`. `CatchmentRunoff` raises
   `NotImplementedError` on a stabilized network. The kernels `static_vlateral` and `dynamic_vlateral` are renamed
   `static_runoff` and `dynamic_runoff`.
@@ -67,18 +87,18 @@
   arguments each re-listed. It takes each river through stages, finding its catchment runoff, transforming it, and
   routing it, and each stage is a numba overload chosen by the type of its argument and registered next to that type.
   The runoff is `None`, `CatchmentRunoffVolumes` (in `CatchmentRunoff.py`), or `GridCellRunoff` (in
-  `GaussianGridRunoff.py`), and each checks its own arrays with `check` and cuts itself to the routed steps with
+  `GridRunoff.py`), and each checks its own arrays with `check` and cuts itself to the routed steps with
   `first_steps`. `GridCellRunoff` carries the whole weight table it is aggregated with
-  (`indptr`, `cell`, `cumulative`, `force_positive`), so the gaussian grid kernel no longer reads it off the Router's
+  (`indptr`, `cell`, `cumulative`, `force_positive`), so the grid kernel no longer reads it off the Router's
   Runoff. A custom Runoff yields catchment runoff as `CatchmentRunoffVolumes`. Routed discharge is bit identical and the kernel time is unchanged; channel routing is about 13%
   faster since it no longer adds zero runoff every step.
 - Catchment runoff is river major end to end, like discharge. Catchment runoff files are `(river_id, time)`, and
-  `CatchmentRunoff` refuses any other order. `Runoff.to_netcdf`, `GaussianGridRunoff.to_dataset`, `aggregate`,
+  `CatchmentRunoff` refuses any other order. `Runoff.to_netcdf`, `GridRunoff.to_dataset`, `aggregate`,
   `catchment_runoff`, and `catchment_reader` produce C-order `(river, time)` arrays, and the aggregation kernel writes
   each river's series straight into its row instead of transposing blocks into a `(time, river)` array. The routing
   kernels read each river's catchment runoff row in place, so `CatchmentByTime` and the block gather are removed.
-  `BLOCK` is removed: gaussian grid runoff is still aggregated 64 rivers at a time before they are routed, now
-  `_RIVERS_AGGREGATED_TOGETHER` in `GaussianGridRunoff.py`, since neighboring catchments share grid
+  `BLOCK` is removed: grid runoff is still aggregated 64 rivers at a time before they are routed, now
+  `_RIVERS_AGGREGATED_TOGETHER` in `GridRunoff.py`, since neighboring catchments share grid
   cells that are then reused from cache. `aggregate(out=...)` takes a flat buffer. Routed discharge is bit identical. On one year of the Amazon,
   aggregating to catchments is about 3x faster and routing catchment runoff about 2.5x faster.
 - Fixed the discharge of sub-cycled rivers on a stabilized network differing in the last bit depending on whether

@@ -5,7 +5,7 @@
 
 - **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
-- **`forcing: catchment`**, **`gaussian_grid`**, or **`reduced_gaussian_grid`**: routes the runoff volumes or
+- **`forcing: catchment`**, **`grid`**, or **`ecmwf_grib`**: routes the runoff volumes or
   depths of `runoff_files`, in that form, directly into river channel inlets at each timestep. This is the most
   common starting point.
 

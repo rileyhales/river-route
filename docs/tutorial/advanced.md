@@ -192,15 +192,15 @@ def save_partial_results(router, dates, discharge_array, discharge_file: str, ru
 ## Customizing Runoff Inputs
 
 Routing reads `runoff_files` with the Runoff class for the `forcing`: `CatchmentRunoff` for `catchment`, or
-`GaussianGridRunoff` for `gaussian_grid`, which aggregates the grids to catchments with `grid_weights_file`. Pass a
-`GaussianGridRunoff` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
+`GridRunoff` for `grid`, which aggregates the grids to catchments with `grid_weights_file`. Pass a
+`GridRunoff` to the `Router` to reuse a weight table you already read, or a subclass of it to change how
 the catchment runoff is prepared. A Runoff passed to the `Router` must be the class for the `forcing`.
 
 ```python title="Pass a Prepared Runoff"
 import river_route as rr
 
 configs = rr.Configs.from_json('config.json')
-runoff = rr.GaussianGridRunoff.from_configs(configs)
+runoff = rr.GridRunoff.from_configs(configs)
 rr.Router(configs, runoff=runoff).route()
 ```
 

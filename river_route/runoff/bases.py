@@ -1,4 +1,29 @@
+"""
+The abstract bases of the runoff classes and the forms of runoff they hand to routing.
+
+``Runoff`` is the base of every runoff class. Each is built from a Configs with ``from_configs`` and yields its runoff
+one file at a time from ``generator``, in one of the NamedTuples defined here. ``BaseGridRunoff`` is the base of the
+gridded runoff classes, which read runoff depths at the grid cells of a weight table and aggregate them onto rivers. A
+subclass names the weight table columns that locate a cell with ``cell_dimensions`` and may read its files its own way
+by overriding ``read_runoff``.
+
+A routing pass takes each river through the stages without a body in router/_routing_passes.py. Each form of runoff
+implements two of them with numba overloads registered here, next to its NamedTuple:
+
+    get_river_catchment_runoff   river r's catchment runoff, from the runoff a file was read into
+    add_catchment_runoff         adds that catchment runoff into the river's forcing
+
+    CatchmentRunoffVolumes  (river, time) volumes whose row r is river r's catchment runoff series. A series, a 1D
+                            array, is also the form of the catchment runoff a transform gives.
+    GridCellRunoff          runoff depths at grid cells and the sparse weights of each river. River r's catchment
+                            runoff is a RiverGridCells, its cells and weights, added into its forcing one cell at a time
+                            so no catchment runoff series is built.
+
+A new form of runoff needs a NamedTuple with ``check`` and ``first_steps``, and an overload of both stages for it.
+"""
+
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import KW_ONLY, dataclass, field, fields
@@ -8,21 +33,77 @@ import numpy as np
 import pandas as pd
 import scipy.sparse
 import xarray as xr
+from numba import types
 from numba.extending import overload
 
+from .._metadata import __version__
 from ..configs import Configs
 from ..router._routing_passes import add_catchment_runoff, get_river_catchment_runoff, is_argument_type
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
-from .CatchmentRunoff import CatchmentRunoffVolumes
-from .Runoff import Runoff
 
 if TYPE_CHECKING:
-    from ..network import Network
+    from ..network.Network import Network
 
-__all__ = ['GridCellRunoff', 'GaussianGridRunoff']
+__all__ = [
+    'CATCHMENT_RUNOFF',
+    'CATCHMENT_AREA',
+    'VOLUME_UNITS',
+    'CatchmentRunoffVolumes',
+    'GridCellRunoff',
+    'Runoff',
+    'BaseGridRunoff',
+]
+
+# the fixed schema of a catchment runoff file: one depth or volume series per catchment and the area of each catchment
+CATCHMENT_RUNOFF = 'catchment_runoff'
+CATCHMENT_AREA = 'catchment_area'
+VOLUME_UNITS = ('m3', 'm^3', 'm³')  # units attributes that mark catchment runoff as volumes, anything else is a depth
 
 logger = logging.getLogger(__name__)
+
+
+class CatchmentRunoffVolumes(NamedTuple):
+    """Each river's catchment runoff volume (m³) in every runoff step, as a C-order (river, time) array whose rows
+    routing reads in place."""
+
+    runoff: FloatArray  # (n_rivers, n_steps) float32 volumes (m³)
+
+    def check(self, n_rivers: int, n_steps: int) -> None:
+        """Raise ValueError unless it is (n_rivers, n_steps) with each river's row contiguous."""
+        if self.runoff.ndim != 2 or self.runoff.strides[1] != self.runoff.itemsize:
+            raise ValueError('catchment runoff must be a (river, time) array with each river row contiguous')
+        if self.runoff.shape != (n_rivers, n_steps):
+            raise ValueError(f'catchment runoff has shape {self.runoff.shape}, expected {(n_rivers, n_steps)}')
+
+    def first_steps(self, n_steps: int) -> CatchmentRunoffVolumes:
+        """The runoff of the first n_steps steps, a view whose rows stay contiguous."""
+        return CatchmentRunoffVolumes(self.runoff[:, :n_steps])
+
+
+@overload(get_river_catchment_runoff)
+def _catchment_runoff_of_river(runoff, r):
+    if is_argument_type(runoff, CatchmentRunoffVolumes):
+        return lambda runoff, r: runoff.runoff[r]
+
+
+def _add_catchment_runoff_series(catchment_runoff, multiplier, n_steps, n_per_step, work):
+    """Add multiplier times each step of a river's catchment runoff series, read in place, into its steps of work."""
+    if n_per_step == 1:
+        for t in range(n_steps):
+            work[t] += multiplier * np.float32(catchment_runoff[t])
+    else:
+        for t in range(n_steps):
+            external = multiplier * np.float32(catchment_runoff[t])
+            for h in range(t * n_per_step, (t + 1) * n_per_step):
+                work[h] += external
+
+
+# a series is the form of a CatchmentRunoffVolumes row, and of any catchment runoff a transform gives
+@overload(add_catchment_runoff, jit_options={'nogil': True, 'fastmath': {'contract'}})
+def _catchment_runoff_series_is_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
+    if isinstance(catchment_runoff, types.Array) and catchment_runoff.ndim == 1:
+        return _add_catchment_runoff_series
 
 
 class GridCellRunoff(NamedTuple):
@@ -98,28 +179,145 @@ def _river_grid_cells_are_added(catchment_runoff, multiplier, n_steps, n_per_ste
         return _add_runoff_of_river_grid_cells
 
 
-@dataclass(eq=False, repr=False)
-class GaussianGridRunoff(Runoff):
+class Runoff(ABC):
     """
-    Prepares catchment runoff for routing from gridded runoff depths and a grid weight table.
+    Base class for the sources of catchment runoff, the runoff volume of each catchment before it is transformed into
+    lateral inflow to its river. Each subclass is built from a Configs with ``from_configs`` and provides a
+    ``generator`` that yields its runoff in the form routing reads, and every subclass writes catchment runoff to disk
+    with ``to_netcdf`` in the one format ``CatchmentRunoff`` reads.
+    """
+
+    as_volumes: bool = True  # whether the arrays are volumes (m³) rather than depths (m)
+
+    @classmethod
+    @abstractmethod
+    def from_configs(cls, configs: Configs) -> Self:
+        """Build this Runoff from the options on a Configs, as a Router does when it is not given one."""
+
+    @abstractmethod
+    def generator(self, runoff_files: PathList) -> RunoffGenerator:
+        """
+        Yield one (dates, runoff, source_file) tuple per input, where runoff is what routing reads: its
+        CatchmentRunoffVolumes, or a GridCellRunoff whose grid cells routing reads as it routes. Each checks its arrays
+        with ``check`` and gives the runoff of its first steps with ``first_steps``.
+        """
+
+    def distribute(self, network: Network) -> None:
+        """
+        Match the runoff to a stabilized network, whose synthetic sub-reaches each need a share of their parent
+        river's runoff. Classes that can split their runoff override this; the others raise when the network has rows
+        they have no runoff for.
+        """
+        if network.synthetic is not None:
+            raise NotImplementedError(f'{type(self).__name__} cannot be routed on a stabilized network yet')
+        return
+
+    def to_netcdf(
+        self,
+        path: PathInput,
+        dates: DatetimeArray,
+        catchment_runoff: FloatArray,
+        river_ids: IntArray,
+        catchment_area: FloatArray,
+    ) -> None:
+        """
+        Write a catchment runoff array to a netCDF file that ``CatchmentRunoff`` reads, routed as ``runoff_files``
+        with ``forcing`` catchment.
+
+        Args:
+            path: netCDF file to write
+            dates: (time,) datetime64 values of the steps
+            catchment_runoff: (n_rivers, time) depths (m) or volumes (m³), rows ordered like ``river_ids``
+            river_ids: (n_rivers,) river id of each column
+            catchment_area: (n_rivers,) area of each catchment in m², the factor between depths and volumes
+        """
+        self._catchment_runoff_dataset(dates, catchment_runoff, river_ids, catchment_area).to_netcdf(path)
+        return
+
+    def _catchment_runoff_dataset(
+        self, dates: DatetimeArray, catchment_runoff: FloatArray, river_ids: IntArray, catchment_area: FloatArray
+    ) -> xr.Dataset:
+        """Build the catchment runoff dataset with dimensions (``river_id``, ``time``) that ``to_netcdf`` writes."""
+        units = 'm3' if self.as_volumes else 'm'
+        kind = 'volumes' if self.as_volumes else 'depths'
+        start_date = pd.Timestamp(dates[0]).strftime('%Y%m%d%H')
+        end_date = pd.Timestamp(dates[-1]).strftime('%Y%m%d%H')
+        timestep = int((dates[1] - dates[0]) / np.timedelta64(1, 's')) if len(dates) > 1 else 0
+        return xr.Dataset(
+            {
+                CATCHMENT_RUNOFF: xr.DataArray(
+                    catchment_runoff,
+                    dims=('river_id', 'time'),
+                    attrs={
+                        'long_name': f'Incremental catchment runoff {kind}',
+                        'units': units,
+                        'cell_measures': f'area: {CATCHMENT_AREA}',
+                    },
+                ),
+                CATCHMENT_AREA: xr.DataArray(
+                    np.asarray(catchment_area).astype(np.float32, copy=False),
+                    dims=('river_id',),
+                    attrs={'long_name': 'catchment area of each river', 'units': 'm2'},
+                ),
+            },
+            coords={
+                'river_id': xr.DataArray(
+                    np.asarray(river_ids).astype(np.int32, copy=False),
+                    dims=('river_id',),
+                    attrs={'long_name': 'unique ID number for each river'},
+                ),
+                'time': xr.DataArray(
+                    dates,
+                    dims=('time',),
+                    attrs={'long_name': 'time', 'standard_name': 'time', 'axis': 'T', 'time_step': f'{timestep}'},
+                ),
+            },
+            attrs={
+                'title': f'Incremental catchment runoff {kind}',
+                'description': f'Incremental catchment runoff ({units}) for each river',
+                'source': f'river-route v{__version__}',
+                'history': f'Created on {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}',
+                'suggested_file_name': f'catchment_runoff_{start_date}_{end_date}.nc',
+            },
+        )
+
+    @staticmethod
+    def _cumulative_to_incremental(df: pd.DataFrame) -> pd.DataFrame:
+        values = df.to_numpy()
+        return pd.DataFrame(np.vstack([values[:1], np.diff(values, axis=0)]), index=df.index, columns=df.columns)
+
+    @staticmethod
+    def _get_conversion_factor(unit: str | None) -> float:
+        if unit is None:
+            logger.warning('No units attribute found. Assuming meters')
+            return 1
+        if unit in ('m', 'meters', 'kg m-2'):
+            return 1
+        if unit in ('mm', 'millimeters'):
+            return 0.001
+        raise ValueError(f'Unknown units: {unit}')
+
+
+@dataclass(eq=False, repr=False)
+class BaseGridRunoff(Runoff):
+    """
+    Prepares catchment runoff for routing from gridded runoff depths and a grid weight table. Each subclass names the
+    weight table columns that locate a grid cell and the runoff dimension each one indexes, with ``cell_dimensions``.
 
     Only ``grid_weights_file`` is required. Every option is named the same here as it is on ``Configs``, so
-    ``GaussianGridRunoff.from_configs`` reads each one off a ``Configs`` by its own name, which is how a ``Router``
-    builds one.
+    ``from_configs`` reads each one off a ``Configs`` by its own name, which is how a ``Router`` builds one.
 
     Reading and indexing the weight table is the same work for every runoff file, so it is done once when the
-    GaussianGridRunoff is created and reused for all of them. Each runoff file is read at the grid cells the table
-    touches. Routing reads each river's cells directly as it routes the river, and ``aggregate`` sums them onto rivers
-    as area weighted depths or volumes in a single pass, each river's series written straight into its row of a C-order
+    runoff is created and reused for all of them. Each runoff file is read at the grid cells the table touches.
+    Routing reads each river's cells directly as it routes the river, and ``aggregate`` sums them onto rivers as area
+    weighted depths or volumes in a single pass, each river's series written straight into its row of a C-order
     (river, time) array.
     """
 
-    grid_weights_file: PathInput  # weight table netCDF produced by ``river_route.runoff.grid_weights``
+    grid_weights_file: PathInput  # weight table netCDF produced by the functions in ``river_route.runoff.weights``
     _: KW_ONLY
     var_river_id: str = 'river_id'  # name of the river id variable in the weight table
     var_grid_runoff: str = 'ro'  # name of the runoff variable in the gridded runoff files
-    var_x: str = 'x'  # name of the grid x coordinate variable
-    var_y: str = 'y'  # name of the grid y coordinate variable
     var_t: str = 'time'  # name of the time coordinate variable
     # ``incremental`` runoff per step, or ``cumulative`` totals to difference
     grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
@@ -130,8 +328,8 @@ class GaussianGridRunoff(Runoff):
 
     # Weight table read once by __post_init__, in row order of the table which follows the routing params order
     river_ids: IntArray = field(init=False)  # (n_rivers,) river id of each catchment runoff column
-    x_index: IntArray = field(init=False)  # (n_cells,) grid x index of each unique cell any catchment touches
-    y_index: IntArray = field(init=False)  # (n_cells,) grid y index of each unique cell
+    # each cell_dimensions column's (n_cells,) index of every unique cell any catchment touches
+    cell_indexes: dict[str, IntArray] = field(init=False)
     # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
     indptr: IntArray = field(init=False)
     cell: IntArray = field(init=False)  # (n_weights,) position in x_index and y_index of the cell of each weight
@@ -141,10 +339,15 @@ class GaussianGridRunoff(Runoff):
 
     def __post_init__(self) -> None:
         if self.grid_weights_file is None:
-            raise ValueError('grid_weights_file is required to build a GaussianGridRunoff')
+            raise ValueError(f'grid_weights_file is required to build a {type(self).__name__}')
         self._read_weights()
         self._buffer = np.empty(0, dtype=np.float32)
         return
+
+    @property
+    @abstractmethod
+    def cell_dimensions(self) -> dict[str, str]:
+        """Each weight table column that locates a grid cell, and the runoff dimension it indexes."""
 
     @property
     def cumulative(self) -> bool:
@@ -153,7 +356,7 @@ class GaussianGridRunoff(Runoff):
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
-        """Build a GaussianGridRunoff from the runoff options on a ``Configs``. The configs are validated for runoff
+        """Build this grid runoff from the runoff options on a ``Configs``. The configs are validated for runoff
         before the weight table is read. Each option is read off the Configs by the field's own name, so a field with
         no matching option raises AttributeError rather than silently keeping its default."""
         if not isinstance(configs, Configs):
@@ -165,7 +368,8 @@ class GaussianGridRunoff(Runoff):
         return cls(**{f.name: getattr(configs, f.name) for f in fields(cls) if f.init})
 
     def __repr__(self) -> str:
-        return f'{type(self).__name__}(n_rivers={self.river_ids.shape[0]}, n_cells={self.x_index.shape[0]})'
+        n_cells = next(iter(self.cell_indexes.values())).shape[0]
+        return f'{type(self).__name__}(n_rivers={self.river_ids.shape[0]}, n_cells={n_cells})'
 
     ################################################
     # Weight table
@@ -174,15 +378,14 @@ class GaussianGridRunoff(Runoff):
     def _read_weights(self) -> None:
         """Read the weight table netCDF into the sparse arrays the aggregation kernel consumes."""
         var_river_id = self.var_river_id
+        cell_columns = list(self.cell_dimensions)
         with xr.open_dataset(self.grid_weights_file) as ds:
-            weight_df = ds[[var_river_id, 'x_index', 'y_index', 'proportion', 'area_sqm']].to_dataframe()
-        unique_indexes = (
-            weight_df[['x_index', 'y_index']].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
-        )
+            weight_df = ds[[var_river_id, *cell_columns, 'proportion', 'area_sqm']].to_dataframe()
+        unique_indexes = weight_df[cell_columns].drop_duplicates().reset_index(drop=True).reset_index().astype(int)
         # index already topo sorted
         river_ids = weight_df[[var_river_id]].drop_duplicates().sort_index()[var_river_id].to_numpy(dtype=np.int32)
 
-        cells = weight_df[['x_index', 'y_index']].merge(unique_indexes, on=['x_index', 'y_index'], how='left')
+        cells = weight_df[cell_columns].merge(unique_indexes, on=cell_columns, how='left')
         point_idx = cells['index'].to_numpy()
         river_id_to_row = pd.Series(np.arange(len(river_ids)), index=river_ids)
         river_idx = river_id_to_row.loc[weight_df[var_river_id].to_numpy()].to_numpy()
@@ -190,8 +393,7 @@ class GaussianGridRunoff(Runoff):
             (weight_df['proportion'].to_numpy(), (river_idx, point_idx)), shape=(len(river_ids), len(unique_indexes))
         )
         self.river_ids = river_ids
-        self.x_index = unique_indexes['x_index'].to_numpy()
-        self.y_index = unique_indexes['y_index'].to_numpy()
+        self.cell_indexes = {column: unique_indexes[column].to_numpy() for column in cell_columns}
         self.indptr = matrix.indptr
         self.cell = matrix.indices
         self.proportion = matrix.data
@@ -362,8 +564,8 @@ class GaussianGridRunoff(Runoff):
                 ds[self.var_grid_runoff]
                 .isel(
                     {
-                        self.var_x: xr.DataArray(self.x_index, dims='points'),
-                        self.var_y: xr.DataArray(self.y_index, dims='points'),
+                        dimension: xr.DataArray(self.cell_indexes[column], dims='points')
+                        for column, dimension in self.cell_dimensions.items()
                     }
                 )
                 .transpose(self.var_t, 'points')
