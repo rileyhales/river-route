@@ -1,7 +1,7 @@
 """
 ``CatchmentRunoff`` reads files of runoff already aggregated to catchments, the forcing catchment, and yields each as
 ``CatchmentRunoffVolumes`` (bases.py), whose rows routing reads in place with the overloads of
-get_river_catchment_runoff and add_catchment_runoff registered there. It defines no form of runoff or overload of its
+get_river_forcing and add_river_forcing registered there. It defines no form of runoff or overload of its
 own.
 """
 

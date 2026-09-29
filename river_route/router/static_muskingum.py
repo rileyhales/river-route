@@ -11,15 +11,13 @@ import numba
 import numpy as np
 from numba.extending import overload
 
-from ._routing_passes import STANDARD_LAYOUT, Layout, add_catchment_runoff, is_argument_type, route_river
+from ._numba_kernels import STANDARD_LAYOUT, Layout, add_river_forcing, is_argument_type, route_river
 
 if TYPE_CHECKING:
     from ..network.Network import Network
     from ..types import FloatArray, IntArray
 
-__all__ = ['NETWORK_TYPES', 'StaticMuskingum', 'prepare_routing']
-
-NETWORK_TYPES = frozenset({'standard', 'stabilized'})
+__all__ = ['StaticMuskingum', 'prepare_routing']
 
 
 class StaticMuskingum(NamedTuple):
@@ -143,7 +141,7 @@ def _route_river_with_static_coefficients(
     ``q_t[p0:p0 + n_pieces]``: one piece on a standard network, and as many as stability needs on a stabilized one.
     The last piece's unclamped series is added into ``downstream_inflow`` and its clamped per-step mean is written into
     ``discharge``; the states are updated in place. ``catchment_runoff`` is None for channel routing, and every piece
-    takes an equal share of it through ``c4_dt``, added into the piece's forcing by add_catchment_runoff.
+    takes an equal share of it through ``c4_dt``, added into the piece's forcing by add_river_forcing.
 
     ``m`` sub-cycles the river: each routing step is taken as m equal steps of its own, which is how a river too short
     for the routing step is kept stable. The upstream series arrives once per routing step and is interpolated
@@ -153,8 +151,8 @@ def _route_river_with_static_coefficients(
     ``work`` holds every step the river takes and ``chain`` one more, which carries a piece's series to the next piece
     in the same layout as an inflow row.
 
-    Only the recurrence q = c3 q + forcing is serial, so it runs alone in its own loop; the passes before and after
-    it are independent per step and vectorize. Fusing multiply-adds is the only fastmath flag, which keeps NaN
+    Only the recurrence q = c3 q + forcing is serial, so it runs alone in its own loop; the loops over the steps before
+    and after it are independent per step and vectorize. Fusing multiply-adds is the only fastmath flag, which keeps NaN
     semantics and makes each serial step one instruction.
     """
     expanded = layout.reach_indptr.shape[0] > 0
@@ -179,7 +177,7 @@ def _route_river_with_static_coefficients(
             for h in range(n_fine):
                 work[h] = c1 * piece_inflow[h + 1] + c2 * piece_inflow[h]
         if catchment_runoff is not None:
-            add_catchment_runoff(catchment_runoff, c4_dt, n_steps, n_per_step, work)
+            add_river_forcing(catchment_runoff, c4_dt, n_steps, n_per_step, work)
 
         # every step of the piece's inflow has been read, so the chain row can take this piece's series in its place
         q = q_t[p0 + j]
@@ -213,7 +211,7 @@ def _route_river_with_static_coefficients(
     return
 
 
-# the routine is itself the implementation numba compiles into the pass, rather than a lambda calling a separately
+# the routine is itself the implementation numba compiles into route_job, rather than a lambda calling a separately
 # jitted function, which added a call per river that passes a dozen arrays and measured 1% slower on the Amazon
 @overload(route_river, jit_options={'nogil': True, 'fastmath': {'contract'}})
 def _route_river_with_static_muskingum(

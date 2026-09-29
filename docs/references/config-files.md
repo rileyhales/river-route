@@ -17,7 +17,7 @@ them that way. `examples/config.json` below lists every option.
   rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
   `'grid'` (a grid with x and y dimensions, read by `GridRunoff`), or `'ecmwf_grib'` (ECMWF GRIB
   files on a reduced gaussian grid, read by `ECMWFGribReducedGrid`). A single value. Default `'channel'`.
-- `transform` - `'uniform'` or `'unit_hydrograph'`, the runoff transformation applied under lateral forcing.
+- `transform` - `'uniform'`, the runoff transformation applied under lateral forcing, and the only option.
   Only read when `forcing` is not `'channel'`. Default `'uniform'`.
 - `network_type` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
   `dt_routing` is routed as the fewest equal sub-reaches in series that are each Muskingum-stable, and each river
@@ -81,10 +81,6 @@ The following table lists where each remaining key applies.
 | **input data**             |                                  |                                                        |
 | `runoff_files`             | Runoff read as the `forcing`     | `forcing` not `channel`                                |
 | `grid_weights_file`        | Aggregates grids to catchments   | `forcing` a grid                                       |
-| **unit hydrograph**        |                                  |                                                        |
-| `uh_kernel_file`           | Unit hydrograph kernel (npz)     | `transform: unit_hydrograph`                           |
-| `uh_state_init_file`       | Initial unit hydrograph state    | optional                                               |
-| `uh_state_final_file`      | Path to save final UH state      | optional                                               |
 | **time**                   |                                  |                                                        |
 | `start_datetime`           | Simulation start date            | optional                                               |
 | `dt_total`                 | Total simulation duration        | `forcing: channel` (else [time docs](time-options.md)) |
@@ -98,7 +94,7 @@ The following table lists where each remaining key applies.
 |--------------------------|--------------------------------------------------------|-----------------------------------------------|
 | `coeff`                  | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
 | `forcing`                | Channel routing, or the form of the runoff files       | `'channel'`                                   |
-| `transform`              | Runoff transform: `'uniform'`, `'unit_hydrograph'`     | `'uniform'`                                   |
+| `transform`              | Runoff transform: `'uniform'`                          | `'uniform'`                                   |
 | `network_type`           | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |
 | `log`                    | Enable or disable logging                              | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                 | `True`                                        |

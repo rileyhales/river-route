@@ -7,11 +7,11 @@ gridded runoff classes, which read runoff depths at the grid cells of a weight t
 subclass names the weight table columns that locate a cell with ``cell_dimensions`` and may read its files its own way
 by overriding ``read_runoff``.
 
-A routing pass takes each river through the stages without a body in router/_routing_passes.py. Each form of runoff
+A routing job takes each river through the stages without a body in router/_numba_kernels.py. Each form of runoff
 implements two of them with numba overloads registered here, next to its NamedTuple:
 
-    get_river_catchment_runoff   river r's catchment runoff, from the runoff a file was read into
-    add_catchment_runoff         adds that catchment runoff into the river's forcing
+    get_river_forcing   river r's catchment runoff, from the runoff a file was read into
+    add_river_forcing   adds that catchment runoff into the river's forcing
 
     CatchmentRunoffVolumes  (river, time) volumes whose row r is river r's catchment runoff series. A series, a 1D
                             array, is also the form of the catchment runoff a transform gives.
@@ -38,7 +38,7 @@ from numba.extending import overload
 
 from .._metadata import __version__
 from ..configs import Configs
-from ..router._routing_passes import add_catchment_runoff, get_river_catchment_runoff, is_argument_type
+from ..router._numba_kernels import add_river_forcing, get_river_forcing, is_argument_type
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
 
@@ -81,7 +81,7 @@ class CatchmentRunoffVolumes(NamedTuple):
         return CatchmentRunoffVolumes(self.runoff[:, :n_steps])
 
 
-@overload(get_river_catchment_runoff)
+@overload(get_river_forcing)
 def _catchment_runoff_of_river(runoff, r):
     if is_argument_type(runoff, CatchmentRunoffVolumes):
         return lambda runoff, r: runoff.runoff[r]
@@ -100,7 +100,7 @@ def _add_catchment_runoff_series(catchment_runoff, multiplier, n_steps, n_per_st
 
 
 # a series is the form of a CatchmentRunoffVolumes row, and of any catchment runoff a transform gives
-@overload(add_catchment_runoff, jit_options={'nogil': True, 'fastmath': {'contract'}})
+@overload(add_river_forcing, jit_options={'nogil': True, 'fastmath': {'contract'}})
 def _catchment_runoff_series_is_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
     if isinstance(catchment_runoff, types.Array) and catchment_runoff.ndim == 1:
         return _add_catchment_runoff_series
@@ -143,7 +143,7 @@ class RiverGridCells(NamedTuple):
     weight: FloatArray  # (n_river_weights,) volume a unit of the cell's runoff depth gives the river
 
 
-@overload(get_river_catchment_runoff)
+@overload(get_river_forcing)
 def _grid_cells_of_river(runoff, r):
     if is_argument_type(runoff, GridCellRunoff):
         return lambda runoff, r: RiverGridCells(
@@ -173,7 +173,7 @@ def _add_runoff_of_river_grid_cells(catchment_runoff, multiplier, n_steps, n_per
                     work[h] += external
 
 
-@overload(add_catchment_runoff, jit_options={'nogil': True, 'fastmath': {'contract'}})
+@overload(add_river_forcing, jit_options={'nogil': True, 'fastmath': {'contract'}})
 def _river_grid_cells_are_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
     if is_argument_type(catchment_runoff, RiverGridCells):
         return _add_runoff_of_river_grid_cells

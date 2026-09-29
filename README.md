@@ -15,7 +15,7 @@ which together choose the kernel:
 |-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `coeff`     | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = alpha*Q^beta from `alpha`,`beta`,`x`). Default `static`.                                  |
 | `forcing`   | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                     |
-| `transform` | `uniform` (the default) or `unit_hydrograph`. Only read when `forcing` is not `channel`.                                                                           |
+| `transform` | `uniform` (the default and only option). Only read when `forcing` is not `channel`.                                                                                |
 | `network`   | `standard` (one reach per river, the default).                                                                                                                     |
 
 A combination with no kernel yet raises `NotImplementedError` naming it and listing those that exist.

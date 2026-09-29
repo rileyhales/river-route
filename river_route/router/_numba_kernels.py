@@ -1,27 +1,66 @@
 """
-How a network is routed. A pass routes the rivers of a schedule's blocks one at a time, each river's whole series before
-the next, and takes every river through three stages: finding its catchment runoff, transforming that runoff, and
-routing it with the routing method, which adds the catchment runoff into its forcing with add_catchment_runoff. The
-stages are the functions without a body below. Each is implemented by a numba overload registered in the module that
-defines the type of argument it reads, so numba compiles one version of route_scheduled_rivers for each combination of
-argument types it is given:
+Customizable routing kernels in numba.
 
-    runoff     None for channel routing (here), CatchmentRunoffVolumes (runoff/bases.py), whose rows are the rivers'
-               catchment runoff series, or GridCellRunoff (runoff/bases.py), whose grid cells are read directly into
-               each river's forcing as the river is routed
-    transform  None for the uniform transform, which changes nothing, so the stage is removed at compile time
-    method     StaticMuskingum (router/static_muskingum.py) or DynamicMuskingum (router/dynamic_muskingum.py)
+Terminology:
 
-An overload returns None for types it does not implement, so numba tries the next one. The overloads do not use
-inline='always': inlining into route_scheduled_rivers at the numba IR level (numba 0.67) made the whole-array in-place
-add of a region's outlet series compile as a new array rather than into the inflow row, which dropped that series from
-the main stem of threaded routing. numba removes a branch on ``argument is None`` only when the argument is None, so a
-stage chooses between types by overload, and a branch on None only skips a stage, as for the uniform transform: an
-identity overload for it measured 2% slower on the Amazon, since each call passes and returns arrays.
+- The full watershed or region worth of work to be routed is given by the config file. If threading is used, then:
+- The region can be split into jobs, one for each thread. To balance work between jobs/threads, then:
+- Each job is assigned sub-watersheds, or "blocks" of rivers, so the amount of work for each thread is balanced.
 
-route_network runs the passes over a Router's schedule. The recurrence, the regions, and the inflow row pool are
-described in docs/references/kernels.md under "How routing works". Inputs are NaN free: the grid runoff classes and
-CatchmentRunoff replace NaN with zero when they read the runoff.
+1. The user calls rr.Router.route() once per simulation which calls these relevant functions.
+
+    Router.route()
+    ├── Router._execute_routing_channel()             forcing 'channel', called once
+    │   └── route_region(router, q_t, discharge_array, None, thread_pool)
+    └── Router._execute_routing_forced()              once per file the Runoff's generator yields
+        └── route_region(router, q_t, discharge_array, runoff, thread_pool)
+
+2. route_region maps all work to be done to sub pieces, called jobs, that can run concurrently.
+
+    route_region()                                    python
+    ├── Network.routing_blocks()                      cached per thread count
+    │   ├── streams.assign_blocks()                   threaded, and only when the params file has no group column
+    │   └── streams.blocks_to_layout()                threaded
+    ├── _check_everything_a_job_reads()
+    ├── _pack_blocks_into_jobs()                      the sub-watershed blocks, packed into one Job per thread
+    ├── route_job(job)                                each of those jobs, concurrently on thread_pool when given
+    └── route_job(main stem job)                      after every other job has finished
+
+3. Route each job. When threading is used, 1 block from every job is routing concurrently.
+
+    route_job()                                       numba.njit
+    ├── count_peak_live_inflow_rows()                 sizes the inflow row pool
+    ├── first_river_and_span_of_job()
+    ├── allocate_inflow_row_pool()
+    ├── sort_block_cuts_by_target_river()
+    └── for each block, for each of its rivers r in index order:
+        ├── get_or_open_downstream_inflow_row()       main stem job: add the block outlet series that drain into r
+        ├── get_upstream_inflow_row()                 the row r's upstream rivers added their series into
+        ├── get_or_open_downstream_inflow_row()       the row r adds its series into, or boundary at a block outlet
+        ├── get_river_forcing(runoff, r)              stage
+        ├── transform_runoff(transform, ...)          stage, skipped for the uniform transform
+        ├── route_river(method, ...)                  stage
+        │   └── add_river_forcing(forcing, ...)       stage, called by the routing method
+        └── release_inflow_row_to_pool()
+
+4. There are 4 stages of routing 1 river which can be overloaded for different types of inputs or methods.
+
+    stage              argument type           what the overload does                      registered in
+    get_river_forcing  None (channel)          returns None, for channel routing           this module
+                       CatchmentRunoffVolumes  returns river r's row of catchment runoff   runoff/bases.py
+                       GridCellRunoff          returns river r's RiverGridCells            runoff/bases.py
+    transform_runoff   None                    no overload: the uniform transform is skipped
+    route_river        StaticMuskingum         routes river r with static coefficients     router/static_muskingum.py
+                       DynamicMuskingum        routes river r with dynamic coefficients    router/dynamic_muskingum.py
+    add_river_forcing  1D array                adds a catchment runoff series into work    runoff/bases.py
+                       RiverGridCells          adds each grid cell's runoff into work      runoff/bases.py
+
+The stages are the functions without a body below. numba picks the overload that matches the type of the argument and
+compiles one version of route_job for each combination of argument types it is given. transform_runoff has no
+overload yet: the only transform is the uniform one, which is None, so route_job skips that call.
+
+To add a kind of runoff, add overloads of get_river_forcing and add_river_forcing next to its type; to add a routing
+method, add an overload of route_river. Nothing else in this module changes. Overloads should not use inline='always'.
 """
 
 import heapq
@@ -33,25 +72,25 @@ import numpy as np
 from numba import types
 from numba.extending import overload
 
-from ..types import FloatArray
+from ..types import FloatArray, Int32Array
 
 if TYPE_CHECKING:
     from ..runoff import CatchmentRunoffVolumes, GridCellRunoff
     from .Router import Router
 
 __all__ = [
-    # the stages a routing pass takes each river through, implemented next to the types they read
-    'get_river_catchment_runoff',
-    'transform_catchment_runoff',
-    'add_catchment_runoff',
+    # the stages a job takes each river through, implemented next to the types they read
+    'get_river_forcing',
+    'transform_runoff',
+    'add_river_forcing',
     'route_river',
     'is_argument_type',
-    # what a pass reads, the pass, and running the passes over a Router's schedule
+    # what a job reads, routing a job, and running the jobs of a Router's blocks
     'Layout',
     'STANDARD_LAYOUT',
-    'Schedule',
-    'route_scheduled_rivers',
-    'route_network',
+    'Job',
+    'route_job',
+    'route_region',
 ]
 
 
@@ -60,15 +99,15 @@ __all__ = [
 ################################################
 
 
-def get_river_catchment_runoff(runoff, r):
-    """River r's catchment runoff, in the form add_catchment_runoff reads, or None for channel routing."""
+def get_river_forcing(runoff, r):
+    """River r's catchment runoff, in the form add_river_forcing reads, or None for channel routing."""
 
 
-def transform_catchment_runoff(transform, catchment_runoff, r, out):
+def transform_runoff(transform, catchment_runoff, r, out):
     """River r's catchment runoff volume in each runoff step after the runoff transform, which may write it into out."""
 
 
-def add_catchment_runoff(catchment_runoff, multiplier, n_steps, n_per_step, work):
+def add_river_forcing(catchment_runoff, multiplier, n_steps, n_per_step, work):
     """
     Add ``multiplier`` times a river's catchment runoff volume in each of the first ``n_steps`` runoff steps into each
     of the ``n_per_step`` steps of ``work`` that the runoff step spans.
@@ -89,14 +128,14 @@ def is_argument_type(numba_type, kind: type) -> bool:
     return getattr(numba_type, 'instance_class', None) is kind
 
 
-@overload(get_river_catchment_runoff)
+@overload(get_river_forcing)
 def _channel_routing_has_no_catchment_runoff(runoff, r):
     if isinstance(runoff, types.NoneType):
         return lambda runoff, r: None
 
 
 ################################################
-# What a pass reads
+# What a job reads
 ################################################
 
 
@@ -115,32 +154,32 @@ class Layout(NamedTuple):
 STANDARD_LAYOUT = Layout(reach_indptr=np.zeros(0, dtype=np.int64), substeps=np.zeros(0, dtype=np.int64))
 
 
-class Schedule(NamedTuple):
+class Job(NamedTuple):
     """
-    The blocks of rivers one pass routes, in order. A block's outlet (-1 for none) hands its unclamped series to
-    ``boundary[block_region]`` instead of an inflow row, and each boundary row in ``cut_target`` is injected into its
+    The blocks of rivers one thread routes, in order. A block's outlet (-1 for none) hands its unclamped series to
+    ``boundary[block_number]`` instead of an inflow row, and each boundary row in ``cut_target`` is injected into its
     target river before that river is routed. ``out_row`` is empty when every river has a discharge row, and otherwise
     gives each river's row, -1 for a synthetic river whose series is written to a scratch row and discarded.
     """
 
-    block_starts: np.ndarray  # (n_blocks,) int32
-    block_stops: np.ndarray  # (n_blocks,) int32
-    block_outlet: np.ndarray  # (n_blocks,) int32
-    block_region: np.ndarray  # (n_blocks,) int32
-    cut_target: np.ndarray  # (n_regions,) int32, or empty
-    boundary: np.ndarray  # (n_regions, n_routing + 1) float32
+    block_starts: np.ndarray  # (n_job_blocks,) int32
+    block_stops: np.ndarray  # (n_job_blocks,) int32
+    block_outlet: np.ndarray  # (n_job_blocks,) int32
+    block_number: np.ndarray  # (n_job_blocks,) int32
+    cut_target: np.ndarray  # (n_blocks,) int32, or empty
+    boundary: np.ndarray  # (n_blocks, n_routing + 1) float32
     out_row: np.ndarray  # (n,) int32, or empty
 
 
 ################################################
-# The pool of inflow rows a pass accumulates upstream series into. A river's row is taken from the pool when its first
-# upstream is routed, or when a region's buffered outlet series is injected into it, and returned once the river itself
-# is routed. Every river index into slot_of is relative to the pass's first river.
+# The pool of inflow rows a job accumulates upstream series into. A river's row is taken from the pool when its first
+# upstream is routed, or when a block's buffered outlet series is injected into it, and returned once the river itself
+# is routed. Every river index into slot_of is relative to the job's first river.
 ################################################
 
 
 @numba.njit(cache=True, nogil=True)
-def sort_region_cuts_by_target_river(cut_target):
+def sort_block_cuts_by_target_river(cut_target):
     """The cuts that drain into a river, as positions into cut_target sorted by target, basin outlets (-1) dropped."""
     order = np.argsort(cut_target, kind='mergesort')
     first = 0
@@ -150,8 +189,8 @@ def sort_region_cuts_by_target_river(cut_target):
 
 
 @numba.njit(cache=True, nogil=True)
-def first_river_and_span_of_pass(block_starts, block_stops):
-    """The first river a pass routes and how many indices its blocks span, which sizes its per-river bookkeeping."""
+def first_river_and_span_of_job(block_starts, block_stops):
+    """The first river a job routes and how many indices its blocks span, which sizes its per-river bookkeeping."""
     first = block_starts.min() if block_starts.shape[0] else 0
     last = block_stops.max() if block_stops.shape[0] else 0
     return first, max(last - first, 0)
@@ -160,12 +199,12 @@ def first_river_and_span_of_pass(block_starts, block_stops):
 @numba.njit(cache=True, nogil=True)
 def count_peak_live_inflow_rows(downstream_indices, block_starts, block_stops, block_outlet, cut_target):
     """
-    Peak number of inflow rows live at once when a pass routes its blocks in order. A block's outlet drains outside
-    the pass, so it never opens a row.
+    Peak number of inflow rows live at once when a job routes its blocks in order. A block's outlet drains outside
+    the job, so it never opens a row.
     """
-    first, span = first_river_and_span_of_pass(block_starts, block_stops)
+    first, span = first_river_and_span_of_job(block_starts, block_stops)
     is_open = np.zeros(span, dtype=np.bool_)
-    cuts = sort_region_cuts_by_target_river(cut_target)
+    cuts = sort_block_cuts_by_target_river(cut_target)
     next_cut = 0
     live = 0
     peak = 0
@@ -229,26 +268,24 @@ def release_inflow_row_to_pool(r, slot_of, free, top):
 
 
 ################################################
-# The pass
+# Routing a job
 ################################################
 
 
 @numba.njit(cache=True, nogil=True)
-def route_scheduled_rivers(
-    q_t, discharge_array, downstream_indices, n_substeps, method, layout, runoff, transform, schedule
-):
+def route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layout, runoff, transform, job):
     """
-    Route every river in the blocks of ``schedule``, river by river, through the stages: its catchment runoff from
+    Route every river in the blocks of ``job``, river by river, through the stages: its catchment runoff from
     ``runoff``, transformed by ``transform``, and routed with the routing ``method``'s parameters. ``discharge_array``
     is C-order (river, time): each river's series is written into its own row in place.
     """
     n_steps = discharge_array.shape[1]
     n_routing = n_steps * n_substeps
-    block_starts, block_stops, block_outlet, block_region, cut_target, boundary, out_row = schedule
+    block_starts, block_stops, block_outlet, block_number, cut_target, boundary, out_row = job
     n_rows = count_peak_live_inflow_rows(downstream_indices, block_starts, block_stops, block_outlet, cut_target)
-    first, span = first_river_and_span_of_pass(block_starts, block_stops)
+    first, span = first_river_and_span_of_job(block_starts, block_stops)
     inflow_rows, slot_of, free, top = allocate_inflow_row_pool(span, n_rows, n_routing)
-    cuts = sort_region_cuts_by_target_river(cut_target)
+    cuts = sort_block_cuts_by_target_river(cut_target)
     next_cut = 0
     transform_scratch = np.empty(0 if transform is None else n_steps, dtype=np.float32)
     expanded = layout.reach_indptr.shape[0] > 0
@@ -263,13 +300,13 @@ def route_scheduled_rivers(
         for r in range(block_starts[b], block_stops[b]):
             while next_cut < cuts.shape[0] and cut_target[cuts[next_cut]] == r:
                 injected = get_or_open_downstream_inflow_row(r - first, inflow_rows, slot_of, free, top)
-                region_outlet_series = boundary[cuts[next_cut]]
+                block_outlet_series = boundary[cuts[next_cut]]
                 for g in range(injected.shape[0]):  # a loop, not +=; see the module docstring
-                    injected[g] += region_outlet_series[g]
+                    injected[g] += block_outlet_series[g]
                 next_cut += 1
             inflow = get_upstream_inflow_row(r - first, inflow_rows, slot_of)
             if r == outlet:
-                downstream_inflow = boundary[block_region[b]]
+                downstream_inflow = boundary[block_number[b]]
                 downstream_inflow[:] = 0.0
             else:
                 d = downstream_indices[r]
@@ -278,22 +315,22 @@ def route_scheduled_rivers(
                 )
             row = out_row[r] if renumbered else r
             discharge = discharge_array[row] if row >= 0 else discarded
-            catchment_runoff = get_river_catchment_runoff(runoff, r)
+            catchment_runoff = get_river_forcing(runoff, r)
             if transform is not None:
-                catchment_runoff = transform_catchment_runoff(transform, catchment_runoff, r, transform_scratch)
+                catchment_runoff = transform_runoff(transform, catchment_runoff, r, transform_scratch)
             route_river(method, layout, q_t, r, catchment_runoff, inflow, downstream_inflow, discharge, work, chain)
             release_inflow_row_to_pool(r - first, slot_of, free, top)
     return
 
 
 ################################################
-# Running the passes over a Router's schedule
+# Running the jobs of a Router's blocks
 ################################################
 
-_NO_CUTS = np.zeros(0, dtype=np.int32)  # a region pass injects nothing; only the main stem does
+_NO_CUTS = np.zeros(0, dtype=np.int32)  # a job of sub-watershed blocks injects nothing; only the main stem job does
 
 
-def route_network(
+def route_region(
     router: Router,
     q_t: FloatArray,
     discharge_array: FloatArray,
@@ -301,78 +338,86 @@ def route_network(
     thread_pool: ThreadPoolExecutor | None,
 ) -> None:
     """
-    Route ``runoff`` through the whole network with the Router's routing method and layout: every region, concurrently
-    on ``thread_pool`` when given, then the main stem, which consumes the boundary buffer the regions filled. ``runoff``
-    is None for channel routing, or what the Router's Runoff generator yielded.
+    Route ``runoff`` through the whole region with the Router's routing method and layout: every sub-watershed block,
+    concurrently on ``thread_pool`` when given, then the main stem, which consumes the boundary buffer the blocks
+    filled. ``runoff`` is None for channel routing, or what the Router's Runoff generator yielded.
 
-    A boundary row holds a region outlet's whole series plus its initial state. One pass takes many regions as blocks,
-    each with its own outlet, so the regions are packed longest first into one pass per thread. That keeps the
-    per-pass cost in python, and the buffers each pass allocates, to once per thread rather than once per region.
+    A boundary row holds a block outlet's whole series plus its initial state. One job holds many blocks, each with
+    its own outlet, so the blocks are packed longest first into one job per thread. That keeps the per-job cost in
+    python, and the buffers each job allocates, to once per thread rather than once per block.
     """
-    _check_everything_a_pass_reads(router, q_t, discharge_array, runoff)
+    # the Network derives the blocks once per thread count and caches them, so this is a lookup after the first file
+    routing_blocks, cut_target = router.network.routing_blocks(
+        threads=router.threads, concurrent=thread_pool is not None
+    )
+    _check_everything_a_job_reads(router, q_t, discharge_array, runoff, routing_blocks, cut_target)
     downstream_indices = router.network.downstream_indices
     n_substeps = router.num_routing_steps_per_runoff
-    n_regions = len(router.routing_jobs) - 1
-    boundary = np.zeros((max(n_regions, 1), router.num_runoff_steps * n_substeps + 1), dtype=np.float32)
+    n_blocks = len(routing_blocks) - 1
+    boundary = np.zeros((max(n_blocks, 1), router.num_runoff_steps * n_substeps + 1), dtype=np.float32)
     synthetic = router.network.synthetic  # each river's discharge row, -1 for a synthetic river that has none
     out_row = _NO_CUTS if synthetic is None else np.where(synthetic, -1, np.cumsum(~synthetic) - 1).astype(np.int32)
 
     method, layout, transform = router.routing_parameters, router.layout, None  # None is the uniform transform
 
-    def route_pass(block_starts, block_stops, block_outlet, block_region, cut_target=_NO_CUTS) -> None:
-        schedule = Schedule(block_starts, block_stops, block_outlet, block_region, cut_target, boundary, out_row)
-        route_scheduled_rivers(
-            q_t, discharge_array, downstream_indices, n_substeps, method, layout, runoff, transform, schedule
-        )
+    def route_one_job(job: Job) -> None:
+        route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layout, runoff, transform, job)
 
-    n_passes = router.threads if thread_pool is not None else 1
-    region_passes = _pack_regions_into_passes(router.routing_jobs[:-1], n_passes)
+    n_threads = router.threads if thread_pool is not None else 1
+    jobs = _pack_blocks_into_jobs(routing_blocks[:-1], n_threads, boundary, out_row)
     if thread_pool is None:
-        for blocks in region_passes:
-            route_pass(*blocks)
+        for job in jobs:
+            route_one_job(job)
     else:
-        list(thread_pool.map(lambda blocks: route_pass(*blocks), region_passes))  # list() so a worker exception raises
+        list(thread_pool.map(route_one_job, jobs))  # list() so a worker exception raises
 
-    # the one barrier of the simulation: every region has finished before the main stem consumes its buffer
-    stem_starts, stem_stops, _, _ = router.routing_jobs[-1]
+    # the one barrier of the simulation: every block has finished before the main stem consumes its buffer
+    stem_starts, stem_stops, _, _ = routing_blocks[-1]
     no_outlet = np.full(stem_starts.shape[0], -1, dtype=np.int32)
-    route_pass(stem_starts, stem_stops, no_outlet, np.zeros(stem_starts.shape[0], dtype=np.int32), router.cut_target)
+    no_number = np.zeros(stem_starts.shape[0], dtype=np.int32)
+    route_one_job(Job(stem_starts, stem_stops, no_outlet, no_number, cut_target, boundary, out_row))
     return
 
 
-def _pack_regions_into_passes(regions: tuple, n_passes: int) -> list[tuple[np.ndarray, ...]]:
+def _pack_blocks_into_jobs(blocks: tuple, n_threads: int, boundary: FloatArray, out_row: np.ndarray) -> list[Job]:
     """
-    Pack region jobs, longest first, onto the least loaded of ``n_passes`` passes. Each pass lists its regions as
-    blocks in index order: (block_starts, block_stops, block_outlet, block_region).
+    Pack sub-watershed blocks, longest first, into the least loaded of ``n_threads`` jobs. Each job lists its blocks
+    in index order and injects no boundary series, which only the main stem job does.
     """
-    loads = [(0, p) for p in range(max(1, n_passes))]
-    members: list[list] = [[] for _ in loads]
-    for starts, stops, outlet, region in regions:
-        load, p = heapq.heappop(loads)
-        members[p].append((int(starts[0]), int(stops[0]), outlet, region))
-        heapq.heappush(loads, (load + int(stops[0] - starts[0]), p))
-    passes = []
-    for jobs in sorted(members, key=lambda jobs: -sum(stop - start for start, stop, _, _ in jobs)):
-        if jobs:
-            jobs.sort()
-            passes.append(tuple(np.array(v, dtype=np.int32) for v in zip(*jobs, strict=True)))
-    return passes
+    loads = [(0, j) for j in range(max(1, n_threads))]
+    blocks_of_job: list[list] = [[] for _ in loads]
+    for starts, stops, outlet, block_number in blocks:
+        load, j = heapq.heappop(loads)
+        blocks_of_job[j].append((int(starts[0]), int(stops[0]), outlet, block_number))
+        heapq.heappush(loads, (load + int(stops[0] - starts[0]), j))
+    jobs = []
+    for job_blocks in sorted(blocks_of_job, key=lambda job: -sum(stop - start for start, stop, _, _ in job)):
+        if job_blocks:
+            job_blocks.sort()
+            starts, stops, outlets, numbers = (np.array(v, dtype=np.int32) for v in zip(*job_blocks, strict=True))
+            jobs.append(Job(starts, stops, outlets, numbers, _NO_CUTS, boundary, out_row))
+    return jobs
 
 
-def _check_everything_a_pass_reads(
-    router: Router, q_t: FloatArray, discharge_array: FloatArray, runoff: CatchmentRunoffVolumes | GridCellRunoff | None
+def _check_everything_a_job_reads(
+    router: Router,
+    q_t: FloatArray,
+    discharge_array: FloatArray,
+    runoff: CatchmentRunoffVolumes | GridCellRunoff | None,
+    routing_blocks: tuple,
+    cut_target: Int32Array,
 ) -> None:
     """
-    Check every array a pass reads, because this is the last point where a wrong one can be caught. The passes are
-    compiled with ``numba.njit`` and therefore do no bounds checking: an array shorter than the network is read and
-    written past its end rather than raising IndexError. A malformed schedule is worse: a cut_target inside a region,
+    Check every array a job reads, because this is the last point where a wrong one can be caught. route_job is
+    compiled with ``numba.njit`` and therefore does no bounds checking: an array shorter than the network is read and
+    written past its end rather than raising IndexError. Malformed blocks are worse: a cut_target inside a block,
     or blocks that overlap, make one thread write into rivers another thread is routing, which corrupts results
     without raising and without reproducing reliably.
 
     Raises:
-        ValueError: if any array does not match the network, the number of routing steps, or the schedule
+        ValueError: if any array does not match the network, the number of routing steps, or the blocks
     """
-    # each river's series is written into its own contiguous row, which is the layout the passes solve in. Output is
+    # each river's series is written into its own contiguous row, which is the layout the jobs solve in. Output is
     # never copied, so any other layout is refused rather than transposed.
     if not discharge_array.flags.c_contiguous:
         raise ValueError('discharge_array must be a C-order (river, time) array')
@@ -400,15 +445,15 @@ def _check_everything_a_pass_reads(
         runoff.check(n_rivers, n_steps)
 
     covered = 0
-    for starts, stops, _outlet, _region in router.routing_jobs:
+    for starts, stops, _outlet, _block_number in routing_blocks:
         if starts.shape != stops.shape:
             raise ValueError(f'block starts/stops shapes differ: {starts.shape} vs {stops.shape}')
         if starts.size and (starts.min() < 0 or stops.max() > n_rivers or np.any(stops <= starts)):
             raise ValueError(f'blocks must be non-empty ranges within [0, {n_rivers})')
         covered += int((stops - starts).sum())
     if covered != n_rivers:
-        raise ValueError(f'region schedule covers {covered} rivers, expected every one of {n_rivers} exactly once')
-    targets = router.cut_target[router.cut_target >= 0]
+        raise ValueError(f'the blocks cover {covered} rivers, expected every one of {n_rivers} exactly once')
+    targets = cut_target[cut_target >= 0]
     if targets.size and targets.max() >= n_rivers:
         raise ValueError(f'every cut_target must fall inside [0, {n_rivers}); found {int(targets.max())}')
     return

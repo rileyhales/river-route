@@ -43,7 +43,7 @@ class Network:
     # the contents of the parameter table
     _df: pd.DataFrame
     downstream_indices: Int32Array  # (n,) index of each river's downstream river, -1 at a basin outlet
-    _schedules: dict[int, tuple[tuple, Int32Array]]  # threads -> (routing_jobs, cut_target)
+    _routing_blocks: dict[int, tuple[tuple, Int32Array]]  # threads -> (routing_blocks, cut_target)
 
     @property
     def size(self) -> int:
@@ -96,7 +96,7 @@ class Network:
         """
         if params_file is None:
             raise ValueError('params_file is required to build a Network')
-        self._schedules = {}
+        self._routing_blocks = {}
 
         # read the parameters
         if isinstance(params_file, pd.DataFrame):
@@ -155,13 +155,13 @@ class Network:
         return
 
     ################################################
-    # Concurrent routing schedule
+    # Routing blocks
     ################################################
 
-    def routing_schedule(self, threads: int = 1, concurrent: bool = True) -> tuple[tuple, Int32Array]:
+    def routing_blocks(self, threads: int = 1, concurrent: bool = True) -> tuple[tuple, Int32Array]:
         """
-        Build the index ranges of the rivers each routing pass routes. Derived once per thread count and cached, so
-        repeated simulations over this network never rebuild the partition.
+        Build the blocks of rivers the jobs route. Derived once per thread count and cached, so repeated simulations
+        over this network never rebuild the partition.
 
         The parameter table is always used in the order it is given. Nothing in the routing path reorders a river,
         so the forcing, the state and the routed discharge stay in parameter file order from end to end. Threaded
@@ -169,56 +169,55 @@ class Network:
         upstream rivers, which makes every subtree a contiguous block that a worker can be handed as a plain index
         range. That is checked against the input and reported if absent, never corrected here.
 
-        The jobs are ordered longest first so the pool packs the very uneven region sizes a river network produces,
-        with the main stem last. That orders the work queue only; the rivers inside each block keep their file
-        positions. A single-threaded schedule is one job spanning the whole network.
+        The sub-watershed blocks are ordered longest first so they pack the very uneven block sizes a river network
+        produces into jobs, with the main stem's blocks last. That orders the blocks only; the rivers inside each block
+        keep their file positions. Single threaded, there is one block spanning the whole network.
 
-        The regions come from the params file's ``group`` column when it has one, and otherwise from
-        ``streams.assign_regions``, which sizes them for ``threads``: it searches a range of caps on the largest
-        region and keeps whichever partition packs onto that many workers fastest. A thread-independent cut such as
-        ``recommend_compute_groups`` puts a hard floor under the wall clock -- one oversized region no thread count
+        The blocks come from the params file's ``group`` column when it has one, and otherwise from
+        ``streams.assign_blocks``, which sizes them for ``threads``: it searches a range of caps on the largest
+        block and keeps whichever partition packs onto that many threads fastest. A thread-independent cut such as
+        ``recommend_compute_groups`` puts a hard floor under the wall clock -- one oversized block no thread count
         can split -- so the partition has to be rebuilt per thread count rather than derived once from topology.
 
         Args:
-            threads: worker count the partition is sized for
-            concurrent: False forces the single-job schedule regardless of ``threads``, for a caller that has no
-                thread pool to run the regions on
+            threads: thread count the partition is sized for
+            concurrent: False forces a single block regardless of ``threads``, for a caller that has no
+                thread pool to run the jobs on
 
         Returns:
-            tuple: (routing_jobs, cut_target). Each job is (block_starts, block_stops, outlet, region); cut_target
-                gives the river each region's outlet drains into, -1 at a basin outlet.
+            tuple: (routing_blocks, cut_target). Each entry of routing_blocks is (starts, stops, outlet,
+                block_number), one per sub-watershed block and then one holding every block of the main stem;
+                cut_target gives the river each block's outlet drains into, -1 at a basin outlet.
         """
         key = threads if concurrent else 1
-        if key in self._schedules:
-            return self._schedules[key]
+        if key in self._routing_blocks:
+            return self._routing_blocks[key]
 
         n = self.river_ids.shape[0]
         whole = (np.array([0], dtype=np.int32), np.array([n], dtype=np.int32), -1, 0)
         single = ((whole,), np.zeros(0, dtype=np.int32))
         if not concurrent or threads < 2:
-            self._schedules[key] = single
+            self._routing_blocks[key] = single
             return single
 
         downstream_index = self.downstream_indices.astype(np.int64)
-        region = self.groups
-        if region is None:
+        block = self.groups
+        if block is None:
             # sized for this thread count; nothing is cached on the frame, so a later call for a different thread
             # count is free to cut the network differently
-            region, _ = streams.assign_regions(downstream_index, threads=threads)
-        layout = streams.regions_to_layout(np.ascontiguousarray(region, dtype=np.int32), downstream_index)
+            block, _ = streams.assign_blocks(downstream_index, threads=threads)
+        layout = streams.blocks_to_layout(np.ascontiguousarray(block, dtype=np.int32), downstream_index)
 
-        n_regions = layout['n_regions']
-        if not n_regions:
-            self._schedules[key] = single
+        if not layout['n_blocks']:
+            self._routing_blocks[key] = single
             return single
 
-        starts, stops = layout['region_starts'], layout['region_stops']
-        order = np.argsort(starts - stops)  # submission order for the pool only; river order is untouched
-        jobs = [(starts[r : r + 1], stops[r : r + 1], int(layout['region_outlet'][r]), int(r)) for r in order.tolist()]
-        jobs.append((layout['stem_starts'], layout['stem_stops'], -1, 0))
-        schedule = (tuple(jobs), layout['cut_target'])
-        self._schedules[key] = schedule
-        return schedule
+        starts, stops, outlets = layout['block_starts'], layout['block_stops'], layout['block_outlet']
+        order = np.argsort(starts - stops)  # packing order into jobs only; river order is untouched
+        blocks = [(starts[b : b + 1], stops[b : b + 1], int(outlets[b]), int(b)) for b in order.tolist()]
+        blocks.append((layout['stem_starts'], layout['stem_stops'], -1, 0))
+        self._routing_blocks[key] = (tuple(blocks), layout['cut_target'])
+        return self._routing_blocks[key]
 
     def recommend_compute_groups(self) -> IntArray:
         """
@@ -486,7 +485,7 @@ class Network:
             df['dynamicAlpha'] *= (k_reach / np.repeat(k, n_sub)).astype(df['dynamicAlpha'].dtype)
         df['k'] = k_reach.astype(df['k'].dtype)
         self._df = df
-        self._schedules = {}
+        self._routing_blocks = {}
         self.set_connectivity()
         return self
 

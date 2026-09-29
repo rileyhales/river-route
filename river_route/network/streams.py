@@ -47,11 +47,11 @@ __all__ = [
     'analyze_min_compute',
     'analyze_stability',
     'is_dfs_ordered',
-    'assign_regions',
+    'assign_blocks',
     'tributary_groups',
     'partition_network',
     'analyze_partitioning',
-    'regions_to_layout',
+    'blocks_to_layout',
     'subset_configs_to_river',
     'connectivity_to_digraph',
     'adjacency_matrix',
@@ -519,7 +519,7 @@ def analyze_stability(df: pd.DataFrame, dt: float) -> dict:
 # instead of a list of rivers. Nothing here ever reorders a parameter table: the order it is given in is the
 # order it is routed and written in, so the forcing, the state and the routed discharge always line up with the
 # file the user provided. DFS order is a property of the input, checked with is_dfs_ordered and required by
-# assign_regions; a table that lacks it is reported, never rewritten.
+# assign_blocks; a table that lacks it is reported, never rewritten.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -615,45 +615,45 @@ def is_dfs_ordered(downstream_index: np.ndarray) -> np.ndarray:
 
 
 @numba.njit(cache=True)
-def _claim_regions(size: np.ndarray, lowest: np.ndarray, order: np.ndarray, cap: int):
+def _claim_blocks(size: np.ndarray, lowest: np.ndarray, order: np.ndarray, cap: int):
     """
-    Claim maximal subtrees of at most ``cap`` rivers as concurrent regions, largest first.
+    Claim maximal subtrees of at most ``cap`` rivers as sub-watershed blocks, largest first.
 
     In DFS computation order a subtree is just the range [lowest[v], v], so claiming one is marking a slice --
     no traversal. Visiting candidates in descending size is what makes the result safe to route concurrently.
     Any ancestor of a river is at least as large as it, so ancestors are considered first: once a river is
     unclaimed at its turn, no ancestor of it has been claimed either. That yields the two properties the kernels
     depend on:
-        1. regions are disjoint contiguous ranges, each holding every river upstream of its own outlet, so a
-           region needs nothing from outside its range;
-        2. a region's outlet always drains into unclaimed water, never into another region, so the only
-           write a region makes outside itself while routing is the single push at its outlet.
+        1. blocks are disjoint contiguous ranges, each holding every river upstream of its own outlet, so a
+           block needs nothing from outside its range;
+        2. a block's outlet always drains into unclaimed water, never into another block, so the only
+           write a block makes outside itself while routing is the single push at its outlet.
 
-    Returns the per-river region id (-1 for rivers left to the sequential main stem) and the region count.
+    Returns the per-river block number (-1 for rivers left to the sequential main stem) and the block count.
     """
     n = size.shape[0]
-    region = np.full(n, -1, dtype=np.int64)
-    n_regions = 0
+    block = np.full(n, -1, dtype=np.int64)
+    n_blocks = 0
     for oi in range(order.shape[0]):
         v = order[oi]
-        if region[v] >= 0 or size[v] > cap:
+        if block[v] >= 0 or size[v] > cap:
             continue
         for i in range(lowest[v], v + 1):
-            region[i] = n_regions
-        n_regions += 1
-    return region, n_regions
+            block[i] = n_blocks
+        n_blocks += 1
+    return block, n_blocks
 
 
-def _parallel_cost(region: np.ndarray, n_regions: int, threads: int) -> tuple[int, int, float]:
+def _parallel_cost(block: np.ndarray, n_blocks: int, threads: int) -> tuple[int, int, float]:
     """
     Predict the cost of a partition as (parallel span, sequential main stem, speedup over one thread).
 
-    Regions are packed onto ``threads`` workers longest-first, which is how a work-stealing pool schedules them
-    when the largest regions are submitted first. Cost is counted in rivers, since routing each river's series
-    takes about the same work. The main stem is added whole because it runs single-threaded afterwards.
+    Blocks are packed into ``threads`` jobs longest-first, which is how route_region packs them when the largest
+    blocks come first. Cost is counted in rivers, since routing each river's series takes about the same work. The
+    main stem is added whole because it runs single-threaded afterwards.
     """
-    counts = np.bincount(region[region >= 0], minlength=max(n_regions, 1))
-    main_stem = int(np.count_nonzero(region < 0))
+    counts = np.bincount(block[block >= 0], minlength=max(n_blocks, 1))
+    main_stem = int(np.count_nonzero(block < 0))
     bins = [(0, w) for w in range(threads)]
     heapq.heapify(bins)
     for count in sorted(counts.tolist(), reverse=True):
@@ -661,35 +661,36 @@ def _parallel_cost(region: np.ndarray, n_regions: int, threads: int) -> tuple[in
         heapq.heappush(bins, (load + int(count), w))
     span = max(load for load, _ in bins) if threads else 0
     total = span + main_stem
-    return span, main_stem, (region.shape[0] / total if total else 1.0)
+    return span, main_stem, (block.shape[0] / total if total else 1.0)
 
 
-# fractions of the ideal per-thread share to try as the largest allowed region; the best is chosen by
+# fractions of the ideal per-thread share to try as the largest allowed block; the best is chosen by
 # _parallel_cost. A loose cap leaves a short main stem but packs unevenly, a tight one packs evenly but
 # pushes more water into the sequential main stem, and the trade turns over at a different point per network.
 _CAP_MULTIPLIERS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0, 1.3, 1.6, 2.0)
 
 
-def assign_regions(
+def assign_blocks(
     downstream_index: np.ndarray, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
 ) -> tuple[np.ndarray, int]:
     """
-    Partition a DFS-ordered network into contiguous regions that can be routed concurrently (see _claim_regions).
+    Partition a DFS-ordered network into contiguous sub-watershed blocks that can be routed concurrently (see
+    _claim_blocks).
 
     Args:
         downstream_index: positional index of each river's downstream, -1 where there is none
-        threads: worker count the partition is being sized for
-        granularity: regions to aim for per thread. More regions than threads let a work-stealing pool even out
-            the uneven region sizes a river network produces; 2 is the measured sweet spot.
-        cap_multiplier: largest allowed region as a multiple of the ideal per-thread share. None searches
+        threads: thread count the partition is being sized for
+        granularity: blocks to aim for per thread. More blocks than threads let the jobs even out the uneven block
+            sizes a river network produces; 2 is the measured sweet spot.
+        cap_multiplier: largest allowed block as a multiple of the ideal per-thread share. None searches
             _CAP_MULTIPLIERS and keeps whichever partition _parallel_cost rates fastest.
 
     Returns:
-        region: per-river region id, -1 for rivers in the sequential main stem
-        n_regions: number of concurrent regions
+        block: per-river block number, -1 for rivers in the sequential main stem
+        n_blocks: number of sub-watershed blocks
 
     Raises:
-        ValueError: if the network is not in DFS computation order, since regions would not be contiguous
+        ValueError: if the network is not in DFS computation order, since blocks would not be contiguous
     """
     if threads < 1:
         raise ValueError(f'threads must be >= 1, got {threads}')
@@ -710,7 +711,7 @@ def assign_regions(
     share = n / (threads * granularity)
 
     multipliers = _CAP_MULTIPLIERS if cap_multiplier is None else (cap_multiplier,)
-    claims = (_claim_regions(size, lowest, order, max(1, int(share * multiplier))) for multiplier in multipliers)
+    claims = (_claim_blocks(size, lowest, order, max(1, int(share * multiplier))) for multiplier in multipliers)
     # the claim with the best parallel speedup, the first of any tie
     return max(claims, key=lambda claim: _parallel_cost(claim[0], claim[1], threads)[2])
 
@@ -719,35 +720,35 @@ def partition_network(
     df: pd.DataFrame, threads: int = 4, granularity: int = 2, cap_multiplier: float | None = None
 ) -> pd.DataFrame:
     """
-    Annotate a routing parameter table with the region each river belongs to for multi-threaded routing.
+    Annotate a routing parameter table with the block each river belongs to for multi-threaded routing.
 
     Topology and row order are unchanged; one column is added. The table must already be in DFS computation
-    order, which is what makes each region a contiguous range of rows, and is a property of the input this
+    order, which is what makes each block a contiguous range of rows, and is a property of the input this
     function checks rather than imposes.
 
-    Routing a partitioned network is a two-stage pass with a single barrier between them, not a barrier per time
-    step: coupling between rivers only ever runs downstream, so a region can be routed for the whole simulation
-    in isolation. Each region's outlet contribution is buffered per routing step and injected when the main stem
-    is swept.
+    Routing a partitioned network takes two stages with a single barrier between them, not a barrier per time
+    step: coupling between rivers only ever runs downstream, so a block can be routed for the whole simulation
+    in isolation. Each block's outlet contribution is buffered per routing step and injected into the main stem
+    river it drains into before that river is routed.
 
     The partition depends only on connectivity and ``threads``, never on the forcing, dt, or coefficients, so it
     is computed once and stored with the parameters rather than rebuilt per simulation.
 
     Args:
         df: parameter table with columns river_id and next_river_id (other columns are preserved)
-        threads: worker count the partition is sized for
-        granularity: regions to aim for per thread; see assign_regions
-        cap_multiplier: largest allowed region as a multiple of the ideal per-thread share; None auto-selects
+        threads: thread count the partition is sized for
+        granularity: blocks to aim for per thread; see assign_blocks
+        cap_multiplier: largest allowed block as a multiple of the ideal per-thread share; None auto-selects
 
     Returns:
         A copy of df with one added column:
-            group -- int32, the concurrent region a river belongs to, or -1 if it is routed in the sequential
+            group -- int32, the sub-watershed block a river belongs to, or -1 if it is routed in the sequential
                      main stem after the barrier. This is the column ``Network.groups`` reads, so a table written
                      with it is routed on this partition instead of one sized for the thread count at run time.
     """
-    region, _ = assign_regions(_downstream_indices(df), threads, granularity, cap_multiplier)
+    block, _ = assign_blocks(_downstream_indices(df), threads, granularity, cap_multiplier)
     out = df.copy()
-    out['group'] = region.astype(np.int32)
+    out['group'] = block.astype(np.int32)
     return out
 
 
@@ -757,22 +758,22 @@ def analyze_partitioning(
     """
     Static analysis of partitioning a network for multi-threaded routing (see partition_network).
 
-    Reports the region count, how evenly they pack onto ``threads`` workers, how much of the network falls into
+    Reports the block count, how evenly they pack into ``threads`` jobs, how much of the network falls into
     the sequential main stem, and the speedup that implies. The speedup is an upper bound from work alone: it
     assumes perfect scaling and ignores memory bandwidth, which this kernel is largely bound by. Also prints a
     human-readable report.
     """
-    region, n_regions = assign_regions(_downstream_indices(df), threads, granularity, cap_multiplier)
-    span, main_stem, speedup = _parallel_cost(region, n_regions, threads)
-    counts = np.bincount(region[region >= 0], minlength=max(n_regions, 1))
+    block, n_blocks = assign_blocks(_downstream_indices(df), threads, granularity, cap_multiplier)
+    span, main_stem, speedup = _parallel_cost(block, n_blocks, threads)
+    counts = np.bincount(block[block >= 0], minlength=max(n_blocks, 1))
     n_rivers = df.shape[0]
 
     summary = {
         'threads': threads,
         'n_rivers': n_rivers,
-        'n_regions': n_regions,
-        'largest_region': int(counts.max()) if n_regions else 0,
-        'smallest_region': int(counts.min()) if n_regions else 0,
+        'n_blocks': n_blocks,
+        'largest_block': int(counts.max()) if n_blocks else 0,
+        'smallest_block': int(counts.min()) if n_blocks else 0,
         'parallel_span': span,
         'main_stem': main_stem,
         'main_stem_fraction': main_stem / n_rivers if n_rivers else 0.0,
@@ -782,8 +783,8 @@ def analyze_partitioning(
     print(f'Partitioning analysis for threads={threads}')
     print(f'  rivers in:              {summary["n_rivers"]:,}')
     print(
-        f'  concurrent regions:     {summary["n_regions"]:,} '
-        f'(largest {summary["largest_region"]:,}, smallest {summary["smallest_region"]:,})'
+        f'  sub-watershed blocks:   {summary["n_blocks"]:,} '
+        f'(largest {summary["largest_block"]:,}, smallest {summary["smallest_block"]:,})'
     )
     print(f'  parallel span:          {summary["parallel_span"]:,} rivers on the busiest thread')
     print(f'  sequential main stem:   {summary["main_stem"]:,} ({summary["main_stem_fraction"]:.1%})')
@@ -791,70 +792,70 @@ def analyze_partitioning(
     return summary
 
 
-def regions_to_layout(region: np.ndarray, downstream_index: np.ndarray) -> dict:
+def blocks_to_layout(block: np.ndarray, downstream_index: np.ndarray) -> dict:
     """
-    Turn a per-river region assignment into the index ranges a region-parallel routing kernel consumes.
+    Turn a per-river block assignment into the index ranges the routing jobs consume.
 
-    Nothing is reordered. In DFS computation order each region is already a contiguous run of rows, so this only
-    locates the run boundaries. The main stem is what is left between the regions, which is generally SEVERAL
-    ranges rather than one: a main stem river sits between the tributary subtrees that feed it. The kernel
-    therefore takes a list of blocks and routes their rivers in increasing index order, which still routes every
+    Nothing is reordered. In DFS computation order each sub-watershed block is already a contiguous run of rows, so
+    this only locates the run boundaries. The main stem is what is left between the sub-watershed blocks, which is
+    generally SEVERAL blocks rather than one: a main stem river sits between the tributary subtrees that feed it. A
+    job therefore takes a list of blocks and routes their rivers in increasing index order, which still routes every
     river after all of its upstreams because the whole table is topologically sorted.
 
     Args:
-        region: per-river region id from assign_regions, -1 for the sequential main stem
+        block: per-river block number from assign_blocks, -1 for the sequential main stem
         downstream_index: positional index of each river's downstream, -1 where there is none
 
     Returns a dict of arrays:
-        region_starts / region_stops -- int32 (n_regions,), region r is [start, stop)
-        region_outlet -- int32 (n_regions,), the river whose push is buffered; always stop - 1 in DFS order
-        cut_target    -- int32 (n_regions,), index each region's outlet drains into, -1 at a basin outlet
-        stem_starts / stem_stops     -- int32 (m,), the main stem blocks, in increasing index order
-        n_regions     -- int, number of concurrent regions
+        block_starts / block_stops -- int32 (n_blocks,), block b is [start, stop)
+        block_outlet  -- int32 (n_blocks,), the river whose push is buffered; always stop - 1 in DFS order
+        cut_target    -- int32 (n_blocks,), index each block's outlet drains into, -1 at a basin outlet
+        stem_starts / stem_stops   -- int32 (m,), the main stem blocks, in increasing index order
+        n_blocks      -- int, number of sub-watershed blocks
 
     Raises:
-        ValueError: if a region is not one contiguous run, or if a region's outlet drains into another region
-            rather than the main stem, either of which would make the regions unsafe to route concurrently
+        ValueError: if a block is not one contiguous run, or if a block's outlet drains into another block
+            rather than the main stem, either of which would make the blocks unsafe to route concurrently
     """
-    n = region.shape[0]
+    n = block.shape[0]
     if downstream_index.shape[0] != n:
-        raise ValueError(f'region has {n} values but downstream_index has {downstream_index.shape[0]}')
-    concurrent = region[region >= 0]
-    n_regions = int(concurrent.max()) + 1 if concurrent.size else 0
-    if concurrent.size and not np.array_equal(np.unique(concurrent), np.arange(n_regions)):
-        raise ValueError(f'region ids must be a contiguous range 0..{n_regions - 1} (plus -1 for the main stem)')
+        raise ValueError(f'block has {n} values but downstream_index has {downstream_index.shape[0]}')
+    concurrent = block[block >= 0]
+    n_blocks = int(concurrent.max()) + 1 if concurrent.size else 0
+    if concurrent.size and not np.array_equal(np.unique(concurrent), np.arange(n_blocks)):
+        raise ValueError(f'block numbers must be a contiguous range 0..{n_blocks - 1} (plus -1 for the main stem)')
 
-    # boundaries of every run of equal region id, then split them into concurrent regions and main stem blocks
-    edges = np.nonzero(np.diff(region))[0] + 1
+    # boundaries of every run of equal block number, then split them into sub-watershed and main stem blocks
+    edges = np.nonzero(np.diff(block))[0] + 1
     starts = np.concatenate(([0], edges))
     stops = np.concatenate((edges, [n]))
-    labels = region[starts]
+    labels = block[starts]
 
-    region_starts = np.full(n_regions, -1, dtype=np.int64)
-    region_stops = np.full(n_regions, -1, dtype=np.int64)
+    block_starts = np.full(n_blocks, -1, dtype=np.int64)
+    block_stops = np.full(n_blocks, -1, dtype=np.int64)
     for start, stop, label in zip(starts[labels >= 0], stops[labels >= 0], labels[labels >= 0], strict=True):
-        if region_starts[label] >= 0:
-            raise ValueError(f'region {int(label)} is split across more than one range of rows; it must be one block')
-        region_starts[label] = start
-        region_stops[label] = stop
+        if block_starts[label] >= 0:
+            raise ValueError(f'block {int(label)} is split across more than one range of rows; it must be one range')
+        block_starts[label] = start
+        block_stops[label] = stop
 
-    # a region's outlet is the last river of its block, and its downstream must land in the main stem
-    region_outlet = region_stops - 1
-    cut_target = downstream_index[region_outlet] if n_regions else np.zeros(0, dtype=np.int64)
-    if n_regions and np.any(region[cut_target[cut_target >= 0]] >= 0):
+    # a block's outlet is its last river, and its downstream must land in the main stem
+    block_outlet = block_stops - 1
+    cut_target = downstream_index[block_outlet] if n_blocks else np.zeros(0, dtype=np.int64)
+    if n_blocks and np.any(block[cut_target[cut_target >= 0]] >= 0):
         raise ValueError(
-            'a region outlet drains into another region rather than the sequential main stem; '
-            'the partition is not safe to route concurrently (build it with assign_regions)'
+            'a block outlet drains into another block rather than the sequential main stem; '
+            'the partition is not safe to route concurrently (build it with assign_blocks)'
         )
 
     return {
-        'region_starts': region_starts.astype(np.int32),
-        'region_stops': region_stops.astype(np.int32),
-        'region_outlet': region_outlet.astype(np.int32),
+        'block_starts': block_starts.astype(np.int32),
+        'block_stops': block_stops.astype(np.int32),
+        'block_outlet': block_outlet.astype(np.int32),
         'cut_target': np.asarray(cut_target).astype(np.int32),
         'stem_starts': starts[labels < 0].astype(np.int32),
         'stem_stops': stops[labels < 0].astype(np.int32),
-        'n_regions': n_regions,
+        'n_blocks': n_blocks,
     }
 
 

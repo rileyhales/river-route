@@ -12,9 +12,9 @@ from .._logging import PROGRESS, build_logger
 from ..configs import Configs, is_dev_null
 from ..network import Network
 from ..runoff import RUNOFF_CLASS_FOR_FORCING, Runoff
-from ..types import DatetimeArray, FloatArray, Int32Array, WriteDischargesFn
+from ..types import DatetimeArray, FloatArray, WriteDischargesFn
 from . import dynamic_muskingum, static_muskingum
-from ._routing_passes import Layout, route_network
+from ._numba_kernels import Layout, route_region
 from .writers import null_writer, zarr_writer
 
 __all__ = ['Router', 'ROUTING_METHOD_FOR_COEFFICIENTS']
@@ -28,7 +28,7 @@ class Router:
     Muskingum style river routing allowing
     - channel-only or runoff forcing
     - static or dynamic coefficients (e.g. muskingum vs muskingum-cunge style)
-    - uniform or unit-hydrograph runoff transformation (e.g. runoff transform method)
+    - the uniform runoff transformation (e.g. runoff transform method)
     - standard or stabilized networks forcing k and x within Muskingum valid ranges
     """
 
@@ -36,14 +36,10 @@ class Router:
     network: Network  # ids, topology, k, x, the partition, and the stability analysis
     runoff: Runoff | None  # reads runoff_files, built from the configs the first time runoff is routed when None
 
-    # the routing method the coefficients config chooses, and what it prepared for the current time steps
-    routing_method: ModuleType  # static_muskingum or dynamic_muskingum
+    # what the routing method the coefficients config chooses prepared for the current time steps
     routing_parameters: static_muskingum.StaticMuskingum | dynamic_muskingum.DynamicMuskingum  # per river
     layout: Layout  # each river routed whole, or as sub-reaches and substeps on a stabilized network
 
-    # The parallelizable groups of rivers the kernels will solve
-    routing_jobs: tuple[tuple[Int32Array, Int32Array, int, int], ...]  # (block_starts, block_stops, outlet, region)
-    cut_target: Int32Array  # (n_regions,) river each region's outlet drains into, -1 at a basin outlet
     threads: int = 1  # the threads passed to the most recent route(), read by writers such as zarr_writer
 
     # State variables
@@ -158,14 +154,6 @@ class Router:
     # Prepare arrays for routing
     ################################################
 
-    def _set_routing_schedule(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> None:
-        """Bind the index ranges of the rivers each routing pass routes, derived and cached by the Network so that
-        repeated simulations over one network never re-partition it."""
-        self.routing_jobs, self.cut_target = self.network.routing_schedule(
-            threads=threads, concurrent=thread_pool is not None
-        )
-        return
-
     def _set_channel_time_options(self) -> None:
         self.dt_routing = self.configs.dt_routing
         self.dt_total = self.configs.dt_total
@@ -218,21 +206,11 @@ class Router:
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         return
 
-    def _choose_routing_method(self) -> ModuleType:
-        """The module of the routing method the configs choose, or NotImplementedError for options no method routes."""
-        method = ROUTING_METHOD_FOR_COEFFICIENTS[self.configs.coefficients]
-        if self.configs.network_type not in method.NETWORK_TYPES:
-            raise NotImplementedError(
-                f'{self.configs.coefficients} coefficients cannot route a {self.configs.network_type} network yet'
-            )
-        if self.configs.forcing != 'channel' and self.configs.transform != 'uniform':
-            raise NotImplementedError(f'the {self.configs.transform} transform is not implemented yet')
-        return method
-
     def _prepare_routing_method(self) -> None:
         """Lay out each river and build the routing method's parameters for the current dt_routing and dt_runoff."""
         self.logger.debug('Preparing the routing method')
-        self.layout, self.routing_parameters = self.routing_method.prepare_routing(
+        method = ROUTING_METHOD_FOR_COEFFICIENTS[self.configs.coefficients]
+        self.layout, self.routing_parameters = method.prepare_routing(
             self.network, self.configs.network_type, self.dt_routing, self.dt_runoff, self.configs.unstable_coefficients
         )
         reach_indptr, substeps = self.layout
@@ -257,8 +235,8 @@ class Router:
             thread_pool: optional pool to route and aggregate gridded runoff concurrently on. It is used as given and
                 never shut down here, so it can be shared and closed by the caller's with block. Without one,
                 routing is single-threaded regardless of ``threads``.
-            threads: number of regions the network is split into when ``thread_pool`` is given. Grid
-                runoff is aggregated inside those regions' routing passes. Also the concurrency limit of writers
+            threads: number of jobs the region's blocks are packed into when ``thread_pool`` is given. Grid
+                runoff is aggregated inside those jobs as each river is routed. Also the concurrency limit of writers
                 that follow it, like zarr_writer.
 
         Returns:
@@ -274,33 +252,15 @@ class Router:
         self.configs.validate_routing()
         self._select_discharge_writer()
         self.logger.debug(self)
-        # the Network parses and partitions the parameter table; both are cached there and reused across runs
-        self._set_routing_schedule(thread_pool, threads)  # which rivers each routing pass routes; nothing is reordered
         # read state, route, write state
         self._read_initial_state()
-        self._execute_routing(thread_pool)
-        self._write_final_state()
-        self.logger.log(PROGRESS, f'Routing completed in {time.perf_counter() - started:.3f} seconds')
-        return self
-
-    def _select_discharge_writer(self) -> None:
-        """Swap in null_writer when every discharge output is the null device, so that a job meant to discard its
-        discharge does not fail in a writer after routing. Called by route() once the configs validate, which is
-        where a mix of null device and real outputs is rejected."""
-        if not all(is_dev_null(f) for f in self.configs.discharge_files):
-            return
-        self.logger.warning('Discharge output is the null device: discharge will be routed and then discarded')
-        self._discharge_writer = null_writer
-        return
-
-    def _execute_routing(self, thread_pool: ThreadPoolExecutor | None) -> None:
-        self.routing_method = self._choose_routing_method()  # raises before any runoff is read if none routes these
-        # there are two types of loops, one for channel only, one if runoff forcing is provided.
         if self.configs.forcing == 'channel':
             self._execute_routing_channel(thread_pool)
         else:
             self._execute_routing_forced(thread_pool)
-        return
+        self._write_final_state()
+        self.logger.log(PROGRESS, f'Routing completed in {time.perf_counter() - started:.3f} seconds')
+        return self
 
     def _execute_routing_channel(self, thread_pool: ThreadPoolExecutor | None) -> None:
         self.logger.info('-' * 60)
@@ -310,7 +270,7 @@ class Router:
         self.logger.debug('Starting routing computation')
         q_t = self.channel_state.astype(np.float32, copy=True)
         discharge_array = self._new_discharge_buffer()
-        route_network(self, q_t, discharge_array, None, thread_pool)
+        route_region(self, q_t, discharge_array, None, thread_pool)
         self.channel_state = q_t
 
         # generate dates since they cannot be copied from an external forcing file
@@ -366,7 +326,7 @@ class Router:
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
             q_array = self._new_discharge_buffer()
-            route_network(self, q_t, q_array, runoff, thread_pool)
+            route_region(self, q_t, q_array, runoff, thread_pool)
             if self.configs.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t
@@ -375,9 +335,7 @@ class Router:
                 self._ensemble_member_states.append(q_t.copy())
 
             if self.dt_discharge > self.dt_runoff:
-                # todo reduce to dt_discharge inside the kernel. That drops this resample pass and sizes the buffer to
-                # the output: 0.44 GB rather than 10.6 GB for a year of hourly routing on the Amazon, where the
-                # reshape-and-mean below costs 3.8 to 5.1 s on its own.
+                # todo reduce to dt_discharge inside the kernel?
                 self.logger.debug('Resampling dates and discharges to specified timestep')
                 q_array = q_array.reshape(
                     (q_array.shape[0], int(self.dt_total / self.dt_discharge), int(self.dt_discharge / self.dt_runoff))
@@ -402,8 +360,15 @@ class Router:
     # Dependency injection methods for users to overwrite default behaviors without subclassing
     ################################################
 
+    def _select_discharge_writer(self) -> None:
+        """Override user's discharge write if the output location is the devnull device"""
+        if not all(is_dev_null(f) for f in self.configs.discharge_files):
+            return
+        self.logger.warning('Discharge output is the null device: discharge will be routed and then discarded')
+        self._discharge_writer = null_writer
+        return
+
     def set_discharge_writer(self, func: WriteDischargesFn) -> Self:
-        """Set how discharge results are saved to disc. See ._discharge_writer for function signature. route()
-        replaces it with null_writer when every discharge output is the null device."""
+        """Set how discharge results are saved to disc. See ._discharge_writer for function signature"""
         self._discharge_writer = func
         return self

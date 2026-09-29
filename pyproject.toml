@@ -68,8 +68,6 @@ rr = "river_route._cli:main"
 
 [tool.ruff]
 line-length = 120
-# these exercise the unit hydrograph API that is not part of the current release
-extend-exclude = ["tests/ignored_test_*.py"]
 
 [tool.ruff.format]
 exclude = ["benchmarks/*"]

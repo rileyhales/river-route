@@ -23,7 +23,7 @@
   `cell_indexes['y_index']`.
 - The abstract bases of the runoff classes, `Runoff` and `BaseGridRunoff`, are in `runoff/bases.py` with the forms of
   runoff routing reads, `CatchmentRunoffVolumes` and `GridCellRunoff`, and their overloads of the routing stages
-  `get_river_catchment_runoff` and `add_catchment_runoff`. `runoff/Runoff.py` is removed, and `CatchmentRunoff`,
+  `get_river_forcing` and `add_river_forcing`. `runoff/Runoff.py` is removed, and `CatchmentRunoff`,
   `GridRunoff`, and `ECMWFGribReducedGrid` each have a module of their own.
 - Routing reads each river's grid cells directly into its forcing as the river is routed, as the C kernel of jsrr
   does, instead of first aggregating the runoff of 64 rivers at a time into scratch rows. One year of hourly ERA5 over
@@ -31,9 +31,21 @@
   `GridCellRunoff`'s `weight` is now each weight's volume per unit of its cell's runoff depth in float32, with the
   catchment area in it, and its `scale`, `cumulative`, and `force_positive` fields are removed: a file whose runoff
   is cumulative or clipped at zero is aggregated when it is read and routed as `CatchmentRunoffVolumes`, as a
-  resampled file already was. The pass stages `count_rivers_prepared_together` and `prepare_runoff_of_rivers` are
-  removed, `get_river_catchment_runoff` takes only the runoff and the river, and a new stage, `add_catchment_runoff`,
+  resampled file already was. The routing stages `count_rivers_prepared_together` and `prepare_runoff_of_rivers` are
+  removed, `get_river_forcing` takes only the runoff and the river, and a new stage, `add_river_forcing`,
   adds a river's catchment runoff into its forcing.
+- Threaded routing is named for its three levels: a region, the network given to `Router`, is divided into blocks,
+  contiguous index ranges of rivers, and the blocks are packed into jobs, one per thread. `router/_routing_passes.py`
+  is `router/_numba_kernels.py`, `Schedule` is `Job`, `route_scheduled_rivers` is `route_job`,
+  `Router.routing_jobs` is `Router.routing_blocks`, and `Network.routing_schedule` is `Network.routing_blocks`. In
+  `network/streams.py`, `assign_regions` is `assign_blocks` and `regions_to_layout` is `blocks_to_layout`, whose
+  keys `region_starts`, `region_stops`, `region_outlet`, and `n_regions` are `block_starts`, `block_stops`,
+  `block_outlet`, and `n_blocks`, and the `analyze_partitioning` keys `n_regions`, `largest_region`, and
+  `smallest_region` are `n_blocks`, `largest_block`, and `smallest_block`. The routing stages
+  `get_river_catchment_runoff`, `transform_catchment_runoff`, and `add_catchment_runoff` are `get_river_forcing`,
+  `transform_runoff`, and `add_river_forcing`.
+- The unit hydrograph transform is postponed past v3: `transform` accepts only `uniform`, and the
+  `uh_kernel_file`, `uh_state_init_file`, and `uh_state_final_file` configs are removed.
 - Removed `writers.parquet_writer` and the transpose that served it: `writers.to_time_major`,
   `writers.TRANSPOSE_TILE`, and `writers.PARQUET_WRITE_OPTIONS`. Write parquet with a custom writer, transposing the
   `(river, time)` discharge array yourself.
@@ -72,17 +84,18 @@
   passed to `Router` must be that class. The grid classes precompute a catchment runoff file with `aggregate_to_file`.
 - Each routing method is one module that routes a single river, chosen by the `coefficients` config through
   `ROUTING_METHOD_FOR_COEFFICIENTS`: `router/static_muskingum.py` and `router/dynamic_muskingum.py`. A method module
-  holds its parameters as a NamedTuple (`StaticMuskingum`, `DynamicMuskingum`), the `NETWORK_TYPES` it routes, a
-  `prepare_routing` that lays out each river and builds its parameters for the time steps, and the routine that
-  routes one river. The Router keeps them as `routing_method`, `routing_parameters`, and `layout`, in place of `c1`,
-  `c2`, `c3`, `c4`, `c4_dt`, `subdivisions`, `reach_indptr`, and `substeps`. This replaces the kernel registry, its
-  dispatchers, and `resolve_dispatcher`; options no method routes yet raise `NotImplementedError` before any runoff is
-  read. Dynamic coefficients route channel, catchment, and grid runoff on a standard network. Each Runoff
+  holds its parameters as a NamedTuple (`StaticMuskingum`, `DynamicMuskingum`), a `prepare_routing` that lays out
+  each river and builds its parameters for the time steps, and the routine that routes one river. The Router keeps
+  what `prepare_routing` builds as `routing_parameters` and `layout`, in place of `c1`, `c2`, `c3`, `c4`, `c4_dt`,
+  `subdivisions`, `reach_indptr`, and `substeps`. This replaces the kernel registry, its dispatchers, and
+  `resolve_dispatcher`. `Configs.validate_routing` raises `NotImplementedError` for options no method routes yet,
+  before any runoff is read, and `Configs._NETWORK_TYPES_FOR_COEFFICIENTS` lists the network types each
+  `coefficients` option routes. Dynamic coefficients route channel, catchment, and grid runoff on a standard network. Each Runoff
   class's `generator` yields what routing reads: `GridRunoff.generator` is the former `cell_reader`, and the
   former `reader`, which yields aggregated arrays, is `catchment_reader`. `CatchmentRunoff` raises
   `NotImplementedError` on a stabilized network. The kernels `static_vlateral` and `dynamic_vlateral` are renamed
   `static_runoff` and `dynamic_runoff`.
-- One numba pass, `route_scheduled_rivers` in `router/_routing_passes.py`, routes every combination, in place of the
+- One numba function, `route_job` in `router/_numba_kernels.py`, routes every combination, in place of the
   per-kernel wrappers `static_channel`, `static_runoff`, `static_grid`, and `dynamic_runoff` and the ~30 loose
   arguments each re-listed. It takes each river through stages, finding its catchment runoff, transforming it, and
   routing it, and each stage is a numba overload chosen by the type of its argument and registered next to that type.
@@ -110,9 +123,9 @@
 - Added the `routing_order` config, `'river'` (the default) or `'time'` (the only order before). River order routes
   each river's whole time series before the next river, solving that series eight steps per serial operation, and is
   6 to 8 times faster than time order on one thread and on 12. It has static channel, static vlateral, and dynamic
-  vlateral kernels, and a fused kernel that aggregates gridded runoff and routes it in one pass without building a
-  vlateral array. It routes concurrently on a `thread_pool` over the same regions as time order, packing the regions
-  into one pass per thread. It reads vlateral in either `(time, river)` layout or, when handed the transpose of a
+  vlateral kernels, and a fused kernel that aggregates gridded runoff as each river is routed without building a
+  vlateral array. It routes concurrently on a `thread_pool` over the same blocks as time order, packing the blocks
+  into one job per thread. It reads vlateral in either `(time, river)` layout or, when handed the transpose of a
   `(river, time)` array, one contiguous row per river. See the new Routing Kernels reference.
 - A discharge writer is handed the routed discharge as a C-order `(river, time)` array, which is the layout the
   kernels write in place, instead of the `(time, river)` array of earlier versions. `zarr_writer` and
@@ -143,7 +156,7 @@
   `alpha`, and `beta` attributes are removed: read them off the network, as `router.network.river_ids`. A custom
   discharge writer that read `router.river_ids` needs the new spelling. `Router._set_vectors_from_params`,
   `_set_connectivity_vectors`, `_set_region_schedule`, `_check_coefficient_stability`, and `_check_river_alignment`
-  are removed; the equivalents are `Network.routing_schedule` and `Network.check_stability`.
+  are removed; the equivalents are `Network.routing_blocks` and `Network.check_stability`.
 - `Network.stabilize(dt)` builds, in memory only, the stabilized network: every reach too long for `dt` is
   replaced by sub-reaches in series that each route stably at it, returned as the flat CSR arrays a kernel
   consumes. The network gains reaches rather than being divided up, hence `StabilizedNetwork`.
@@ -205,7 +218,7 @@
 - Threading happens only on a thread pool the caller passes; the package never creates one. Threads are a runtime
   resource, not a config. `Router.route(thread_pool=pool, threads=n)` uses a `ThreadPoolExecutor` as given and never
   shuts it down, so it can be shared with `RunoffGaussianGrid.vlateral(..., thread_pool=pool, threads=n)` and closed by the
-  caller's `with` block. `threads` sets how many regions the network is partitioned into when a pool is given;
+  caller's `with` block. `threads` sets how many jobs the region's blocks are packed into when a pool is given;
   without one, routing is single-threaded. `RunoffGaussianGrid.aggregate` and `RunoffGaussianGrid.to_dataset` take the same arguments.
   `Router.thread_pool()` is removed.
 - `river_route.router.writers` holds the discharge writers, beside the class whose io it is. It is not importable
@@ -259,7 +272,7 @@
 - Routing procedure is now selected by config keys rather than class names
     - `coeff` (`static` | `dynamic`)
     - `forcing` (`channel` | `vlateral`)
-    - `transform` (`uniform` | `unit_hydrograph`)
+    - `transform` (`uniform`)
     - `network` (`standard`| `expanded`).
 - **Removed** the `Muskingum`, `RapidMuskingum`, and `UnitMuskingum` classes
 - Added a capability-keyed kernel registry to dispatch the routing kernel from the resolved selectors.

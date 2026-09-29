@@ -200,7 +200,8 @@ def test_gridded_and_catchment_file_runoff_route_the_same(package: Path, manifes
 def test_threaded_routing_is_repeatable(willamette: Basin, tmp_path: Path) -> None:
     first = route(tmp_path, willamette.months, params_file=willamette.params_file, threads=4)
     second = route(tmp_path, willamette.months, params_file=willamette.params_file, threads=4)
-    assert len(first.router.routing_jobs) > 1, 'the basin was routed as one region, so no threads were used'
+    routing_blocks, _ = first.router.network.routing_blocks(threads=4)
+    assert len(routing_blocks) > 1, 'the basin was routed as one block, so no threads were used'
     for first_discharge, second_discharge in zip(first.discharge, second.discharge, strict=True):
         np.testing.assert_array_equal(first_discharge, second_discharge)
     np.testing.assert_array_equal(first.final_state, second.final_state)

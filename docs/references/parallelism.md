@@ -91,12 +91,12 @@ single-threaded result on your own hardware before keeping it.
 
 ### Multithreading matrix solvers
 
-**Summary**: A network in DFS computation order can be split into independent upstream regions that are routed
-concurrently, followed by the main stem on a single thread.
+**Summary**: A region in DFS computation order can be split into independent sub-watershed blocks, packed into one
+job per thread and routed concurrently, followed by the main stem on a single thread.
 
 `river-route` never creates threads on its own. Threads are a runtime resource, not a config, so pass a
-`ThreadPoolExecutor` and `threads`, the number of regions to split the network into, to `Router.route`. The same pool
-aggregates gaussian grid runoff, since that aggregation happens inside the routing passes.
+`ThreadPoolExecutor` and `threads`, the number of jobs to pack the region's blocks into, to `Router.route`. The same
+pool aggregates gaussian grid runoff, since that aggregation happens inside the jobs as each river is routed.
 
 ```python title="Threaded Routing"
 from concurrent.futures import ThreadPoolExecutor

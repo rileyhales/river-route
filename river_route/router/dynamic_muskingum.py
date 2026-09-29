@@ -9,14 +9,12 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 import numpy as np
 from numba.extending import overload
 
-from ._routing_passes import STANDARD_LAYOUT, Layout, add_catchment_runoff, is_argument_type, route_river
+from ._numba_kernels import STANDARD_LAYOUT, Layout, add_river_forcing, is_argument_type, route_river
 
 if TYPE_CHECKING:
     from ..network.Network import Network
 
-__all__ = ['NETWORK_TYPES', 'DynamicMuskingum', 'prepare_routing']
-
-NETWORK_TYPES = frozenset({'standard'})
+__all__ = ['DynamicMuskingum', 'prepare_routing']
 
 
 class DynamicMuskingum(NamedTuple):
@@ -71,7 +69,7 @@ def _route_river_with_dynamic_coefficients(
     if catchment_runoff is not None:
         for t in range(n_steps):
             work[t] = zero
-        add_catchment_runoff(catchment_runoff, np.float32(1.0), n_steps, 1, work)
+        add_river_forcing(catchment_runoff, np.float32(1.0), n_steps, 1, work)
     q = q_t[r]
     u_prev = inflow[0]
     downstream_inflow[0] += q

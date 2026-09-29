@@ -28,14 +28,15 @@ class Configs:
     """
     Accepts and validates every possible option that can be passed to a computation job.
     """
+
     # annotate file path fields with PathInput or PathList
     # _derive_path_sets() will detect them by inspecting class annotations
 
     # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
     coefficients: Literal['static', 'dynamic'] = 'static'
     forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
-    transform: Literal['uniform', 'unit_hydrograph'] = 'uniform'
-    network_type: Literal['standard', 'stabilized'] = 'standard'        # route as given, or add substeps/subcycles
+    transform: Literal['uniform'] = 'uniform'
+    network_type: Literal['standard', 'stabilized'] = 'standard'  # route as given, or add substeps/subcycles
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
     # Network and routing descriptor
@@ -61,21 +62,16 @@ class Configs:
     var_river_id: str = 'river_id'
     var_discharge: str = 'Q'
     var_grid_runoff: str = 'ro'
-    var_x: str = 'x'        # grid x dimension
-    var_y: str = 'y'        # grid y dimension
+    var_x: str = 'x'  # grid x dimension
+    var_y: str = 'y'  # grid y dimension
     var_cell: str = 'cell'  # ecmwf_grib cell dimension
     var_t: str = 'time'
 
-    # For runoff transform by unit hydrograph
-    uh_kernel_file: PathInput | None = None
-    uh_state_init_file: PathInput | None = None
-    uh_state_final_file: PathInput | None = None
-
     # Time options
-    dt_routing: int = 0      # Interval in seconds between calculating discharges, <= dt_runoff
-    dt_runoff: int = 0       # Interval in seconds between forcing values, >= dt_routing
-    dt_discharge: int = 0    # Interval in seconds between discharge outputs, >= dt_runoff
-    dt_total: int = 0        # Interval in seconds between total outputs, >= dt_discharge
+    dt_routing: int = 0  # Interval in seconds between calculating discharges, <= dt_runoff
+    dt_runoff: int = 0  # Interval in seconds between forcing values, >= dt_routing
+    dt_discharge: int = 0  # Interval in seconds between discharge outputs, >= dt_runoff
+    dt_total: int = 0  # Interval in seconds between total outputs, >= dt_discharge
     start_datetime: str = '1970-01-01'
 
     # Misc behavior that users may want to override
@@ -89,12 +85,17 @@ class Configs:
     _validated: bool = field(default=False, init=False, repr=False, compare=False)
 
     # special subset of auto-detected PathLists where the directory needs to exist, not the file
-    _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({'channel_state_final_file', 'uh_state_final_file'})
+    _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({'channel_state_final_file'})
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
     # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
     _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
+    # the network types the routing method of each coefficients option can route
+    _NETWORK_TYPES_FOR_COEFFICIENTS: ClassVar[dict[str, frozenset[str]]] = {
+        'static': frozenset({'standard', 'stabilized'}),
+        'dynamic': frozenset({'standard'}),
+    }
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -238,6 +239,7 @@ class Configs:
 
         Raises:
             ValueError, FileNotFoundError, NotADirectoryError: if any option is missing or invalid
+            NotImplementedError: if no routing method routes the chosen options yet
         """
         if not self.params_file:
             raise ValueError('params_file is required to route')
@@ -263,8 +265,6 @@ class Configs:
             if len(self.discharge_files) != 1:
                 raise ValueError('Channel routing requires exactly one entry in discharge_files')
         else:
-            if self.transform == 'unit_hydrograph' and not self.uh_kernel_file:
-                raise ValueError('uh_kernel_file is required when transform is unit_hydrograph')
             if not self.discharge_files:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             if not self.runoff_files:
@@ -278,6 +278,11 @@ class Configs:
             outputs = [f for f in self.discharge_files if not is_dev_null(f)]
             if len(set(outputs)) != len(outputs):
                 raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
+        # options that are consistent, but that no routing method routes yet
+        if self.network_type not in self._NETWORK_TYPES_FOR_COEFFICIENTS[self.coefficients]:
+            raise NotImplementedError(
+                f'{self.coefficients} coefficients cannot route a {self.network_type} network yet'
+            )
         object.__setattr__(self, '_validated', True)
         return self
 

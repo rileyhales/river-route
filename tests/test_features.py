@@ -75,11 +75,6 @@ REFUSED_CONFIGS = {
         ValueError,
         'channel_state_init_file is required',
     ),
-    'unit hydrographs need a kernel file': (
-        lambda basin, d: {'transform': 'unit_hydrograph'},
-        ValueError,
-        'uh_kernel_file is required',
-    ),
     'input files must exist': (lambda basin, d: {'params_file': d / 'missing.parquet'}, FileNotFoundError, 'not found'),
     'output folders must exist': (
         lambda basin, d: {'discharge_files': [d / 'missing' / 'q.zarr']},
@@ -168,21 +163,21 @@ def test_networks_refuse_broken_tables(breaks, message, willamette: Basin) -> No
 
 
 @pytest.mark.parametrize('threads', [1, 4])
-def test_the_routing_schedule_routes_every_river_once(threads: int, package: Path, manifest: dict) -> None:
+def test_the_routing_blocks_route_every_river_once(threads: int, package: Path, manifest: dict) -> None:
     network = rr.Network(package / manifest['runs']['static_standard']['configs']['params_file'])
-    jobs, cut_target = network.routing_schedule(threads=threads, concurrent=True)
+    blocks, cut_target = network.routing_blocks(threads=threads, concurrent=True)
     rivers = np.concatenate(
-        [np.arange(start, stop) for job in jobs for start, stop in zip(job[0], job[1], strict=True)]
+        [np.arange(start, stop) for block in blocks for start, stop in zip(block[0], block[1], strict=True)]
     )
     np.testing.assert_array_equal(np.sort(rivers), np.arange(network.size))
     downstream = network.downstream_indices
-    for starts, stops, outlet, region in jobs[:-1]:
-        assert starts.shape == (1,), 'a region is one contiguous block of rivers'
+    for starts, stops, outlet, block_number in blocks[:-1]:
+        assert starts.shape == (1,), 'a sub-watershed block is one contiguous range of rivers'
         members = np.arange(starts[0], stops[0])
         leaving = members[(downstream[members] < starts[0]) | (downstream[members] >= stops[0])]
-        np.testing.assert_array_equal(leaving, [outlet])  # only a region's outlet drains out of it
-        assert cut_target[region] == downstream[outlet]
-    assert (len(jobs) > 1) == (threads > 1)
+        np.testing.assert_array_equal(leaving, [outlet])  # only a block's outlet drains out of it
+        assert cut_target[block_number] == downstream[outlet]
+    assert (len(blocks) > 1) == (threads > 1)
 
 
 @pytest.mark.parametrize('dt', [3600, 900])
@@ -326,11 +321,7 @@ UNSUPPORTED_OPTIONS = {
     'dynamic coefficients on a stabilized network': (
         lambda basin: {'coefficients': 'dynamic', 'network_type': 'stabilized'},
         'cannot route a stabilized network',
-    ),
-    'the unit hydrograph transform': (
-        lambda basin: {'transform': 'unit_hydrograph', 'uh_kernel_file': basin.params_file},
-        'transform is not implemented',
-    ),
+    )
 }
 
 
