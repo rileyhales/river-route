@@ -2,7 +2,7 @@
 
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
 JSON file with `Configs.from_json`.
-All routing runs through `Router`. The procedure it runs is set by the selector keys (`coeff`, `forcing`,
+All routing runs through `Router`. The procedure it runs is set by the selector keys (`coefficients`, `forcing`,
 `transform`, `network_type`), and the required config keys depend on which selections you make.
 
 `Router` takes a `Configs` and nothing else. `Network` and the Runoff classes take the options they need as ordinary
@@ -11,8 +11,8 @@ them that way. `examples/config.json` below lists every option.
 
 ### Routing procedure selectors
 
-- `coeff` - `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha\*Q^beta
-  from columns `alpha`, `beta`, `x`). Default `'static'`.
+- `coefficients` - `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear
+  K = dynamicAlpha\*Q^dynamicBeta from columns `dynamicAlpha`, `dynamicBeta`, `x`). Default `'static'`.
 - `forcing` - `'channel'` (channel routing only, no inflows), or the form of the `runoff_files` whose runoff enters the
   rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
   `'grid'` (a grid with x and y dimensions, read by `GridRunoff`), or `'ecmwf_grib'` (ECMWF GRIB
@@ -61,10 +61,11 @@ Beyond the always-required keys above, additional keys are required depending on
   Time keys for forced procedures (`dt_total`, `dt_discharge`, `dt_runoff`, `dt_routing`, `start_datetime`)
   are resolved from the inputs where possible; see the [time options](time-options.md).
 
-**`coeff` selection** determines the required `params_file` columns:
+**`coefficients` selection** determines the required `params_file` columns:
 
-- `coeff: static` requires columns `k`, `x`
-- `coeff: dynamic` requires columns `k`, `x`, `alpha`, `beta` (the K formula uses `alpha`, `beta`, `x`, but a `k` column must still be present)
+- `coefficients: static` requires columns `k`, `x`
+- `coefficients: dynamic` requires columns `k`, `x`, `dynamicAlpha`, `dynamicBeta` (the K formula uses `dynamicAlpha`,
+  `dynamicBeta`, `x`, but a `k` column must still be present)
 
 The following table lists where each remaining key applies.
 
@@ -92,7 +93,7 @@ The following table lists where each remaining key applies.
 
 | Config Key               | Description                                            | Default                                       |
 |--------------------------|--------------------------------------------------------|-----------------------------------------------|
-| `coeff`                  | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
+| `coefficients`           | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
 | `forcing`                | Channel routing, or the form of the runoff files       | `'channel'`                                   |
 | `transform`              | Runoff transform: `'uniform'`                          | `'uniform'`                                   |
 | `network_type`           | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |

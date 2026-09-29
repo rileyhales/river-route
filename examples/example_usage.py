@@ -18,7 +18,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     runoff_files = sorted(list(Path(args.runoff_root).glob('year=*/*.zarr')))
-    discharge_dir = Path(os.devnull)         # must pass something to pass config validation
+    discharge_dir = Path(os.devnull)  # must pass something to pass config validation
     region_dir = Path(args.regions_root)
     params_file = region_dir / f'region={args.region}' / 'routing.parquet'
     grid_weights_file = region_dir / f'region={args.region}' / f'gridweights_ERA5_{args.region}.nc'
@@ -53,7 +53,4 @@ if __name__ == '__main__':
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()
     with pool_context as pool:
-        (
-            rr.Router(conf)
-            .route(thread_pool=pool, threads=args.threads)
-        )
+        rr.Router(conf).route(thread_pool=pool, threads=args.threads)

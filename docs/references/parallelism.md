@@ -32,7 +32,13 @@ prepare computations.
 
 ### Topological river sorting and Depth First Search (DFS)
 
-TBD
+The rivers of the params file must be in depth first search (DFS) order, a hard requirement of the data. A table
+in topological order has every river after all of the rivers upstream of it. A table in DFS order also has the rivers
+upstream of each river in the rows immediately before it, so every river's whole upstream watershed is one
+contiguous range of rows ending at that river. That is what lets a region be divided into blocks of contiguous
+rivers: a block needs nothing from outside its own range of rows, and a job is handed a plain index range. river-route
+never reorders the table, so the forcing, the channel state, and the routed discharge stay in the order of the file
+given. See the [File Schemas reference](io-file-schema.md#routing-parameters) for how to check a table.
 
 ### Splitting watershed subgraphs
 
@@ -72,8 +78,8 @@ discharge on millions of rivers and producing a 5 trillion data point simulation
 
 What you control is how much work you ask that kernel to do.
 
-1. **Choose the simplest routing procedure your problem needs.** `coeff: static` computes Muskingum coefficients
-   once and reuses them for every file with the same time steps. `coeff: dynamic` rebuilds them inside the kernel
+1. **Choose the simplest routing procedure your problem needs.** `coefficients: static` computes Muskingum coefficients
+   once and reuses them for every file with the same time steps. `coefficients: dynamic` rebuilds them inside the kernel
    on every substep. Only pay for dynamic coefficients when the application needs them. See the
    [config file reference](config-files.md#routing-procedure-selectors).
 2. **Use the largest stable routing time step.** Every river is routed at every routing step, so halving

@@ -298,7 +298,7 @@ wheels = [
 
 [[package]]
 name = "geopandas"
-version = "1.1.4"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
@@ -308,9 +308,9 @@ dependencies = [
     { name = "pyproj" },
     { name = "shapely" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/39/a9/0478b74a33aea66827c10baaf6025cb2a17e44b1c117533eecd3e977bb75/geopandas-1.1.4.tar.gz", hash = "sha256:06f2890a07e1a239047daa14b486a7c6ae5ce82dcf7405e13c46bf31f5d0dd66", size = 337445, upload-time = "2026-06-26T17:23:54.497Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/6b/079d42d468f6537b0e8ba04ad411d53fe6b03070801e5b85328b01d28772/geopandas-1.2.0.tar.gz", hash = "sha256:72425b0dec1b77122b1e00f72c2b3b91f320cf0331ae236d37e26865e8808628", size = 337713, upload-time = "2026-09-28T15:53:57.721Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/a8/bd530cc264e62ddbc1d1bb7225823992e6f2432c664693e9281bb6b9c359/geopandas-1.1.4-py3-none-any.whl", hash = "sha256:1a0c459cbdb1537cd154dafe6174be20d1760844b7f1c967dc8520b180f2e773", size = 343292, upload-time = "2026-06-26T17:23:53.112Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/26/10e1061c79b388621b7bae46fcd4942a8c62f960018adf4c38719e9e91ac/geopandas-1.2.0-py3-none-any.whl", hash = "sha256:948fd57df4f713697d5cce149333c0e4714965320c9f5ffa411666c577962eba", size = 368068, upload-time = "2026-09-28T15:53:55.62Z" },
 ]
 
 [[package]]
@@ -651,11 +651,11 @@ wheels = [
 
 [[package]]
 name = "networkx"
-version = "3.6.1"
+version = "3.7"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/76/3af777226b63a5e64a6b36b1ec5855c14e2b94a37096d4760e595fc43511/networkx-3.7.tar.gz", hash = "sha256:fd77a511bd90f39f3d016351345b52cf5319b813bdca01de3f755d3cca62e96a", size = 1866482, upload-time = "2026-09-21T16:45:16.974Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/cd/fe58041e9011f307c490e3e17dd48cc516448f7c698a3f2d9d9d65d7e6a8/networkx-3.7-py3-none-any.whl", hash = "sha256:e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0", size = 2142205, upload-time = "2026-09-21T16:45:14.609Z" },
 ]
 
 [[package]]
@@ -1020,6 +1020,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cfgrib" },
     { name = "dask" },
+    { name = "eccodes" },
     { name = "geopandas" },
     { name = "netcdf4" },
     { name = "networkx" },
@@ -1057,19 +1058,20 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "cfgrib", specifier = ">=0.9.15.1" },
-    { name = "dask", specifier = "==2026.8.0" },
-    { name = "geopandas", specifier = ">=1.0,<2" },
+    { name = "dask", specifier = ">=2026.8.0" },
+    { name = "eccodes", specifier = ">=2.48.0,<3" },
+    { name = "geopandas", specifier = ">=1.2.0,<2" },
     { name = "netcdf4", specifier = ">=1.6,<2" },
-    { name = "networkx", specifier = ">=3.0,<4" },
+    { name = "networkx", specifier = "==3.7,<4" },
     { name = "numba", specifier = ">=0.67,<1" },
-    { name = "numpy", specifier = "==2.5.3" },
-    { name = "pandas", specifier = "==3.0.6" },
+    { name = "numpy", specifier = ">=2.5.3,<3" },
+    { name = "pandas", specifier = ">=3.0.6,<4" },
     { name = "pyarrow", specifier = ">=25.0.1" },
-    { name = "scipy", specifier = "==1.18.1" },
+    { name = "scipy", specifier = ">=1.18.1,<2" },
     { name = "shapely", specifier = ">=2.0,<3" },
-    { name = "tqdm", specifier = "==4.70.1" },
-    { name = "xarray", specifier = "==2026.7.0" },
-    { name = "zarr", specifier = "==3.4.0" },
+    { name = "tqdm", specifier = ">=4.70.1,<5" },
+    { name = "xarray", specifier = ">=2026.7.0" },
+    { name = "zarr", specifier = ">=3.4.0,<4" },
 ]
 
 [package.metadata.requires-dev]

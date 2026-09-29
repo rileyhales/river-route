@@ -2,7 +2,7 @@
 
 ```mermaid
 graph TD
-    A[route method] --> B[validate config for coeff/forcing/network]
+    A[route method] --> B[validate config for coefficients/forcing/network_type]
     B --> C[build Network from params_file<br/>topology, k and x, partition]
     C --> D[read initial state]
     D --> E{forcing}
@@ -35,7 +35,7 @@ graph TD
 ```
 
 `Router.route()` first validates the required config keys and inflow source for the selected
-`coeff`, `forcing`, `transform`, and `network` before any routing data is read. It then builds its
+`coefficients`, `forcing`, `transform`, and `network_type` before any routing data is read. It then builds its
 [`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
 vectors, and the concurrent routing partition, and the routing method chosen by `coefficients` builds its
 parameters from them. Options no routing method supports yet raise `NotImplementedError` before any runoff is

@@ -25,8 +25,24 @@ These routing parameters typically come from preprocessing and calibration workf
 1. topology (`river_id`, `next_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
 
-!!! warning "Topological Ordering Warning"
-    Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
+!!! warning "Depth First Search Ordering Requirement"
+    Rows (rivers) ***must be sorted in depth first search (DFS) order***. This is a hard requirement of the data.
+    Each river comes after every river upstream of it, and the rivers upstream of a river are the rows immediately
+    before it, so every river's whole upstream watershed is one contiguous range of rows ending at that river.
+    Sorting upstream before downstream (topological order) is not enough: a table in topological order but not DFS
+    order breaks the division of the rivers into blocks that routing depends on.
+
+    river-route never reorders the parameter table, so every file with one entry per river (grid weights,
+    catchment runoff, channel state) must list the rivers in this same order. Check a table with
+
+    ```python
+    import river_route as rr
+
+    network = rr.Network('/path/to/params.parquet')
+    rr.network.streams.is_dfs_ordered(network.downstream_indices).all()
+    ```
+
+    `examples/migrate_v2_to_v3.py` sorts a table into DFS order along with the files that follow it.
 
 ## Catchment Runoff Files
 
@@ -129,9 +145,9 @@ routed with `grid_accumulation_type` cumulative.
 cells on each row. Its `cell_polygons` are the area each cell represents, one polygon per cell of the
 world in cell order: a box of longitude and latitude halfway to the cells beside it and between latitude edges that
 give each row of cells the area of its gaussian quadrature weight, in two parts on either edge of the map for the
-cells centered on 180 degrees. `river_route.runoff.reduced_grid_weights` intersects those boxes with the catchments,
-and `examples/reduced_grid_weights.py` saves the cells of the world and builds the weight table of every region. Its weight table has the columns of the table above with `cell_index`, the position of the cell in the
-values of a GRIB message, in place of `x_index` and `y_index`.
+cells centered on 180 degrees. `river_route.runoff.reduced_grid_weights` intersects those boxes with the catchments.
+Its weight table has the columns of the table above with `cell_index`, the position of the cell in the values of a
+GRIB message, in place of `x_index` and `y_index`.
 
 ## Output Files
 

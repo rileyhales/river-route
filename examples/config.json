@@ -1,7 +1,8 @@
 {
-  "coeff": "static",
+  "coefficients": "static",
   "forcing": "channel",
   "transform": "uniform",
+  "network_type": "standard",
   "params_file": "",
   "runoff_files": [],
   "grid_weights_file": "",

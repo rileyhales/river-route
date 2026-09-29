@@ -11,12 +11,12 @@ Muskingum-family routing at watershed scale.
 All routing runs through `Router`. The routing procedure is described by config selector keys,
 which together choose the kernel:
 
-| Key         | Options                                                                                                                                                            |
-|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `coeff`     | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = alpha*Q^beta from `alpha`,`beta`,`x`). Default `static`.                                  |
-| `forcing`   | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                     |
-| `transform` | `uniform` (the default and only option). Only read when `forcing` is not `channel`.                                                                                |
-| `network`   | `standard` (one reach per river, the default).                                                                                                                     |
+| Key            | Options                                                                                                                                                                  |
+|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `coefficients` | `static` (constant Muskingum K from `k`,`x`) or `dynamic` (nonlinear K = dynamicAlpha*Q^dynamicBeta from `dynamicAlpha`,`dynamicBeta`,`x`). Default `static`.            |
+| `forcing`      | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                           |
+| `transform`    | `uniform` (the default and only option). Only read when `forcing` is not `channel`.                                                                                      |
+| `network_type` | `standard` (one reach per river, the default) or `stabilized` (every river routed stably at `dt_routing` with sub-reaches or substeps).                                  |
 
 A combination with no kernel yet raises `NotImplementedError` naming it and listing those that exist.
 
@@ -95,14 +95,5 @@ Subset a parameter table, and its grid weight table, to one river and everything
 river becomes the outlet of the subset.
 
 ```bash
-rr subset 12345 params.parquet params_subset.parquet --weights weights.nc --out-weights weights_subset.nc
-```
-
-## Testing
-
-`pytest` is not a required dependency. You need to install `pytest` separately to run tests.
-
-```bash
-./tests/download_test_data.sh
-pytest tests -v -s
+rr subset 12345 --params params.parquet --out-params params_subset.parquet --weights weights.nc --out-weights weights_subset.nc
 ```

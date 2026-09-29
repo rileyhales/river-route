@@ -370,7 +370,9 @@ class Configs:
         if self.coefficients == 'dynamic':
             for column in ('dynamicAlpha', 'dynamicBeta'):
                 if column not in params_df.columns:
-                    raise ValueError(f'{self.params_file} missing {column} column required when coeff is dynamic')
+                    raise ValueError(
+                        f'{self.params_file} missing {column} column required when coefficients is dynamic'
+                    )
                 if params_df[column].isna().any():
                     raise ValueError(f'{self.params_file} {column} column contains null values')
                 if not pd.api.types.is_numeric_dtype(params_df[column]):

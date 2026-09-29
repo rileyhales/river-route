@@ -7,19 +7,19 @@
 All routing runs through `rr.Router`. You describe the routing procedure with config selector keys,
 which together choose the kernel.
 
-| Selector    | Options                                                                                                                                                       | Default      |
-|-------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
-| `coeff`     | `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = alpha*Q^beta from columns `alpha`, `beta`, `x`).                        | `'static'`   |
-| `forcing`   | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`. | `'channel'`  |
-| `transform` | `'uniform'`, the only option. Only read when `forcing` is not `'channel'`.                                                                                    | `'uniform'`  |
-| `network`   | `'standard'` (one reach per river).                                                                                                                           | `'standard'` |
+| Selector       | Options                                                                                                                                                            | Default      |
+|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| `coefficients` | `'static'` (constant Muskingum K from columns `k`, `x`) or `'dynamic'` (nonlinear K = dynamicAlpha*Q^dynamicBeta from columns `dynamicAlpha`, `dynamicBeta`, `x`). | `'static'`   |
+| `forcing`      | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`.                          | `'channel'`  |
+| `transform`    | `'uniform'`, the only option. Only read when `forcing` is not `'channel'`.                                                                                         | `'uniform'`  |
+| `network_type` | `'standard'` (one reach per river) or `'stabilized'` (every river routed stably at `dt_routing` with sub-reaches or substeps).                                     | `'standard'` |
 
 A combination with no kernel yet raises `NotImplementedError` naming it and listing those that exist.
 
 ```python
 import river_route as rr
 
-configs = rr.Configs.from_json("/path/to/config.json")  # sets coeff, forcing, network, and the other options
+configs = rr.Configs.from_json("/path/to/config.json")  # sets coefficients, forcing, network_type, and the other options
 rr.Router(configs).route()
 ```
 

@@ -15,8 +15,10 @@ This tutorial routes catchment runoff (`forcing: catchment`).
 
 - **VPU** (Vector Processing Unit): a named group of catchments and channels forming a complete routing domain.
 - **Catchment**: a subunit of a watershed. Water enters at one upstream location and exits at exactly one outlet.
-- **Topological order**: rivers sorted so that every upstream segment appears before all downstream segments.
-  Required by `river-route` — the routing params file must be in topological order.
+- **Depth first search (DFS) order**: rivers sorted so that each river comes after every river upstream of it,
+  and the rivers upstream of a river are the rows immediately before it. Every river's upstream watershed is then
+  one contiguous range of rows ending at that river. A hard requirement of `river-route`: the routing params file
+  must be in DFS order. Sorting upstream before downstream (topological order) is not enough.
 
 ## Required Files
 
@@ -39,7 +41,9 @@ The routing parameters parquet must contain at minimum these columns:
 | `k`             | Muskingum K — travel time (seconds); typically channel length / wave speed |
 | `x`             | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
 
-Rows must be in **topological order**: all upstream segments before their downstream neighbors.
+Rows must be in **DFS order**: every river's upstream rivers are the rows immediately before it. Every file with
+one entry per river, such as the catchment runoff and channel state files, lists the rivers in this same order. See
+the [File Schemas reference](../references/io-file-schema.md#routing-parameters) for how to check a table.
 
 ## Config File
 
