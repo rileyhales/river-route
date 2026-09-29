@@ -7,6 +7,11 @@
 
 ## Router Class Changes
 
+!!! note
+    This is the historical v1 → v2 guide, kept as written. In **v3** the `Muskingum`, `RapidMuskingum`, and
+    `UnitMuskingum` classes below were removed in favor of one `Router`. See the
+    [v2 to v3 migration guide](v2-to-v3.md) for the v3 replacements.
+
 The `Muskingum` class has been renamed and is now supplemented with routing options.
 
 | v1 Class    | v2 Replacement   | Use Case                                           |

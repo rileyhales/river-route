@@ -1,38 +1,56 @@
 ## Watershed Description Files
 
-You can get example inputs from the GEOGLOWS River Forecast System available on AWS S3 at
-[s3://geoglows-v2/routing-test-data.zip/](https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip).
+You can get example inputs from the GEOGLOWS River Forecast System available on AWS S3 at [s3://geoglows-v2/routing-test-data.zip/](https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip).
 
 ### Routing Parameters
 
-```yaml
-params_file: '/path/to/params.parquet'
+```json
+{
+  "params_file": "/path/to/params.parquet"
+}
 ```
 
 The routing parameters file is a parquet file. It has 1 row per river in the watershed.
-Required for all routers (`Muskingum`, `RapidMuskingum`, `UnitMuskingum`):
+Required for all routing:
 
-| Column                | Data Type | Description                                                |
-|-----------------------|-----------|------------------------------------------------------------|
-| `river_id`            | integer   | Unique ID of a river segment                               |
-| `downstream_river_id` | integer   | ID of downstream river segment, or `-1` for outlet reaches |
-| `k`                   | float     | Muskingum `k` parameter (length / velocity)                |
-| `x`                   | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
+| Column          | Data Type | Description                                                |
+|-----------------|-----------|------------------------------------------------------------|
+| `river_id`      | integer   | Unique ID of a river segment                               |
+| `next_river_id` | integer   | ID of downstream river segment, or `-1` for outlet reaches |
+| `k`             | float     | Muskingum `k` parameter (length / velocity)                |
+| `x`             | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
 
 These routing parameters typically come from preprocessing and calibration workflows:
 
-1. topology (`river_id`, `downstream_river_id`) from vector network processing
+1. topology (`river_id`, `next_river_id`) from vector network processing
 2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
 
-!!! warning "Topological Ordering Warning"
-    Rows (rivers) ***must be sorted in topological order*** from upstream to downstream.
+!!! warning "Depth First Search Ordering Requirement"
+    Rows (rivers) ***must be sorted in depth first search (DFS) order***. This is a hard requirement of the data.
+    Each river comes after every river upstream of it, and the rivers upstream of a river are the rows immediately
+    before it, so every river's whole upstream watershed is one contiguous range of rows ending at that river.
+    Sorting upstream before downstream (topological order) is not enough: a table in topological order but not DFS
+    order breaks the division of the rivers into blocks that routing depends on.
+
+    river-route never reorders the parameter table, so every file with one entry per river (grid weights,
+    catchment runoff, channel state) must list the rivers in this same order. Check a table with
+
+    ```python
+    import river_route as rr
+
+    network = rr.Network('/path/to/params.parquet')
+    rr.network.streams.is_dfs_ordered(network.downstream_indices).all()
+    ```
+
+    `examples/migrate_v2_to_v3.py` sorts a table into DFS order along with the files that follow it.
 
 ## Catchment Runoff Files
 
-You need a time series of per-catchment runoff to be routed. There are 2 ways to provide it:
+You need a time series of per-catchment runoff to be routed. It is given as `runoff_files`, read in the form `forcing` names:
 
-1. Pre-aggregated catchment files (`qlateral_files`)
-2. Gridded runoff depths with a weight table (`grid_runoff_files` + `grid_weights_file`)
+1. `catchment`: files already aggregated to catchments
+2. `grid`: gridded runoff depths with x and y dimensions, aggregated with a weight table (`grid_weights_file`)
+3. `ecmwf_grib`: ECMWF GRIB files of runoff depths on a reduced gaussian grid, aggregated with a weight table
 
 !!! warning "Runoff Depths Warning"
     There are many projections for grid cells, different names of variables, various file formats, and units of the
@@ -41,26 +59,45 @@ You need a time series of per-catchment runoff to be routed. There are 2 ways to
 
 ### Pre-aggregated Catchment Files (recommended)
 
-```yaml
-qlateral_files:
-  - '/path/to/catchment_runoff.nc'
+```json
+{
+  "forcing": "catchment",
+  "runoff_files": [
+    "/path/to/catchment_runoff.nc"
+  ]
+}
 ```
 
 !!! note "Ordering River IDs"
     The `river_id` values **must** be the same values and order as in the routing parameters
 
-Catchment runoff is given as netcdf with 2 dimensions, `time` and `river_id`. The `river_id` dimension **must** contain
-exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters file. It
-should have 1 data variable named `qlateral` which is an array of shape `(time, river_id)` of dtype float.
-`RapidMuskingum` expects volumes (m³) and `UnitMuskingum` expects depths (m).
+Catchment runoff is given as netcdf with 2 dimensions, `river_id` and `time`, in that order, so each river's series is
+contiguous and is read straight into the river major arrays the router works in. The `river_id` dimension **must**
+contain exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters
+file. The names and the order are fixed and cannot be configured:
+
+| Variable           | Dimensions           | Description                                                                 |
+|--------------------|----------------------|-----------------------------------------------------------------------------|
+| `catchment_runoff` | `(river_id, time)`   | Incremental runoff of each catchment per step, as a volume or a depth       |
+| `catchment_area`   | `(river_id,)`        | Area of each catchment in m², the factor between depths and volumes         |
+
+The `units` attribute of `catchment_runoff` is required and says which form it takes: `m3` for volumes, or a depth unit
+(`m` or `mm`). Depths and volumes are equivalent: routing uses volumes, so depths are converted to meters and
+multiplied by `catchment_area` when they are read. `catchment_runoff` names the area variable with the CF attribute
+`cell_measures = "area: catchment_area"`. `Runoff.to_netcdf` writes this schema, and the grid runoff classes write it
+from their grids with `aggregate_to_file`.
 
 ### Gridded Runoff Depths
 
-```yaml
-grid_runoff_files:
-  - '/path/to/grid1.nc'
-  - '/path/to/grid2.nc'
-grid_weights_file: '/path/to/weight_table.nc'
+```json
+{
+  "forcing": "grid",
+  "runoff_files": [
+    "/path/to/grid1.nc",
+    "/path/to/grid2.nc"
+  ],
+  "grid_weights_file": "/path/to/weight_table.nc"
+}
 ```
 
 !!! note "Ordering River IDs"
@@ -83,47 +120,50 @@ The grid weights netCDF has the following variables:
 | `area_sqm`   | float     | Area of the grid cell–catchment overlap in square meters                       |
 | `proportion` | float     | Fraction of catchment area covered by this grid cell, sums to 1.0 per river_id |
 
+### Reduced Gaussian Grid Runoff Depths
+
+```json
+{
+  "forcing": "ecmwf_grib",
+  "runoff_files": [
+    "/path/to/ro_20260927_00z_cf.grib"
+  ],
+  "grid_weights_file": "/path/to/gridweights_O1280.nc",
+  "grid_accumulation_type": "cumulative"
+}
+```
+
+Runoff depths are given as ECMWF GRIB files on a global reduced gaussian grid, such as the octahedral O1280 grid
+of the IFS. This forcing is specialized to that format; runoff in any other form must be prepared as `catchment` or
+`grid` forcing. Every message whose shortName is
+`var_grid_runoff` (default `'ro'`) is read with eccodes as one time step, in the order of the files and of their
+messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the weight table
+and the routing is left to the caller. IFS forecast runoff accumulates from the start of the forecast, so it is
+routed with `grid_accumulation_type` cumulative.
+
+`river_route.runoff.ReducedGaussianGrid.from_grib` reads the grid of a file from its metadata: `N` and the number of
+cells on each row. Its `cell_polygons` are the area each cell represents, one polygon per cell of the
+world in cell order: a box of longitude and latitude halfway to the cells beside it and between latitude edges that
+give each row of cells the area of its gaussian quadrature weight, in two parts on either edge of the map for the
+cells centered on 180 degrees. `river_route.runoff.reduced_grid_weights` intersects those boxes with the catchments.
+Its weight table has the columns of the table above with `cell_index`, the position of the cell in the values of a
+GRIB message, in place of `x_index` and `y_index`.
+
 ## Output Files
 
 ### Routed Discharge
 
-Routed discharge outputs are given in a netCDF file with 2 dimensions: `time` and `river_id`. It will
-have 1 variable named `Q` which is an array of shape `(time, river_id)` of dtype float.
+Routed discharge is written by `river_route.router.writers.zarr_writer` unless another writer is set, to a zarr
+store with 2 dimensions: `river_id` and `time`. It has 1 variable named `Q` of shape `(river_id, time)` and dtype
+float32, chunked so that each chunk holds every time step of a block of rivers.
 
-You can change the structure of the output file by overriding the default write function.
-See the [Advanced Uses](../tutorial/advanced.md) page for more information.
+The values are rounded to `writers.ZARR_KEEPBITS` mantissa bits, a relative error of at most `2^-13`, and each chunk
+is compressed with `writers.ZARR_COMPRESSOR`, Blosc lz4 with bitshuffle. On a year of the Amazon that is 2.71x
+smaller than the raw array and faster to write than storing it uncompressed, since less of it reaches the disk.
 
-## Initial and Final States
+The river dimension comes first in every array format, because that is the layout the kernels write in place: each
+river's whole series is contiguous. That is also the layout a writer is handed, as a C-order `(river, time)` array,
+so nothing is transposed on the way to the file. Writing `(time, river_id)` instead costs about twice the kernel time
+on a large network, since each river's series then has to be transposed out in blocks.
 
-```yaml
-channel_state_init_file: '/path/to/initial.parquet'
-channel_state_final_file: '/path/to/final.parquet'
-```
-
-State information is stored in parquet files. Muskingum routing solves for river discharge at time `t+1`
-as a function of inflow at time `t` and `t+1`, and discharge at time `t`.
-
-The parquet state file must contain 1 column in river order:
-
-| Column | Description           |
-|--------|-----------------------|
-| `Q`    | River discharge state |
-
-## UnitMuskingum UH State Files (Optional)
-
-```yaml
-uh_kernel_file: '/path/to/kernel.npz'
-uh_state_init_file: '/path/to/state.parquet'
-uh_state_final_file: '/path/to/final_state.parquet'
-```
-
-`UnitMuskingum` reads a pre-computed convolution kernel and can optionally warm-start the UH
-state from a previous run. The kernel is a scipy sparse npz file and the state files are parquet,
-both with shape `(n_basins, n_time_steps)`, one row per basin.
-
-- `uh_kernel_file`: the unit hydrograph kernel (scipy sparse npz). Required for `UnitMuskingum`. Note
-  that the kernel depends on `tc`, `area`, **and the routing timestep**.
-- `uh_state_init_file`: warm-start the UH rolling state buffer from a prior run.
-  Note, the **state depends on the routing timestep**.
-- `uh_state_final_file`: path to write the final UH state after routing completes,
-  for use as `uh_state_init_file` in a subsequent run.
+`river_route.router.writers.netcdf_writer` writes the same `(river_id, time)` layout to an uncompressed netCDF file.

@@ -1,51 +1,23 @@
 import argparse
-import sys
 
-from .routers import Muskingum, RapidMuskingum, UnitMuskingum
-
-ROUTERS = {
-    'Muskingum': Muskingum,
-    'RapidMuskingum': RapidMuskingum,
-    'UnitMuskingum': UnitMuskingum,
-}
-
-
-def _add_config_arg(subparser: argparse.ArgumentParser) -> None:
-    subparser.add_argument('config', type=str, help='Path to routing configuration file')
-
-
-def _route(args):
-    """Run routing from a config file using the router specified by --router."""
-    router_class = ROUTERS.get(args.router)
-    if router_class is None:
-        print(f'Unknown router: {args.router!r}. Must be one of: {", ".join(ROUTERS)}')
-        sys.exit(1)
-
-    router_class(args.config).route()
-
+from .configs import Configs
+from .network.streams import subset_configs_to_river
+from .router import Router
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        prog='rr',
-        description='river-route: vectorized Muskingum river routing',
-    )
+    parser = argparse.ArgumentParser(prog='rr', description='river-route: configurable Muskingum river routing')
     subparsers = parser.add_subparsers(dest='command')
 
-    route = subparsers.add_parser('route', help='Run routing from a config file with a specified router')
-    _add_config_arg(route)
-    route.add_argument('--router', type=str, required=True,
-                       choices=list(ROUTERS.keys()),
-                       help='Router class to use (Muskingum, RapidMuskingum, or UnitMuskingum)')
+    route = subparsers.add_parser('route', help='Run routing from a config file')
+    route.add_argument('config', type=str, help='Path to routing configuration file (JSON)')
 
-    channel = subparsers.add_parser('Muskingum', help='Channel-only Muskingum routing (no lateral inflow)')
-    _add_config_arg(channel)
-
-    rapid = subparsers.add_parser('RapidMuskingum', help='RAPID-style Muskingum routing with lateral runoff')
-    _add_config_arg(rapid)
-
-    unit = subparsers.add_parser('UnitMuskingum', help='Unit hydrograph transform then Muskingum routing')
-    _add_config_arg(unit)
+    subset = subparsers.add_parser('subset', help='Subset a parameter table and optionally its grid weights')
+    subset.add_argument('river', type=int, help='river_id to subset to; it becomes the outlet')
+    subset.add_argument('--params', type=str, default=None, help='Path to the full parameters parquet')
+    subset.add_argument('--out-params', type=str, default=None, help='Path to write the subset parameters parquet')
+    subset.add_argument('--weights', type=str, default=None, help='Path to the full grid weights netCDF')
+    subset.add_argument('--out-weights', type=str, default=None, help='Path to write the subset grid weights netCDF')
 
     args = parser.parse_args()
 
@@ -54,6 +26,19 @@ def main():
         return
 
     if args.command == 'route':
-        _route(args)
-    else:
-        ROUTERS[args.command](args.config).route()
+        if args.config is None:
+            route.error('Missing required argument: config')
+        Router(Configs.from_json(args.config)).route()
+
+    if args.command == 'subset':
+        if (args.params is None) != (args.out_params is None):
+            subset.error('--params and --out-params are given together: one is useless without the other')
+        if (args.weights is None) != (args.out_weights is None):
+            subset.error('--weights and --out-weights are given together: one is useless without the other')
+        if (args.params is None) and (args.weights is None):
+            subset.error('At least one of --params or --weights must be given to subset')
+        subset_configs_to_river(args.river, args.params, args.out_params, args.weights, args.out_weights)
+
+
+if __name__ == '__main__':
+    main()

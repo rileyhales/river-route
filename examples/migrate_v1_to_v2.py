@@ -24,16 +24,7 @@ def convert_grid_weights(csv_path: str, output_path: str) -> None:
     csv_path: Path to the v1 grid weights CSV.
     output_path: Where to write the v2 netCDF file.
     """
-    df = (
-        pd
-        .read_csv(csv_path)
-        .rename(columns={
-            'lon_index': 'x_index',
-            'lat_index': 'y_index',
-            'lon': 'x',
-            'lat': 'y', }
-        )
-    )
+    df = pd.read_csv(csv_path).rename(columns={'lon_index': 'x_index', 'lat_index': 'y_index', 'lon': 'x', 'lat': 'y'})
 
     if 'proportion' not in df.columns:
         if 'area_sqm' not in df.columns:
@@ -42,10 +33,7 @@ def convert_grid_weights(csv_path: str, output_path: str) -> None:
                 'Add an "area_sqm" or "proportion" column manually.'
             )
         total_area = (
-            df[['river_id', 'area_sqm']]
-            .groupby('river_id')
-            .sum()
-            .rename(columns={'area_sqm': 'area_sqm_total'})
+            df[['river_id', 'area_sqm']].groupby('river_id').sum().rename(columns={'area_sqm': 'area_sqm_total'})
         )
         df = df.merge(total_area, left_on='river_id', right_index=True, how='left')
         df['proportion'] = df['area_sqm'] / df['area_sqm_total']
@@ -56,13 +44,11 @@ def convert_grid_weights(csv_path: str, output_path: str) -> None:
             'river_id': ('index', df['river_id'].to_numpy(dtype=np.int64)),
             'x_index': ('index', df['x_index'].to_numpy(dtype=np.int64)),
             'y_index': ('index', df['y_index'].to_numpy(dtype=np.int64)),
-            'x': ('index', df['x'].to_numpy(dtype=np.float64)),
-            'y': ('index', df['y'].to_numpy(dtype=np.float64)),
-            'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float64)),
-            'proportion': ('index', df['proportion'].to_numpy(dtype=np.float64)),
+            'x': ('index', df['x'].to_numpy(dtype=np.float32)),
+            'y': ('index', df['y'].to_numpy(dtype=np.float32)),
+            'area_sqm': ('index', df['area_sqm'].to_numpy(dtype=np.float32)),
+            'proportion': ('index', df['proportion'].to_numpy(dtype=np.float32)),
         },
-        attrs={
-            'description': 'proportions of runoff cells that intersect catchments for use with river-route',
-        },
+        attrs={'description': 'proportions of runoff cells that intersect catchments for use with river-route'},
     )
     ds.to_netcdf(output_path)
