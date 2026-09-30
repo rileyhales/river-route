@@ -3,7 +3,7 @@
   "forcing": "channel",
   "transform": "uniform",
   "network_type": "standard",
-  "params_file": "",
+  "network_file": "",
   "runoff_files": [],
   "grid_weights_file": "",
   "grid_accumulation_type": "incremental",

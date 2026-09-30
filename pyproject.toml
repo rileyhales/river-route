@@ -25,16 +25,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
-    "cfgrib>=0.9.15.1",
     "dask>=2026.8.0",
     "eccodes>=2.48.0,<3",
     "geopandas>=1.2.0,<2",
     "netcdf4>=1.6,<2",
-    "networkx==3.7,<4",
     "numba>=0.67,<1",
     "numpy>=2.5.3,<3",
     "pandas>=3.0.6,<4",
     "pyarrow>=25.0.1",
+    "pyproj>=3.7.2,<4",
     "scipy>=1.18.1,<2",
     "shapely>=2.0,<3",
     "tqdm>=4.70.1,<5",

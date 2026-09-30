@@ -1,7 +1,7 @@
 ## Routing Runoff Ensembles
 
 Ensemble routing means running multiple runoff members over the same period using the same
-routing parameters and initial conditions. The main difference from sequential single-member
+network file and initial conditions. The main difference from sequential single-member
 routing is state handling:
 
 - In sequential routing, each run initializes from the previous run's final state.
@@ -48,7 +48,7 @@ import river_route as rr
 
 
 def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file):
-    # router: the Router doing the routing, which provides river_ids and the configs options
+    # router: the Router doing the routing, which provides router.network.river_ids and the router.configs options
     # dates: datetime array for the columns of the discharge array
     # discharge_array: routed flows, C-order with shape (river_id, time)
     # discharge_file: the path to the output file provided by your config file
@@ -61,11 +61,11 @@ def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_
     member_number = os.path.basename(runoff_file)
 
     # option 1
-    init_values = df.loc['2023-10-01 12:00:00'].T  # for if you know the exact time step to use
+    init_values = df.loc['2023-10-01 12:00:00'].to_frame(name='Q')  # for if you know the exact time step to use
     init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
 
     # option 2
-    init_values = df.iloc[24, :].T  # for if you know the number of time steps after initialization to use
+    init_values = df.iloc[24].to_frame(name='Q')  # for if you know the number of time steps after initialization
     init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
 
     # continue with writing the full outputs

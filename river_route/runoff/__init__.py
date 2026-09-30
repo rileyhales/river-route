@@ -1,9 +1,8 @@
 from .bases import BaseGridRunoff, CatchmentRunoffVolumes, GridCellRunoff, Runoff
 from .CatchmentRunoff import CatchmentRunoff
-from .ECMWFGribReducedGrid import ECMWFGribReducedGrid
+from .ECMWFGribReducedGrid import ECMWFGribReducedGrid, ReducedGaussianGrid
 from .GridRunoff import GridRunoff
 from .weights import (
-    ReducedGaussianGrid,
     cell_xy_from_regular_grid,
     compute_voronoi_catchment_intersects,
     grid_weights,

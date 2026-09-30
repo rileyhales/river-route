@@ -1,12 +1,13 @@
 """
-Convert river-route v2 inputs to v3 inputs. v3 requires the rivers of the params file in depth-first search (DFS)
-order: every river's upstream rivers are the rows immediately before it, so each river is the last row of the
-contiguous range of rows holding its whole upstream watershed. v2 only required upstream before downstream, so a v2
-params file that is not in DFS order is reordered, and every file with one row per river (grid weights, qlateral
-files, channel state files) is converted in that same river order so they stay aligned with the params file.
+Convert river-route v2 inputs to v3 inputs. The v2 params file becomes a v3 network file, whose columns are camelCase
+and whose rivers are in depth-first search (DFS) order: every river's upstream rivers are the rows immediately before
+it, so each river is the last row of the contiguous range of rows holding its whole upstream watershed, which its
+riverIndex and upstreamCount columns give. v2 only required upstream before downstream, so a v2 params file that is
+not in DFS order is reordered, and every file with one row per river (grid weights, qlateral files, channel state
+files) is converted in that same river order so they stay aligned with the network file.
 
     python examples/migrate_v2_to_v3.py \
-        --params v2/params.parquet --out-params v3/params.parquet \
+        --params v2/params.parquet --out-network v3/network.parquet \
         --weights v2/weights.nc --out-weights v3/weights.nc \
         --qlateral v2/qlateral_2020.nc v2/qlateral_2021.nc --out-catchment-runoff-dir v3/ \
         --channel-state v2/state.parquet --out-channel-state v3/state.parquet \
@@ -25,12 +26,14 @@ import xarray as xr
 import river_route as rr
 
 V2_UNIT_HYDROGRAPH_KEYS = ('uh_kernel_file', 'uh_state_init_file', 'uh_state_final_file')
+V2_TO_V3_COLUMNS = {'river_id': 'riverId', 'downstream_river_id': 'nextRiverId', 'k': 'muskingumK', 'x': 'muskingumX'}
 
 
-def dfs_order(river_ids: np.ndarray, next_river_ids: np.ndarray) -> np.ndarray:
+def dfs_order(river_ids: np.ndarray, next_river_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     The positions of the rivers in DFS order: each river after all of its upstream rivers, which are the rows
-    immediately before it. Upstream rivers and basin outlets keep their original relative order.
+    immediately before it. Upstream rivers and basin outlets keep their original relative order. Also returns the
+    number of rivers upstream of each river in that order, its upstreamCount.
 
     river_ids: (n,) id of each river
     next_river_ids: (n,) id of the river each drains into, negative at a basin outlet
@@ -40,12 +43,12 @@ def dfs_order(river_ids: np.ndarray, next_river_ids: np.ndarray) -> np.ndarray:
         raise ValueError('river_ids and next_river_ids must have the same length')
     position = pd.Series(np.arange(n), index=river_ids)
     if not position.index.is_unique:
-        raise ValueError('river_id values must be unique')
+        raise ValueError('riverId values must be unique')
     is_outlet = next_river_ids < 0
     downstream = np.full(n, n, dtype=np.int64)  # n is a root that every basin outlet drains into
     downstream[~is_outlet] = position.reindex(next_river_ids[~is_outlet]).to_numpy(dtype=float, na_value=-1)
     if np.any(downstream < 0):
-        raise ValueError('next_river_id values reference ids not present in river_id')
+        raise ValueError('nextRiverId values reference ids not present in riverId')
 
     upstream = np.argsort(downstream, kind='stable')  # every river, grouped by the river it drains into
     indptr = np.concatenate(([0], np.cumsum(np.bincount(downstream, minlength=n + 1))))
@@ -53,6 +56,8 @@ def dfs_order(river_ids: np.ndarray, next_river_ids: np.ndarray) -> np.ndarray:
     stack = np.empty(n + 1, dtype=np.int64)
     stack[0], depth = n, 1
     order = np.empty(n, dtype=np.int64)
+    upstream_count = np.empty(n, dtype=np.int64)
+    first_row_upstream = np.zeros(n + 1, dtype=np.int64)  # the row the first river of each river's watershed takes
     emitted = 0
     # each river is pushed onto the stack once and emitted once, and the root is pushed and popped once
     for _ in range(2 * n + 2):
@@ -60,45 +65,53 @@ def dfs_order(river_ids: np.ndarray, next_river_ids: np.ndarray) -> np.ndarray:
             break
         river = stack[depth - 1]
         if next_upstream[river] < indptr[river + 1]:
-            stack[depth] = upstream[next_upstream[river]]
+            upstream_river = upstream[next_upstream[river]]
+            first_row_upstream[upstream_river] = emitted
+            stack[depth] = upstream_river
             next_upstream[river] += 1
             depth += 1
             continue
         depth -= 1
         if river != n:
             order[emitted] = river
+            upstream_count[emitted] = emitted - first_row_upstream[river]
             emitted += 1
     if emitted != n:
         raise ValueError(f'{n - emitted:,} rivers are not upstream of any basin outlet; the network has a cycle')
-    return order
+    return order, upstream_count
 
 
-def convert_params(params_path: str, output_path: str) -> tuple[np.ndarray, np.ndarray]:
+def convert_network(params_path: str, output_path: str) -> tuple[np.ndarray, np.ndarray]:
     """
-    Rename downstream_river_id to next_river_id and write the rivers in DFS order.
-    Returns the river ids in their v2 order and in their v3 order.
+    Write a v2 params file as a v3 network file: its columns renamed to camelCase, every basin outlet marked -1, the
+    rivers in DFS order, which leaves a table already in DFS order as it is, and the riverIndex and upstreamCount
+    columns that describe that order. Returns the river ids in their v2 order and in their v3 order.
     """
-    params = pd.read_parquet(params_path).rename(columns={'downstream_river_id': 'next_river_id'})
-    missing = {'river_id', 'next_river_id', 'k', 'x'} - set(params.columns)
+    params = pd.read_parquet(params_path)
+    missing = set(V2_TO_V3_COLUMNS) - set(params.columns)
     if missing:
         raise ValueError(f'{params_path} is missing required columns: {missing}')
-    v2_river_ids = params['river_id'].to_numpy()
-    if not rr.network.streams.is_dfs_ordered(rr.Network(params).downstream_indices).all():
-        params = params.iloc[dfs_order(v2_river_ids, params['next_river_id'].to_numpy())].reset_index(drop=True)
-    params.to_parquet(output_path, index=False)
-    return v2_river_ids, params['river_id'].to_numpy()
+    network = params.rename(columns=V2_TO_V3_COLUMNS)
+    network['nextRiverId'] = network['nextRiverId'].where(network['nextRiverId'] >= 0, -1)  # v3 outlets are -1
+    v2_river_ids = network['riverId'].to_numpy()
+    order, upstream_count = dfs_order(v2_river_ids, network['nextRiverId'].to_numpy())
+    network = network.iloc[order].reset_index(drop=True)
+    network['riverIndex'] = np.arange(len(network), dtype=np.int32)
+    network['upstreamCount'] = upstream_count.astype(np.int32)
+    network.to_parquet(output_path, index=False)
+    return v2_river_ids, network['riverId'].to_numpy()
 
 
 def positions_of(river_ids: np.ndarray, file_river_ids: np.ndarray, path: str) -> np.ndarray:
     """The position in a file of each river of river_ids, which must be exactly the rivers of the file."""
     if np.setxor1d(river_ids, file_river_ids).size:
-        raise ValueError(f'{path} does not have exactly the rivers of the params file')
+        raise ValueError(f'{path} does not have exactly the rivers of the network file')
     return pd.Series(np.arange(file_river_ids.shape[0]), index=file_river_ids).loc[river_ids].to_numpy()
 
 
 def convert_grid_weights(weights_path: str, river_ids: np.ndarray, output_path: str) -> np.ndarray:
     """
-    Write the weight table with its rows in the river order of the v3 params file, the order each river's runoff is
+    Write the weight table with its rows in the river order of the v3 network file, the order each river's runoff is
     read in. Returns the catchment area of each river in m².
     """
     with xr.open_dataset(weights_path) as ds:
@@ -107,7 +120,7 @@ def convert_grid_weights(weights_path: str, river_ids: np.ndarray, output_path: 
     first_row = pd.Series(np.arange(rows.shape[0])).groupby(rows).first()
     rank = pd.Series(np.arange(river_ids.shape[0]), index=river_ids).reindex(first_row.index)
     if rank.isna().any() or first_row.shape[0] != river_ids.shape[0]:
-        raise ValueError(f'{weights_path} does not have exactly the rivers of the params file')
+        raise ValueError(f'{weights_path} does not have exactly the rivers of the network file')
     weights.isel(index=np.argsort(rank.loc[rows].to_numpy(), kind='stable')).to_netcdf(output_path)
     catchment_area = weights[['river_id', 'area_sqm']].to_dataframe().groupby('river_id')['area_sqm'].sum()
     return catchment_area.loc[river_ids].to_numpy()
@@ -116,7 +129,7 @@ def convert_grid_weights(weights_path: str, river_ids: np.ndarray, output_path: 
 def convert_qlateral(qlateral_path: str, river_ids: np.ndarray, catchment_area: np.ndarray, output_path: str) -> None:
     """
     Write a v2 qlateral file, the runoff volume (m³) of each catchment per step with dimensions (time, river_id), as
-    a v3 catchment runoff file with dimensions (river_id, time) in the river order of the v3 params file.
+    a v3 catchment runoff file with dimensions (river_id, time) in the river order of the v3 network file.
     catchment_area is only read when catchment runoff holds depths, so it may be NaN for these volumes.
     """
     with xr.open_dataset(qlateral_path) as ds:
@@ -141,7 +154,8 @@ def convert_channel_state(state_path: str, v2_river_ids: np.ndarray, river_ids: 
 def convert_config(config_path: str, output_path: str) -> None:
     """
     Write a v2 YAML or JSON config as a v3 JSON config. The forcing is the form of the runoff files the v2 config
-    routed. Paths are copied unchanged, so point them at the converted files. Reading YAML needs pyyaml.
+    routed, and params_file becomes network_file. Paths are copied unchanged, so point them at the converted files.
+    Reading YAML needs pyyaml.
     """
     with open(config_path, encoding='utf-8') as f:
         if Path(config_path).suffix in ('.yml', '.yaml'):
@@ -159,9 +173,11 @@ def convert_config(config_path: str, output_path: str) -> None:
         raise ValueError(f'{config_path} sets both qlateral_files and grid_runoff_files')
     config['forcing'] = 'catchment' if qlateral_files else 'grid' if grid_runoff_files else 'channel'
     config['runoff_files'] = qlateral_files or grid_runoff_files
+    if 'params_file' in config:
+        config['network_file'] = config.pop('params_file')
     unknown = set(config) - {field.name for field in fields(rr.Configs) if field.init}
     if unknown:
-        raise ValueError(f'{config_path} has keys that are not v2 configs: {sorted(unknown)}')
+        raise ValueError(f'{config_path} has keys that are not v3 configs: {sorted(unknown)}')
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
 
@@ -169,7 +185,7 @@ def convert_config(config_path: str, output_path: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Convert river-route v2 inputs to v3 inputs')
     parser.add_argument('--params', help='v2 params parquet')
-    parser.add_argument('--out-params', help='v3 params parquet to write, in DFS order')
+    parser.add_argument('--out-network', help='v3 network file parquet to write, in DFS order')
     parser.add_argument('--weights', help='v2 grid weights netCDF')
     parser.add_argument('--out-weights', help='v3 grid weights netCDF to write')
     parser.add_argument('--qlateral', nargs='+', default=[], help='v2 qlateral netCDF files')
@@ -181,7 +197,7 @@ def main() -> None:
     args = parser.parse_args()
 
     pairs = {
-        '--params': (args.params, args.out_params),
+        '--params': (args.params, args.out_network),
         '--weights': (args.weights, args.out_weights),
         '--qlateral': (args.qlateral, args.out_catchment_runoff_dir),
         '--channel-state': (args.channel_state, args.out_channel_state),
@@ -189,7 +205,7 @@ def main() -> None:
     }
     for flag, (source, output) in pairs.items():
         if bool(source) != bool(output):
-            parser.error(f'{flag} and its output are given together: one is useless without the other')
+            parser.error(f'{flag} and its output must be given together')
     if (args.weights or args.qlateral or args.channel_state) and not args.params:
         parser.error('--params is required to put the files with one row per river in the v3 river order')
 
@@ -197,7 +213,7 @@ def main() -> None:
         convert_config(args.config, args.out_config)
     if not args.params:
         return
-    v2_river_ids, river_ids = convert_params(args.params, args.out_params)
+    v2_river_ids, river_ids = convert_network(args.params, args.out_network)
     catchment_area = np.full(river_ids.shape[0], np.nan, dtype=np.float32)
     if args.weights:
         catchment_area = convert_grid_weights(args.weights, river_ids, args.out_weights)

@@ -1,3 +1,5 @@
+"""The frozen Configs object that holds and validates every option of a routing run and of preparing its runoff."""
+
 import json
 import os
 import types
@@ -23,10 +25,38 @@ def is_dev_null(path: PathInput) -> bool:
     return str(path) in _DEV_NULL
 
 
+def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
+    """The allowed values of every field annotated with a Literal, by field name."""
+    result = {}
+    for name, hint in get_type_hints(cls).items():
+        if not name.startswith('_') and get_origin(hint) is Literal:
+            result[name] = frozenset(get_args(hint))
+    return result
+
+
+def _unalias(hint: Any) -> Any:
+    """The type a ``type X = ...`` alias names, such as list[PathInput] for PathList, whose origin is otherwise None."""
+    return hint.__value__ if isinstance(hint, TypeAliasType) else hint
+
+
+def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
+    """The names of the fields annotated PathInput or PathInput | None, and of the fields annotated PathList."""
+    single, lists = set(), set()
+    for name, hint in get_type_hints(cls).items():
+        if name.startswith('_'):
+            continue
+        hint = _unalias(hint)
+        if get_origin(hint) is list:
+            lists.add(name)  # PathList
+        elif get_origin(hint) is types.UnionType and set(get_args(hint)) >= _PATH_INPUT_TYPES:
+            single.add(name)  # PathInput or PathInput | None
+    return frozenset(single), frozenset(lists)
+
+
 @dataclass(kw_only=True, frozen=True)
 class Configs:
     """
-    Accepts and validates every possible option that can be passed to a computation job.
+    Accepts and validates every option of a routing run and of preparing its runoff.
     """
 
     # annotate file path fields with PathInput or PathList
@@ -40,7 +70,7 @@ class Configs:
     unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
 
     # Network and routing descriptor
-    params_file: PathInput | None = None
+    network_file: PathInput | None = None
 
     # Core Routing Files
     discharge_dir: PathInput | None = None
@@ -71,7 +101,7 @@ class Configs:
     dt_routing: int = 0  # Interval in seconds between calculating discharges, <= dt_runoff
     dt_runoff: int = 0  # Interval in seconds between forcing values, >= dt_routing
     dt_discharge: int = 0  # Interval in seconds between discharge outputs, >= dt_runoff
-    dt_total: int = 0  # Interval in seconds between total outputs, >= dt_discharge
+    dt_total: int = 0  # Length in seconds of the simulation, >= dt_discharge
     start_datetime: str = '1970-01-01'
 
     # Misc behavior that users may want to override
@@ -81,10 +111,11 @@ class Configs:
     log_stream: str = 'stdout'
     log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
 
-    # False until validate_routing or validate_runoff passes
-    _validated: bool = field(default=False, init=False, repr=False, compare=False)
+    # False until validate_routing, or validate_runoff, passes; neither satisfies the other
+    _routing_validated: bool = field(default=False, init=False, repr=False, compare=False)
+    _runoff_validated: bool = field(default=False, init=False, repr=False, compare=False)
 
-    # special subset of auto-detected PathLists where the directory needs to exist, not the file
+    # the single path fields that name outputs, so their directory needs to exist rather than the file
     _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({'channel_state_final_file'})
     # 2 options for specifying how the computed discharge files are saved
     _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
@@ -114,17 +145,24 @@ class Configs:
         self._resolve_discharge_dir()
         return
 
-    # --- construction, copying, and serialization ---
     @classmethod
     def from_json(cls, path: PathInput) -> Self:
-        """Build Configs from a JSON file."""
+        """
+        Build Configs from a JSON file. Relative paths in it are made absolute against the working directory.
+
+        Args:
+            path: JSON file holding an object of config keys and values, as ``to_json`` writes
+
+        Raises:
+            ValueError: if the file has a key that is not a config option
+        """
         with open(path, encoding='utf-8') as f:
             raw = json.load(f)
         cls._check_keys(raw)
         return cls(**raw)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a dict representation of the configs"""
+        """Every option by name, with discharge_files left empty when they were named from discharge_dir."""
         values = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
         values = {key: list(value) if isinstance(value, list) else value for key, value in values.items()}
         if self.discharge_dir:
@@ -132,7 +170,12 @@ class Configs:
         return values
 
     def to_json(self, path: PathInput) -> None:
-        """Write every option to JSON"""
+        """
+        Write every option to a JSON file that ``from_json`` reads back.
+
+        Args:
+            path: JSON file to write
+        """
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)
 
@@ -144,7 +187,6 @@ class Configs:
             raise ValueError(f'Unrecognized config key(s): {", ".join(map(repr, unknown))}')
         return
 
-    # --- path normalization and verification ---
     def _coerce_path_list_fields(self) -> None:
         """Normalize any list-of-paths field given as a single string to [str]."""
         for key in self._LIST_PATH_FIELDS:
@@ -154,15 +196,15 @@ class Configs:
         return
 
     def _absolutize_paths(self) -> None:
-        """Convert all relative path fields to absolute paths in-place."""
+        """Convert all path fields to absolute path strings in-place. The null device is kept as it is named."""
         for key in self._SINGLE_PATH_FIELDS:
             val = getattr(self, key, None)
-            if val and not is_dev_null(val):
-                object.__setattr__(self, key, os.path.abspath(val))
+            if val:
+                object.__setattr__(self, key, str(val) if is_dev_null(val) else os.path.abspath(val))
         for key in self._LIST_PATH_FIELDS:
             val = getattr(self, key, [])
             if val:
-                object.__setattr__(self, key, [p if is_dev_null(p) else os.path.abspath(p) for p in val])
+                object.__setattr__(self, key, [str(p) if is_dev_null(p) else os.path.abspath(p) for p in val])
         return
 
     def _verify_input_files_exist(self) -> None:
@@ -204,7 +246,7 @@ class Configs:
                 )
             discharge_files = [os.path.join(d, f'discharge_{stem}{self._DISCHARGE_SUFFIX}') for stem in stems]
         else:
-            # Muskingum (no lateral inflow files)
+            # channel routing has no runoff files to name its one output after
             discharge_files = [os.path.join(d, f'discharge{self._DISCHARGE_SUFFIX}')]
         object.__setattr__(self, 'discharge_files', discharge_files)
         return
@@ -230,24 +272,23 @@ class Configs:
                 raise NotADirectoryError(f'Output directory not found: {val}')
         return
 
-    # --- validation ---
     def validate_routing(self) -> Self:
         """
         Validate the options for routing: the options the chosen procedure requires are set and consistent, input
         paths exist, and outputs are in existing directories. Called by Router.route. Returns immediately once the
-        Configs has been validated. The contents of the input files are not read; call deep_validate for that.
+        Configs has passed it. The contents of the input files are not read; call deep_validate for that.
 
         Raises:
             ValueError, FileNotFoundError, NotADirectoryError: if any option is missing or invalid
             NotImplementedError: if no routing method routes the chosen options yet
         """
-        if not self.params_file:
-            raise ValueError('params_file is required to route')
-        if self._validated:
+        if not self.network_file:
+            raise ValueError('network_file is required to route')
+        if self._routing_validated:
             return self
         self._verify_input_files_exist()
         self._verify_output_directories_exist()
-        # the Router picks the null writer for the whole job, so a mix of discarded and written outputs has no meaning
+        # the Router picks the null writer for the whole run, so a mix of discarded and written outputs has no meaning
         null_outputs = [is_dev_null(f) for f in self.discharge_files]
         if any(null_outputs) and not all(null_outputs):
             raise ValueError('discharge_files mixes the null device with real paths; use one or the other')
@@ -283,32 +324,33 @@ class Configs:
             raise NotImplementedError(
                 f'{self.coefficients} coefficients cannot route a {self.network_type} network yet'
             )
-        object.__setattr__(self, '_validated', True)
+        object.__setattr__(self, '_routing_validated', True)
         return self
 
     def validate_runoff(self) -> Self:
         """
         Validate the options for preparing gridded runoff: grid_weights_file is set and every input path exists.
-        Called by the grid runoff classes. Returns immediately once the Configs has been validated. The contents of the
-        input files are not read; call deep_validate for that.
+        Called by the grid runoff classes. Returns immediately once the Configs has passed it, which does not validate
+        it for routing. The contents of the input files are not read; call deep_validate for that.
 
         Raises:
             ValueError, FileNotFoundError: if any option is missing or invalid
         """
         if not self.grid_weights_file:
             raise ValueError('grid_weights_file is required to prepare runoff')
-        if self._validated:
+        if self._runoff_validated:
             return self
         self._verify_input_files_exist()
-        object.__setattr__(self, '_validated', True)
+        object.__setattr__(self, '_runoff_validated', True)
         return self
 
     def deep_validate(self) -> Self:
         """
-        Validate the contents of every input file that is set and their consistency with each other: the params
-        file columns, types, and value ranges and that it is topologically sorted, that the grid weight table
-        matches the params file and its proportions sum to 1 per river, and that the initial channel state has one
-        row per river.
+        Validate the contents of the network file, the grid weight table, and the initial channel state, whichever are
+        set, and their consistency with each other: the network file columns, types, and value ranges and that it is
+        topologically sorted, that the grid weight table matches the network file and its proportions sum to 1 per
+        river, and that the initial channel state has one row per river, or on a stabilized network one per
+        sub-reach. The runoff files are not read.
 
         Nothing calls this for you. It reads every input file, which is the same work routing is about to do, so
         run it once on inputs you have not checked before rather than on every route. ``validate_routing`` and
@@ -317,79 +359,99 @@ class Configs:
         Raises:
             ValueError: if any file or combination of files is invalid
         """
-        params_df = self._deep_validate_params_file() if self.params_file else None
+        network_df = self._deep_validate_network_file() if self.network_file else None
         if self.grid_weights_file:
-            self._deep_validate_grid_weights_file(self.grid_weights_file, params_df)
+            self._deep_validate_grid_weights_file(self.grid_weights_file, network_df)
         if self.channel_state_init_file:
-            self._deep_validate_channel_state_init_file(params_df)
+            self._deep_validate_channel_state_init_file(network_df)
         return self
 
-    def _deep_validate_params_file(self) -> pd.DataFrame:
-        # params df should be parquet with columns river_id, next_river_id, k, x
-        # river_id should be non-null, integer, and unique
-        # next_river_id should be non-null, integer, all -1 or positive, and exist in river_id (except for -1)
-        # k should be positive float
-        # x should be positive float less than or equal to 0.5
+    def _deep_validate_network_file(self) -> pd.DataFrame:
+        # network file parquet has columns: riverId, nextRiverId, muskingumK, muskingumX, riverIndex, upstreamCount
+        # riverId should be non-null, positive, integer, and unique except for -1 (outlets/sinks)
+        # nextRiverId should be non-null, integer, all -1 or positive, and exist in riverId (except for -1)
+        # muskingumK should be positive float
+        # muskingumX should be positive float less than or equal to 0.5
         try:
-            params_df = pd.read_parquet(self.params_file)
+            network_df = pd.read_parquet(self.network_file)
         except Exception as e:
-            raise ValueError('Error reading params file. Must be valid parquet file') from e
-        rid = self.var_river_id
-        if rid not in params_df.columns:
-            raise ValueError(f'{self.params_file} missing {rid} column')
-        if 'next_river_id' not in params_df.columns:
-            raise ValueError(f'{self.params_file} missing next_river_id column')
-        if 'k' not in params_df.columns:
-            raise ValueError(f'{self.params_file} missing k column')
-        if 'x' not in params_df.columns:
-            raise ValueError(f'{self.params_file} missing x column')
-        if params_df[rid].isna().any():
-            raise ValueError(f'{self.params_file} {rid} column contains null values')
-        if not pd.api.types.is_integer_dtype(params_df[rid]):
-            raise ValueError(f'{self.params_file} {rid} column must be integer type')
-        if not params_df[rid].is_unique:
-            raise ValueError(f'{self.params_file} {rid} column must be unique')
-        if params_df['next_river_id'].isna().any():
-            raise ValueError(f'{self.params_file} next_river_id column contains null values')
-        if not pd.api.types.is_integer_dtype(params_df['next_river_id']):
-            raise ValueError(f'{self.params_file} next_river_id column must be integer type')
-        if np.any(params_df['next_river_id'] < -1):
-            raise ValueError(f'{self.params_file} next_river_id column must be -1 or positive integers')
-        downstream_ids = set(params_df['next_river_id'].unique())
-        river_ids = set(params_df[rid].unique())
+            raise ValueError('Error reading network file. Must be valid parquet file') from e
+        for column in ('riverId', 'nextRiverId', 'muskingumK', 'muskingumX'):
+            if column not in network_df.columns:
+                raise ValueError(f'{self.network_file} missing {column} column')
+        if network_df['riverId'].isna().any():
+            raise ValueError(f'{self.network_file} riverId column contains null values')
+        if not pd.api.types.is_integer_dtype(network_df['riverId']):
+            raise ValueError(f'{self.network_file} riverId column must be integer type')
+        if not network_df['riverId'].is_unique:
+            raise ValueError(f'{self.network_file} riverId column must be unique')
+        if np.any(network_df['riverId'] == -1):
+            raise ValueError(f'{self.network_file} riverId must not be -1, which marks a basin outlet in nextRiverId')
+        if network_df['nextRiverId'].isna().any():
+            raise ValueError(f'{self.network_file} nextRiverId column contains null values')
+        if not pd.api.types.is_integer_dtype(network_df['nextRiverId']):
+            raise ValueError(f'{self.network_file} nextRiverId column must be integer type')
+        downstream_ids = set(network_df['nextRiverId'].unique())
+        river_ids = set(network_df['riverId'].unique())
         if not downstream_ids.issubset(river_ids.union({-1})):
-            raise ValueError(f'{self.params_file} next_river_id values must exist in {rid} (except -1)')
-        if params_df[['k', 'x']].isna().any(axis=None):
-            raise ValueError(f'{self.params_file} k and x columns must not contain null values')
-        if np.any(params_df['k'] <= 0):
-            raise ValueError(f'{self.params_file} k column must be positive')
-        if np.any(params_df['x'] < 0) or np.any(params_df['x'] > 0.5):
-            raise ValueError(f'{self.params_file} x column must be in the range [0, 0.5]')
+            raise ValueError(f'{self.network_file} nextRiverId values must exist in riverId (except -1)')
+        if network_df[['muskingumK', 'muskingumX']].isna().any(axis=None):
+            raise ValueError(f'{self.network_file} muskingumK and muskingumX columns must not contain null values')
+        if np.any(network_df['muskingumK'] <= 0):
+            raise ValueError(f'{self.network_file} muskingumK column must be positive')
+        if np.any(network_df['muskingumX'] < 0) or np.any(network_df['muskingumX'] > 0.5):
+            raise ValueError(f'{self.network_file} muskingumX column must be in the range [0, 0.5]')
 
         # dynamic coefficients are rebuilt in the kernel from K = dynamicAlpha * Q ** dynamicBeta
         if self.coefficients == 'dynamic':
             for column in ('dynamicAlpha', 'dynamicBeta'):
-                if column not in params_df.columns:
+                if column not in network_df.columns:
                     raise ValueError(
-                        f'{self.params_file} missing {column} column required when coefficients is dynamic'
+                        f'{self.network_file} missing {column} column required when coefficients is dynamic'
                     )
-                if params_df[column].isna().any():
-                    raise ValueError(f'{self.params_file} {column} column contains null values')
-                if not pd.api.types.is_numeric_dtype(params_df[column]):
-                    raise ValueError(f'{self.params_file} {column} column must be numeric type')
-            if np.any(params_df['dynamicAlpha'] <= 0):
-                raise ValueError(f'{self.params_file} dynamicAlpha column must be strictly positive')
+                if network_df[column].isna().any():
+                    raise ValueError(f'{self.network_file} {column} column contains null values')
+                if not pd.api.types.is_numeric_dtype(network_df[column]):
+                    raise ValueError(f'{self.network_file} {column} column must be numeric type')
+            if np.any(network_df['dynamicAlpha'] <= 0):
+                raise ValueError(f'{self.network_file} dynamicAlpha column must be strictly positive')
 
-        # check topological sort: every next_river_id must appear later in the table than its upstream
-        river_id_index = {int(river_id): i for i, river_id in enumerate(params_df[rid])}
-        for upstream_idx, ds_id in enumerate(params_df['next_river_id']):
-            if int(ds_id) < 0:
+        # check topological sort: every nextRiverId must appear later in the table than its upstream
+        river_id_index = {int(river_id): i for i, river_id in enumerate(network_df['riverId'])}
+        for upstream_idx, ds_id in enumerate(network_df['nextRiverId']):
+            if int(ds_id) == -1:
                 continue
             if river_id_index[int(ds_id)] <= upstream_idx:
-                raise ValueError(f'{self.params_file} is not topologically sorted (upstream to downstream)')
-        return params_df
+                raise ValueError(f'{self.network_file} is not topologically sorted (upstream to downstream)')
+        self._deep_validate_dfs_order_columns(network_df)
+        return network_df
 
-    def _deep_validate_grid_weights_file(self, grid_weights_file: PathInput, params_df: pd.DataFrame | None) -> None:
+    def _deep_validate_dfs_order_columns(self, network_df: pd.DataFrame) -> None:
+        # riverIndex numbers the rows one apart and upstreamCount counts the rivers upstream of each river, so in DFS
+        # order a river's upstream watershed is exactly the rows from its riverIndex - upstreamCount to its riverIndex.
+        # That holds when each count is the sum over the river's upstreams of their counts plus one, and each
+        # upstream's own range of rows lies inside the range of the river it drains into.
+        for column in ('riverIndex', 'upstreamCount'):
+            if column not in network_df.columns:
+                raise ValueError(f'{self.network_file} missing {column} column')
+            if not pd.api.types.is_integer_dtype(network_df[column]):
+                raise ValueError(f'{self.network_file} {column} column must be integer type')
+        if np.any(np.diff(network_df['riverIndex'].to_numpy(dtype=np.int64)) != 1):
+            raise ValueError(f'{self.network_file} riverIndex must increase by one from each row to the next')
+        count = network_df['upstreamCount'].to_numpy(dtype=np.int64)
+        downstream = pd.Index(network_df['riverId']).get_indexer(network_df['nextRiverId'])  # -1 at outlets
+        upstream = np.flatnonzero(downstream >= 0)
+        down = downstream[upstream]
+        if not np.array_equal(count, np.bincount(down, weights=count[upstream] + 1, minlength=count.shape[0])):
+            raise ValueError(f'{self.network_file} upstreamCount must count every river upstream of each river')
+        if np.any(upstream - count[upstream] < down - count[down]):
+            raise ValueError(
+                f'{self.network_file} is not in DFS order: the rivers upstream of each river must be the rows '
+                f'immediately before it'
+            )
+        return
+
+    def _deep_validate_grid_weights_file(self, grid_weights_file: PathInput, network_df: pd.DataFrame | None) -> None:
         # weights should be netcdf with variables river_id, the cell index columns, x, y, area_sqm, proportion.
         # A reduced grid locates its cells with cell_index, a grid with x_index and y_index.
         rid = self.var_river_id
@@ -406,8 +468,8 @@ class Configs:
             raise ValueError(f'Grid weights {rid} variable contains null values')
         if not pd.api.types.is_integer_dtype(ds[rid].dtype):
             raise ValueError(f'Grid weights {rid} variable must be integer type')
-        if params_df is not None and not np.isin(ds[rid].values, params_df[rid].to_numpy()).all():
-            raise ValueError(f'Grid weights {rid} values must exist in params {rid}')
+        if network_df is not None and not np.isin(ds[rid].values, network_df['riverId'].to_numpy()).all():
+            raise ValueError(f'Grid weights {rid} values must exist in the riverId column of the network file')
         for variable in expected_variables[1:]:
             if np.any(ds[variable].isnull()):
                 raise ValueError(f'Grid weights {variable} variable contains null values')
@@ -424,10 +486,10 @@ class Configs:
             raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
         return
 
-    def _deep_validate_channel_state_init_file(self, params_df: pd.DataFrame | None) -> None:
-        # initial channel state should be parquet with 1 column named Q.
-        # Q should be non-null, numeric, and non-negative.
-        # it should be exactly the same shape as the number of rows in the params file and in the same order.
+    def _deep_validate_channel_state_init_file(self, network_df: pd.DataFrame | None) -> None:
+        # initial channel state should be parquet with a column named Q, non-null, numeric, and non-negative.
+        # it has one row per river of the network file in the same order, or on a stabilized network one row per
+        # sub-reach, at least one per river, whose count depends on dt_routing and is checked when routing.
         try:
             state_df = pd.read_parquet(self.channel_state_init_file)
         except Exception as e:
@@ -440,43 +502,15 @@ class Configs:
             raise ValueError('Initial state file Q column must be numeric type')
         if np.any(state_df['Q'] < 0):
             raise ValueError('Initial state file Q column must be non-negative')
-        if params_df is not None and state_df.shape[0] != params_df.shape[0]:
-            raise ValueError(f'Initial state file must have the same number of rows as {self.params_file}')
+        if network_df is None:
+            return
+        if self.network_type == 'stabilized' and state_df.shape[0] < network_df.shape[0]:
+            raise ValueError(
+                f'Initial state file must have a row per sub-reach, at least one per river of {self.network_file}'
+            )
+        if self.network_type == 'standard' and state_df.shape[0] != network_df.shape[0]:
+            raise ValueError(f'Initial state file must have the same number of rows as {self.network_file}')
         return
-
-
-def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
-    result = {}
-    for name, hint in get_type_hints(cls).items():
-        if not name.startswith('_') and get_origin(hint) is Literal:
-            result[name] = frozenset(get_args(hint))
-    return result
-
-
-def _unalias(hint: Any) -> Any:
-    """The type a ``type X = ...`` alias names, such as list[PathInput] for PathList, whose origin is otherwise None."""
-    return hint.__value__ if isinstance(hint, TypeAliasType) else hint
-
-
-def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
-    single, lists = set(), set()
-    for name, hint in get_type_hints(cls).items():
-        if name.startswith('_'):
-            continue
-        hint = _unalias(hint)
-        origin = get_origin(hint)
-        if origin is list:
-            args = get_args(hint)
-            if args and get_origin(args[0]) is Literal:
-                continue  # selector list (e.g. forcing), not a list of file paths
-            lists.add(name)
-        elif origin is types.UnionType:
-            non_none = [_unalias(a) for a in get_args(hint) if a is not type(None)]
-            if len(non_none) == 1 and get_origin(non_none[0]) is list:
-                lists.add(name)  # PathList | None
-            elif set(get_args(hint)) >= _PATH_INPUT_TYPES:
-                single.add(name)  # PathInput or PathInput | None
-    return frozenset(single), frozenset(lists)
 
 
 Configs._SINGLE_PATH_FIELDS, Configs._LIST_PATH_FIELDS = _derive_path_sets(Configs)

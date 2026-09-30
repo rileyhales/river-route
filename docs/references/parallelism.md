@@ -7,7 +7,7 @@ preparing the inputs in more careful ways than there is through jumping immediat
 effectiveness of parallelization depends on the strategy, the size and complexity of the network, and the 
 hardware being used. 
 
-Not all parallelization strategies are worth pursing in river routing cases. This page is a list of the strategies 
+Not all parallelization strategies are worth pursuing in river routing cases. This page is a list of the strategies 
 tested in `river-route` and recommendations based on using these methods to operate a global hydrological model 
 generating a 5 trillion data point simulation product.
 
@@ -21,8 +21,9 @@ The two fundamental constraints in river routing. First, it is a time stepping p
 solve for discharge at the current time `t` before solving for the next time `t+1`. Second, there is an 
 order dependency that river segment upstream must be solved before the current river and the downstream river.
 
-Within a time step, the solve is a forward substitution: the value at row $i$ depends on all previously solved
-rows $1, \ldots, i-1$. Water only moves downstream, so a river cannot be computed before every river upstream of it.
+Across the rivers, the solve is a forward substitution: river $i$ depends on every river upstream of it, which all
+come before it in the network table. Water only moves downstream, so a river cannot be computed before every river
+upstream of it.
 A large river's main stem depends on its whole basin and is always computed on one thread.
 
 ## Better ways to prepare inputs
@@ -32,17 +33,15 @@ prepare computations.
 
 ### Topological river sorting and Depth First Search (DFS)
 
-The rivers of the params file must be in depth first search (DFS) order, a hard requirement of the data. A table
-in topological order has every river after all of the rivers upstream of it. A table in DFS order also has the rivers
-upstream of each river in the rows immediately before it, so every river's whole upstream watershed is one
-contiguous range of rows ending at that river. That is what lets a region be divided into blocks of contiguous
-rivers: a block needs nothing from outside its own range of rows, and a job is handed a plain index range. river-route
-never reorders the table, so the forcing, the channel state, and the routed discharge stay in the order of the file
-given. See the [File Schemas reference](io-file-schema.md#routing-parameters) for how to check a table.
+The rivers of the network file must be in depth first search (DFS) order. A table in topological order has every
+river after all of the rivers upstream of it. A table in DFS order also has the rivers upstream of each river in the
+rows immediately before it, so every river's whole upstream watershed is one contiguous range of rows ending at that
+river, the rows its `riverIndex` and `upstreamCount` columns give. That is what lets a region be divided into blocks
+of contiguous rivers: a block needs nothing from outside its own range of rows, and a job is handed a plain index
+range. river-route never reorders the table, so the forcing, the channel state, and the routed discharge stay in the order
+of the file given. See the [File Schemas reference](io-file-schema.md#network-file) for how to check a table.
 
 ### Splitting watershed subgraphs
-
-[//]: # (todo: talk about identificaiton of subgraphs and balancing size with resources)
 
 **Summary**: If your computations contains several independent watersheds, you can route them simultaneously in separate processes.
 
@@ -51,9 +50,7 @@ process simultaneously or combine them into a single config file if compute time
 
 ### Formats of inputs and outputs
 
-[//]: # (todo)
-
-after you carefully prepare inputs and the algorithm, a large, possibly the largest, portion of remaining time is spent reading and writing data.
+After you carefully prepare inputs and the algorithm, a large, possibly the largest, portion of remaining time is spent reading and writing data.
 You should reduce the number of times the code needs to read/write data and the number of total files it needs to read/write.
 Faster storage formats and fewer, better sized files do more than parallelizing file I/O.
 
@@ -80,7 +77,7 @@ What you control is how much work you ask that kernel to do.
 
 1. **Choose the simplest routing procedure your problem needs.** `coefficients: static` computes Muskingum coefficients
    once and reuses them for every file with the same time steps. `coefficients: dynamic` rebuilds them inside the kernel
-   on every substep. Only pay for dynamic coefficients when the application needs them. See the
+   on every routing step. Only pay for dynamic coefficients when the application needs them. See the
    [config file reference](config-files.md#routing-procedure-selectors).
 2. **Use the largest stable routing time step.** Every river is routed at every routing step, so halving
    `dt_routing` doubles the work. Check stability with `Network.unstable_mask(dt)` rather than
@@ -95,14 +92,14 @@ What you control is how much work you ask that kernel to do.
 Once a job is efficient on a single core, these strategies can add to it. Measure each one against your
 single-threaded result on your own hardware before keeping it.
 
-### Multithreading matrix solvers
+### Multithreading sub-watershed blocks
 
 **Summary**: A region in DFS computation order can be split into independent sub-watershed blocks, packed into one
 job per thread and routed concurrently, followed by the main stem on a single thread.
 
 `river-route` never creates threads on its own. Threads are a runtime resource, not a config, so pass a
 `ThreadPoolExecutor` and `threads`, the number of jobs to pack the region's blocks into, to `Router.route`. The same
-pool aggregates gaussian grid runoff, since that aggregation happens inside the jobs as each river is routed.
+pool aggregates gridded runoff, since that aggregation happens inside the jobs as each river is routed.
 
 ```python title="Threaded Routing"
 from concurrent.futures import ThreadPoolExecutor
@@ -118,9 +115,7 @@ The speedup is limited by the rivers left in the sequential main stem and by mem
 kernel is largely bound by. Use `river_route.network.streams.analyze_partitioning` to see how a network splits and the upper
 bound on speedup before committing to it. The partition depends only on connectivity and `threads`, never on the
 forcing, dt, or coefficients, so the `Network` derives it once and caches it per thread count: every simulation
-over one `Network` reuses it. `river_route.network.streams.partition_network` can also store it as a `group` column in
-the parameter file, which a `Network` reuses as-is instead of deriving one at all. A stored partition is
-fixed at the thread count it was built for, so only store one if you always route with that many threads.
+over one `Network` reuses it.
 
 **Conclusion**: Meaningful speedup is possible with multiple threads but only if you sort the network into
 independent but ordered subgraphs. This is an optional addition to a job that is already efficient single threaded.
@@ -133,7 +128,7 @@ only the initial state. Multiple members can be processed concurrently in separa
 
 In production, you will usually add logic to:
 
-1. Set the config variables and routing parameter files
+1. Set the config variables and network files
 2. Find all the catchment runoff files, 1 for each member
 3. Determine unique output names for each so you don't overwrite or corrupt files
 4. Submit each input/output file pair to a parallel processing framework
@@ -143,7 +138,7 @@ from multiprocessing import Pool
 
 import river_route as rr
 
-params_file = 'routing_parameters.parquet'
+network_file = 'routing_parameters.parquet'
 runoff_files = ['catchment_runoff_member_1.nc',
                 'catchment_runoff_member_2.nc', ]
 output_files = ['discharges_member_1.zarr',
@@ -153,7 +148,7 @@ output_files = ['discharges_member_1.zarr',
 def route(input_file: str, output_file: str) -> None:
     configs = rr.Configs(
         forcing='catchment',
-        params_file=params_file,
+        network_file=network_file,
         runoff_files=[input_file, ],
         discharge_files=[output_file, ],
     )

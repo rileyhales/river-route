@@ -63,22 +63,41 @@ VOLUME_UNITS = ('m3', 'm^3', 'm³')  # units attributes that mark catchment runo
 logger = logging.getLogger(__name__)
 
 
+def _check_river_order(runoff_river_ids: IntArray, river_ids: IntArray) -> None:
+    """Raise ValueError unless the runoff is for the rivers of the network in the same order, since routing reads the
+    runoff of river r from its row r."""
+    if runoff_river_ids.shape != river_ids.shape:
+        raise ValueError(f'the runoff is for {runoff_river_ids.shape[0]} rivers, the network has {river_ids.shape[0]}')
+    if np.array_equal(runoff_river_ids, river_ids):
+        return
+    row = int(np.argmax(runoff_river_ids != river_ids))
+    raise ValueError(
+        f'row {row} of the runoff is river_id {runoff_river_ids[row]} where the network has {river_ids[row]}. The '
+        f'runoff must list the rivers of the network file in the same order.'
+    )
+
+
 class CatchmentRunoffVolumes(NamedTuple):
     """Each river's catchment runoff volume (m³) in every runoff step, as a C-order (river, time) array whose rows
     routing reads in place."""
 
     runoff: FloatArray  # (n_rivers, n_steps) float32 volumes (m³)
+    river_ids: IntArray  # (n_rivers,) river id of each row
 
-    def check(self, n_rivers: int, n_steps: int) -> None:
-        """Raise ValueError unless it is (n_rivers, n_steps) with each river's row contiguous."""
+    def check(self, river_ids: IntArray, n_steps: int) -> None:
+        """Raise ValueError unless it holds n_steps steps for ``river_ids`` in that order, each river's row
+        contiguous."""
         if self.runoff.ndim != 2 or self.runoff.strides[1] != self.runoff.itemsize:
             raise ValueError('catchment runoff must be a (river, time) array with each river row contiguous')
-        if self.runoff.shape != (n_rivers, n_steps):
-            raise ValueError(f'catchment runoff has shape {self.runoff.shape}, expected {(n_rivers, n_steps)}')
+        if self.runoff.shape != (river_ids.shape[0], n_steps):
+            raise ValueError(
+                f'catchment runoff has shape {self.runoff.shape}, expected {(river_ids.shape[0], n_steps)}'
+            )
+        _check_river_order(self.river_ids, river_ids)
 
     def first_steps(self, n_steps: int) -> CatchmentRunoffVolumes:
         """The runoff of the first n_steps steps, a view whose rows stay contiguous."""
-        return CatchmentRunoffVolumes(self.runoff[:, :n_steps])
+        return CatchmentRunoffVolumes(self.runoff[:, :n_steps], self.river_ids)
 
 
 @overload(get_river_forcing)
@@ -99,9 +118,9 @@ def _add_catchment_runoff_series(catchment_runoff, multiplier, n_steps, n_per_st
                 work[h] += external
 
 
-# a series is the form of a CatchmentRunoffVolumes row, and of any catchment runoff a transform gives
 @overload(add_river_forcing, jit_options={'nogil': True, 'fastmath': {'contract'}})
 def _catchment_runoff_series_is_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
+    """Add a series, the form of a CatchmentRunoffVolumes row and of any catchment runoff a transform gives."""
     if isinstance(catchment_runoff, types.Array) and catchment_runoff.ndim == 1:
         return _add_catchment_runoff_series
 
@@ -118,9 +137,12 @@ class GridCellRunoff(NamedTuple):
     # (n_weights,) float32 volume (m³) a unit of the cell's runoff depth gives the river: the weight's proportion of the
     # river's catchment area, times that area, times the factor converting the depth unit to meters
     weight: FloatArray
+    river_ids: IntArray  # (n_rivers,) river id of each river the weights describe, in the order of indptr
 
-    def check(self, n_rivers: int, n_steps: int) -> None:
-        """Raise ValueError unless the weight table describes n_rivers rivers and the runoff has n_steps steps."""
+    def check(self, river_ids: IntArray, n_steps: int) -> None:
+        """Raise ValueError unless the weight table describes ``river_ids`` in that order and the runoff has n_steps
+        steps."""
+        n_rivers = river_ids.shape[0]
         if self.runoff_by_cell.ndim != 2 or self.runoff_by_cell.shape[1] < n_steps:
             raise ValueError(f'runoff_by_cell has shape {self.runoff_by_cell.shape}, expected (n_cells, >= {n_steps})')
         if not self.runoff_by_cell.flags.c_contiguous:
@@ -129,6 +151,7 @@ class GridCellRunoff(NamedTuple):
             raise ValueError(f'the weight table does not describe the {n_rivers} rivers being routed')
         if self.cell.size and self.cell.max() >= self.runoff_by_cell.shape[0]:
             raise ValueError(f'the weight table references cells beyond the {self.runoff_by_cell.shape[0]} read')
+        _check_river_order(self.river_ids, river_ids)
 
     def first_steps(self, n_steps: int) -> GridCellRunoff:
         """Itself, since routing reads only the steps it routes."""
@@ -181,8 +204,8 @@ def _river_grid_cells_are_added(catchment_runoff, multiplier, n_steps, n_per_ste
 
 class Runoff(ABC):
     """
-    Base class for the sources of catchment runoff, the runoff volume of each catchment before it is transformed into
-    lateral inflow to its river. Each subclass is built from a Configs with ``from_configs`` and provides a
+    Base class for the sources of catchment runoff, the runoff volume of each catchment before the runoff transform
+    adds it to its river. Each subclass is built from a Configs with ``from_configs`` and provides a
     ``generator`` that yields its runoff in the form routing reads, and every subclass writes catchment runoff to disk
     with ``to_netcdf`` in the one format ``CatchmentRunoff`` reads.
     """
@@ -228,7 +251,7 @@ class Runoff(ABC):
             path: netCDF file to write
             dates: (time,) datetime64 values of the steps
             catchment_runoff: (n_rivers, time) depths (m) or volumes (m³), rows ordered like ``river_ids``
-            river_ids: (n_rivers,) river id of each column
+            river_ids: (n_rivers,) river id of each row
             catchment_area: (n_rivers,) area of each catchment in m², the factor between depths and volumes
         """
         self._catchment_runoff_dataset(dates, catchment_runoff, river_ids, catchment_area).to_netcdf(path)
@@ -291,9 +314,9 @@ class Runoff(ABC):
         if unit is None:
             logger.warning('No units attribute found. Assuming meters')
             return 1
-        if unit in ('m', 'meters', 'kg m-2'):
+        if unit in ('m', 'meters'):
             return 1
-        if unit in ('mm', 'millimeters'):
+        if unit in ('mm', 'millimeters', 'kg m-2'):  # a kilogram of water on a square meter is a millimeter deep
             return 0.001
         raise ValueError(f'Unknown units: {unit}')
 
@@ -326,13 +349,13 @@ class BaseGridRunoff(Runoff):
     force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
     as_volumes: bool = False  # prepare volumes (m3) instead of depths (m); routing always uses volumes
 
-    # Weight table read once by __post_init__, in row order of the table which follows the routing params order
+    # Weight table read once by __post_init__, in row order of the table which follows the network file order
     river_ids: IntArray = field(init=False)  # (n_rivers,) river id of each catchment runoff column
     # each cell_dimensions column's (n_cells,) index of every unique cell any catchment touches
     cell_indexes: dict[str, IntArray] = field(init=False)
     # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
     indptr: IntArray = field(init=False)
-    cell: IntArray = field(init=False)  # (n_weights,) position in x_index and y_index of the cell of each weight
+    cell: IntArray = field(init=False)  # (n_weights,) position in cell_indexes of the cell of each weight
     proportion: FloatArray = field(init=False)  # (n_weights,) share of the river's catchment area inside the cell
     catchment_area: FloatArray = field(init=False)  # (n_rivers,) total catchment area of each river in m²
     _buffer: FloatArray = field(init=False)  # flat reused catchment_runoff() output, sized to the longest file
@@ -371,10 +394,6 @@ class BaseGridRunoff(Runoff):
         n_cells = next(iter(self.cell_indexes.values())).shape[0]
         return f'{type(self).__name__}(n_rivers={self.river_ids.shape[0]}, n_cells={n_cells})'
 
-    ################################################
-    # Weight table
-    ################################################
-
     def _read_weights(self) -> None:
         """Read the weight table netCDF into the sparse arrays the aggregation kernel consumes."""
         var_river_id = self.var_river_id
@@ -403,7 +422,7 @@ class BaseGridRunoff(Runoff):
     def distribute(self, network: Network) -> None:
         """
         Match the weight table to a stabilized network: each river's runoff volume is split evenly between every row
-        with it as parent_river_id, which is the river and the synthetic sub-reaches injected upstream of it. Does
+        with it as parentRiverId, which is the river and the synthetic sub-reaches injected upstream of it. Does
         nothing when the table already has a row per network row.
         """
         n = network.river_ids.shape[0]
@@ -411,7 +430,7 @@ class BaseGridRunoff(Runoff):
             return
         parent = pd.Index(self.river_ids).get_indexer(network.parent_river_ids)  # weight table row of each parent
         if np.any(parent < 0):
-            raise ValueError(f'{self.grid_weights_file} is missing parent_river_id values of the network')
+            raise ValueError(f'{self.grid_weights_file} is missing parentRiverId values of the network')
         counts = np.diff(self.indptr)[parent]
         indptr = np.concatenate(([0], np.cumsum(counts))).astype(self.indptr.dtype)
         take = np.repeat(self.indptr[parent] - indptr[:-1], counts) + np.arange(indptr[-1])
@@ -421,12 +440,13 @@ class BaseGridRunoff(Runoff):
         self._buffer = np.empty(0, dtype=np.float32)
         return
 
-    ################################################
-    # Prepare catchment runoff from gridded runoff
-    ################################################
-
     def catchment_runoff(
-        self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
+        self,
+        runoff_data: PathInput | list[PathInput],
+        thread_pool: Executor | None = None,
+        threads: int = 1,
+        *,
+        as_volumes: bool | None = None,
     ) -> tuple[FloatArray, DatetimeArray]:
         """
         Read and aggregate runoff into one reused buffer so that repeated calls allocate nothing.
@@ -435,6 +455,7 @@ class BaseGridRunoff(Runoff):
             runoff_data: path(s) to runoff files
             thread_pool: optional thread pool to aggregate on, used as given and never shut down here
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
+            as_volumes: volumes (m³) rather than depths (m); None follows the ``as_volumes`` option
 
         Returns:
             tuple: (catchment runoff as a C-order (n_rivers, time) array, its time values). The array is a view of
@@ -444,7 +465,13 @@ class BaseGridRunoff(Runoff):
         if self._buffer.shape[0] < runoff.shape[0] * self.river_ids.shape[0]:
             self._buffer = np.empty(runoff.shape[0] * self.river_ids.shape[0], dtype=np.float32)
         return self.aggregate(
-            runoff, time_index, conversion_factor, out=self._buffer, thread_pool=thread_pool, threads=threads
+            runoff,
+            time_index,
+            conversion_factor,
+            out=self._buffer,
+            thread_pool=thread_pool,
+            threads=threads,
+            as_volumes=as_volumes,
         )
 
     def catchment_reader(
@@ -466,9 +493,10 @@ class BaseGridRunoff(Runoff):
         Yields:
             tuple: (dates, catchment_runoff, source_file) per input file
         """
-        self.as_volumes = True  # routing uses catchment runoff volumes
         for runoff_file in runoff_files:
-            catchment_runoff, dates = self.catchment_runoff(runoff_file, thread_pool=thread_pool, threads=threads)
+            catchment_runoff, dates = self.catchment_runoff(
+                runoff_file, thread_pool=thread_pool, threads=threads, as_volumes=True
+            )
             yield dates.astype('datetime64[s]'), catchment_runoff.astype(np.float32, copy=False), runoff_file
 
     def generator(self, runoff_files: PathList) -> RunoffGenerator:
@@ -485,12 +513,11 @@ class BaseGridRunoff(Runoff):
             tuple: (dates, runoff, source_file) per input file, where runoff is a GridCellRunoff, or
                 CatchmentRunoffVolumes when the file was aggregated here
         """
-        self.as_volumes = True  # routing uses catchment runoff volumes
         for runoff_file in runoff_files:
             runoff, time_index, conversion_factor = self.read_runoff(runoff_file)
             if self._needs_resampling(time_index) or self.cumulative or self.force_positive_runoff:
-                catchment_runoff, time_index = self.aggregate(runoff, time_index, conversion_factor)
-                aggregated = CatchmentRunoffVolumes(catchment_runoff.astype(np.float32, copy=False))
+                catchment_runoff, time_index = self.aggregate(runoff, time_index, conversion_factor, as_volumes=True)
+                aggregated = CatchmentRunoffVolumes(catchment_runoff.astype(np.float32, copy=False), self.river_ids)
                 yield time_index.astype('datetime64[s]'), aggregated, runoff_file
                 continue
             volume_of_depth = self._weight(conversion_factor) * np.repeat(self.catchment_area, np.diff(self.indptr))
@@ -499,6 +526,7 @@ class BaseGridRunoff(Runoff):
                 indptr=self.indptr,
                 cell=self.cell,
                 weight=volume_of_depth.astype(np.float32),
+                river_ids=self.river_ids,
             )
             del runoff
             yield time_index.astype('datetime64[s]'), forcing, runoff_file
@@ -516,7 +544,7 @@ class BaseGridRunoff(Runoff):
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Returns:
-            xr.Dataset: catchment runoff with dimensions ``time`` and ``river_id``. Contains ``catchment_runoff`` in
+            xr.Dataset: catchment runoff with dimensions (``river_id``, ``time``). Contains ``catchment_runoff`` in
                 meters or m³ and ``catchment_area`` in m².
         """
         runoff, time_index, conversion_factor = self.read_runoff(runoff_data)
@@ -557,7 +585,7 @@ class BaseGridRunoff(Runoff):
         Returns:
             tuple: (runoff as a C-order (time, n_cells) array, time values, factor converting the depth unit to meters)
         """
-        with xr.open_mfdataset(runoff_data, chunks=None) as ds:
+        with xr.open_mfdataset(runoff_data) as ds:
             runoff_depth_unit = self.runoff_depth_unit or ds[self.var_grid_runoff].attrs.get('units', 'm')
             conversion_factor = self._get_conversion_factor(runoff_depth_unit)
             runoff = (
@@ -582,6 +610,8 @@ class BaseGridRunoff(Runoff):
         out: FloatArray | None = None,
         thread_pool: Executor | None = None,
         threads: int = 1,
+        *,
+        as_volumes: bool | None = None,
     ) -> tuple[FloatArray, DatetimeArray]:
         """
         Aggregate gridded runoff depths onto rivers as area weighted depths or volumes in a single pass.
@@ -596,11 +626,13 @@ class BaseGridRunoff(Runoff):
                 ``threads`` ranges of similar work that the same kernel aggregates concurrently. Without a pool one
                 range covers every river.
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
+            as_volumes: volumes (m³) rather than depths (m); None follows the ``as_volumes`` option
 
         Returns:
             tuple: (catchment runoff as a C-order (n_rivers, time) array, its time values). When ``out`` is used the
                 array is a view of its start.
         """
+        volumes = self.as_volumes if as_volumes is None else as_volumes
         n_steps, n_rivers = runoff.shape[0], self.river_ids.shape[0]
         runoff_by_cell = self._by_cell(runoff)
         weight = self._weight(conversion_factor)
@@ -621,7 +653,7 @@ class BaseGridRunoff(Runoff):
             catchment_runoff = np.array(df.to_numpy(dtype=np.float32).T, order='C')
             del df
             catchment_runoff[np.isnan(catchment_runoff)] = 0.0
-            if self.as_volumes:
+            if volumes:
                 catchment_runoff *= self.catchment_area[:, np.newaxis]
             return catchment_runoff, time_index
 
@@ -631,7 +663,7 @@ class BaseGridRunoff(Runoff):
             raise ValueError(f'out must be a flat buffer of at least {n_rivers * n_steps} values')
         else:
             catchment_runoff = out[: n_rivers * n_steps].reshape(n_rivers, n_steps)
-        scale = self.catchment_area if self.as_volumes else no_scale
+        scale = self.catchment_area if volumes else no_scale
         self._aggregate_over_ranges(runoff_by_cell, weight, scale, catchment_runoff, thread_pool, threads)
         return catchment_runoff, time_index
 

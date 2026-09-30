@@ -9,6 +9,19 @@ if TYPE_CHECKING:
     from .router.Router import Router
     from .runoff import CatchmentRunoffVolumes, GridCellRunoff
 
+__all__ = [
+    'PathInput',
+    'PathList',
+    'FloatArray',
+    'Float64Array',
+    'IntArray',
+    'Int32Array',
+    'DatetimeArray',
+    'JobBlocks',
+    'RunoffGenerator',
+    'WriteDischargesFn',
+]
+
 PathInput = str | Path  # used at runtime for validation so it can't be a lazy type alias
 type PathList = list[PathInput]
 type FloatArray = NDArray[np.float32]
@@ -16,6 +29,8 @@ type Float64Array = NDArray[np.float64]
 type IntArray = NDArray[np.int64]
 type Int32Array = NDArray[np.int32]
 type DatetimeArray = NDArray[np.datetime64]
+# the blocks one job routes, as (block_starts, block_stops, block_outlet, block_number); see Network.routing_blocks
+type JobBlocks = tuple[Int32Array, Int32Array, Int32Array, Int32Array]
 # what Runoff.generator yields for each input: its dates, its runoff in the form routing reads, and the file
 type RunoffGenerator = Generator[tuple[DatetimeArray, CatchmentRunoffVolumes | GridCellRunoff, PathInput]]
 
@@ -32,16 +47,3 @@ class WriteDischargesFn(Protocol):
         discharge_file: PathInput,
         runoff_file: PathInput = '',
     ) -> None: ...
-
-
-__all__ = [
-    'PathInput',
-    'PathList',
-    'FloatArray',
-    'Float64Array',
-    'IntArray',
-    'Int32Array',
-    'DatetimeArray',
-    'RunoffGenerator',
-    'WriteDischargesFn',
-]

@@ -1,8 +1,7 @@
 """
-``CatchmentRunoff`` reads files of runoff already aggregated to catchments, the forcing catchment, and yields each as
-``CatchmentRunoffVolumes`` (bases.py), whose rows routing reads in place with the overloads of
-get_river_forcing and add_river_forcing registered there. It defines no form of runoff or overload of its
-own.
+``CatchmentRunoff`` reads runoff already aggregated to catchments and yields each as ``CatchmentRunoffVolumes``
+(bases.py), whose rows routing reads in place with the overloads of
+get_river_forcing and add_river_forcing registered there. It defines no form of runoff or overload of its own.
 """
 
 from typing import Self
@@ -45,15 +44,18 @@ class CatchmentRunoff(Runoff):
                     raise ValueError(
                         f'{CATCHMENT_RUNOFF} in {runoff_file} has dimensions {runoff.dims}, expected (river_id, time)'
                     )
+                if 'river_id' not in ds.variables:
+                    raise ValueError(f'{runoff_file} has no river_id coordinate naming the river of each row')
                 units = runoff.attrs.get('units')
                 if units is None:
                     raise ValueError(f'{CATCHMENT_RUNOFF} in {runoff_file} has no units attribute, m3 or a depth unit')
+                river_ids = ds['river_id'].values
                 array = runoff.values.astype(np.float32, copy=False)
                 if units not in VOLUME_UNITS:
                     area = ds[CATCHMENT_AREA].values.astype(np.float32) * np.float32(self._get_conversion_factor(units))
                     array *= area[:, np.newaxis]
             np.nan_to_num(array, copy=False, nan=0.0)  # the routing kernels never see NaN
-            yield dates, CatchmentRunoffVolumes(array), runoff_file
+            yield dates, CatchmentRunoffVolumes(array, river_ids), runoff_file
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:

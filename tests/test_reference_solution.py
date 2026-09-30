@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-from reference_solution import RUN_NAMES, assert_same, route_run, write_catchment_runoff
+from reference_solution import assert_same, reference_runs, route_run, write_catchment_runoff
 
 from river_route.router import writers
 
@@ -36,7 +36,7 @@ def test_catchment_runoff_is_reproduced(package: Path, manifest: dict, tmp_path:
                 assert_same(regenerated[name].to_numpy(), reference[name].to_numpy())
 
 
-@pytest.mark.parametrize('name', RUN_NAMES)
+@pytest.mark.parametrize('name', reference_runs('', '', [], []))
 def test_run_is_reproduced(name: str, package: Path, manifest: dict, tmp_path: Path) -> None:
     run = manifest['runs'][name]
     routed = {}  # each discharge file's name -> what the router handed its writer

@@ -4,14 +4,14 @@ every input and output so the test suite can require river-route to regenerate i
 definition, so rebuild it only when the routing is deliberately changed. Build it with
 
     python tests/reference_solution.py \
-        --region-dir ~/data/v3TestData/hydrography/region=7020014250 \
+        --region-dir ~/data/rfsv3/routing/region=7020014250 \
         --outlet-river-id 720207783 \
         --runoff ~/data/era5/year=2000/era5_2000{03,04,05,06}.nc
 
-which routes the Columbia River, river 720207783 at its mouth and the 29,876 rivers upstream of it in the level 2
-basin covering Washington, Oregon, and southwestern Canada, through March to June 2000. It cuts the region's
-routing.parquet and grid weights down to that basin with ``streams.subset_configs_to_river``, copies the runoff files
-unmodified into ``inputs/``, aggregates each runoff file into a catchment runoff file, routes every run of
+which routes the Columbia River, river 720207783 at its mouth and the 29,404 rivers upstream of it in the level 2
+basin covering Washington, Oregon, and southwestern Canada, through March to June 2000. It cuts the region's network
+file, network.parquet, and grid weights down to that basin with ``streams.subset_network_to_river``, copies the runoff
+files unmodified into ``inputs/``, aggregates each runoff file into a catchment runoff file, routes every run of
 ``reference_runs`` into ``outputs/`` with the months in sequence, and writes ``manifest.json`` describing how each
 output was made. Discharge is written by the default zarr writer with every float32 mantissa bit kept, so nothing is
 rounded.
@@ -46,16 +46,16 @@ from river_route.router import writers
 
 PACKAGE = Path(__file__).parent / 'data' / 'reference_solution'
 GRID_NAMES = {'var_x': 'longitude', 'var_y': 'latitude', 'var_t': 'valid_time'}
-INPUT_PATH_OPTIONS = ('params_file', 'grid_weights_file', 'channel_state_init_file')
+INPUT_PATH_OPTIONS = ('network_file', 'grid_weights_file', 'channel_state_init_file')
 TOLERANCE = 10e-4  # answers that should be identical may differ by this share of each river's largest value
 WILLAMETTE = 720184033  # the Willamette River where it joins the Columbia at Portland: 1,390 rivers
 
 
 @dataclass
 class Basin:
-    """A basin cut from the package: its params and weights, and its catchment runoff volumes for each month."""
+    """A basin cut from the package: its network file and weights, and its catchment runoff volumes for each month."""
 
-    params_file: Path
+    network_file: Path
     weights_file: Path
     runoff_files: list[Path]  # the package's gridded runoff, one file per month
     months: list[tuple[np.ndarray, np.ndarray]]  # (dates, (river, time) catchment runoff volumes) per runoff file
@@ -64,7 +64,7 @@ class Basin:
     def gridded(self, months: int = 4) -> dict:
         """Configs options that route the basin's first ``months`` of gridded runoff."""
         return GRID_NAMES | {
-            'params_file': self.params_file,
+            'network_file': self.network_file,
             'forcing': 'grid',
             'runoff_files': self.runoff_files[:months],
             'grid_weights_file': self.weights_file,
@@ -93,16 +93,19 @@ def assert_same(actual: np.ndarray, desired: np.ndarray, tolerance: float = TOLE
 
 class ArrayRunoff(rr.CatchmentRunoff):
     """
-    Catchment runoff volumes held in memory as one (dates, (river, time) volumes) pair per runoff file, for tests that
-    shape the runoff themselves. The paths in ``runoff_files`` only have to exist; they are not read.
+    Catchment runoff volumes held in memory as one (dates, (river, time) volumes) pair per runoff file, with rows in
+    the order of ``river_ids``, for tests that shape the runoff themselves. The paths in ``runoff_files`` only have to
+    exist; they are not read.
     """
 
-    def __init__(self, files: list[tuple[np.ndarray, np.ndarray]]) -> None:
+    def __init__(self, files: list[tuple[np.ndarray, np.ndarray]], river_ids: np.ndarray) -> None:
         self.files = files
+        self.river_ids = river_ids
 
     def generator(self, runoff_files):
         for (dates, volumes), runoff_file in zip(self.files, runoff_files, strict=True):
-            yield dates, rr.runoff.CatchmentRunoffVolumes(np.ascontiguousarray(volumes, dtype=np.float32)), runoff_file
+            runoff = np.ascontiguousarray(volumes, dtype=np.float32)
+            yield dates, rr.runoff.CatchmentRunoffVolumes(runoff, self.river_ids), runoff_file
 
 
 @dataclass
@@ -132,8 +135,8 @@ def route(
     """
     runoff = None
     if files is not None:
-        runoff = ArrayRunoff(files)
-        options |= {'forcing': 'catchment', 'runoff_files': [options['params_file']] * len(files)}
+        runoff = ArrayRunoff(files, (network or rr.Network(options['network_file'])).river_ids)
+        options |= {'forcing': 'catchment', 'runoff_files': [options['network_file']] * len(files)}
     n_outputs = len(options.get('runoff_files', [])) or 1
     defaults = {
         'discharge_files': [directory / f'discharge_{i}.zarr' for i in range(n_outputs)],
@@ -158,12 +161,12 @@ def route(
     return routed
 
 
-def reference_runs(params: str, weights: str, runoff: list[str], catchment_runoff: list[str]) -> dict[str, dict]:
+def reference_runs(network_file: str, weights: str, runoff: list[str], catchment_runoff: list[str]) -> dict[str, dict]:
     """
     Each run's thread count and configs, with its input paths relative to the package. They are built in this order,
     since later runs read the catchment runoff files and the standard run's final state.
     """
-    common = {'params_file': params, 'dt_routing': 3600, 'unstable_coefficients': 'ignore'}
+    common = {'network_file': network_file, 'dt_routing': 3600, 'unstable_coefficients': 'ignore'}
     grid = common | GRID_NAMES | {'forcing': 'grid', 'runoff_files': runoff, 'grid_weights_file': weights}
     stabilized = grid | {'network_type': 'stabilized'}
     catchment = common | {'forcing': 'catchment', 'runoff_files': catchment_runoff}
@@ -181,9 +184,6 @@ def reference_runs(params: str, weights: str, runoff: list[str], catchment_runof
         'catchment_file': {'threads': 1, 'configs': catchment},
         'channel': {'threads': 1, 'configs': channel},
     }
-
-
-RUN_NAMES = tuple(reference_runs('', '', [], []))
 
 
 def route_run(package: Path, run: dict, discharge_files: list[Path], final_state_file: Path, writer) -> None:
@@ -218,16 +218,16 @@ def build(region_dir: Path, outlet_river_id: int | None, runoff: list[Path], pac
     """Copy or cut the inputs into ``package``, route every reference run, and write the manifest."""
     if package.exists():
         raise FileExistsError(f'{package} exists; the reference solution is only rebuilt after it is deleted')
-    params_source = region_dir / 'routing.parquet'
+    network_source = region_dir / 'network.parquet'
     weights_source = next(region_dir.glob('gridweights_*.nc'))
-    params, weights = f'inputs/{params_source.name}', f'inputs/{weights_source.name}'
+    network_file, weights = f'inputs/{network_source.name}', f'inputs/{weights_source.name}'
     (package / 'inputs').mkdir(parents=True)
     if outlet_river_id is None:
-        shutil.copy2(params_source, package / params)
+        shutil.copy2(network_source, package / network_file)
         shutil.copy2(weights_source, package / weights)
     else:
-        streams.subset_configs_to_river(
-            outlet_river_id, params_source, package / params, weights_source, package / weights
+        streams.subset_network_to_river(
+            outlet_river_id, network_source, package / network_file, weights_source, package / weights
         )
     for source in runoff:
         copy = shutil.copytree if source.is_dir() else shutil.copy2
@@ -245,7 +245,7 @@ def build(region_dir: Path, outlet_river_id: int | None, runoff: list[Path], pac
         write_catchment_runoff(package, catchment_runoff, runoff_file, package / path)
 
     writers.ZARR_KEEPBITS = 23  # every float32 mantissa bit, so zarr_writer writes the discharge unrounded
-    runs = reference_runs(params, weights, runoff_copies, catchment_runoff['files'])
+    runs = reference_runs(network_file, weights, runoff_copies, catchment_runoff['files'])
     for name, run in runs.items():
         (package / 'outputs' / name).mkdir()
         months = [Path(path).stem for path in run['configs'].get('runoff_files', [])]
@@ -289,7 +289,7 @@ def build(region_dir: Path, outlet_river_id: int | None, runoff: list[Path], pac
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Build the reference solution the test suite reproduces.')
-    parser.add_argument('--region-dir', type=Path, required=True, help='folder with routing.parquet and grid weights')
+    parser.add_argument('--region-dir', type=Path, required=True, help='folder with network.parquet and grid weights')
     parser.add_argument('--outlet-river-id', type=int, help='cut the region to this river and its upstreams')
     parser.add_argument('--runoff', type=Path, nargs='+', required=True, help='gridded runoff files, routed in order')
     parser.add_argument('--package', type=Path, default=PACKAGE, help='where to write the reference solution')

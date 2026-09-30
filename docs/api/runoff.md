@@ -45,26 +45,37 @@ router = rr.Router(configs, runoff=runoff)
       show_root_heading: true
       show_source: false
 
-::: river_route.GridRunoff
+::: river_route.runoff.GridRunoff.GridRunoff
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
+      show_root_full_path: false
 
-::: river_route.CatchmentRunoff
+::: river_route.runoff.CatchmentRunoff.CatchmentRunoff
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
+      show_root_full_path: false
 
-::: river_route.ECMWFGribReducedGrid
+::: river_route.runoff.ECMWFGribReducedGrid.ECMWFGribReducedGrid
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
+      show_root_full_path: false
+
+::: river_route.runoff.ECMWFGribReducedGrid.ReducedGaussianGrid
+    handler: python
+    options:
+      members_order: source
+      show_root_heading: true
+      show_source: false
+      show_root_full_path: false
 
 ::: river_route.runoff.weights
     handler: python

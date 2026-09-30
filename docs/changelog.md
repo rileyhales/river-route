@@ -17,13 +17,17 @@ file format.
 - Rivers are routed one at a time from upstream to downstream, each river's whole time series before the next river,
   by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
 - `coefficients='dynamic'` routes with nonlinear Muskingum K = `dynamicAlpha` * Q ^ `dynamicBeta`, from those two
-  columns of the params file, recomputed at every routing step. Dynamic coefficients route standard networks.
-- `network_type='stabilized'` routes every river stably at `dt_routing`: a river too long for it is routed as
-  sub-reaches in series, and a river too short for it is sub-cycled. `Network.stabilize(dt)` builds the stabilized
-  network in memory and `Network.write_stabilized(dt)` writes it as a parameter table, in which added reaches are
-  numbered down from -1,000,000, `synthetic` marks them, and `parent_river_id` maps each reach to the river it was
-  split from. Stabilized networks are routed with static coefficients and the `channel`, `grid`, or `ecmwf_grib`
-  forcing.
+  columns of the network file, recomputed at every routing step. Dynamic coefficients route standard networks.
+- `network_type='stabilized'` routes every river stably at `dt_routing`: a river too long for it is routed in
+  substeps, sub-reaches in series inside the kernel, and a river too short for it is routed in subcycles, shorter
+  routing steps of its own. Without `dt_routing` it routes
+  at the largest divisor of `dt_runoff` at which every river can be made stable, `Network.largest_stable_dt`. It
+  routes static coefficients with every forcing, and its state files hold one row per sub-reach.
+- `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
+  their own, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
+  down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
+  Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose Runoff classes share each
+  river's runoff among its sub-reaches with `Runoff.distribute`.
 - Rivers whose parameters are not Muskingum stable for `dt_routing`, outside `2*k*x <= dt_routing <= 2*k*(1-x)`,
   are reported. The new `unstable_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
 - `Router.route(thread_pool=pool, threads=n)` routes concurrently on a `ThreadPoolExecutor` the caller passes. The
@@ -40,20 +44,31 @@ file format.
 
 **Network**
 
-- `rr.Network` owns the river network: the ids, topology, and parameters of the params file, the partition of the
+- `rr.Network` owns the river network: the ids, topology, and parameters of the network file, the partition of the
   rivers into blocks, the stability analysis, and stabilization. A Router builds one from its Configs, or is given
   one as `Router(configs, network=network)`, so one parsed and partitioned network backs many simulations. A
-  Network is built from a params file or a DataFrame. `Router.river_ids`, `k`, and `x` are read off the network, as
+  Network is built from a network file or a DataFrame. `Router.river_ids`, `k`, and `x` are read off the network, as
   `router.network.river_ids`.
-- The params file column `downstream_river_id` is renamed `next_river_id`. Dynamic coefficients read the columns
-  `dynamicAlpha` and `dynamicBeta`.
-- The rivers of the params file must be in depth first search (DFS) order, where v2 required only upstream before
+- The params file is renamed the network file, set with the `network_file` config in place of `params_file`: it
+  describes the network the `Network` class is built from, not only its Muskingum parameters. Its columns are
+  camelCase: `riverId`, `nextRiverId` (was `downstream_river_id`), `muskingumK` (was `k`), and `muskingumX` (was
+  `x`), with `dynamicAlpha` and `dynamicBeta` for dynamic coefficients and `synthetic` and `parentRiverId` on a
+  stabilized network.
+- The rivers of the network file must be in depth first search (DFS) order, where v2 required only upstream before
   downstream: the rivers upstream of each river are the rows immediately before it, so every river's upstream
-  watershed is one contiguous range of rows. Every file with one entry per river lists the rivers in that order.
-  `examples/migrate_v2_to_v3.py` converts v2 inputs, sorting the params file into DFS order and the grid weights,
-  qlateral files, and channel state files into the same order.
-- `river_route.tools` is removed. `subset_configs_to_river`, `connectivity_to_digraph`, and `adjacency_matrix` are in
-  `river_route.network.streams` with the functions that analyze and partition networks.
+  watershed is one contiguous range of rows. Two new required columns describe that order: `riverIndex`, each river's
+  position in it, and `upstreamCount`, the number of rivers upstream of each river. Every file with one entry per
+  river lists the rivers in that order, and routing refuses catchment runoff or a grid weight table whose rivers are
+  not the rivers of the network file in that order. `examples/migrate_v2_to_v3.py` converts v2 inputs, writing the
+  params file as a network file in DFS order with both columns, and the grid weights, qlateral files, and channel
+  state files in the same order.
+- `Network` analyzes Muskingum stability with `stability_window`, `unstable_mask`, `substeps`, `subcycles`,
+  `conditioning`, `largest_stable_dt`, and `check_stability`, and divides the rivers into the blocks threads route
+  with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a `Network` refuses
+  a table whose `upstreamCount` does not describe its DFS order.
+- `river_route.tools` is removed. `subset_network_to_river` is in `river_route.network.streams`, with the functions
+  that analyze and partition networks, and cuts a basin as the rows its outlet's `riverIndex` and `upstreamCount`
+  give, without building a graph. `connectivity_to_digraph` and `adjacency_matrix` are removed.
 
 **Runoff**
 
@@ -74,11 +89,12 @@ file format.
   Columbia in a 145 step O1280 forecast that reads in 0.72 s with memory for one message, where xarray and cfgrib
   took 5.8 s and 4 GB. `ReducedGaussianGrid.from_grib` reads a file's grid from its metadata,
   `ReducedGaussianGrid.cell_polygons` gives the area each cell represents, and `reduced_grid_weights` builds a weight
-  table that locates each cell by its `cell_index`. The `var_cell` config names the cell dimension.
+  table that locates each cell by its `cell_index`.
 - `runoff_depth_unit`, `force_positive_runoff`, `force_uniform_timesteps`, and `as_volumes`, arguments of
   `runoff_to_qlateral` in v2, are configs.
 - NaN runoff is set to zero before it is routed: a NaN cell contributes nothing while the other cells of its
   catchment still count.
+- A runoff `units` attribute of `kg m-2` is read as millimeters of water; v2 read it as meters.
 - The weight table functions `grid_weights`, `compute_voronoi_catchment_intersects`,
   `voronoi_diagram_from_regular_xy`, and `cell_xy_from_regular_grid` are in `river_route.runoff.weights`, and still
   importable from `river_route.runoff`.
@@ -90,14 +106,16 @@ file format.
   keyword arguments.
 - Config files are JSON only. YAML config files are no longer read, and `pyyaml` is no longer a dependency.
   `examples/config.json` lists every option.
-- Unrecognized config keys raise a `ValueError` naming them. `Router.route` validates the options and paths with
-  `Configs.validate_routing`. `Configs.deep_validate()` reads every input file that is set and checks its contents
-  and their consistency with each other; nothing calls it for you.
+- Unrecognized keys in a config file raise a `ValueError` naming them, and unknown keyword arguments a `TypeError`.
+  `Router.route` validates the options and paths with `Configs.validate_routing`, and `GridRunoff.from_configs` with
+  `Configs.validate_runoff`; passing one does not pass the other. `Configs.deep_validate()` reads the network file,
+  grid weights, and initial state that are set and checks their contents and their consistency with each other;
+  nothing calls it for you.
 - Outputs named from `discharge_dir` are `discharge_<input name>.zarr`, taking the extension of the store the
   default writer writes instead of the extension of the runoff file. Input files with duplicate names are rejected
   rather than overwriting each other's output. `discharge_dir=os.devnull` routes and discards the discharge.
 - `dt_total` shorter than a runoff file routes that portion, and one longer than the file raises instead of reading
-  past the end of the array. Runoff is checked against the params file for its number of rivers before it is
+  past the end of the array. Runoff is checked against the network file for its rivers, in order, before it is
   routed.
 
 **Outputs**
@@ -108,21 +126,29 @@ file format.
   bitshuffle, 2.71x smaller than the raw array on a year of the Amazon. `netcdf_writer` writes an uncompressed
   netCDF file with dimensions `(river_id, time)`, where v2 wrote `(time, river_id)`. `null_writer` writes nothing.
 - `set_write_discharges` is renamed `set_discharge_writer`. A writer is called as
-  `writer(router, dates, discharge_array, discharge_file, runoff_file)`: it is handed the Router first, and the
-  discharge as a C-order `(river, time)` array.
+  `writer(router, dates, discharge_array, discharge_file, runoff_file)`: it is handed the Router first, the
+  discharge as a C-order `(river, time)` array, and `runoff_file` `''` for channel routing.
+- Final state files hold a `river_id` column beside `Q`. River ids are written as int32 in discharge, catchment
+  runoff files, and network tables written by `Network`, and read as int32 from grid weight tables.
+
+**Metrics**
+
+- `metrics.kge2012` computes its variability ratio as the simulated over the observed coefficient of variation; v2
+  inverted it.
 
 **CLI**
 
 - `rr route config.json` routes a config file, replacing `rr route --router <class> config` and the per-class
   commands `rr Muskingum`, `rr RapidMuskingum`, and `rr UnitMuskingum`.
-- `rr subset <river_id> --params <in> --out-params <out>` cuts a params file, and optionally a grid weight table with
+- `rr subset <river_id> --network <in> --out-network <out>` cuts a network file, and optionally a grid weight table with
   `--weights` and `--out-weights`, to a river and every river upstream of it.
 
 **Packaging**
 
 - Increased the minimum Python version to 3.14.
-- Added lower and upper version bounds to every dependency. Added `zarr`, `cfgrib`, and `eccodes`, and removed
-  `pyyaml`.
+- Added lower version bounds to every dependency, and major version upper bounds to those that follow semantic
+  versioning: `dask` and `xarray`, versioned by date, and `pyarrow` have none. Added `zarr`, `eccodes`, and
+  `pyproj`, and removed `pyyaml` and `networkx`.
 
 ---
 

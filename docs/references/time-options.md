@@ -2,12 +2,14 @@
 
 Routing simulations have four different time steps, all given in seconds.
 
-- `dt_routing`: The routing computation step, dt in the Muskingum equation. **The only one you need to specify**.
+- `dt_routing`: The routing computation step, dt in the Muskingum equation. Channel routing requires it, and routing
+  with forcing defaults it from `dt_runoff`.
 - `dt_runoff`: Interval between runoff inputs. If you don't provide it, it will be identified when the runoff file is opened.
-- `dt_discharge`: Interval over which to average discharge to write to disc. Must be greater than or equal to `dt_runoff`.
+- `dt_discharge`: Interval over which to average discharge to write to disk. Must be greater than or equal to `dt_runoff`.
 - `dt_total`: Total simulation duration.
 
-The most important time step is `dt_routing`. All other time steps are derived from this and the runoff inputs.
+The most important time step is `dt_routing`. The others are read from the runoff inputs unless the configs give
+them.
 
 The following rules apply:
 
@@ -24,7 +26,8 @@ The following rules apply:
     - `dt_runoff` defaults to the runoff-file timestep.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
-    - `dt_routing` defaults to `dt_runoff`.
+    - `dt_routing` defaults to `dt_runoff`, or with `network_type: stabilized` to the largest divisor of `dt_runoff`
+      at which every river can be made stable.
 
 ## Required Relationships
 

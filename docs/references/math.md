@@ -278,10 +278,10 @@ $$
 
 Because $L_{ii} = 1$, no division is needed. Each unknown $x_i$ depends only on previously
 solved values $x_1, \ldots, x_{i-1}$, so the system is solved sequentially from the first
-row to the last. Specifically, `river-route` does not store the matrix $L$ at all. It uses a
-push-based forward substitution over a single `downstream_indices` vector. Each river is
-visited once in topological order; once a river's discharge is known, its contribution is pushed
-forward onto the right-hand side of its single downstream river using pre-gathered coefficients.
+row to the last. `river-route` does not store the matrix $L$ at all, and it does not solve it one time step at a
+time. Once every river upstream of a river is routed, the whole right-hand side of that river is known at every step,
+so v3 solves the system one river at a time: each river's whole time series is routed before the next river, in
+topological order, and pushed onto its single downstream river through a `downstream_indices` vector.
 
 ```
 for j = 1, 2, ..., n:
@@ -292,36 +292,38 @@ for j = 1, 2, ..., n:
 
 *Listing 1: Conceptual column-oriented forward substitution pseudocode for a generic unit lower triangular system (not river-route's storage layout).*
 
-In the actual v3 kernels (`river_route/router/_numba_kernels.py`, e.g. `static_channel`), there is no
-matrix and no CSC arrays. Each river's right-hand side is first seeded with its own $c_3\, Q_t$ term (plus
-any lateral forcing). The kernel then visits the rivers in topological order, and once a river's new
-discharge is known it pushes that contribution forward onto its single downstream river using the
-pre-gathered `downstream_c1` / `downstream_c2` coefficients (built in `Router.py`). Conceptually, one routing step is:
+In the v3 kernels (`route_job` in `river_route/router/_numba_kernels.py` and the `route_river` routing methods next
+to it) there is no matrix. A river's inflow row already holds the summed discharge of its upstream rivers at every
+routing step when the river is reached, so its whole series is the recurrence
+$Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}$ with every $I$ known, and once it is solved the
+series is added into the inflow row of the river downstream:
 
 ```python
-for i in range(n_rivers):              # topological order: upstream before downstream
-    q_old = q_t[i]
-    q_new = rhs[i]                      # rhs[i] already holds c3*q_old + upstream/lateral contributions
-    q_t[i] = q_new
-    downstream_idx = downstream_indices[i]
-    if downstream_idx >= 0:             # outlets have no downstream (-1)
-        rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
+for i in range(n_rivers):                        # topological order: upstream before downstream
+    inflow = inflow_rows[i]                      # summed discharge of the rivers upstream of i, at every level
+    series[0] = q[i]
+    for t in range(n_steps):
+        q[i] = c1[i] * inflow[t + 1] + c2[i] * inflow[t] + c3[i] * q[i] + c4[i] * runoff_rate[i, t]
+        series[t + 1] = q[i]
+    if downstream_indices[i] >= 0:               # outlets have no downstream (-1)
+        inflow_rows[downstream_indices[i]] += series
 ```
 
-*Listing 2: Push-based forward substitution over downstream indices for one routing step, matching `static_channel` in `_numba_kernels.py`.*
+*Listing 2: River-at-a-time forward substitution over downstream indices, the order in which `route_job` routes.*
 
-- **Time:** $O(n + m)$ where $n$ is the number of river segments and $m$ is the number of edges
-  (upstream-downstream connections). For tree-structured river networks, $m = n - 1$.
-- **Space:** Only the sparse matrix entries are stored. No fill-in occurs because no
-  factorization is performed.
+- **Time:** $O((n + m)\, T)$ where $n$ is the number of river segments, $m$ is the number of edges
+  (upstream-downstream connections), and $T$ is the number of routing steps. For tree-structured river networks,
+  $m = n - 1$.
+- **Space:** No matrix is stored. Only the inflow rows of the rivers that some but not all of their upstream rivers
+  have been routed into are held at once.
 
-This is optimal — every edge is visited exactly once per time step.
+This is optimal — every edge is visited exactly once per routing step.
 
 ## Numerical stability relationship between c1, c2, dt, k, x
 
 Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly
 regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative
-discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_2$ is negative. The coefficients
+discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_3$ is negative. The coefficients
 are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the
 numerators are positive comparing dt (a subjective choice) to k and x (physically derived parameters):
 
@@ -334,7 +336,7 @@ c_3 > 0 &\iff \Delta t < 2k(1-x)
 $$
 
 Note that $c_2$ is always positive because $dt$, $k$, and $x$ are all positive.
-The remaining 2 inequalities can be combined to fine the range of valid $dt$ values:
+The remaining 2 inequalities can be combined to find the range of valid $dt$ values:
 
 $$
 2kx < \Delta t < 2k(1-x)
@@ -344,23 +346,25 @@ There are several noteworthy insights from these equations:
 
 - The width of the valid range is $2k(1-x) - 2kx = 2k(1-2x)$ which is positive for $x < 0.5$.
 - The lower bound of valid $dt$ values is 0 when $x = 0$ meaning maximum attenuation such as at a reservoir.
-- The upper bound of valid $dt$ values approaches 0 as $x$ approaches 0.5 meaning no attenuation.
+- The upper bound of valid $dt$ values approaches $k$ as $x$ approaches 0.5 meaning no attenuation.
 - The width of the valid range approaches 0 as $x$ approaches 0.5 meaning no attenuation.
 - The width of the valid range approaches $2k$ as $x$ approaches 0 meaning maximum attenuation such as at a reservoir.
 
-In the case of the river-route solver implementation which allows a single $dt$ for all rivers, numerical stability is easier when:
+With a single `dt_routing` for every river, numerical stability is easier when the following hold, and
+`network_type: stabilized` routes the rivers that still fall outside the range in substeps, sub-reaches in series, or
+in subcycles, shorter routing steps of their own:
 
 - There is more attenuation (smaller x) making the valid range wider, approaching $2k$.
-- Rivers are longer (larger k) and reaches are subdivided to accommodate $dt$.
+- Rivers are longer (larger k) and reaches are routed in substeps to accommodate $dt$.
 
 ## References
 
 - HEC-HMS Users Manual introduction to Muskingum Model
-  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model]
+  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model>
 - HEC-HMS Users Manual introduction to Muskingum Cunge Model
-  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model]
+  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model>
 - HEC-HMS Users Manual introduction to Unit Hydrographs
-  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts]
+  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts>
 - David, C. H. (2011) River Network Routing on the NHDPlus Dataset *Journal of Hydrometeorology* [doi:10.1175/2011JHM1345.1](https://doi.org/10.1175/2011JHM1345.1)
 - NRCS (2010). *National Engineering Handbook*, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture.
 - Wikipedia: [Triangular matrix — Forward substitution](https://en.wikipedia.org/wiki/Triangular_matrix#Forward_substitution).

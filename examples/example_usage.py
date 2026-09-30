@@ -7,32 +7,35 @@ from pathlib import Path
 import river_route as rr
 
 if __name__ == '__main__':
-    # Amazon: 6020006540, Caribbean: 7020065090, Mississippi:
+    # Amazon: 6020006540, Caribbean: 7020065090
     parser = argparse.ArgumentParser()
+    parser.add_argument('--bucket-root', default=Path.home() / 'data' / 'rfsv3')
     parser.add_argument('--region', default='6020006540')
-    parser.add_argument('--regions-root', default=Path.home() / 'data' / 'rfsv3' / 'hydrography')
-    parser.add_argument('--runoff-root', default=Path.home() / 'data' / 'era5_zarr_16x16_12month')
-    parser.add_argument('--dt-routing', type=int, default=3600)
-    parser.add_argument('--network-conditioning', choices=('standard', 'stabilized'), default='standard')
     parser.add_argument('--threads', type=int, default=1)
     args = parser.parse_args()
 
-    runoff_files = sorted(list(Path(args.runoff_root).glob('year=*/*.zarr')))
-    discharge_dir = Path(os.devnull)  # must pass something to pass config validation
-    region_dir = Path(args.regions_root)
-    params_file = region_dir / f'region={args.region}' / 'routing.parquet'
-    grid_weights_file = region_dir / f'region={args.region}' / f'gridweights_ERA5_{args.region}.nc'
+    dt_routing = 3600  # all times in seconds, 1 hour
+
+    # find the routing files for the region
+    routing_root = Path(args.bucket_root) / 'routing'
+    network_file = routing_root / f'region={args.region}' / 'routing.parquet'
+    grid_weights_file = routing_root / f'region={args.region}' / f'gridweights_ERA5_{args.region}.nc'
+    # find the runoff forcing files
+    era5_root = Path(args.bucket_root) / 'forcings' / 'era5'
+    runoff_files = sorted(era5_root.glob('194[0-9].zarr'))
+    # provide an output directory
+    discharge_dir = Path(os.devnull)  # devnull will pass validation and results will be discarded
 
     # ── 1. Configs: every option, frozen, in one object ──────────────────────
     conf = rr.Configs(
-        # the network/routing parameters file
-        params_file=params_file,
-        network_type=args.network_conditioning,
+        # the network/network file
+        network_file=network_file,
         # primary modeling choices
         coefficients='static',
         forcing='grid',
         transform='uniform',
-        dt_routing=args.dt_routing,
+        network_type='standard',
+        dt_routing=dt_routing,
         # model state files
         channel_state_init_file=None,
         channel_state_final_file=None,

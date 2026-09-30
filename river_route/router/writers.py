@@ -87,7 +87,7 @@ def netcdf_writer(
         dates: datetime array corresponding to the discharge columns
         discharge_array: routed discharge values, C-order with shape (river, time)
         discharge_file: path to write the discharge data to
-        runoff_file: path to the lateral inflow used to generate the discharge values, if applicable
+        runoff_file: path to the runoff file the discharge was routed from, or '' for channel routing
     """
     _check_discharge_shape(router, dates, discharge_array, discharge_file)
     rid = router.configs.var_river_id
@@ -101,12 +101,12 @@ def netcdf_writer(
         time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
         id_var = ds.createVariable(rid, 'i4', rid)
         id_var[:] = _river_ids(router)
-        flow_var = ds.createVariable(router.configs.var_discharge, 'f4', (rid, 'time'))
-        flow_var[:] = discharge_array  # one call: blocking the write only slows it down
-        flow_var.long_name = 'Discharge at catchment outlet'
-        flow_var.standard_name = 'discharge'
-        flow_var.aggregation_method = 'mean'
-        flow_var.units = 'm3 s-1'
+        discharge_var = ds.createVariable(router.configs.var_discharge, 'f4', (rid, 'time'))
+        discharge_var[:] = discharge_array  # one call: blocking the write only slows it down
+        discharge_var.long_name = 'Discharge at catchment outlet'
+        discharge_var.standard_name = 'discharge'
+        discharge_var.aggregation_method = 'mean'
+        discharge_var.units = 'm3 s-1'
     return
 
 
@@ -126,7 +126,7 @@ def zarr_writer(
         dates: datetime array corresponding to the discharge columns
         discharge_array: routed discharge values, C-order with shape (river, time)
         discharge_file: path of the zarr store to write
-        runoff_file: path to the lateral inflow used to generate the discharge values, if applicable
+        runoff_file: path to the runoff file the discharge was routed from, or '' for channel routing
     """
     _check_discharge_shape(router, dates, discharge_array, discharge_file)
     rid = router.configs.var_river_id
@@ -134,7 +134,7 @@ def zarr_writer(
     # zarr sizes its worker pool once per process, so the per-operation concurrency limit is what follows threads
     with zarr.config.set({'async.concurrency': router.threads}):
         group = zarr.create_group(str(discharge_file), overwrite=True, attributes={'runoff_file': str(runoff_file)})
-        flow = group.create_array(
+        discharge = group.create_array(
             router.configs.var_discharge,
             shape=(n_rivers, n_steps),
             chunks=(ZARR_RIVERS_PER_CHUNK, -1),
@@ -152,12 +152,12 @@ def zarr_writer(
             },
         )
         if ZARR_KEEPBITS >= 23:
-            flow[:] = discharge_array
+            discharge[:] = discharge_array
         else:  # round a chunk of rivers at a time, so the copy this makes stays the size of one chunk
 
             def write_chunk(r0: int) -> None:
                 r1 = min(r0 + ZARR_RIVERS_PER_CHUNK, n_rivers)
-                flow[r0:r1] = bitround(discharge_array[r0:r1], ZARR_KEEPBITS)
+                discharge[r0:r1] = bitround(discharge_array[r0:r1], ZARR_KEEPBITS)
 
             starts = range(0, n_rivers, ZARR_RIVERS_PER_CHUNK)
             if router.threads > 1:

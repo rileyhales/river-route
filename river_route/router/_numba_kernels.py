@@ -19,11 +19,10 @@ Terminology:
 
     route_region()                                    python
     ├── Network.routing_blocks()                      cached per thread count
-    │   ├── streams.assign_blocks()                   threaded, and only when the params file has no group column
-    │   └── streams.blocks_to_layout()                threaded
+    │   └── streams.assign_blocks()                   the blocks of each job, read from the upstreamCount column
+    │       └── pack_blocks_into_jobs()               network/_numba_kernels.py, one job per thread
     ├── _check_everything_a_job_reads()
-    ├── _pack_blocks_into_jobs()                      the sub-watershed blocks, packed into one Job per thread
-    ├── route_job(job)                                each of those jobs, concurrently on thread_pool when given
+    ├── route_job(job)                                each sub-watershed job, concurrently on thread_pool when given
     └── route_job(main stem job)                      after every other job has finished
 
 3. Route each job. When threading is used, 1 block from every job is routing concurrently.
@@ -63,7 +62,6 @@ To add a kind of runoff, add overloads of get_river_forcing and add_river_forcin
 method, add an overload of route_river. Nothing else in this module changes. Overloads should not use inline='always'.
 """
 
-import heapq
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -72,7 +70,7 @@ import numpy as np
 from numba import types
 from numba.extending import overload
 
-from ..types import FloatArray, Int32Array
+from ..types import FloatArray, Int32Array, JobBlocks
 
 if TYPE_CHECKING:
     from ..runoff import CatchmentRunoffVolumes, GridCellRunoff
@@ -94,9 +92,37 @@ __all__ = [
 ]
 
 
-################################################
-# The stages of routing one river, implemented next to the types they read
-################################################
+class Layout(NamedTuple):
+    """
+    How each river is routed. Both are empty on a standard network, where ``q_t`` holds one state per river. On a
+    stabilized network river r is routed in substeps, the sub-reaches ``reach_indptr[r]:reach_indptr[r + 1]`` in
+    series, with one state per sub-reach in ``q_t``, and ``subcycles`` gives the steps of its own each river takes per
+    routing step, or is empty when no river is subcycled.
+    """
+
+    reach_indptr: np.ndarray  # (n + 1,) int64, or empty
+    subcycles: np.ndarray  # (n,) int64, or empty
+
+
+class Job(NamedTuple):
+    """
+    The blocks of rivers one thread routes, in order. A block's outlet (-1 for none) hands its unclamped series to
+    ``boundary[block_number]`` instead of an inflow row, and each boundary row in ``cut_target`` is injected into its
+    target river before that river is routed. ``out_row`` is empty when every river has a discharge row, and otherwise
+    gives each river's row, -1 for a synthetic river whose series is written to a scratch row and discarded.
+    """
+
+    block_starts: np.ndarray  # (n_job_blocks,) int32
+    block_stops: np.ndarray  # (n_job_blocks,) int32
+    block_outlet: np.ndarray  # (n_job_blocks,) int32
+    block_number: np.ndarray  # (n_job_blocks,) int32
+    cut_target: np.ndarray  # (n_blocks,) int32, or empty
+    boundary: np.ndarray  # (n_blocks, n_routing + 1) float32
+    out_row: np.ndarray  # (n,) int32, or empty
+
+
+STANDARD_LAYOUT = Layout(reach_indptr=np.zeros(0, dtype=np.int64), subcycles=np.zeros(0, dtype=np.int64))
+_NO_CUTS = np.zeros(0, dtype=np.int32)  # a job of sub-watershed blocks injects nothing; only the main stem job does
 
 
 def get_river_forcing(runoff, r):
@@ -132,50 +158,6 @@ def is_argument_type(numba_type, kind: type) -> bool:
 def _channel_routing_has_no_catchment_runoff(runoff, r):
     if isinstance(runoff, types.NoneType):
         return lambda runoff, r: None
-
-
-################################################
-# What a job reads
-################################################
-
-
-class Layout(NamedTuple):
-    """
-    How each river is routed. Both are empty on a standard network, where ``q_t`` holds one state per river. On a
-    stabilized network river r is the sub-reaches ``reach_indptr[r]:reach_indptr[r + 1]`` in series, with one state
-    per sub-reach in ``q_t``, and ``substeps`` gives the steps each river takes per routing step, or is empty when no
-    river is sub-cycled.
-    """
-
-    reach_indptr: np.ndarray  # (n + 1,) int64, or empty
-    substeps: np.ndarray  # (n,) int64, or empty
-
-
-STANDARD_LAYOUT = Layout(reach_indptr=np.zeros(0, dtype=np.int64), substeps=np.zeros(0, dtype=np.int64))
-
-
-class Job(NamedTuple):
-    """
-    The blocks of rivers one thread routes, in order. A block's outlet (-1 for none) hands its unclamped series to
-    ``boundary[block_number]`` instead of an inflow row, and each boundary row in ``cut_target`` is injected into its
-    target river before that river is routed. ``out_row`` is empty when every river has a discharge row, and otherwise
-    gives each river's row, -1 for a synthetic river whose series is written to a scratch row and discarded.
-    """
-
-    block_starts: np.ndarray  # (n_job_blocks,) int32
-    block_stops: np.ndarray  # (n_job_blocks,) int32
-    block_outlet: np.ndarray  # (n_job_blocks,) int32
-    block_number: np.ndarray  # (n_job_blocks,) int32
-    cut_target: np.ndarray  # (n_blocks,) int32, or empty
-    boundary: np.ndarray  # (n_blocks, n_routing + 1) float32
-    out_row: np.ndarray  # (n,) int32, or empty
-
-
-################################################
-# The pool of inflow rows a job accumulates upstream series into. A river's row is taken from the pool when its first
-# upstream is routed, or when a block's buffered outlet series is injected into it, and returned once the river itself
-# is routed. Every river index into slot_of is relative to the job's first river.
-################################################
 
 
 @numba.njit(cache=True, nogil=True)
@@ -267,20 +249,17 @@ def release_inflow_row_to_pool(r, slot_of, free, top):
         slot_of[r] = -1
 
 
-################################################
-# Routing a job
-################################################
-
-
 @numba.njit(cache=True, nogil=True)
-def route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layout, runoff, transform, job):
+def route_job(
+    q_t, discharge_array, downstream_indices, routing_steps_per_runoff_step, method, layout, runoff, transform, job
+):
     """
     Route every river in the blocks of ``job``, river by river, through the stages: its catchment runoff from
     ``runoff``, transformed by ``transform``, and routed with the routing ``method``'s parameters. ``discharge_array``
     is C-order (river, time): each river's series is written into its own row in place.
     """
     n_steps = discharge_array.shape[1]
-    n_routing = n_steps * n_substeps
+    n_routing = n_steps * routing_steps_per_runoff_step
     block_starts, block_stops, block_outlet, block_number, cut_target, boundary, out_row = job
     n_rows = count_peak_live_inflow_rows(downstream_indices, block_starts, block_stops, block_outlet, cut_target)
     first, span = first_river_and_span_of_job(block_starts, block_stops)
@@ -289,9 +268,9 @@ def route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layo
     next_cut = 0
     transform_scratch = np.empty(0 if transform is None else n_steps, dtype=np.float32)
     expanded = layout.reach_indptr.shape[0] > 0
-    most = layout.substeps.max() if layout.substeps.shape[0] > 0 else 1
-    work = np.empty(n_routing * most, dtype=np.float32)
-    chain = np.empty(n_routing * most + 1 if expanded else 0, dtype=np.float32)
+    most_subcycles = layout.subcycles.max() if layout.subcycles.shape[0] > 0 else 1
+    work = np.empty(n_routing * most_subcycles, dtype=np.float32)
+    chain = np.empty(n_routing * most_subcycles + 1 if expanded else 0, dtype=np.float32)
     renumbered = out_row.shape[0] > 0
     discarded = np.empty(n_steps if renumbered else 0, dtype=discharge_array.dtype)
 
@@ -301,7 +280,7 @@ def route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layo
             while next_cut < cuts.shape[0] and cut_target[cuts[next_cut]] == r:
                 injected = get_or_open_downstream_inflow_row(r - first, inflow_rows, slot_of, free, top)
                 block_outlet_series = boundary[cuts[next_cut]]
-                for g in range(injected.shape[0]):  # a loop, not +=; see the module docstring
+                for g in range(injected.shape[0]):
                     injected[g] += block_outlet_series[g]
                 next_cut += 1
             inflow = get_upstream_inflow_row(r - first, inflow_rows, slot_of)
@@ -323,13 +302,6 @@ def route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layo
     return
 
 
-################################################
-# Running the jobs of a Router's blocks
-################################################
-
-_NO_CUTS = np.zeros(0, dtype=np.int32)  # a job of sub-watershed blocks injects nothing; only the main stem job does
-
-
 def route_region(
     router: Router,
     q_t: FloatArray,
@@ -338,65 +310,49 @@ def route_region(
     thread_pool: ThreadPoolExecutor | None,
 ) -> None:
     """
-    Route ``runoff`` through the whole region with the Router's routing method and layout: every sub-watershed block,
-    concurrently on ``thread_pool`` when given, then the main stem, which consumes the boundary buffer the blocks
-    filled. ``runoff`` is None for channel routing, or what the Router's Runoff generator yielded.
+    Route ``runoff`` through the whole region with the Router's routing method and layout: every job of sub-watershed
+    blocks, concurrently on ``thread_pool`` when given, then the main stem, which consumes the boundary buffer the
+    blocks filled. ``runoff`` is None for channel routing, or what the Router's Runoff generator yielded.
 
-    A boundary row holds a block outlet's whole series plus its initial state. One job holds many blocks, each with
-    its own outlet, so the blocks are packed longest first into one job per thread. That keeps the per-job cost in
-    python, and the buffers each job allocates, to once per thread rather than once per block.
+    A boundary row holds a block outlet's whole series plus its initial state. The Network packs the blocks into one
+    job per thread, which keeps the per-job cost in python, and the buffers each job allocates, to once per thread
+    rather than once per block.
     """
     # the Network derives the blocks once per thread count and caches them, so this is a lookup after the first file
-    routing_blocks, cut_target = router.network.routing_blocks(
-        threads=router.threads, concurrent=thread_pool is not None
-    )
-    _check_everything_a_job_reads(router, q_t, discharge_array, runoff, routing_blocks, cut_target)
+    job_blocks, cut_target = router.network.routing_blocks(router.threads if thread_pool is not None else 1)
+    _check_everything_a_job_reads(router, q_t, discharge_array, runoff, job_blocks)
     downstream_indices = router.network.downstream_indices
-    n_substeps = router.num_routing_steps_per_runoff
-    n_blocks = len(routing_blocks) - 1
-    boundary = np.zeros((max(n_blocks, 1), router.num_runoff_steps * n_substeps + 1), dtype=np.float32)
+    routing_steps_per_runoff_step = router.num_routing_steps_per_runoff
+    n_routing_steps = router.num_runoff_steps * routing_steps_per_runoff_step
+    boundary = np.zeros((max(cut_target.shape[0], 1), n_routing_steps + 1), dtype=np.float32)
     synthetic = router.network.synthetic  # each river's discharge row, -1 for a synthetic river that has none
     out_row = _NO_CUTS if synthetic is None else np.where(synthetic, -1, np.cumsum(~synthetic) - 1).astype(np.int32)
 
     method, layout, transform = router.routing_parameters, router.layout, None  # None is the uniform transform
 
-    def route_one_job(job: Job) -> None:
-        route_job(q_t, discharge_array, downstream_indices, n_substeps, method, layout, runoff, transform, job)
+    def route_one_job(blocks: JobBlocks, cut_target_of_job: Int32Array = _NO_CUTS) -> None:
+        route_job(
+            q_t,
+            discharge_array,
+            downstream_indices,
+            routing_steps_per_runoff_step,
+            method,
+            layout,
+            runoff,
+            transform,
+            Job(*blocks, cut_target_of_job, boundary, out_row),
+        )
 
-    n_threads = router.threads if thread_pool is not None else 1
-    jobs = _pack_blocks_into_jobs(routing_blocks[:-1], n_threads, boundary, out_row)
+    *sub_watershed_jobs, main_stem = job_blocks
     if thread_pool is None:
-        for job in jobs:
-            route_one_job(job)
+        for blocks in sub_watershed_jobs:
+            route_one_job(blocks)
     else:
-        list(thread_pool.map(route_one_job, jobs))  # list() so a worker exception raises
+        list(thread_pool.map(route_one_job, sub_watershed_jobs))  # list() so a worker exception raises
 
     # the one barrier of the simulation: every block has finished before the main stem consumes its buffer
-    stem_starts, stem_stops, _, _ = routing_blocks[-1]
-    no_outlet = np.full(stem_starts.shape[0], -1, dtype=np.int32)
-    no_number = np.zeros(stem_starts.shape[0], dtype=np.int32)
-    route_one_job(Job(stem_starts, stem_stops, no_outlet, no_number, cut_target, boundary, out_row))
+    route_one_job(main_stem, cut_target)
     return
-
-
-def _pack_blocks_into_jobs(blocks: tuple, n_threads: int, boundary: FloatArray, out_row: np.ndarray) -> list[Job]:
-    """
-    Pack sub-watershed blocks, longest first, into the least loaded of ``n_threads`` jobs. Each job lists its blocks
-    in index order and injects no boundary series, which only the main stem job does.
-    """
-    loads = [(0, j) for j in range(max(1, n_threads))]
-    blocks_of_job: list[list] = [[] for _ in loads]
-    for starts, stops, outlet, block_number in blocks:
-        load, j = heapq.heappop(loads)
-        blocks_of_job[j].append((int(starts[0]), int(stops[0]), outlet, block_number))
-        heapq.heappush(loads, (load + int(stops[0] - starts[0]), j))
-    jobs = []
-    for job_blocks in sorted(blocks_of_job, key=lambda job: -sum(stop - start for start, stop, _, _ in job)):
-        if job_blocks:
-            job_blocks.sort()
-            starts, stops, outlets, numbers = (np.array(v, dtype=np.int32) for v in zip(*job_blocks, strict=True))
-            jobs.append(Job(starts, stops, outlets, numbers, _NO_CUTS, boundary, out_row))
-    return jobs
 
 
 def _check_everything_a_job_reads(
@@ -404,32 +360,22 @@ def _check_everything_a_job_reads(
     q_t: FloatArray,
     discharge_array: FloatArray,
     runoff: CatchmentRunoffVolumes | GridCellRunoff | None,
-    routing_blocks: tuple,
-    cut_target: Int32Array,
+    job_blocks: tuple[JobBlocks, ...],
 ) -> None:
-    """
-    Check every array a job reads, because this is the last point where a wrong one can be caught. route_job is
-    compiled with ``numba.njit`` and therefore does no bounds checking: an array shorter than the network is read and
-    written past its end rather than raising IndexError. Malformed blocks are worse: a cut_target inside a block,
-    or blocks that overlap, make one thread write into rivers another thread is routing, which corrupts results
-    without raising and without reproducing reliably.
-
-    Raises:
-        ValueError: if any array does not match the network, the number of routing steps, or the blocks
-    """
-    # each river's series is written into its own contiguous row, which is the layout the jobs solve in. Output is
-    # never copied, so any other layout is refused rather than transposed.
+    """Last chance to validate before routing. The numba kernels will not check or raise useful errors."""
+    # each river's series is written into its own contiguous row, which is the layout the jobs solve in.
+    # Output is never copied, so any other layout is refused rather than transposed.
     if not discharge_array.flags.c_contiguous:
         raise ValueError('discharge_array must be a C-order (river, time) array')
     n_rivers = router.network.river_ids.shape[0]
     n_steps = router.num_runoff_steps
-    reach_indptr, substeps = router.layout
+    reach_indptr, subcycles = router.layout
     if reach_indptr.shape[0] and (
         reach_indptr.shape != (n_rivers + 1,) or reach_indptr[0] != 0 or np.any(np.diff(reach_indptr) < 1)
     ):
         raise ValueError(f'reach_indptr must be ({n_rivers + 1},) offsets from 0 with at least one reach per river')
-    if substeps.shape[0] and (substeps.shape != (n_rivers,) or substeps.min() < 1):
-        raise ValueError(f'substeps must be ({n_rivers},) counts of at least 1, or empty')
+    if subcycles.shape[0] and (subcycles.shape != (n_rivers,) or subcycles.min() < 1):
+        raise ValueError(f'subcycles must be ({n_rivers},) counts of at least 1, or empty')
     n_states = int(reach_indptr[-1]) if reach_indptr.shape[0] else n_rivers  # one state per reach
     synthetic = router.network.synthetic
     n_out = n_rivers if synthetic is None else int(np.count_nonzero(~synthetic))  # synthetic rivers have no row
@@ -442,18 +388,13 @@ def _check_everything_a_job_reads(
         if isinstance(array, np.ndarray) and array.shape != (n_rivers,):
             raise ValueError(f'{name} has shape {array.shape}, expected ({n_rivers},)')
     if runoff is not None:
-        runoff.check(n_rivers, n_steps)
+        runoff.check(router.network.river_ids, n_steps)
 
-    covered = 0
-    for starts, stops, _outlet, _block_number in routing_blocks:
-        if starts.shape != stops.shape:
-            raise ValueError(f'block starts/stops shapes differ: {starts.shape} vs {stops.shape}')
-        if starts.size and (starts.min() < 0 or stops.max() > n_rivers or np.any(stops <= starts)):
-            raise ValueError(f'blocks must be non-empty ranges within [0, {n_rivers})')
-        covered += int((stops - starts).sum())
-    if covered != n_rivers:
-        raise ValueError(f'the blocks cover {covered} rivers, expected every one of {n_rivers} exactly once')
-    targets = cut_target[cut_target >= 0]
-    if targets.size and targets.max() >= n_rivers:
-        raise ValueError(f'every cut_target must fall inside [0, {n_rivers}); found {int(targets.max())}')
+    # sorted by start, the blocks tile [0, n_rivers) exactly when each ends where the next begins: no gap, no overlap
+    starts = np.concatenate([blocks[0] for blocks in job_blocks])
+    stops = np.concatenate([blocks[1] for blocks in job_blocks])
+    order = np.argsort(starts)
+    starts, stops = starts[order], stops[order]
+    if np.any(stops <= starts) or starts[0] != 0 or stops[-1] != n_rivers or np.any(stops[:-1] != starts[1:]):
+        raise ValueError(f'the blocks must cover every one of the {n_rivers} rivers exactly once')
     return

@@ -2,19 +2,113 @@
 ``ECMWFGribReducedGrid`` reads runoff depths from ECMWF GRIB files on a reduced gaussian grid with eccodes, the
 forcing ecmwf_grib. It is a ``BaseGridRunoff`` (bases.py) that overrides only ``read_runoff``, so it yields the same
 ``GridCellRunoff``, or ``CatchmentRunoffVolumes`` when a file must be aggregated first, routed with the overloads
-registered in bases.py. It defines no form of runoff or overload of its own.
+registered in bases.py. It defines no form of runoff or overload of its own. ``ReducedGaussianGrid`` is the grid of
+those files, read from their metadata, on which ``reduced_grid_weights`` (weights.py) builds a weight table.
 """
 
 import os
 from dataclasses import KW_ONLY, dataclass
+from typing import NamedTuple, Self
 
 import eccodes
+import geopandas as gpd
 import numpy as np
+import shapely
 
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput
 from .bases import BaseGridRunoff
 
-__all__ = ['ECMWFGribReducedGrid']
+__all__ = ['ECMWFGribReducedGrid', 'ReducedGaussianGrid']
+
+EARTH_RADIUS_M = 6371229.0  # radius of the sphere the ECMWF IFS models the earth as
+
+
+class ReducedGaussianGrid(NamedTuple):
+    """
+    A global reduced gaussian grid: 2N rows of cells at the gaussian latitudes, north to south, each row's cells evenly
+    spaced in longitude eastward from 0 degrees. Cells are numbered row after row, the order of the values in a GRIB
+    message.
+    """
+
+    N: int  # rows of cells between a pole and the equator
+    cells_per_row: IntArray  # (2N,) number of cells on each row, north to south, the GRIB pl array
+
+    @classmethod
+    def from_grib(cls, grib_path: PathInput) -> Self:
+        """Read the grid from the metadata of the first message in a GRIB file."""
+        with open(grib_path, 'rb') as file:
+            handle = eccodes.codes_grib_new_from_file(file)
+        if handle is None:
+            raise ValueError(f'{grib_path} holds no GRIB messages')
+        try:
+            if eccodes.codes_get(handle, 'gridType') != 'reduced_gg':
+                raise ValueError(f'{grib_path} is on a {eccodes.codes_get(handle, "gridType")} grid, not reduced_gg')
+            grid = cls(eccodes.codes_get(handle, 'N'), eccodes.codes_get_array(handle, 'pl'))
+            numbered_as_described = (
+                eccodes.codes_get(handle, 'global') == 1
+                and eccodes.codes_get(handle, 'iScansNegatively') == 0
+                and eccodes.codes_get(handle, 'jScansPositively') == 0
+                and eccodes.codes_get(handle, 'numberOfDataPoints') == grid.cells_per_row.sum()
+            )
+        finally:
+            eccodes.codes_release(handle)
+        if not numbered_as_described:
+            raise ValueError(f'{grib_path} is not a global grid numbered north to south and west to east')
+        if grid.cells_per_row.shape[0] != 2 * grid.N:
+            raise ValueError(f'{grib_path} has {grid.cells_per_row.shape[0]} rows of cells, expected {2 * grid.N}')
+        return grid
+
+    @property
+    def n_cells(self) -> int:
+        """The number of cells of the whole grid, the number of values in a GRIB message on it."""
+        return int(self.cells_per_row.sum())
+
+    @property
+    def spacing_km(self) -> float:
+        """Side of a square with the mean cell area, the resolution ECMWF quotes, e.g. 9 km for O1280."""
+        return float(np.sqrt(4 * np.pi * EARTH_RADIUS_M**2 / self.n_cells) / 1000)
+
+    def cell_polygons(self, bounds: tuple[float, float, float, float] | None = None) -> gpd.GeoDataFrame:
+        """
+        The area each cell represents, as a box of longitude and latitude in EPSG:4326 with longitudes from -180 to
+        180: halfway in longitude to the cells beside it, and in latitude between the edges of its row. The edges split
+        the sphere into bands whose areas are the gaussian quadrature weights of the rows, so each cell covers the share
+        of the sphere the grid's own quadrature weights its value by.
+
+        Args:
+            bounds: optional (min x, min y, max x, max y) in degrees; only the cells overlapping it are made. Without
+                it every cell of the world is made.
+
+        Returns:
+            gpd.GeoDataFrame: one row per cell, in cell order: cell_index (position in a GRIB message's values), x and
+                y (the cell center longitude and latitude), and geometry
+        """
+        sine_latitude, quadrature_weight = np.polynomial.legendre.leggauss(2 * self.N)  # south to north
+        row_latitude = np.degrees(np.arcsin(sine_latitude[::-1]))
+        sine_row_edge = 1 - np.concatenate(([0], np.cumsum(quadrature_weight[::-1])))
+        sine_row_edge[-1] = -1  # the running sum of the weights reaches 2, the south pole, only to within rounding
+        row_edge = np.degrees(np.arcsin(sine_row_edge))
+        row = np.repeat(np.arange(2 * self.N), self.cells_per_row)
+        cells_before_row = np.concatenate(([0], np.cumsum(self.cells_per_row)[:-1]))
+        cells_in_row = self.cells_per_row[row]
+        x = (360 * (np.arange(row.shape[0]) - cells_before_row[row]) / cells_in_row + 180) % 360 - 180
+        west, east = x - 180 / cells_in_row, x + 180 / cells_in_row
+        south, north = row_edge[row + 1], row_edge[row]
+        straddles = west < -180  # the cells centered on -180 degrees, which reach past it onto the east edge of the map
+        cell_index = np.arange(row.shape[0])
+        if bounds is not None:
+            min_x, min_y, max_x, max_y = bounds
+            overlaps_x = ((east > min_x) & (west < max_x)) | (straddles & (west + 360 < max_x))
+            cell_index = np.flatnonzero(overlaps_x & (north > min_y) & (south < max_y))
+        west, east = west[cell_index], east[cell_index]
+        south, north = south[cell_index], north[cell_index]
+        straddles = straddles[cell_index]
+        geometry = shapely.box(np.maximum(west, -180), south, east, north)
+        # each cell reaching past -180 degrees is the two parts of its box, one on either edge of the map
+        east_edge_part = shapely.box(west[straddles] + 360, south[straddles], 180, north[straddles])
+        geometry[straddles] = shapely.multipolygons(np.stack([geometry[straddles], east_edge_part], axis=1))
+        columns = {'cell_index': cell_index, 'x': x[cell_index], 'y': row_latitude[row[cell_index]]}
+        return gpd.GeoDataFrame(columns, geometry=geometry, crs=4326)
 
 
 @dataclass(eq=False, repr=False)
@@ -41,6 +135,7 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
 
     @property
     def cell_dimensions(self) -> dict[str, str]:
+        """The weight table column cell_index, the position of each cell in the values of a GRIB message."""
         return {'cell_index': self.var_cell}
 
     def read_runoff(self, runoff_data: PathInput | list[PathInput]) -> tuple[FloatArray, DatetimeArray, float]:

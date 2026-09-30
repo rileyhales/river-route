@@ -26,10 +26,10 @@ ROUTING_METHOD_FOR_COEFFICIENTS: dict[str, ModuleType] = {'static': static_muski
 class Router:
     """
     Muskingum style river routing allowing
-    - channel-only or runoff forcing
-    - static or dynamic coefficients (e.g. muskingum vs muskingum-cunge style)
-    - the uniform runoff transformation (e.g. runoff transform method)
-    - standard or stabilized networks forcing k and x within Muskingum valid ranges
+    - coefficients: static (muskingum) or dynamic (muskingum-cunge style)
+    - forcing: channel-only or runoff on grids/meshes or already aggregated to catchments
+    - network conditioning: standard, or "stabilized" making edits to put k and x within valid ranges for dt_routing
+    - transformation: the uniform runoff transformation (e.g. runoff transform method)
     """
 
     configs: Configs
@@ -38,7 +38,7 @@ class Router:
 
     # what the routing method the coefficients config chooses prepared for the current time steps
     routing_parameters: static_muskingum.StaticMuskingum | dynamic_muskingum.DynamicMuskingum  # per river
-    layout: Layout  # each river routed whole, or as sub-reaches and substeps on a stabilized network
+    layout: Layout  # each river routed whole, or in substeps and subcycles on a stabilized network
 
     threads: int = 1  # the threads passed to the most recent route(), read by writers such as zarr_writer
 
@@ -46,11 +46,11 @@ class Router:
     channel_state: FloatArray  # one value per river, or per sub-reach on a stabilized network
     _ensemble_member_states: list[FloatArray]  # for ensemble routing
 
-    # Time options
-    dt_routing: int  # compute time step, must be divisible into and <= min(dt_runoff, dt_discharge)
-    dt_runoff: int  # time between catchment runoff steps, must be 1) constant, divisible into and <= dt_total
-    dt_discharge: int  # time to average routed flows and save them, must be <=
-    dt_total: int  # how long to simulate,
+    # Time options, in seconds
+    dt_routing: int  # routing step, an integer divisor of dt_runoff
+    dt_runoff: int  # time between catchment runoff steps, constant, and an integer divisor of dt_discharge
+    dt_discharge: int  # time routed discharge is averaged over before it is written, an integer divisor of dt_total
+    dt_total: int  # how long to simulate
     num_runoff_steps: int
     num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
@@ -65,8 +65,8 @@ class Router:
             configs: options describing the simulation, from ``Configs(...)`` or ``Configs.from_json(path)``. They
                 are validated for routing when ``route`` is called. A Router takes its options only from this
                 object, so build a new Configs and a Router from it to change them.
-            network: the network to route over. One is built from the params file the first time it is needed
-                when none is given, so pass one to reuse a parsed and partitioned network across Routers.
+            network: the network to route over. One is built from the network file here when none is given, so
+                pass one to reuse a parsed and partitioned network across Routers.
             runoff: the Runoff that aggregates ``runoff_files`` to catchments. It must be the class for the
                 ``forcing`` config. One is built from the configs the first time it is needed when none is given,
                 so pass one to reuse a read weight table across Routers.
@@ -88,7 +88,7 @@ class Router:
         self.network = network if network is not None else Network.from_configs(configs)
         self.runoff = runoff  # built from the configs the first time runoff is routed when None
 
-        # configure logging - progress bar and info/debug logs are mutually exclusive
+        # configure logging; Configs turns the progress bar off when logging is off
         self.logger = build_logger(self.configs, 'router')
         self.logger.debug('Logger initialized')
 
@@ -97,7 +97,7 @@ class Router:
         return
 
     def __repr__(self) -> str:
-        return f'{type(self).__name__}(params_file={self.configs.params_file!r})'
+        return f'{type(self).__name__}(network_file={self.configs.network_file!r})'
 
     def _read_initial_state(self) -> None:
         """Read the initial channel state from the config. Called on every route() so that repeated calls on
@@ -113,7 +113,7 @@ class Router:
         # a stabilized network may start from one value per sub-reach, which is checked once the layout is known
         if state.shape[0] != n_rivers and self.configs.network_type != 'stabilized':
             raise ValueError(
-                f'channel_state_init_file has {state.shape[0]} values but {self.configs.params_file} has '
+                f'channel_state_init_file has {state.shape[0]} values but {self.configs.network_file} has '
                 f'{n_rivers} rivers. The state file must have one row per river in the same order.'
             )
         self.channel_state = state
@@ -123,21 +123,23 @@ class Router:
         """
         Require channel_state to have one value per routed reach: one per river on a standard network, one per
         sub-reach on a stabilized one. Without an initial state file a stabilized network starts from zero in every
-        sub-reach. A state file that does not match the layout raises; its values are never changed to fit.
+        sub-reach. Any other state that does not match the layout raises, whether it was read from a state file or
+        carried from the previous runoff file; its values are never changed to fit.
         """
         if not self.layout.reach_indptr.shape[0]:
             return
         n_reaches = int(self.layout.reach_indptr[-1])
-        if not self.configs.channel_state_init_file:
-            self.channel_state = np.zeros(n_reaches, dtype=np.float32)
+        if self.channel_state.shape[0] == n_reaches:
             return
-        if self.channel_state.shape[0] != n_reaches:
-            raise ValueError(
-                f'channel_state_init_file has {self.channel_state.shape[0]} values, but the stabilized network has '
-                f'{n_reaches} sub-reaches. The state file must have one row per sub-reach in the order a final '
-                f'state file is written.'
-            )
-        return
+        if not self.configs.channel_state_init_file and not self.channel_state.any():
+            self.channel_state = np.zeros(n_reaches, dtype=np.float32)  # a zero state is zero in any layout
+            return
+        raise ValueError(
+            f'the channel state has {self.channel_state.shape[0]} values, but the stabilized network has {n_reaches} '
+            f'sub-reaches at dt_routing={self.dt_routing} s. A channel_state_init_file must have one row per sub-reach '
+            f'in the order a final state file is written, and the sub-reaches cannot change between the runoff files '
+            f'of one sequential run: set dt_routing to route every file at the same step.'
+        )
 
     def _write_final_state(self) -> None:
         final_state_file = self.configs.channel_state_final_file
@@ -202,7 +204,6 @@ class Router:
         # Now that we know time parameters are valid, set time-derived parameters for computation cycles
         self.num_runoff_steps = int(self.dt_total / self.dt_runoff)
         self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)  # to resample/reshape results
-        # todo for synthesized networks, this will have to become a vector
         self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         return
 
@@ -213,11 +214,12 @@ class Router:
         self.layout, self.routing_parameters = method.prepare_routing(
             self.network, self.configs.network_type, self.dt_routing, self.dt_runoff, self.configs.unstable_coefficients
         )
-        reach_indptr, substeps = self.layout
+        reach_indptr, subcycles = self.layout
         if reach_indptr.shape[0]:
             self.logger.info(
-                f'Stabilized network: {self.network.size} rivers routed as {int(reach_indptr[-1])} sub-reaches '
-                f'at dt_routing={self.dt_routing} s, {int(np.count_nonzero(substeps > 1))} of them sub-cycled'
+                f'Stabilized network: {self.network.size} rivers routed in substeps as {int(reach_indptr[-1])} '
+                f'sub-reaches at dt_routing={self.dt_routing} s, and {int(np.count_nonzero(subcycles > 1))} rivers '
+                f'routed in subcycles'
             )
         self._check_channel_state()
         return
@@ -228,7 +230,7 @@ class Router:
 
     def route(self, thread_pool: ThreadPoolExecutor | None = None, threads: int = 1) -> Self:
         """
-        Execute the simulation described by the configs and routing parameters. The configs are validated for routing
+        Execute the simulation described by the configs, over the network. The configs are validated for routing
         first. The thread pool and thread count are runtime resources, not configs, so they are given here.
 
         Args:
@@ -282,7 +284,7 @@ class Router:
 
         # write outputs
         self.logger.debug('Writing Discharge Array to File')
-        self._discharge_writer(self, dates, discharge_array, self.configs.discharge_files[0])
+        self._discharge_writer(self, dates, discharge_array, self.configs.discharge_files[0], '')  # no runoff file
         self.logger.info('-' * 60)
         return
 
@@ -325,8 +327,8 @@ class Router:
                 prepared_for_time_steps = (self.dt_routing, self.dt_runoff)
             self.logger.debug('Starting routing computation')
             q_t = self.channel_state.astype(np.float32, copy=True)
-            q_array = self._new_discharge_buffer()
-            route_region(self, q_t, q_array, runoff, thread_pool)
+            discharge_array = self._new_discharge_buffer()
+            route_region(self, q_t, discharge_array, runoff, thread_pool)
             if self.configs.runoff_processing_mode == 'sequential':
                 self.logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = q_t
@@ -335,15 +337,19 @@ class Router:
                 self._ensemble_member_states.append(q_t.copy())
 
             if self.dt_discharge > self.dt_runoff:
-                # todo reduce to dt_discharge inside the kernel?
+                # the kernels write one value per runoff step, so coarser outputs are averaged from them here
                 self.logger.debug('Resampling dates and discharges to specified timestep')
-                q_array = q_array.reshape(
-                    (q_array.shape[0], int(self.dt_total / self.dt_discharge), int(self.dt_discharge / self.dt_runoff))
+                discharge_array = discharge_array.reshape(
+                    (
+                        discharge_array.shape[0],
+                        int(self.dt_total / self.dt_discharge),
+                        int(self.dt_discharge / self.dt_runoff),
+                    )
                 ).mean(axis=2)
                 dates = dates[:: self.num_runoff_steps_per_discharge]
 
             self.logger.debug('Writing Discharge Array to File')
-            self._discharge_writer(self, dates, q_array, discharge_file, runoff_file)
+            self._discharge_writer(self, dates, discharge_array, discharge_file, runoff_file)
 
         if self.configs.runoff_processing_mode == 'ensemble':
             self.channel_state = np.array(self._ensemble_member_states).mean(axis=0)
@@ -357,11 +363,11 @@ class Router:
         return np.zeros((n_rivers, self.num_runoff_steps), dtype=np.float32)
 
     ################################################
-    # Dependency injection methods for users to overwrite default behaviors without subclassing
+    # Dependency injection methods
     ################################################
 
     def _select_discharge_writer(self) -> None:
-        """Override user's discharge write if the output location is the devnull device"""
+        """Override the user's discharge writer when every output is the null device"""
         if not all(is_dev_null(f) for f in self.configs.discharge_files):
             return
         self.logger.warning('Discharge output is the null device: discharge will be routed and then discarded')
@@ -369,6 +375,6 @@ class Router:
         return
 
     def set_discharge_writer(self, func: WriteDischargesFn) -> Self:
-        """Set how discharge results are saved to disc. See ._discharge_writer for function signature"""
+        """Set how discharge results are saved to disk, with the function signature ``types.WriteDischargesFn``"""
         self._discharge_writer = func
         return self

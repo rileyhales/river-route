@@ -2,47 +2,61 @@
 
 You can get example inputs from the GEOGLOWS River Forecast System available on AWS S3 at [s3://geoglows-v2/routing-test-data.zip/](https://geoglows-v2.s3.amazonaws.com/routing-test-data.zip).
 
-### Routing Parameters
+### Network File
 
 ```json
 {
-  "params_file": "/path/to/params.parquet"
+  "network_file": "/path/to/network.parquet"
 }
 ```
 
-The routing parameters file is a parquet file. It has 1 row per river in the watershed.
+The network file is a parquet file. It has 1 row per river in the watershed.
 Required for all routing:
 
-| Column          | Data Type | Description                                                |
-|-----------------|-----------|------------------------------------------------------------|
-| `river_id`      | integer   | Unique ID of a river segment                               |
-| `next_river_id` | integer   | ID of downstream river segment, or `-1` for outlet reaches |
-| `k`             | float     | Muskingum `k` parameter (length / velocity)                |
-| `x`             | float     | Muskingum `x` parameter, expected in `[0, 0.5]`            |
+| Column          | Data Type | Description                                                                     |
+|-----------------|-----------|---------------------------------------------------------------------------------|
+| `riverId`       | integer   | Unique ID of a river segment                                                    |
+| `nextRiverId`   | integer   | ID of downstream river segment, or `-1` for outlet reaches                      |
+| `muskingumK`    | float     | Muskingum `k` parameter (length / velocity), in seconds                         |
+| `muskingumX`    | float     | Muskingum `x` parameter, expected in `[0, 0.5]`                                 |
+| `riverIndex`    | integer   | Position of the river in depth first search order, one more than the row before |
+| `upstreamCount` | integer   | Number of rivers upstream of the river, not counting itself                     |
 
-These routing parameters typically come from preprocessing and calibration workflows:
+Optional columns:
 
-1. topology (`river_id`, `next_river_id`) from vector network processing
-2. channel routing (`k`, `x`) from hydraulic assumptions and/or calibration
+| Column            | Data Type | Description                                                                          |
+|-------------------|-----------|--------------------------------------------------------------------------------------|
+| `dynamicAlpha`    | float     | Required for `coefficients: dynamic`: K = dynamicAlpha * Q ^ dynamicBeta             |
+| `dynamicBeta`     | float     | Required for `coefficients: dynamic`                                                 |
+| `synthetic`       | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                   |
+| `parentRiverId`   | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from       |
 
-!!! warning "Depth First Search Ordering Requirement"
-    Rows (rivers) ***must be sorted in depth first search (DFS) order***. This is a hard requirement of the data.
-    Each river comes after every river upstream of it, and the rivers upstream of a river are the rows immediately
-    before it, so every river's whole upstream watershed is one contiguous range of rows ending at that river.
-    Sorting upstream before downstream (topological order) is not enough: a table in topological order but not DFS
-    order breaks the division of the rivers into blocks that routing depends on.
+These columns typically come from preprocessing and calibration workflows:
 
-    river-route never reorders the parameter table, so every file with one entry per river (grid weights,
-    catchment runoff, channel state) must list the rivers in this same order. Check a table with
+1. topology (`riverId`, `nextRiverId`) from vector network processing
+2. depth first search order (`riverIndex`, `upstreamCount`) from a depth first search of that topology
+3. channel routing (`muskingumK`, `muskingumX`) from hydraulic assumptions and/or calibration
+
+!!! warning "River Ordering Requirement"
+    Rows (rivers) ***must be sorted in depth first search (DFS) order***: each river comes after every river upstream
+    of it, and the rivers upstream of a river are the rows immediately before it, so every river's whole upstream
+    watershed is one contiguous range of rows ending at that river. `riverIndex` numbers the rows in that order and
+    `upstreamCount` counts each river's upstream rivers, so a river's watershed is the rows from its `riverIndex`
+    minus its `upstreamCount` to its `riverIndex`. That is what divides the rivers into blocks that route
+    concurrently, and what `rr subset` cuts a basin with.
+
+    river-route never reorders the network table, so every file with one entry per river (grid weights,
+    catchment runoff, channel state) must list the rivers in this same order, and routing refuses runoff that does
+    not. `Configs.deep_validate` checks the order and both columns against the topology:
 
     ```python
     import river_route as rr
 
-    network = rr.Network('/path/to/params.parquet')
-    rr.network.streams.is_dfs_ordered(network.downstream_indices).all()
+    rr.Configs(network_file='/path/to/network.parquet').deep_validate()
     ```
 
-    `examples/migrate_v2_to_v3.py` sorts a table into DFS order along with the files that follow it.
+    `examples/migrate_v2_to_v3.py` sorts a v2 params file into DFS order, writes both columns, and reorders the
+    files that follow it.
 
 ## Catchment Runoff Files
 
@@ -69,12 +83,11 @@ You need a time series of per-catchment runoff to be routed. It is given as `run
 ```
 
 !!! note "Ordering River IDs"
-    The `river_id` values **must** be the same values and order as in the routing parameters
+    The `river_id` values **must** be the same values and order as the `riverId` column of the network file
 
 Catchment runoff is given as netcdf with 2 dimensions, `river_id` and `time`, in that order, so each river's series is
 contiguous and is read straight into the river major arrays the router works in. The `river_id` dimension **must**
-contain exactly the same IDs **and** be sorted in the same order as the `river_id` column of the routing parameters
-file. The names and the order are fixed and cannot be configured:
+contain exactly the same IDs **and** be sorted in the same order as the `riverId` column of the network file. The names and the order are fixed and cannot be configured:
 
 | Variable           | Dimensions           | Description                                                                 |
 |--------------------|----------------------|-----------------------------------------------------------------------------|
@@ -101,7 +114,7 @@ from their grids with `aggregate_to_file`.
 ```
 
 !!! note "Ordering River IDs"
-    The `river_id` values **must** be the same values and order as in the routing parameters
+    The `river_id` values **must** be the same values and order as the `riverId` column of the network file
 
 Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`. The dimension names
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden

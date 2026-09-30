@@ -41,11 +41,6 @@ def read_discharge(package: Path, files: list[str]) -> np.ndarray:
     return np.concatenate(series, axis=1)
 
 
-################################################
-# Correctness beyond the reference
-################################################
-
-
 @pytest.mark.parametrize(('network_type', 'dt_routing'), [('standard', 3600), ('standard', 1800), ('stabilized', 3600)])
 def test_steady_state_is_a_fixed_point(network_type: str, dt_routing: int, willamette: Basin, tmp_path: Path) -> None:
     """
@@ -66,7 +61,7 @@ def test_steady_state_is_a_fixed_point(network_type: str, dt_routing: int, willa
     routed = route(
         tmp_path,
         [(dates, constant)],
-        params_file=willamette.params_file,
+        network_file=willamette.network_file,
         network_type=network_type,
         dt_routing=dt_routing,
         channel_state_init_file=tmp_path / 'steady.parquet',
@@ -77,8 +72,8 @@ def test_steady_state_is_a_fixed_point(network_type: str, dt_routing: int, willa
 @pytest.mark.parametrize('network_type', ['standard', 'stabilized'])
 def test_doubling_the_runoff_doubles_the_discharge(network_type: str, willamette: Basin, tmp_path: Path) -> None:
     dates, volumes = willamette.months[0]
-    once = route(tmp_path, [(dates, volumes)], params_file=willamette.params_file, network_type=network_type)
-    twice = route(tmp_path, [(dates, 2 * volumes)], params_file=willamette.params_file, network_type=network_type)
+    once = route(tmp_path, [(dates, volumes)], network_file=willamette.network_file, network_type=network_type)
+    twice = route(tmp_path, [(dates, 2 * volumes)], network_file=willamette.network_file, network_type=network_type)
     assert_same(twice.discharge[0], 2 * once.discharge[0])
     assert_same(twice.final_state, 2 * once.final_state)
 
@@ -116,7 +111,7 @@ def test_months_in_sequence_match_one_combined_series(package: Path, manifest: d
     months = list(rr.CatchmentRunoff().generator([package / path for path in run['configs']['runoff_files']]))
     dates = np.concatenate([month_dates for month_dates, _, _ in months])
     volumes = np.concatenate([month.runoff for _, month, _ in months], axis=1)
-    routed = route(tmp_path, [(dates, volumes)], params_file=package / run['configs']['params_file'])
+    routed = route(tmp_path, [(dates, volumes)], network_file=package / run['configs']['network_file'])
     assert_same(routed.discharge[0], read_discharge(package, run['discharge']))
 
 
@@ -125,7 +120,7 @@ def test_headwaters_follow_the_muskingum_formula(willamette: Basin, tmp_path: Pa
     float64 from its k and x."""
     network = willamette.network
     dates, volumes = willamette.months[0]
-    routed = route(tmp_path, [(dates, volumes)], params_file=willamette.params_file)
+    routed = route(tmp_path, [(dates, volumes)], network_file=willamette.network_file)
     has_upstream = np.zeros(network.size, dtype=bool)
     has_upstream[network.downstream_indices[network.downstream_indices >= 0]] = True
     too_long, too_short = network.unstable_mask(DT)
@@ -149,7 +144,7 @@ def test_water_is_conserved(network_type: str, willamette: Basin, tmp_path: Path
     outlet."""
     wet = [(dates, np.maximum(volumes, 0)) for dates, volumes in willamette.months[:2]]
     dry = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months[2:]]
-    routed = route(tmp_path, wet + dry, params_file=willamette.params_file, network_type=network_type)
+    routed = route(tmp_path, wet + dry, network_file=willamette.network_file, network_type=network_type)
     volume_in = sum(volumes.sum(dtype=np.float64) for _, volumes in wet)
     volume_out = sum(discharge[outlet_of(willamette)].sum(dtype=np.float64) for discharge in routed.discharge) * DT
     assert abs(volume_out - volume_in) <= TOLERANCE * volume_in, f'{volume_out:.6g} m³ left of {volume_in:.6g} m³'
@@ -177,7 +172,7 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     months = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months]
     pulse = 1e6  # m³
     months[0][1][headwater, 0] = pulse
-    routed = route(tmp_path, months, params_file=willamette.params_file, network_type='stabilized')
+    routed = route(tmp_path, months, network_file=willamette.network_file, network_type='stabilized')
     outflow = np.concatenate([discharge[outlet_of(willamette)] for discharge in routed.discharge]).astype(np.float64)
     assert abs(outflow.sum() * DT - pulse) <= TOLERANCE * pulse
     step_ends = np.arange(1, outflow.size + 1) * DT
@@ -187,19 +182,14 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     )
 
 
-################################################
-# Consistency between routing paths
-################################################
-
-
 def test_gridded_and_catchment_file_runoff_route_the_same(package: Path, manifest: dict) -> None:
     grid, catchment = manifest['runs']['static_standard'], manifest['runs']['catchment_file']
     assert_same(read_discharge(package, catchment['discharge']), read_discharge(package, grid['discharge']))
 
 
 def test_threaded_routing_is_repeatable(willamette: Basin, tmp_path: Path) -> None:
-    first = route(tmp_path, willamette.months, params_file=willamette.params_file, threads=4)
-    second = route(tmp_path, willamette.months, params_file=willamette.params_file, threads=4)
+    first = route(tmp_path, willamette.months, network_file=willamette.network_file, threads=4)
+    second = route(tmp_path, willamette.months, network_file=willamette.network_file, threads=4)
     routing_blocks, _ = first.router.network.routing_blocks(threads=4)
     assert len(routing_blocks) > 1, 'the basin was routed as one block, so no threads were used'
     for first_discharge, second_discharge in zip(first.discharge, second.discharge, strict=True):
@@ -215,11 +205,11 @@ def test_threaded_and_single_threaded_runs_agree(name: str, package: Path, manif
 
 def test_split_networks_route_like_kernel_stabilized_networks(willamette: Basin, tmp_path: Path) -> None:
     """
-    A network stabilized by writing its sub-reaches as rows must route like network_type='stabilized', which splits
-    them inside the kernel. The written network does not sub-cycle rivers too short for the routing step, so only
-    rivers with no such river upstream of them are compared.
+    A network stabilized by writing its sub-reaches as rows must route like network_type='stabilized', which routes
+    them as substeps inside the kernel. The written network does not route rivers too short for the routing step in
+    subcycles, so only rivers with no such river upstream of them are compared.
     """
-    split_network = rr.Network(willamette.params_file).stabilize(DT)
+    split_network = rr.Network(willamette.network_file).stabilize(DT)
     split = route(tmp_path, network=split_network, **willamette.gridded(months=2))
     in_kernel = route(tmp_path, network_type='stabilized', **willamette.gridded(months=2))
     _, too_short = willamette.network.unstable_mask(DT)
@@ -229,23 +219,36 @@ def test_split_networks_route_like_kernel_stabilized_networks(willamette: Basin,
         assert_same(split_discharge[comparable], kernel_discharge[comparable])
 
 
+def test_dynamic_coefficients_without_an_exponent_route_like_static(willamette: Basin, tmp_path: Path) -> None:
+    """With dynamicBeta = 0 a river's K = dynamicAlpha * Q ** dynamicBeta is dynamicAlpha whatever it carries, so with
+    dynamicAlpha = k the dynamic coefficients of every step are the static ones."""
+    table = pd.read_parquet(willamette.network_file)
+    table.assign(dynamicAlpha=table['muskingumK'], dynamicBeta=np.float32(0)).to_parquet(tmp_path / 'dynamic.parquet')
+    static = route(tmp_path, willamette.months[:1], network_file=willamette.network_file)
+    dynamic = route(tmp_path, willamette.months[:1], network_file=tmp_path / 'dynamic.parquet', coefficients='dynamic')
+    assert_same(dynamic.discharge[0], static.discharge[0])
+    assert_same(dynamic.final_state, static.final_state)
+
+
 def test_daily_output_is_the_mean_of_each_day(willamette: Basin, tmp_path: Path) -> None:
-    hourly = route(tmp_path, willamette.months[:1], params_file=willamette.params_file)
-    daily = route(tmp_path, willamette.months[:1], params_file=willamette.params_file, dt_discharge=86400)
+    hourly = route(tmp_path, willamette.months[:1], network_file=willamette.network_file)
+    daily = route(tmp_path, willamette.months[:1], network_file=willamette.network_file, dt_discharge=86400)
     n_rivers, n_hours = hourly.discharge[0].shape
     assert_same(daily.discharge[0], hourly.discharge[0].reshape(n_rivers, n_hours // 24, 24).mean(axis=2))
     np.testing.assert_array_equal(daily.dates[0], hourly.dates[0][::24])
 
 
 def test_dt_total_routes_the_first_steps(willamette: Basin, tmp_path: Path) -> None:
-    full = route(tmp_path, willamette.months[:1], params_file=willamette.params_file)
-    first_days = route(tmp_path, willamette.months[:1], params_file=willamette.params_file, dt_total=10 * 86400)
+    full = route(tmp_path, willamette.months[:1], network_file=willamette.network_file)
+    first_days = route(tmp_path, willamette.months[:1], network_file=willamette.network_file, dt_total=10 * 86400)
     assert_same(first_days.discharge[0], full.discharge[0][:, : 10 * 24])
 
 
 def test_ensemble_members_start_from_the_same_state(willamette: Basin, tmp_path: Path) -> None:
-    ensemble = route(tmp_path, willamette.months, params_file=willamette.params_file, runoff_processing_mode='ensemble')
-    members = [route(tmp_path, [month], params_file=willamette.params_file) for month in willamette.months]
+    ensemble = route(
+        tmp_path, willamette.months, network_file=willamette.network_file, runoff_processing_mode='ensemble'
+    )
+    members = [route(tmp_path, [month], network_file=willamette.network_file) for month in willamette.months]
     for ensemble_discharge, member in zip(ensemble.discharge, members, strict=True):
         assert_same(ensemble_discharge, member.discharge[0])
     assert_same(ensemble.final_state, np.mean([member.final_state for member in members], axis=0))

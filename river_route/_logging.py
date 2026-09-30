@@ -1,5 +1,3 @@
-"""One way to build the logger a class writes its progress to, from the log options on a Configs."""
-
 import itertools
 import logging
 import sys
@@ -9,13 +7,12 @@ __all__ = ['PROGRESS', 'build_logger']
 PROGRESS = 25
 logging.addLevelName(PROGRESS, 'PROGRESS')
 
-# id() is reused after garbage collection, so it cannot name a logger uniquely
 _INSTANCE_COUNT = itertools.count()
 
 
 def build_logger(cfg, kind: str) -> logging.Logger:
     """
-    Build a logger for one instance of ``kind`` from the log options on ``configs``.
+    Build a logger for one instance of ``kind`` from the log options on ``cfg``.
 
     Every instance gets its own logger and owns its single handler. The logger does not propagate, because the
     handler is already attached here and propagating to the root logger would print every message twice.

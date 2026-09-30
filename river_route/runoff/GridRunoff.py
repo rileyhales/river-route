@@ -25,4 +25,5 @@ class GridRunoff(BaseGridRunoff):
 
     @property
     def cell_dimensions(self) -> dict[str, str]:
+        """The weight table columns x_index and y_index, and the runoff dimensions each indexes."""
         return {'x_index': self.var_x, 'y_index': self.var_y}

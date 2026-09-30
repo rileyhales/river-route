@@ -1,9 +1,10 @@
 # Routing Kernels
 
 Every kernel solves one river's whole time series before moving to the next river. The time series of one river is a
-simple recurrence, which is solved eight steps per serial operation instead of one, and gridded runoff can be turned
-into lateral inflow as each river is routed so no catchment runoff array is built. The cost is that every time step of a file's
-forcing must be available at once.
+simple recurrence, which static coefficients solve eight steps per serial operation instead of one, while dynamic
+coefficients, rebuilt from the river's own discharge, take one step at a time. Gridded runoff is added into each
+river's forcing as the river is routed, so no catchment runoff array is built. The cost is that every time step of a
+file's forcing must be available at once.
 
 Each routing method is one module that routes a single river, chosen by the `coefficients` config. One numba function,
 `route_job`, takes care of the network, the runoff, and the threads for every method, so a method module only says how
@@ -23,8 +24,9 @@ yields the runoff in the form a job reads.
 ## Measured
 
 One year of hourly ERA5 runoff routed over region 6020006540 (303,097 rivers, 8,777 steps) on an Apple M3 Max,
-through the fused kernel that aggregates gridded runoff as each river is routed. Seconds, minimum of repeated
-runs, with the runoff read from a warm page cache. "Write" is a real file on disk, not fsynced.
+through the fused kernel that aggregates gridded runoff as each river is routed, as it was before the direct grid cell
+reads of the next paragraph. Seconds, minimum of repeated runs, with the runoff read from a warm page cache. "Write"
+is a real file on disk, not fsynced.
 
 | Writer | Kernel, 1 thread | Kernel, 12 threads | Write, 1 thread | Write, 12 threads | Total, 12 threads |     File |
 |--------|-----------------:|-------------------:|----------------:|------------------:|------------------:|---------:|
@@ -117,7 +119,8 @@ routed as catchment runoff.
 | Catchment runoff files, or your own runoff reader | the `(river, time)` array is read in place, one row per river     |
 
 A custom Runoff must yield catchment runoff as `CatchmentRunoffVolumes`: a `(river, time)` array of volumes whose rows
-are contiguous. Discharge is always written `(river, time)`, and that C-order array is what a discharge writer
+are contiguous, and the river id of each row, which routing requires to be the rivers of the network file in the same
+order. Discharge is always written `(river, time)`, and that C-order array is what a discharge writer
 receives.
 
 Inputs are NaN free by the time they reach a kernel: gridded runoff has NaN cells set to zero before it is aggregated,

@@ -1,7 +1,7 @@
 """
 Muskingum routing with dynamic coefficients, the nonlinear Muskingum method: each river's travel time is rebuilt from
 its own discharge every routing step as K = dynamicAlpha * Q ** dynamicBeta, so its coefficients change as it routes.
-Standard networks only: stabilizing a river whose K moves needs a rule for choosing its sub-reaches and substeps.
+Standard networks only: stabilizing a river whose K moves needs a rule for choosing its substeps and subcycles.
 """
 
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -37,10 +37,23 @@ def prepare_routing(
     """
     The standard layout and each river's nonlinear parameters. The coefficients change as each river routes, so there
     is nothing for ``unstable_coefficients`` to check before routing starts.
+
+    Args:
+        network: the network whose dynamicAlpha, dynamicBeta, and x the parameters are read from
+        network_type: always ``standard``; Configs refuses dynamic coefficients on a stabilized network
+        dt_routing: the routing step in seconds
+        dt_runoff: the runoff step in seconds, which turns each catchment runoff volume into an inflow rate
+        unstable_coefficients: unused, since there are no fixed coefficients to check
+
+    Returns:
+        tuple: (the standard Layout, the DynamicMuskingum parameters of every river)
+
+    Raises:
+        ValueError: if the network file has no dynamicAlpha or dynamicBeta column
     """
     alpha, beta = network.dynamicAlpha, network.dynamicBeta
     if alpha is None or beta is None:
-        raise ValueError('dynamic coefficients need dynamicAlpha and dynamicBeta columns in the params file')
+        raise ValueError('dynamic coefficients need dynamicAlpha and dynamicBeta columns in the network file')
     return STANDARD_LAYOUT, DynamicMuskingum(
         alpha, beta, network.x, np.float32(dt_routing), np.float32(1.0 / dt_runoff)
     )
@@ -64,8 +77,9 @@ def _route_river_with_dynamic_coefficients(
     two_x = np.float32(2.0) * x
     two_one_minus_x = np.float32(2.0) * (np.float32(1.0) - x)
     n_steps = discharge.shape[0]
-    n_substeps = (inflow.shape[0] - 1) // n_steps  # an inflow row holds the level before the first step and every step
-    inv_substeps = np.float32(1.0 / n_substeps)
+    # an inflow row holds the level before the first step and at every step
+    routing_steps_per_runoff_step = (inflow.shape[0] - 1) // n_steps
+    inv_routing_steps_per_runoff_step = np.float32(1.0 / routing_steps_per_runoff_step)
     if catchment_runoff is not None:
         for t in range(n_steps):
             work[t] = zero
@@ -79,7 +93,7 @@ def _route_river_with_dynamic_coefficients(
         if catchment_runoff is not None:
             external = work[t] * inv_dt_runoff
         interval_sum = zero
-        for _ in range(n_substeps):
+        for _ in range(routing_steps_per_runoff_step):
             k = alpha * max(qmin, q) ** beta
             dt_div_k = dt_routing / k
             denominator = dt_div_k + two_one_minus_x
@@ -92,8 +106,9 @@ def _route_river_with_dynamic_coefficients(
             downstream_inflow[g] += q
             interval_sum += q
             g += 1
-        # todo clamping negative discharge to zero is a stopgap; fix the root-cause instability
-        discharge[t] = max(zero, interval_sum * inv_substeps)
+        # coefficients that are not Muskingum-stable give negative discharge, which is clamped to zero here and does not
+        # conserve mass; the unclamped value is what flows downstream and carries to the next step
+        discharge[t] = max(zero, interval_sum * inv_routing_steps_per_runoff_step)
     q_t[r] = q
     return
 

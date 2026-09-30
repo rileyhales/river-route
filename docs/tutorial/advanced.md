@@ -2,9 +2,9 @@
 
 ```mermaid
 graph TD
-    A[route method] --> B[validate config for coefficients/forcing/network_type]
-    B --> C[build Network from params_file<br/>topology, k and x, partition]
-    C --> D[read initial state]
+    A[Router] --> C[build Network from network_file<br/>topology, k and x, partition]
+    C --> B[route method: validate config for coefficients/forcing/network_type]
+    B --> D[read initial state]
     D --> E{forcing}
 
     E -->|channel| F[set time params from config]
@@ -13,11 +13,11 @@ graph TD
     H --> I[generate date array]
     I --> J[write discharges]
 
-    E -->|lateral| K[loop: runoff input files generator]
+    E -->|runoff| K[loop: runoff input files generator]
     K --> L[set time params from dates]
     L --> M[prepare catchment runoff]
     M --> N[set coefficients]
-    N --> O[route with lateral inflow]
+    N --> O[route with catchment runoff]
     O --> P{dt_discharge > dt_runoff?}
     P -->|yes| Q[resample to discharge timestep]
     P -->|no| R[write discharges]
@@ -34,13 +34,12 @@ graph TD
     W --> X[log timing]
 ```
 
-`Router.route()` first validates the required config keys and inflow source for the selected
-`coefficients`, `forcing`, `transform`, and `network_type` before any routing data is read. It then builds its
-[`Network`](../api/network.md) from the params file, which supplies the topology, the `k` and `x`
-vectors, and the concurrent routing partition, and the routing method chosen by `coefficients` builds its
-parameters from them. Options no routing method supports yet raise `NotImplementedError` before any runoff is
-read. The `Network` is built once and reused, so routing repeatedly
-on one `Router` re-reads and re-partitions nothing. When `forcing` is `'channel'`, time parameters are read directly from the config and a
+A `Router` builds its [`Network`](../api/network.md) from the network file when it is created, unless it is given
+one. The network supplies the topology, the `k` and `x` vectors, and the concurrent routing partition, and the
+routing method chosen by `coefficients` builds its parameters from them. `Router.route()` first validates the
+required config keys and runoff source for the selected `coefficients`, `forcing`, `transform`, and `network_type`
+before any runoff is read. Options no routing method supports yet raise `NotImplementedError` then. The `Network` is
+built once and reused, so routing repeatedly on one `Router` re-reads and re-partitions nothing. When `forcing` is `'channel'`, time parameters are read directly from the config and a
 single channel-only routing pass runs over `dt_total`. Otherwise the router loops over the runoff
 input files (processed sequentially or as an ensemble), inferring time parameters from each file's
 date array, routes each one, optionally resamples the output to a coarser discharge timestep, and
@@ -67,7 +66,7 @@ root_dir = '/path/to/root/directory'
 vpu_name = 'sample-project'
 
 configs = os.path.join(root_dir, 'configs', vpu_name)
-params_file = os.path.join(configs, 'params.parquet')
+network_file = os.path.join(configs, 'network.parquet')
 
 runoff_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
 
@@ -76,7 +75,7 @@ os.makedirs(outputs, exist_ok=True)
 
 configs = rr.Configs(
     forcing='catchment',
-    params_file=params_file,
+    network_file=network_file,
     runoff_files=runoff_files,
     discharge_dir=outputs,
 )
@@ -109,14 +108,16 @@ of reasons you would want to do this include appending the outputs to an existin
 database, or to add metadata or attributes to the file.
 
 Use the `set_discharge_writer` method to supply a custom writer function; it returns the `Router`
-so you can chain it onto the constructor. The writer is called once per routed input file with 5 arguments:
+so you can chain it onto the constructor. The writer is called once per routed input file, or once for channel
+routing, with 5 arguments:
 
-1. `router`: the `Router` doing the routing, which provides `river_ids` and the `cfg` options.
+1. `router`: the `Router` doing the routing, which provides the network as `router.network`, such as
+   `router.network.river_ids`, and the options as `router.configs`.
 2. `dates`: datetime array for the columns of the discharge array.
 3. `discharge_array`: routed discharge array, C-order with shape `(river_id, time)`. The kernels route one river's
    whole series at a time and write it into that river's row, so this is the layout every writer is handed.
 4. `discharge_file`: path to the output file.
-5. `runoff_file`: path to the runoff input used to produce this output.
+5. `runoff_file`: path to the runoff input used to produce this output, or `''` for channel routing.
 
 As an example, you might want to write output as Parquet instead. The snippets below focus on the
 writer override; for `.route()` to actually run, the config must select a `forcing` that routes runoff, such as

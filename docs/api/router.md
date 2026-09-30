@@ -12,9 +12,10 @@ The Runoff is only built when runoff is routed, so channel routing never reads a
 the class for the `forcing`.
 Pass either in to reuse one that already exists across many Routers.
 
-::: river_route.Router
+::: river_route.router.Router.Router
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
+      show_root_full_path: false

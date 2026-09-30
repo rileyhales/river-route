@@ -31,11 +31,15 @@ def manifest(package: Path) -> dict:
 def willamette(package: Path, manifest: dict, tmp_path_factory: pytest.TempPathFactory) -> Basin:
     configs = manifest['runs']['static_standard']['configs']
     directory = tmp_path_factory.mktemp('willamette')
-    params_file, weights_file = directory / 'routing.parquet', directory / 'gridweights.nc'
-    streams.subset_configs_to_river(
-        WILLAMETTE, package / configs['params_file'], params_file, package / configs['grid_weights_file'], weights_file
+    network_file, weights_file = directory / 'network.parquet', directory / 'gridweights.nc'
+    streams.subset_network_to_river(
+        WILLAMETTE,
+        package / configs['network_file'],
+        network_file,
+        package / configs['grid_weights_file'],
+        weights_file,
     )
     runoff_files = [package / path for path in configs['runoff_files']]
     grid = rr.GridRunoff(weights_file, **GRID_NAMES)
     months = [(dates, volumes.copy()) for dates, volumes, _ in grid.catchment_reader(runoff_files)]
-    return Basin(params_file, weights_file, runoff_files, months, rr.Network(params_file))
+    return Basin(network_file, weights_file, runoff_files, months, rr.Network(network_file))

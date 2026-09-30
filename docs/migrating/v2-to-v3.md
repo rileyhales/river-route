@@ -9,32 +9,34 @@
 
 ### Watershed Preparation
 
-Watersheds prepared for routing in v3 must be sorted in a depth first search, DFS order, from the headwaters to the outlet. This facilitates the 
-greatest number of optimizations of the algorithm. Your watersheds must be sorted in this order. This is readily accomplished with code in many 
-ways but likely not in the GIS software possibly being used to generate the watersheds.
+Watersheds prepared for routing in v3 must be sorted in a depth first search, DFS order, from the headwaters to the outlet, where v2 only
+required upstream before downstream (topological order). This facilitates the greatest number of optimizations of the algorithm. This is
+readily accomplished with code in many ways but likely not in the GIS software possibly being used to generate the watersheds.
 
 In DFS order the rivers upstream of each river are the rows immediately before it, so every river's whole watershed is one contiguous range of
-rows. Sorting upstream before downstream (topological order), which was enough for v2, is not enough for v3. river-route never reorders your
-files, so every file with one entry per river (grid weights, catchment runoff, channel state) must list the rivers in this same order.
+rows. The network file records that order in two columns: `riverIndex`, each river's position in DFS order, and `upstreamCount`, the number of
+rivers upstream of it, so a river's watershed is the rows from its `riverIndex` minus its `upstreamCount` to its `riverIndex`. river-route
+never reorders your files, so every file with one entry per river (grid weights, catchment runoff, channel state) must list the rivers in this
+same order, and routing refuses runoff that does not.
 
 ```python
 import river_route as rr
 
-"""check whether a params file is already in DFS order"""
-network = rr.Network('/path/to/params.parquet')
-rr.network.streams.is_dfs_ordered(network.downstream_indices).all()
+"""check that a network file is in DFS order and that its riverIndex and upstreamCount describe that order"""
+rr.Configs(network_file='/path/to/network.parquet').deep_validate()
 ```
 
-### Runff and catchments
+### Runoff and catchments
 
 You no longer need to incorporate code to convert your runoff source to catchment level aggregates and then route those files. It was faster and 
-more resource efficient to do this in v2. In v3 is generally so much more efficient that it is discouraged to prepare them in advance. The code 
+more resource efficient to do this in v2. In v3 routing the grids directly is generally so much more efficient that it is discouraged to
+prepare them in advance. The code 
 will still accept precalculated catchment level runoff since there are still many reasons you may want your data this way. The difference is that 
 this intermediate step should not be thought of as required or best or more efficient.
 
 
-`examples/migrate_v2_to_v3.py` sorts a v2 params file into DFS order and rewrites the grid weights, qlateral files, and channel state files
-in the same order.
+`examples/migrate_v2_to_v3.py` writes a v2 params file as a v3 network file in DFS order and rewrites the grid weights, qlateral files, and
+channel state files in the same order.
 
 ## Router Class Changes
 
@@ -43,7 +45,7 @@ procedure is chosen by the `forcing` config instead of by the class.
 
 | v2 Class                                  | v3 Replacement                      | Use Case                                           |
 |-------------------------------------------|-------------------------------------|----------------------------------------------------|
-| `Muskingum`                               | `Router` with `forcing='channel'`   | Channel-only routing (no lateral inflow)           |
+| `Muskingum`                               | `Router` with `forcing='channel'`   | Channel-only routing (no runoff)                   |
 | `RapidMuskingum` with `qlateral_files`    | `Router` with `forcing='catchment'` | Routing runoff already aggregated to catchments    |
 | `RapidMuskingum` with `grid_runoff_files` | `Router` with `forcing='grid'`      | Routing gridded runoff depths with a weight table  |
 | `UnitMuskingum`                           | _(Proper replacement postponed)_    | Routing with unit hydrograph runoff transformation |
@@ -69,7 +71,7 @@ rr.RapidMuskingum('/path/to/config.yaml', dt_routing=900).route()
 """2 options to initialize a config object first then pass to router"""
 conf1 = rr.Configs.from_json('/path/to/config.json')
 conf2 = rr.Configs(
-    params_file='/path/to/params.parquet',
+    network_file='/path/to/network.parquet',
     forcing='catchment',
     runoff_files=['/path/to/catchment_runoff.nc'],
     discharge_dir='/path/to/outputs/',
@@ -86,6 +88,7 @@ file into it. The following config keys have been renamed, removed, or added.
 
 | v2 Key                | v3 Key                                   |
 |-----------------------|------------------------------------------|
+| `params_file`         | `network_file`                           |
 | `qlateral_files`      | `runoff_files` with `forcing: catchment` |
 | `grid_runoff_files`   | `runoff_files` with `forcing: grid`      |
 | `uh_kernel_file`      | _(removed)_                              |
@@ -96,7 +99,7 @@ New keys, each with a default that routes as v2 did:
 
 | Key                       | Default      | Description                                                                         |
 |---------------------------|--------------|-------------------------------------------------------------------------------------|
-| `coefficients`            | `'static'`   | `'static'` Muskingum K from `k`, or `'dynamic'` from `dynamicAlpha`, `dynamicBeta`  |
+| `coefficients`            | `'static'`   | `'static'` Muskingum K from `muskingumK`, or `'dynamic'` from `dynamicAlpha`, `dynamicBeta` |
 | `forcing`                 | `'channel'`  | `'channel'`, or the form of `runoff_files`: `'catchment'`, `'grid'`, `'ecmwf_grib'` |
 | `transform`               | `'uniform'`  | The only option                                                                     |
 | `network_type`            | `'standard'` | `'standard'`, or `'stabilized'` to route every river stably at `dt_routing`         |
@@ -120,9 +123,9 @@ in `river_route.network.streams`, and the router reads river ids and parameters 
 |---------------------------------------------|-------------------------------------------------------|
 | `router.set_write_discharges(func)`         | `router.set_discharge_writer(func)`                   |
 | `router.river_ids`, `router.k`, `router.x`  | `router.network.river_ids`, `.k`, `.x`                |
-| `river_route.tools.subset_configs_to_river` | `river_route.network.streams.subset_configs_to_river` |
-| `river_route.tools.connectivity_to_digraph` | `river_route.network.streams.connectivity_to_digraph` |
-| `river_route.tools.adjacency_matrix`        | `river_route.network.streams.adjacency_matrix`        |
+| `river_route.tools.subset_configs_to_river` | `river_route.network.streams.subset_network_to_river` |
+| `river_route.tools.connectivity_to_digraph` | _(removed)_                                           |
+| `river_route.tools.adjacency_matrix`        | _(removed)_                                           |
 | `river_route.runoff.runoff_to_qlateral`     | `river_route.GridRunoff(...).to_dataset`              |
 | `river_route.uhkernels`                     | _(removed)_                                           |
 
@@ -132,20 +135,25 @@ in `river_route.network.streams`, and the router reads river ids and parameters 
 
 !!! tip
     `examples/migrate_v2_to_v3.py` converts the params file, grid weights, qlateral files, channel state files, and config file from v2 to v3
-    in one command. Run it with `--help` to see the arguments.
+    in one command. Run it with `--help` to see the arguments. Converting a YAML config file needs `pyyaml`, which v3 no longer depends on, so
+    install it for the migration.
 
-### Routing Parameters
+### Network File
 
-The `downstream_river_id` column is renamed `next_river_id`. The other columns are unchanged. The rows must also be in DFS order, see
+The v2 params file is the v3 network file, configured with `network_file`. Its columns are camelCase, every outlet's `nextRiverId` must be
+`-1`, and it has two new required columns, `riverIndex` and `upstreamCount`, that describe its DFS order; see
 [Watershed Preparation](#watershed-preparation).
 
-```python
-import pandas as pd
+| v2 Column             | v3 Column                                                       |
+|-----------------------|-----------------------------------------------------------------|
+| `river_id`            | `riverId`                                                       |
+| `downstream_river_id` | `nextRiverId`                                                   |
+| `k`                   | `muskingumK`                                                    |
+| `x`                   | `muskingumX`                                                    |
+|                       | `riverIndex`, each river's position in DFS order                |
+|                       | `upstreamCount`, the number of rivers upstream of each river    |
 
-"""renaming the column is enough when the rivers are already in DFS order"""
-params = pd.read_parquet('/path/to/v2_params.parquet')
-params.rename(columns={'downstream_river_id': 'next_river_id'}).to_parquet('/path/to/params.parquet')
-```
+The migration script renames the columns, sorts the rivers into DFS order, and computes both new columns.
 
 ### Catchment Runoff (was qlateral)
 
@@ -177,16 +185,17 @@ with xr.open_dataset('/path/to/qlateral.nc') as ds:
     )
 ```
 
-This keeps the rivers in the order of the qlateral file, so it only gives a valid file when that order is already DFS order. Otherwise use
-the migration script, which writes the catchment runoff files in the same order as the sorted params file.
+This keeps the rivers in the order of the qlateral file, so it only gives a valid file when that is the order of the network file. Otherwise use
+the migration script, which writes the catchment runoff files in the same order as the sorted network file.
 
 You do not need catchment runoff files for gridded runoff anymore. Routing with `forcing: grid` reads each river's grid cells while it routes,
 which is faster than writing and then reading an intermediate file. If you still want the files, `GridRunoff.aggregate_to_file` writes them.
 
 ### Grid Weights and Channel State
 
-The file formats are unchanged, but the rivers must be listed in the same DFS order as the params file. If your params file was reordered, these
-files need to be reordered with it. The migration script does this for you.
+The grid weights format is unchanged. A channel state file still holds a `Q` column, and a final state file written by v3 also holds each
+row's `river_id`. Both must list the rivers in the same order as the network file. If your network file was reordered, these files need to be
+reordered with it. The migration script does this for you.
 
 ### Routed Discharge
 
@@ -235,7 +244,7 @@ rr.Router(rr.Configs.from_json('/path/to/config.json')).set_discharge_writer(wri
 
 ## CLI
 
-There is only one routing command now since the config file chooses the routing procedure. The new `rr subset` command cuts a params file,
+There is only one routing command now since the config file chooses the routing procedure. The new `rr subset` command cuts a network file,
 and optionally its grid weights, down to one river and every river upstream of it.
 
 | v2                                             | v3                                                                      |
@@ -244,4 +253,4 @@ and optionally its grid weights, down to one river and every river upstream of i
 | `rr Muskingum config.yaml`                     | `rr route config.json` with `forcing: channel`                          |
 | `rr RapidMuskingum config.yaml`                | `rr route config.json` with `forcing` set                               |
 | `rr UnitMuskingum config.yaml`                 | _(Proper replacement postponed)_                                        |
-|                                                | `rr subset <river_id> --params <in.parquet> --out-params <out.parquet>` |
+|                                                | `rr subset <river_id> --network <in.parquet> --out-network <out.parquet>` |

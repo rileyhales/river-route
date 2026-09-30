@@ -2,10 +2,6 @@ import numba
 
 __all__ = ['aggregate_river', 'aggregate_to_rivers', 'cells_by_time']
 
-# The aggregation kernel covers a continuous range of rivers, which could be the whole network, so that code does not
-# change between the single-threaded and multithreaded cases. Disjoint ranges can run concurrently because each
-# writes only its own output columns, provided each is given its own scratch block.
-
 
 @numba.njit(cache=True, nogil=True)
 def aggregate_river(
@@ -47,6 +43,7 @@ def aggregate_river(
     return
 
 
+# todo this should be named more clearly referencing the grid runoff style forcing it is specifically designed for
 @numba.njit(cache=True, nogil=True)
 def aggregate_to_rivers(
     *,
@@ -55,7 +52,7 @@ def aggregate_to_rivers(
     cell,  # Array (n_weights,) of the row of runoff_by_cell each weight applies to
     weight,  # Array (n_weights,) of area proportions, already multiplied by the depth unit conversion factor
     scale,  # Array (n_rivers,) of per-river multipliers (catchment area for volumes); EMPTY to skip scaling
-    zero,  # scalar zero in the dtype of scratch
+    zero,  # scalar zero in the dtype of out
     cumulative,  # bool, de-accumulate each river's series from cumulative to incremental
     force_positive,  # bool, clip negative values to zero
     r_start,  # first river index this call aggregates
@@ -63,8 +60,11 @@ def aggregate_to_rivers(
     out,  # Array (n_rivers, n_steps) C-order catchment runoff to write rows r_start:r_stop into
 ):
     """
-    Aggregate every river in r_start:r_stop with aggregate_river straight into its own row of the C-order
-    (river, time) output. Each river's series is contiguous, so nothing is transposed.
+    Aggregate runoff rivers in r_start:r_stop with aggregate_river straight into its row of the C-order (river,
+    time) output.
+
+    The range could be the whole network, so the code does not change between the single-threaded and multithreaded
+    cases. Disjoint ranges can run concurrently because each writes only its own rows of the output.
     """
     for r in range(r_start, r_stop):
         aggregate_river(runoff_by_cell, indptr, cell, weight, scale, zero, cumulative, force_positive, r, out[r])
