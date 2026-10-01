@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     # find the routing files for the region
     routing_root = Path(args.bucket_root) / 'routing'
-    network_file = routing_root / f'region={args.region}' / 'routing.parquet'
+    network_file = routing_root / f'region={args.region}' / 'network.parquet'
     grid_weights_file = routing_root / f'region={args.region}' / f'gridweights_ERA5_{args.region}.nc'
     # find the runoff forcing files
     era5_root = Path(args.bucket_root) / 'forcings' / 'era5'
@@ -28,7 +28,7 @@ if __name__ == '__main__':
 
     # ── 1. Configs: every option, frozen, in one object ──────────────────────
     conf = rr.Configs(
-        # the network/network file
+        # the network file
         network_file=network_file,
         # primary modeling choices
         coefficients='static',

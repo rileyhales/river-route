@@ -10,7 +10,8 @@ You can get example inputs from the GEOGLOWS River Forecast System available on 
 }
 ```
 
-The network file is a parquet file. It has 1 row per river in the watershed.
+The network file is a parquet file. It has 1 row per river in the watershed, and a network stabilized by
+`Network.write_stabilized` also has 1 row per sub-reach it added.
 Required for all routing:
 
 | Column          | Data Type | Description                                                                     |
@@ -30,6 +31,9 @@ Optional columns:
 | `dynamicBeta`     | float     | Required for `coefficients: dynamic`                                                 |
 | `synthetic`       | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                   |
 | `parentRiverId`   | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from       |
+
+A network file with `synthetic` rows routes with the `channel`, `grid`, and `ecmwf_grib` forcings. The `catchment`
+forcing refuses it, since a catchment runoff file has one row per river and none for the added sub-reaches.
 
 These columns typically come from preprocessing and calibration workflows:
 
@@ -83,16 +87,16 @@ You need a time series of per-catchment runoff to be routed. It is given as `run
 ```
 
 !!! note "Ordering River IDs"
-    The `river_id` values **must** be the same values and order as the `riverId` column of the network file
+    The `riverId` values **must** be the same values and order as the `riverId` column of the network file
 
-Catchment runoff is given as netcdf with 2 dimensions, `river_id` and `time`, in that order, so each river's series is
-contiguous and is read straight into the river major arrays the router works in. The `river_id` dimension **must**
+Catchment runoff is given as netcdf with 2 dimensions, `riverId` and `time`, in that order, so each river's series is
+contiguous and is read straight into the river major arrays the router works in. The `riverId` dimension **must**
 contain exactly the same IDs **and** be sorted in the same order as the `riverId` column of the network file. The names and the order are fixed and cannot be configured:
 
 | Variable           | Dimensions           | Description                                                                 |
 |--------------------|----------------------|-----------------------------------------------------------------------------|
-| `catchment_runoff` | `(river_id, time)`   | Incremental runoff of each catchment per step, as a volume or a depth       |
-| `catchment_area`   | `(river_id,)`        | Area of each catchment in m², the factor between depths and volumes         |
+| `catchment_runoff` | `(riverId, time)`    | Incremental runoff of each catchment per step, as a volume or a depth       |
+| `catchment_area`   | `(riverId,)`         | Area of each catchment in m², the factor between depths and volumes         |
 
 The `units` attribute of `catchment_runoff` is required and says which form it takes: `m3` for volumes, or a depth unit
 (`m` or `mm`). Depths and volumes are equivalent: routing uses volumes, so depths are converted to meters and
@@ -114,24 +118,28 @@ from their grids with `aggregate_to_file`.
 ```
 
 !!! note "Ordering River IDs"
-    The `river_id` values **must** be the same values and order as the `riverId` column of the network file
+    The `riverId` values **must** be the same values and order as the `riverId` column of the network file
 
 Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`. The dimension names
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden
 with `var_grid_runoff` (default `'ro'`).
 
 Weights need to be recomputed if the grid resolution, grid extent, or catchment boundaries change.
-The grid weights netCDF has the following variables:
+The grid weights netCDF has the following variables, each with the one dimension `index`, a row per weight:
 
 | Column       | Data Type | Description                                                                    |
 |--------------|-----------|--------------------------------------------------------------------------------|
-| `river_id`   | integer   | Unique ID of a river segment                                                   |
+| `riverId`    | integer   | Unique ID of a river segment                                                   |
 | `x_index`    | integer   | The x index of the runoff grid cell that overlaps with the catchment boundary  |
 | `y_index`    | integer   | The y index of the runoff grid cell that overlaps with the catchment boundary  |
 | `x`          | float     | The x coordinate of the runoff grid cell                                       |
 | `y`          | float     | The y coordinate of the runoff grid cell                                       |
 | `area_sqm`   | float     | Area of the grid cell–catchment overlap in square meters                       |
-| `proportion` | float     | Fraction of catchment area covered by this grid cell, sums to 1.0 per river_id |
+| `proportion` | float     | Fraction of catchment area covered by this grid cell, sums to 1.0 per riverId  |
+
+The names are fixed. A weight table made before v3 names the river id `river_id`, and must be renamed `riverId` before
+it is read. The weight table functions of `river_route.runoff.weights` read the catchments' `riverId` column and write
+these names.
 
 ### Reduced Gaussian Grid Runoff Depths
 
@@ -162,12 +170,27 @@ cells centered on 180 degrees. `river_route.runoff.reduced_grid_weights` interse
 Its weight table has the columns of the table above with `cell_index`, the position of the cell in the values of a
 GRIB message, in place of `x_index` and `y_index`.
 
+## Channel State Files
+
+A channel state file is a parquet file with two columns, one row per river, listing the rivers of the network file
+in the same order. `channel_state_final_file` is written in this format, so a final state starts the next run as its
+`channel_state_init_file`.
+
+| Column     | Type    | Description                                            |
+|------------|---------|--------------------------------------------------------|
+| `riverId`  | integer | ID of the river, in the order of the network file      |
+| `Q`        | float   | Discharge of the river in m³/s at the end of the run   |
+
+With `network_type: stabilized` a state file has one row per sub-reach instead, each river's sub-reaches upstream to
+downstream with its `riverId` repeated on each. Routing refuses a state file without `riverId` or whose rivers are
+not the rivers of the network file in order.
+
 ## Output Files
 
 ### Routed Discharge
 
 Routed discharge is written by `river_route.router.writers.zarr_writer` unless another writer is set, to a zarr
-store with 2 dimensions: `river_id` and `time`. It has 1 variable named `Q` of shape `(river_id, time)` and dtype
+store with 2 dimensions: `riverId` and `time`. It has 1 variable named `Q` of shape `(riverId, time)` and dtype
 float32, chunked so that each chunk holds every time step of a block of rivers.
 
 The values are rounded to `writers.ZARR_KEEPBITS` mantissa bits, a relative error of at most `2^-13`, and each chunk
@@ -176,7 +199,7 @@ smaller than the raw array and faster to write than storing it uncompressed, sin
 
 The river dimension comes first in every array format, because that is the layout the kernels write in place: each
 river's whole series is contiguous. That is also the layout a writer is handed, as a C-order `(river, time)` array,
-so nothing is transposed on the way to the file. Writing `(time, river_id)` instead costs about twice the kernel time
+so nothing is transposed on the way to the file. Writing `(time, riverId)` instead costs about twice the kernel time
 on a large network, since each river's series then has to be transposed out in blocks.
 
-`river_route.router.writers.netcdf_writer` writes the same `(river_id, time)` layout to an uncompressed netCDF file.
+`river_route.router.writers.netcdf_writer` writes the same `(riverId, time)` layout to an uncompressed netCDF file.

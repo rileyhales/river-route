@@ -11,9 +11,9 @@ Terminology:
 
     Router.route()
     ├── Router._execute_routing_channel()             forcing 'channel', called once
-    │   └── route_region(router, q_t, discharge_array, None, thread_pool)
+    │   └── route_region(network, method, layout, ..., None, thread_pool, threads)
     └── Router._execute_routing_forced()              once per file the Runoff's generator yields
-        └── route_region(router, q_t, discharge_array, runoff, thread_pool)
+        └── route_region(network, method, layout, ..., runoff, thread_pool, threads)
 
 2. route_region maps all work to be done to sub pieces, called jobs, that can run concurrently.
 
@@ -73,8 +73,10 @@ from numba.extending import overload
 from ..types import FloatArray, Int32Array, JobBlocks
 
 if TYPE_CHECKING:
+    from ..network.Network import Network
     from ..runoff import CatchmentRunoffVolumes, GridCellRunoff
-    from .Router import Router
+    from .dynamic_muskingum import DynamicMuskingum
+    from .static_muskingum import StaticMuskingum
 
 __all__ = [
     # the stages a job takes each river through, implemented next to the types they read
@@ -303,32 +305,36 @@ def route_job(
 
 
 def route_region(
-    router: Router,
+    network: Network,
+    method: StaticMuskingum | DynamicMuskingum,
+    layout: Layout,
+    routing_steps_per_runoff_step: int,
     q_t: FloatArray,
     discharge_array: FloatArray,
     runoff: CatchmentRunoffVolumes | GridCellRunoff | None,
     thread_pool: ThreadPoolExecutor | None,
+    threads: int,
 ) -> None:
     """
-    Route ``runoff`` through the whole region with the Router's routing method and layout: every job of sub-watershed
-    blocks, concurrently on ``thread_pool`` when given, then the main stem, which consumes the boundary buffer the
-    blocks filled. ``runoff`` is None for channel routing, or what the Router's Runoff generator yielded.
+    Route ``runoff`` through the whole region with a routing method's parameters and layout: every job of
+    sub-watershed blocks, concurrently on ``thread_pool`` when given, then the main stem, which consumes the boundary
+    buffer the blocks filled. ``runoff`` is None for channel routing, or what a Runoff generator yielded.
+    ``discharge_array`` has a column per runoff step, and ``threads`` is the number of jobs the blocks are packed into
+    when ``thread_pool`` is given.
 
     A boundary row holds a block outlet's whole series plus its initial state. The Network packs the blocks into one
     job per thread, which keeps the per-job cost in python, and the buffers each job allocates, to once per thread
     rather than once per block.
     """
     # the Network derives the blocks once per thread count and caches them, so this is a lookup after the first file
-    job_blocks, cut_target = router.network.routing_blocks(router.threads if thread_pool is not None else 1)
-    _check_everything_a_job_reads(router, q_t, discharge_array, runoff, job_blocks)
-    downstream_indices = router.network.downstream_indices
-    routing_steps_per_runoff_step = router.num_routing_steps_per_runoff
-    n_routing_steps = router.num_runoff_steps * routing_steps_per_runoff_step
+    job_blocks, cut_target = network.routing_blocks(threads if thread_pool is not None else 1)
+    _check_everything_a_job_reads(network, method, layout, q_t, discharge_array, runoff, job_blocks)
+    downstream_indices = network.downstream_indices
+    n_routing_steps = discharge_array.shape[1] * routing_steps_per_runoff_step
     boundary = np.zeros((max(cut_target.shape[0], 1), n_routing_steps + 1), dtype=np.float32)
-    synthetic = router.network.synthetic  # each river's discharge row, -1 for a synthetic river that has none
+    synthetic = network.synthetic  # each river's discharge row, -1 for a synthetic river that has none
     out_row = _NO_CUTS if synthetic is None else np.where(synthetic, -1, np.cumsum(~synthetic) - 1).astype(np.int32)
-
-    method, layout, transform = router.routing_parameters, router.layout, None  # None is the uniform transform
+    transform = None  # the uniform transform
 
     def route_one_job(blocks: JobBlocks, cut_target_of_job: Int32Array = _NO_CUTS) -> None:
         route_job(
@@ -356,7 +362,9 @@ def route_region(
 
 
 def _check_everything_a_job_reads(
-    router: Router,
+    network: Network,
+    method: StaticMuskingum | DynamicMuskingum,
+    layout: Layout,
     q_t: FloatArray,
     discharge_array: FloatArray,
     runoff: CatchmentRunoffVolumes | GridCellRunoff | None,
@@ -367,9 +375,9 @@ def _check_everything_a_job_reads(
     # Output is never copied, so any other layout is refused rather than transposed.
     if not discharge_array.flags.c_contiguous:
         raise ValueError('discharge_array must be a C-order (river, time) array')
-    n_rivers = router.network.river_ids.shape[0]
-    n_steps = router.num_runoff_steps
-    reach_indptr, subcycles = router.layout
+    n_rivers = network.river_ids.shape[0]
+    n_steps = discharge_array.shape[1]
+    reach_indptr, subcycles = layout
     if reach_indptr.shape[0] and (
         reach_indptr.shape != (n_rivers + 1,) or reach_indptr[0] != 0 or np.any(np.diff(reach_indptr) < 1)
     ):
@@ -377,18 +385,17 @@ def _check_everything_a_job_reads(
     if subcycles.shape[0] and (subcycles.shape != (n_rivers,) or subcycles.min() < 1):
         raise ValueError(f'subcycles must be ({n_rivers},) counts of at least 1, or empty')
     n_states = int(reach_indptr[-1]) if reach_indptr.shape[0] else n_rivers  # one state per reach
-    synthetic = router.network.synthetic
-    n_out = n_rivers if synthetic is None else int(np.count_nonzero(~synthetic))  # synthetic rivers have no row
+    n_out = network.original_river_ids.shape[0]  # synthetic rivers have no discharge row
     expected_shapes = {'q_t': ((n_states,), q_t.shape), 'discharge_array': ((n_out, n_steps), discharge_array.shape)}
     for name, (want, got) in expected_shapes.items():
         if got != want:
             raise ValueError(f'{name} has shape {got}, expected {want} for {n_rivers} rivers and {n_steps} steps')
-    per_river = {'downstream_indices': router.network.downstream_indices, **router.routing_parameters._asdict()}
+    per_river = {'downstream_indices': network.downstream_indices, **method._asdict()}
     for name, array in per_river.items():
         if isinstance(array, np.ndarray) and array.shape != (n_rivers,):
             raise ValueError(f'{name} has shape {array.shape}, expected ({n_rivers},)')
     if runoff is not None:
-        runoff.check(router.network.river_ids, n_steps)
+        runoff.check(network.river_ids, n_steps)
 
     # sorted by start, the blocks tile [0, n_rivers) exactly when each ends where the next begins: no gap, no overlap
     starts = np.concatenate([blocks[0] for blocks in job_blocks])

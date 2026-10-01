@@ -266,8 +266,8 @@ That convolution helper is not part of the current release and is not wired into
 
 ## Forward Substitution Algorithm
 
-Because of the careful preparation of the routing matrices, the linear system can be solved for directly with a single forward substitution 
-pass without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency gain in terms of the 
+Because of the careful preparation of the routing matrices, the linear system can be solved for directly by forward substitution, 
+one river at a time from upstream to downstream, without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency gain in terms of the 
 complexity of the algorithm as well as how efficiently it can be implemented and compiled in code.
 
 For a unit lower triangular system $L\, x = b$ of size $n$:

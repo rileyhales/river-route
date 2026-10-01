@@ -13,3 +13,4 @@ plans/
 experiments/
 .venv/
 benchmarks/
+correctness_tests/

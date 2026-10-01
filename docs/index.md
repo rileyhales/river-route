@@ -13,7 +13,7 @@ which together choose the kernel.
 | `coefficients` | `'static'` (constant Muskingum K from columns `muskingumK`, `muskingumX`) or `'dynamic'` (nonlinear K = dynamicAlpha*Q^dynamicBeta from columns `dynamicAlpha`, `dynamicBeta`, `muskingumX`). | `'static'`   |
 | `forcing`      | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`.                          | `'channel'`  |
 | `transform`    | `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over the step.                                                      | `'uniform'`  |
-| `network_type` | `'standard'` (one reach per river) or `'stabilized'` (every river routed stably at `dt_routing` in substeps or subcycles).                                         | `'standard'` |
+| `network_type` | `'standard'` (one reach per river) or `'stabilized'` (each river routed in the substeps or subcycles that make it stable at `dt_routing`, where any do).           | `'standard'` |
 
 The one combination no routing method routes yet, `'dynamic'` coefficients on a `'stabilized'` network, raises
 `NotImplementedError` before any runoff is read.
@@ -65,23 +65,11 @@ rr.Router(configs).route()
 | `Router`  | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.            |
 | `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many runoff files.              |
 
-`Router` takes a `Configs`, and builds its `Network` and the `Runoff` class its `forcing` names from it unless it is
-given them as `Router(configs, network=..., runoff=...)`. `Network` and `GridRunoff` take the options they need as
-ordinary arguments and each has a `from_configs` classmethod that reads those same values off a `Configs`.
-`examples/config.json` lists every option.
+`Router` takes only a `Configs`, and builds its `Network` and the `Runoff` class its `forcing` names from it.
+`Network` and `GridRunoff` take the options they need as ordinary arguments and each has a `from_configs` classmethod
+that reads those same values off a `Configs`. `examples/config.json` lists every option.
 
-A `Network` reads and partitions a network table once and every simulation over it reuses the result, so it can
-be built up front and handed to a `Router` when many runs share one network:
-
-```python
-import river_route as rr
-
-configs = rr.Configs.from_json('/path/to/config.json')
-
-network = rr.Network.from_configs(configs)  # optional; the Router builds its own when not given one
-rr.Router(configs, network=network).route()
-rr.Router(other_configs, network=network).route()  # reuses the parsed and partitioned network
-```
+A `Router` reads and partitions its network table once, and every `route()` call on it reuses the result.
 
 ## Start Here
 

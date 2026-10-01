@@ -12,6 +12,7 @@ import pkgutil
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -81,14 +82,24 @@ REFUSED_CONFIGS = {
         ValueError,
         'mixes the null device',
     ),
+    'time steps are whole seconds': (
+        lambda basin, d: {'dt_routing': DT / 7},
+        ValueError,
+        'dt_routing must be a whole number of seconds',
+    ),
+    'time steps are not negative': (
+        lambda basin, d: {'dt_total': -DT},
+        ValueError,
+        'dt_total must be a whole number of seconds',
+    ),
 }
 
 BROKEN_NETWORK_FILES = {
     'a downstream river is missing': (
         lambda table: table.drop(index=table.index[table['riverId'].isin(table['nextRiverId'])][0]),
-        'nextRiverId values must exist',
+        'is not in the riverId column',
     ),
-    'rows out of upstream to downstream order': (lambda table: table.iloc[::-1], 'not topologically sorted'),
+    'rows out of upstream to downstream order': (lambda table: table.iloc[::-1], 'topologically sorted'),
     'a river with the outlet id': (
         lambda table: table.assign(riverId=np.where(np.arange(len(table)) == 0, -1, table['riverId'])),
         'riverId must not be -1',
@@ -129,6 +140,27 @@ UNSUPPORTED_OPTIONS = {
         lambda basin: {'coefficients': 'dynamic', 'network_type': 'stabilized'},
         'cannot route a stabilized network',
     )
+}
+
+IRREGULAR_TIME_STEPS = {
+    'a missing time step': (
+        lambda dates, volumes: (np.delete(dates, 5), np.delete(volumes, 5, axis=1)),
+        'uniform time steps',
+    ),
+    'a single time step': (lambda dates, volumes: (dates[:1], volumes[:, :1]), 'single time step'),
+    'time running backward': (lambda dates, volumes: (dates[::-1], volumes[:, ::-1]), 'must increase'),
+}
+
+OTHER_CHANNEL_STATES = {
+    'no riverId column': (lambda ids: {'Q': np.zeros(ids.shape[0], dtype=np.float32)}, 'missing the column'),
+    'one river short': (
+        lambda ids: {'riverId': ids[:-1], 'Q': np.zeros(ids.shape[0] - 1, dtype=np.float32)},
+        'the network has',
+    ),
+    'the rivers in another order': (
+        lambda ids: {'riverId': ids[::-1], 'Q': np.zeros(ids.shape[0], dtype=np.float32)},
+        'in the same order',
+    ),
 }
 
 MODULES = [module.name for module in pkgutil.walk_packages(rr.__path__, 'river_route.')]
@@ -172,9 +204,9 @@ def test_configs_round_trip_through_json(outputs: str, willamette: Basin, tmp_pa
 
 def test_preparing_runoff_does_not_skip_routing_validation(willamette: Basin, tmp_path: Path) -> None:
     configs = rr.Configs(**routing_options(willamette, tmp_path), coefficients='dynamic', network_type='stabilized')
-    runoff = rr.GridRunoff.from_configs(configs)  # validates the configs for preparing runoff, not for routing
+    rr.GridRunoff.from_configs(configs)  # validates the configs for preparing runoff, not for routing
     with pytest.raises(NotImplementedError, match='cannot route a stabilized network'):
-        rr.Router(configs, runoff=runoff).route()
+        rr.Router(configs).route()
 
 
 def test_unknown_config_keys_are_refused(tmp_path: Path) -> None:
@@ -200,8 +232,11 @@ def test_deep_validate_checks_a_state_against_the_network_type(willamette: Basin
     route(tmp_path, willamette.months[:1], network_type='stabilized', **options)
     stabilized_state = {'network_file': willamette.network_file, 'channel_state_init_file': final_state}
     rr.Configs(**stabilized_state, network_type='stabilized').deep_validate()  # one row per sub-reach
-    with pytest.raises(ValueError, match='same number of rows'):
+    with pytest.raises(ValueError, match='rivers, the network has'):
         rr.Configs(**stabilized_state).deep_validate()
+    pd.read_parquet(final_state, columns=['Q']).to_parquet(tmp_path / 'no_ids.parquet')
+    with pytest.raises(ValueError, match='missing riverId'):
+        rr.Configs(**(stabilized_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
 
 
 def test_deep_validate_finds_weights_that_do_not_sum_to_one(willamette: Basin, tmp_path: Path) -> None:
@@ -273,6 +308,26 @@ def test_write_stabilized_writes_only_its_output(willamette: Basin, tmp_path: Pa
         rr.Network(pd.read_parquet(source)).write_stabilized(DT)
 
 
+def test_a_network_is_stabilized_once(willamette: Basin, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match='already stabilized'):
+        rr.Network(willamette.network_file).stabilize(DT).stabilize(DT / 4)
+    written = rr.Network(willamette.network_file).write_stabilized(DT, tmp_path / 'stabilized.parquet')
+    with pytest.raises(ValueError, match='already stabilized'):
+        rr.Network(written).write_stabilized(DT / 4, tmp_path / 'stabilized_again.parquet')
+
+
+def test_river_ids_beyond_int32_are_kept(willamette: Basin, tmp_path: Path) -> None:
+    table = pd.read_parquet(willamette.network_file)
+    offset = np.int64(np.iinfo(np.int32).max)
+    table['riverId'] = table['riverId'].astype(np.int64) + offset
+    table['nextRiverId'] = np.where(table['nextRiverId'] == -1, -1, table['nextRiverId'].astype(np.int64) + offset)
+    written = pd.read_parquet(rr.Network(table).write_stabilized(DT, tmp_path / 'stabilized.parquet'))
+    original = ~written['synthetic'].to_numpy()
+    np.testing.assert_array_equal(written['riverId'].to_numpy()[original], table['riverId'])
+    np.testing.assert_array_equal(written['parentRiverId'].to_numpy()[original], table['riverId'])
+    assert written['parentRiverId'].isin(table['riverId']).all()
+
+
 def test_stabilize_splits_each_river_into_stable_pieces_of_its_travel_time(willamette: Basin) -> None:
     river_ids, k, x = willamette.network.river_ids, willamette.network.k.astype(np.float64), willamette.network.x
     pieces = {}
@@ -327,68 +382,64 @@ def test_depth_units_are_converted(unit: str, willamette: Basin) -> None:
 
 
 def test_cumulative_runoff_becomes_runoff_per_step(willamette: Basin, march) -> None:
-    cells, time_index, factor = march
-    per_step, _ = grid(willamette).aggregate(cells, time_index, factor)
+    cells, _, factor = march
+    per_step = grid(willamette).aggregate(cells, factor)
     totals = np.cumsum(cells, axis=0, dtype=np.float32)
-    from_totals, _ = grid(willamette, grid_accumulation_type='cumulative').aggregate(totals, time_index, factor)
+    from_totals = grid(willamette, grid_accumulation_type='cumulative').aggregate(totals, factor)
     assert_same(from_totals, per_step)
 
 
 def test_missing_cells_contribute_nothing(willamette: Basin, march) -> None:
-    cells, time_index, factor = march
+    cells, _, factor = march
     missing, zero = cells.copy(), cells.copy()
     missing[:, 0], zero[:, 0] = np.nan, 0
-    np.testing.assert_array_equal(
-        grid(willamette).aggregate(missing, time_index, factor)[0],
-        grid(willamette).aggregate(zero, time_index, factor)[0],
-    )
+    np.testing.assert_array_equal(grid(willamette).aggregate(missing, factor), grid(willamette).aggregate(zero, factor))
 
 
 def test_force_positive_runoff_clips_negative_catchment_runoff(willamette: Basin, march) -> None:
-    cells, time_index, factor = march
+    cells, _, factor = march
     shifted = cells - cells.mean(dtype=np.float32)  # plenty of negative runoff
-    unclipped, _ = grid(willamette).aggregate(shifted, time_index, factor)
-    clipped, _ = grid(willamette, force_positive_runoff=True).aggregate(shifted, time_index, factor)
+    unclipped = grid(willamette).aggregate(shifted, factor)
+    clipped = grid(willamette, force_positive_runoff=True).aggregate(shifted, factor)
     np.testing.assert_array_equal(clipped, np.maximum(unclipped, 0))
 
 
 def test_volumes_are_depths_times_catchment_area(willamette: Basin, march) -> None:
-    cells, time_index, factor = march
-    depths, _ = grid(willamette).aggregate(cells, time_index, factor)
+    cells, _, factor = march
+    depths = grid(willamette).aggregate(cells, factor)
     volume_grid = grid(willamette, as_volumes=True)
-    volumes, _ = volume_grid.aggregate(cells, time_index, factor)
+    volumes = volume_grid.aggregate(cells, factor)
     assert_same(volumes, depths * volume_grid.catchment_area[:, np.newaxis])
 
 
-def test_irregular_time_steps_are_resampled_keeping_the_total(willamette: Basin, march) -> None:
-    cells, time_index, factor = march
-    keep = np.ones(time_index.size, dtype=bool)
-    keep[5::7] = False  # drop every seventh step after the fifth
-    every_step, _ = grid(willamette).aggregate(cells, time_index, factor)
-    resampled, resampled_times = grid(willamette).aggregate(cells[keep], time_index[keep], factor)
-    assert np.all(np.diff(resampled_times) == np.timedelta64(DT, 's'))
-    assert (resampled_times[0], resampled_times[-1]) == (time_index[0], time_index[-1])
-    assert_same(resampled.sum(axis=1), every_step[:, keep].sum(axis=1))
-
-
 def test_depth_files_are_read_as_volumes(willamette: Basin, march, tmp_path: Path) -> None:
-    cells, time_index, factor = march
+    cells, dates, factor = march
     depth_grid = grid(willamette)
-    depths, dates = depth_grid.aggregate(cells, time_index, factor)
-    depth_grid.to_netcdf(tmp_path / 'depths.nc', dates, depths, depth_grid.river_ids, depth_grid.catchment_area)
-    volumes, _ = grid(willamette, as_volumes=True).aggregate(cells, time_index, factor)
+    depths = depth_grid.aggregate(cells, factor)
+    areas = depth_grid.catchment_area
+    rr.CatchmentRunoff.to_netcdf(tmp_path / 'depths.nc', dates, depths, depth_grid.river_ids, areas, as_volumes=False)
+    volumes = grid(willamette, as_volumes=True).aggregate(cells, factor)
     ((_, read, _),) = rr.CatchmentRunoff().generator([tmp_path / 'depths.nc'])
     assert_same(read.runoff, volumes)
 
 
-def test_reading_runoff_for_routing_leaves_depths_as_depths(willamette: Basin, march) -> None:
-    cells, time_index, factor = march
+def test_catchment_reader_volumes_are_written_as_volumes(willamette: Basin, tmp_path: Path) -> None:
     depth_grid = grid(willamette)
-    depths, _ = depth_grid.aggregate(cells, time_index, factor)
+    dates, volumes, _ = next(depth_grid.catchment_reader(willamette.runoff_files[:1]))
+    areas = depth_grid.catchment_area
+    rr.CatchmentRunoff.to_netcdf(tmp_path / 'volumes.nc', dates, volumes, depth_grid.river_ids, areas, as_volumes=True)
+    ((_, read, _),) = rr.CatchmentRunoff().generator([tmp_path / 'volumes.nc'])
+    assert_same(read.runoff, volumes)
+
+
+def test_reading_runoff_for_routing_leaves_depths_as_depths(willamette: Basin, march) -> None:
+    cells, _, factor = march
+    depth_grid = grid(willamette)
+    depths = depth_grid.aggregate(cells, factor)
     next(depth_grid.generator(willamette.runoff_files[:1]))  # both read volumes, which routing uses
     next(depth_grid.catchment_reader(willamette.runoff_files[:1]))
     assert not depth_grid.as_volumes
-    np.testing.assert_array_equal(depth_grid.aggregate(cells, time_index, factor)[0], depths)
+    np.testing.assert_array_equal(depth_grid.aggregate(cells, factor), depths)
 
 
 def test_catchment_runoff_in_another_river_order_is_refused(willamette: Basin, tmp_path: Path) -> None:
@@ -396,7 +447,7 @@ def test_catchment_runoff_in_another_river_order_is_refused(willamette: Basin, t
     volume_grid = grid(willamette, as_volumes=True)
     reversed_file = tmp_path / 'reversed.nc'
     river_ids, areas = volume_grid.river_ids[::-1], volume_grid.catchment_area[::-1]
-    volume_grid.to_netcdf(reversed_file, dates, volumes[::-1], river_ids, areas)
+    rr.CatchmentRunoff.to_netcdf(reversed_file, dates, volumes[::-1], river_ids, areas, as_volumes=True)
     changes = {'forcing': 'catchment', 'grid_weights_file': None, 'runoff_files': [reversed_file]}
     with pytest.raises(ValueError, match='in the same order'):
         route(tmp_path, **(willamette.gridded(months=1) | changes))
@@ -404,7 +455,7 @@ def test_catchment_runoff_in_another_river_order_is_refused(willamette: Basin, t
 
 def test_a_weight_table_in_another_river_order_is_refused(willamette: Basin, tmp_path: Path) -> None:
     with xr.open_dataset(willamette.weights_file) as weights:
-        position = pd.Index(willamette.network.river_ids).get_indexer(weights['river_id'].to_numpy())
+        position = pd.Index(willamette.network.river_ids).get_indexer(weights['riverId'].to_numpy())
         reordered = weights.isel(index=np.argsort(-position, kind='stable')).load()
     reordered.assign_coords(index=np.arange(reordered.sizes['index'])).to_netcdf(tmp_path / 'reversed.nc')
     with pytest.raises(ValueError, match='in the same order'):
@@ -451,21 +502,22 @@ def test_threads_must_be_a_positive_integer(threads, willamette: Basin, tmp_path
         router.route(threads=threads)
 
 
-def test_a_runoff_of_the_wrong_class_is_refused(willamette: Basin, tmp_path: Path) -> None:
-    options = routing_options(willamette, tmp_path) | {'forcing': 'catchment', 'grid_weights_file': None}
-    with pytest.raises(TypeError, match='is read by CatchmentRunoff'):
-        rr.Router(rr.Configs(**options), runoff=grid(willamette))
-
-
-def test_an_initial_state_of_the_wrong_size_is_refused(willamette: Basin, tmp_path: Path) -> None:
-    pd.DataFrame({'Q': np.zeros(willamette.network.size - 1, dtype=np.float32)}).to_parquet(tmp_path / 'state.parquet')
-    with pytest.raises(ValueError, match='channel_state_init_file has'):
+@pytest.mark.parametrize(('columns', 'message'), OTHER_CHANNEL_STATES.values(), ids=OTHER_CHANNEL_STATES.keys())
+def test_a_channel_state_for_other_rivers_is_refused(columns, message, willamette: Basin, tmp_path: Path) -> None:
+    pd.DataFrame(columns(willamette.network.river_ids)).to_parquet(tmp_path / 'state.parquet')
+    with pytest.raises(ValueError, match=message):
         route(
             tmp_path,
             willamette.months[:1],
             network_file=willamette.network_file,
             channel_state_init_file=tmp_path / 'state.parquet',
         )
+
+
+@pytest.mark.parametrize(('cut', 'message'), IRREGULAR_TIME_STEPS.values(), ids=IRREGULAR_TIME_STEPS.keys())
+def test_runoff_must_come_in_uniform_time_steps(cut, message, willamette: Basin, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=message):
+        route(tmp_path, [cut(*willamette.months[0])], network_file=willamette.network_file)
 
 
 def test_a_stabilized_run_refuses_sub_reaches_that_change_between_files(willamette: Basin, tmp_path: Path) -> None:
@@ -485,17 +537,21 @@ def test_a_stabilized_run_refuses_sub_reaches_that_change_between_files(willamet
 def test_null_device_outputs_are_routed_and_discarded(willamette: Basin, tmp_path: Path) -> None:
     options = willamette.gridded(months=1) | {'discharge_dir': os.devnull, 'log': False, 'progress_bar': False}
     written = []
-    router = rr.Router(rr.Configs(**options)).set_discharge_writer(lambda *arguments: written.append(arguments))
+    router = rr.Router(rr.Configs(**options)).set_discharge_writer(
+        lambda *arguments, **keywords: written.append(arguments)
+    )
     router.route()
     assert not written and not any(tmp_path.iterdir())
 
 
 def test_split_rivers_write_only_the_original_rivers(willamette: Basin, tmp_path: Path) -> None:
-    network = rr.Network(willamette.network_file).stabilize(DT)
-    routed = route(tmp_path, network=network, writer=writers.zarr_writer, **willamette.gridded(months=1))
+    split_file = rr.Network(willamette.network_file).write_stabilized(DT, tmp_path / 'split.parquet')
+    options = willamette.gridded(months=1) | {'network_file': split_file}
+    routed = route(tmp_path, writer=writers.zarr_writer, **options)
     assert routed.discharge[0].shape[0] == willamette.network.size
+    np.testing.assert_array_equal(routed.router.network.original_river_ids, willamette.network.river_ids)
     with xr.open_zarr(tmp_path / routed.discharge_files[0]) as written:
-        np.testing.assert_array_equal(written['river_id'].to_numpy(), willamette.network.river_ids)
+        np.testing.assert_array_equal(written['riverId'].to_numpy(), willamette.network.river_ids)
 
 
 def test_the_writer_is_called_once_per_runoff_file(willamette: Basin, tmp_path: Path) -> None:
@@ -515,11 +571,21 @@ def test_the_zarr_writer_layout(willamette: Basin, march_discharge, tmp_path: Pa
     writers.zarr_writer(march_discharge.router, march_discharge.dates[0], march_discharge.discharge[0], written)
     zarr.open_consolidated(str(written))
     with xr.open_zarr(written) as discharge:
-        assert discharge['Q'].dims == ('river_id', 'time')
+        assert discharge['Q'].dims == ('riverId', 'time')
         np.testing.assert_array_equal(discharge['time'].to_numpy(), march_discharge.dates[0].astype('datetime64[ns]'))
-        np.testing.assert_array_equal(discharge['river_id'].to_numpy(), willamette.network.river_ids)
+        np.testing.assert_array_equal(discharge['riverId'].to_numpy(), willamette.network.river_ids)
         rounded = writers.bitround(march_discharge.discharge[0], writers.ZARR_KEEPBITS)
         np.testing.assert_array_equal(discharge['Q'].to_numpy(), rounded)
+
+
+def test_threaded_zarr_writes_match_one_thread(march_discharge, tmp_path: Path) -> None:
+    router, dates, discharge = march_discharge.router, march_discharge.dates[0], march_discharge.discharge[0]
+    assert discharge.shape[0] > writers.ZARR_RIVERS_PER_CHUNK, 'the basin fits in one chunk, so no chunks are threaded'
+    writers.zarr_writer(router, dates, discharge, tmp_path / 'one_thread.zarr')
+    with ThreadPoolExecutor(4) as pool:
+        writers.zarr_writer(router, dates, discharge, tmp_path / 'four_threads.zarr', thread_pool=pool, threads=4)
+    with xr.open_zarr(tmp_path / 'one_thread.zarr') as one, xr.open_zarr(tmp_path / 'four_threads.zarr') as four:
+        xr.testing.assert_identical(four, one)
 
 
 def test_bitround_error_is_bounded(march_discharge) -> None:
@@ -534,7 +600,7 @@ def test_the_netcdf_writer_round_trips(willamette: Basin, march_discharge, tmp_p
     )
     with xr.open_dataset(tmp_path / 'q.nc') as discharge:
         np.testing.assert_array_equal(discharge['Q'].to_numpy(), march_discharge.discharge[0])
-        np.testing.assert_array_equal(discharge['river_id'].to_numpy(), willamette.network.river_ids)
+        np.testing.assert_array_equal(discharge['riverId'].to_numpy(), willamette.network.river_ids)
 
 
 def test_a_subset_is_a_closed_upstream_basin(willamette: Basin, package: Path, manifest: dict) -> None:
@@ -543,7 +609,7 @@ def test_a_subset_is_a_closed_upstream_basin(willamette: Basin, package: Path, m
     assert set(table['nextRiverId']) <= ids | {-1}
     np.testing.assert_array_equal(table.loc[table['nextRiverId'] == -1, 'riverId'], [WILLAMETTE])
     with xr.open_dataset(willamette.weights_file) as weights:
-        assert set(np.unique(weights['river_id'].to_numpy())) == ids
+        assert set(np.unique(weights['riverId'].to_numpy())) == ids
     columbia = rr.Network(package / manifest['runs']['static_standard']['configs']['network_file'])
     in_basin = columbia.river_ids == WILLAMETTE
     for river in range(
@@ -560,7 +626,7 @@ def test_metrics_of_known_series(march_discharge) -> None:
     assert metrics.me(series, series) == metrics.mae(series, series) == metrics.mse(series, series) == 0
     # adding its mean keeps the correlation at 1, doubles the mean, and halves the coefficient of variation
     assert metrics.kge2012(series, series + series.mean()) == pytest.approx(1 - np.sqrt(1.25))
-    assert metrics.me(series, series + 1) == pytest.approx(-1)
+    assert metrics.me(series, series + 1) == pytest.approx(1)  # simulated minus observed
     assert metrics.mae(series, series + 1) == metrics.mse(series, series + 1) == pytest.approx(1)
 
 

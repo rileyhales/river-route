@@ -1,33 +1,41 @@
-import itertools
 import logging
 import sys
+from typing import TYPE_CHECKING
 
-__all__ = ['PROGRESS', 'build_logger']
+if TYPE_CHECKING:
+    from .configs.Configs import Configs
+
+__all__ = ['PROGRESS', 'configure_logging']
 
 PROGRESS = 25
 logging.addLevelName(PROGRESS, 'PROGRESS')
 
-_INSTANCE_COUNT = itertools.count()
+_PACKAGE_LOGGER = logging.getLogger('river_route')
+_HANDLER_NAME = 'river_route'  # the name of the one handler configure_logging adds, so it replaces only its own
 
 
-def build_logger(cfg, kind: str) -> logging.Logger:
+def configure_logging(configs: Configs) -> None:
     """
-    Build a logger for one instance of ``kind`` from the log options on ``cfg``.
-
-    Every instance gets its own logger and owns its single handler. The logger does not propagate, because the
-    handler is already attached here and propagating to the root logger would print every message twice.
+    Point the river_route logger at the log options of ``configs``: one handler writing ``log_format`` to
+    ``log_stream`` at ``log_level``, which replaces the handler of the previous call, or no output when ``log`` is off.
+    Every module logs to a child of this logger, so the options apply to all of them. They apply to the whole process,
+    so the Router built last sets them. The logger does not propagate, so a root logger the application configured
+    does not print each line twice.
 
     Args:
-        cfg: a Configs, read for log, log_level, log_stream, and log_format
-        kind: what is being built, used to name the logger (e.g. 'router', 'network')
+        configs: a Configs, read for log, log_level, log_stream, and log_format
     """
-    logger = logging.getLogger(f'river_route.{kind}{next(_INSTANCE_COUNT)}')
-    logger.propagate = False
-    logger.disabled = not cfg.log
-    logger.setLevel(cfg.log_level)
-    if cfg.log_stream == 'stdout':
-        logger.addHandler(logging.StreamHandler(sys.stdout))
-    else:
-        logger.addHandler(logging.FileHandler(cfg.log_stream))
-    logger.handlers[0].setFormatter(logging.Formatter(cfg.log_format))
-    return logger
+    for handler in [handler for handler in _PACKAGE_LOGGER.handlers if handler.get_name() == _HANDLER_NAME]:
+        _PACKAGE_LOGGER.removeHandler(handler)
+        handler.close()
+    _PACKAGE_LOGGER.propagate = False
+    if not configs.log:
+        _PACKAGE_LOGGER.setLevel(logging.CRITICAL + 1)
+        return
+    _PACKAGE_LOGGER.setLevel(configs.log_level)
+    stream = configs.log_stream
+    handler = logging.StreamHandler(sys.stdout) if stream == 'stdout' else logging.FileHandler(stream)
+    handler.set_name(_HANDLER_NAME)
+    handler.setFormatter(logging.Formatter(configs.log_format))
+    _PACKAGE_LOGGER.addHandler(handler)
+    return

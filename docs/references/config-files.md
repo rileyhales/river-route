@@ -5,10 +5,9 @@ JSON file with `Configs.from_json`.
 All routing runs through `Router`. The procedure it runs is set by the selector keys (`coefficients`, `forcing`,
 `transform`, `network_type`), and the required config keys depend on which selections you make.
 
-`Router` takes a `Configs`, and optionally the `Network` and the Runoff it would otherwise build for itself:
-`Router(configs, network=..., runoff=...)`. `Network` and the Runoff classes take the options they need as ordinary
-arguments and each has a `from_configs` classmethod that reads those same values off a `Configs`; `Router` builds
-them that way when it is not given them. `examples/config.json` below lists every option.
+`Router` takes only a `Configs`. `Network` and the Runoff classes take the options they need as ordinary arguments
+and each has a `from_configs` classmethod that reads those same values off a `Configs`, which is how `Router` builds
+them. `examples/config.json` below lists every option.
 
 ### Routing procedure selectors
 
@@ -28,8 +27,9 @@ them that way when it is not given them. `examples/config.json` below lists ever
   number of substeps and subcycles per river. A river routed in subcycles interpolates its upstream inflow linearly
   within each routing step. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which every river can
   be made stable. The state files then hold one value per sub-reach, each river's sub-reaches upstream to
-  downstream, in the order a final state file is written. A state file with one value per river is refused, and so
-  is a run whose sub-reaches change between its runoff files, which setting `dt_routing` prevents.
+  downstream, in the order a final state file is written, with each row's `riverId` repeated for every sub-reach of
+  its river. A state file with one value per river is refused, and so is a run whose sub-reaches change between its
+  runoff files, which setting `dt_routing` prevents.
 
 The selectors together choose the routing method and the form of runoff it reads; see [kernels](kernels.md). The one
 combination no routing method routes yet, `'dynamic'` coefficients on a `'stabilized'` network, raises
@@ -62,9 +62,9 @@ Beyond the always-required keys above, additional keys are required depending on
 - `grid_weights_file` when `forcing` is `grid` or `ecmwf_grib`. It must not be set for
   `catchment`.
 
-  Time keys for forced procedures (`dt_total`, `dt_discharge`, `dt_runoff`, `dt_routing`) are resolved from the
-  inputs where possible; see the [time options](time-options.md). `start_datetime` is only read by channel routing,
-  which has no input dates to copy.
+  Time keys for forced procedures (`dt_total`, `dt_discharge`, `dt_routing`) are resolved from the inputs where
+  possible, and the runoff time step is always read from the runoff files; see the
+  [time options](time-options.md). `start_datetime` is only read by channel routing, which has no input dates to copy.
 
 **`coefficients` selection** determines the required `network_file` columns:
 
@@ -94,10 +94,12 @@ The following table lists where each remaining key applies.
 | `start_datetime`           | Channel routing start date       | optional, `forcing: channel` only                      |
 | `dt_total`                 | Total simulation duration        | `forcing: channel` (else [time docs](time-options.md)) |
 | `dt_discharge`             | Output timestep                  | optional - [time docs](time-options.md)                |
-| `dt_runoff`                | Runoff data timestep             | optional - [time docs](time-options.md)                |
 | `dt_routing`               | Routing computational timestep   | `forcing: channel` (else [time docs](time-options.md)) |
 
 ## Optional configs with defaults
+
+The `var_` options name the variables of the gridded runoff files that are read. Every other file, read or written,
+uses fixed names, such as `riverId` for the river id.
 
 | Config Key               | Description                                            | Default                                       |
 |--------------------------|--------------------------------------------------------|-----------------------------------------------|
@@ -110,18 +112,14 @@ The following table lists where each remaining key applies.
 | `log_level`              | Logger level, defaults to between INFO and WARNING     | `'PROGRESS'`                                  |
 | `log_stream`             | `'stdout'` or a file path                              | `'stdout'`                                    |
 | `log_format`             | Python logging format string                           | `'%(levelname)s - %(asctime)s - %(message)s'` |
-| `var_river_id`           | River ID dimension name in files                       | `'river_id'`                                  |
-| `var_discharge`          | Discharge variable name in output                      | `'Q'`                                         |
 | `var_grid_runoff`        | Runoff variable name in grid `runoff_files`            | `'ro'`                                        |
 | `var_x`                  | X-dimension name in `grid` runoff files                | `'x'`                                         |
 | `var_y`                  | Y-dimension name in `grid` runoff files                | `'y'`                                         |
-| `var_cell`               | Cell dimension name in reduced gaussian grids          | `'cell'`                                      |
 | `var_t`                  | Time dimension name in depth grids                     | `'time'`                                      |
 | `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`       | `'incremental'`                               |
 | `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs       | `'sequential'`                                |
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
-| `force_uniform_timesteps` | Resample irregular grid runoff to the first timestep  | `True`                                        |
 | `as_volumes`             | `GridRunoff` prepares volumes instead of depths        | `False`                                       |
 | `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
 
@@ -145,14 +143,16 @@ rr.Configs.from_json('config.json').deep_validate()
 routing timestep, which requires `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window the solution for
 that river oscillates and negative discharges are clamped to zero, which does not conserve mass. The
 default `'warn'` issues a warning saying how many rivers are affected; `'raise'` refuses to route; `'ignore'` is
-silent. It applies to static coefficients, which the Router checks by calling `Network.check_stability`. Dynamic
+silent. It applies to static coefficients, which routing checks with `Network.check_stability`. Dynamic
 coefficients change as each river routes, so there is nothing to check before routing starts.
 
 Use `Network.unstable_mask(dt)` to inspect a network before routing it. `network_type='stabilized'` routes each river
 too long for `dt_routing` in `Network.substeps(dt)` sub-reaches inside the kernel, and each river too short for it,
 which substeps cannot fix, in `Network.subcycles(dt)` steps of its own. `Network.stabilize(dt)` instead rewrites the
 network in place with those sub-reaches as rows of their own, for the rivers substeps can fix, and
-`Network.write_stabilized(dt)` saves that network as a network table.
+`Network.write_stabilized(dt)` saves that network as a network table. Such a network routes with the `channel`,
+`grid`, and `ecmwf_grib` forcings, whose runoff is shared among the sub-reaches of each river; `catchment` forcing
+refuses it, since a catchment runoff file has one row per river.
 
 ## Example Configuration
 

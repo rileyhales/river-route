@@ -94,21 +94,22 @@ file into it. The following config keys have been renamed, removed, or added.
 | `uh_kernel_file`      | _(removed)_                              |
 | `uh_state_init_file`  | _(removed)_                              |
 | `uh_state_final_file` | _(removed)_                              |
+| `dt_runoff`           | _(removed)_, read from the runoff files  |
+| `var_river_id`        | _(removed)_, every file uses `riverId`   |
+| `var_discharge`       | _(removed)_, discharge is always `Q`     |
 
-New keys, each with a default that routes as v2 did:
+New keys, each with a default that matches v2 except `forcing`, which must be set to route runoff:
 
 | Key                       | Default      | Description                                                                         |
 |---------------------------|--------------|-------------------------------------------------------------------------------------|
 | `coefficients`            | `'static'`   | `'static'` Muskingum K from `muskingumK`, or `'dynamic'` from `dynamicAlpha`, `dynamicBeta` |
 | `forcing`                 | `'channel'`  | `'channel'`, or the form of `runoff_files`: `'catchment'`, `'grid'`, `'ecmwf_grib'` |
 | `transform`               | `'uniform'`  | The only option                                                                     |
-| `network_type`            | `'standard'` | `'standard'`, or `'stabilized'` to route every river stably at `dt_routing`         |
+| `network_type`            | `'standard'` | `'standard'`, or `'stabilized'` to route every resolvable river stably               |
 | `unstable_coefficients`   | `'warn'`     | `'warn'`, `'raise'`, or `'ignore'` rivers that are unstable at `dt_routing`         |
 | `runoff_depth_unit`       | `None`       | Unit of gridded runoff depths; `None` reads the file attributes                     |
 | `force_positive_runoff`   | `false`      | Clip negative runoff depths to zero                                                 |
-| `force_uniform_timesteps` | `true`       | Resample runoff with irregular timesteps to the first timestep                      |
 | `as_volumes`              | `false`      | Prepare catchment runoff as volumes (m³) instead of depths (m)                      |
-| `var_cell`                | `'cell'`     | Cell dimension of `ecmwf_grib` runoff                                               |
 
 `forcing` must be set to route runoff: with the default, `channel`, any `runoff_files` are ignored.
 
@@ -157,8 +158,8 @@ The migration script renames the columns, sorts the rivers into DFS order, and c
 
 ### Catchment Runoff (was qlateral)
 
-v3 files are now all river-major C style arrays- meaning array dimensions are the shape `(river_id, time)`. This is a pivot or transpose of 
-v2 files which were always of shape `(time, river_id)`
+v3 files are now all river-major C style arrays- meaning array dimensions are the shape `(riverId, time)`. This is a pivot or transpose of 
+v2 files which were always of shape `(time, river_id)`. Every v3 file names the river id `riverId`, where v2 files named it `river_id`.
 
 The kernels route one river's whole time series at a time, so keeping each river's series contiguous is what makes reading it fast. The
 variable is renamed `catchment_runoff` and needs a `units` attribute, `m3` for volumes or `m` or `mm` for depths. The file also holds a
@@ -173,15 +174,16 @@ import river_route as rr
 with xr.open_dataset('/path/to/weights.nc') as weights:
     areas = weights[['river_id', 'area_sqm']].to_dataframe().groupby('river_id', sort=False)['area_sqm'].sum()
 
-"""pivot the v2 qlateral array to (river_id, time) and write the v3 file"""
+"""pivot the v2 qlateral array to (river, time) and write the v3 file, which names its river dimension riverId"""
 with xr.open_dataset('/path/to/qlateral.nc') as ds:
     river_ids = ds['river_id'].values
-    rr.CatchmentRunoff().to_netcdf(
+    rr.CatchmentRunoff.to_netcdf(
         '/path/to/catchment_runoff.nc',
         dates=ds['time'].values,
         catchment_runoff=ds['qlateral'].transpose('river_id', 'time').values,
         river_ids=river_ids,
         catchment_area=areas.reindex(river_ids).to_numpy(),
+        as_volumes=True,
     )
 ```
 
@@ -189,21 +191,23 @@ This keeps the rivers in the order of the qlateral file, so it only gives a vali
 the migration script, which writes the catchment runoff files in the same order as the sorted network file.
 
 You do not need catchment runoff files for gridded runoff anymore. Routing with `forcing: grid` reads each river's grid cells while it routes,
-which is faster than writing and then reading an intermediate file. If you still want the files, `GridRunoff.aggregate_to_file` writes them.
+which is faster than writing and then reading an intermediate file, except for cumulative or clipped runoff, which is aggregated on one thread
+before it is routed. If you still want the files, `GridRunoff.aggregate_to_file` writes them.
 
 ### Grid Weights and Channel State
 
-The grid weights format is unchanged. A channel state file still holds a `Q` column, and a final state file written by v3 also holds each
-row's `river_id`. Both must list the rivers in the same order as the network file. If your network file was reordered, these files need to be
-reordered with it. The migration script does this for you.
+The grid weights name the river id `riverId` instead of `river_id`, so a v2 weight table must be renamed before it is read. A
+channel state file holds a `Q` column and must now also hold each row's `riverId`. Both must list the rivers in the same order as the network
+file. If your network file was reordered, these files need to be reordered with it. The migration script does this for you, and renames the
+river id of both.
 
 ### Routed Discharge
 
 The default writer is now zarr instead of netCDF and outputs in `discharge_dir` are named `discharge_<input name>.zarr`. Discharge is river-major
-`(river_id, time)` like every other v3 file. The kernels produce discharge in that layout so writing it needs no transpose, and zarr compresses
-it, which makes the files smaller and faster to write. Code that selects by dimension name like `ds['Q'].sel(river_id=...)` still works but
-code that assumes the axis order does not. If you prefer netCDF, set `river_route.router.writers.netcdf_writer`, which also writes
-`(river_id, time)`.
+`(riverId, time)` like every other v3 file. The kernels produce discharge in that layout so writing it needs no transpose, and zarr compresses
+it, which makes the files smaller and faster to write. Code that selects by dimension name must use the new name, `ds['Q'].sel(riverId=...)`,
+and code that assumes the axis order must transpose. If you prefer netCDF, set `river_route.router.writers.netcdf_writer`, which also writes
+`(riverId, time)`, and give its `.nc` output paths with `discharge_files`, since `discharge_dir` names `.zarr` outputs.
 
 ```python
 import xarray as xr
@@ -216,8 +220,9 @@ discharge = xr.open_zarr('/path/to/discharge_runoff_2020.zarr')['Q']
 
 ## Custom Discharge Writers
 
-Writers are now given the `Router` as their first argument so they can read anything they need from it, like the river ids from
-`router.network` or the options from `router.configs`. The discharge array is river-major `(river, time)` instead of `(time, river)`.
+Writers are now given the `Router` as their first argument so they can read anything they need from it, like the river of each row from
+`router.network.original_river_ids` or the options from `router.configs`, and the thread pool and thread count `Router.route` was given as
+keywords. The discharge array is river-major `(river, time)` instead of `(time, river)`.
 
 ```python
 import river_route as rr
@@ -232,8 +237,8 @@ rr.RapidMuskingum('/path/to/config.yaml').set_write_discharges(write).route()
 
 # v3
 """writers receive the router first and a (river, time) array"""
-def write(router, dates, discharge_array, discharge_file, runoff_file=''):
-    river_ids = router.network.river_ids
+def write(router, dates, discharge_array, discharge_file, runoff_file='', *, thread_pool=None, threads=1):
+    river_ids = router.network.original_river_ids  # the river of each row of discharge_array
     ...
 
 
@@ -253,4 +258,4 @@ and optionally its grid weights, down to one river and every river upstream of i
 | `rr Muskingum config.yaml`                     | `rr route config.json` with `forcing: channel`                          |
 | `rr RapidMuskingum config.yaml`                | `rr route config.json` with `forcing` set                               |
 | `rr UnitMuskingum config.yaml`                 | _(Proper replacement postponed)_                                        |
-|                                                | `rr subset <river_id> --network <in.parquet> --out-network <out.parquet>` |
+|                                                | `rr subset <riverId> --network <in.parquet> --out-network <out.parquet>` |

@@ -14,7 +14,7 @@ def main() -> None:
     route.add_argument('config', type=str, help='Path to routing configuration file (JSON)')
 
     subset = subparsers.add_parser('subset', help='Subset a network file and optionally its grid weights')
-    subset.add_argument('river', type=int, help='river_id to subset to; it becomes the outlet')
+    subset.add_argument('river', type=int, help='riverId to subset to; it becomes the outlet')
     subset.add_argument('--network', type=str, required=True, help='Path to the full network file parquet')
     subset.add_argument('--out-network', type=str, required=True, help='Path to write the subset network file parquet')
     subset.add_argument('--weights', type=str, default=None, help='Path to the full grid weights netCDF')

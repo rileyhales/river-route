@@ -1,6 +1,8 @@
 """The frozen Configs object that holds and validates every option of a routing run and of preparing its runoff."""
 
 import json
+import logging
+import numbers
 import os
 import types
 from collections.abc import Mapping
@@ -11,10 +13,11 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from river_route._logging import build_logger
-from river_route.types import PathInput, PathList
+from river_route.types import IntArray, PathInput, PathList
 
-__all__ = ['Configs', 'is_dev_null']
+__all__ = ['Configs', 'check_channel_state_rivers', 'is_dev_null']
+
+logger = logging.getLogger(__name__)
 
 _PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
 _DEV_NULL: frozenset[str] = frozenset({os.devnull, '/dev/null'})
@@ -23,6 +26,29 @@ _DEV_NULL: frozenset[str] = frozenset({os.devnull, '/dev/null'})
 def is_dev_null(path: PathInput) -> bool:
     """True for the null device, which always counts as a path that exists and discards whatever is written."""
     return str(path) in _DEV_NULL
+
+
+def check_channel_state_rivers(
+    state_river_ids: IntArray, river_ids: IntArray, per_sub_reach: bool, state_file: PathInput
+) -> None:
+    """
+    Raise ValueError unless the riverId column of a channel state file lists the rivers of the network in network
+    order: one row per river, or with ``per_sub_reach``, as a stabilized network's final state is written, a run of
+    rows per river, one per sub-reach. The number of sub-reaches depends on dt_routing and is checked when routing.
+    """
+    if per_sub_reach and state_river_ids.shape[0]:
+        first_row_of_river = np.ones(state_river_ids.shape[0], dtype=bool)
+        first_row_of_river[1:] = state_river_ids[1:] != state_river_ids[:-1]
+        state_river_ids = state_river_ids[first_row_of_river]
+    if state_river_ids.shape != river_ids.shape:
+        raise ValueError(f'{state_file} holds {state_river_ids.shape[0]} rivers, the network has {river_ids.shape[0]}')
+    if np.array_equal(state_river_ids, river_ids):
+        return
+    river = int(np.argmax(state_river_ids != river_ids))
+    raise ValueError(
+        f'{state_file} lists riverId {state_river_ids[river]} where the network has {river_ids[river]}. A channel '
+        f'state must list the rivers of the network file in the same order.'
+    )
 
 
 def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
@@ -83,24 +109,20 @@ class Configs:
     runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
     runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
     force_positive_runoff: bool = False  # clip negative runoff depths to zero
-    force_uniform_timesteps: bool = True  # resample runoff with irregular timesteps to the first timestep
     as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
 
     # Runoff sources: catchment runoff files, or gridded runoff aggregated to catchments with a weight table
     runoff_files: PathList = field(default_factory=list)  # read as the forcing names
     grid_weights_file: PathInput | None = None  # required for the grid runoff types
-    var_river_id: str = 'river_id'
-    var_discharge: str = 'Q'
+    # the names of variables in the gridded runoff files that are read; every file river-route writes uses the defaults
     var_grid_runoff: str = 'ro'
     var_x: str = 'x'  # grid x dimension
     var_y: str = 'y'  # grid y dimension
-    var_cell: str = 'cell'  # ecmwf_grib cell dimension
     var_t: str = 'time'
 
     # Time options
-    dt_routing: int = 0  # Interval in seconds between calculating discharges, <= dt_runoff
-    dt_runoff: int = 0  # Interval in seconds between forcing values, >= dt_routing
-    dt_discharge: int = 0  # Interval in seconds between discharge outputs, >= dt_runoff
+    dt_routing: int = 0  # Interval in seconds between calculating discharges, <= the time step of the runoff files
+    dt_discharge: int = 0  # Interval in seconds between discharge outputs, >= the time step of the runoff files
     dt_total: int = 0  # Length in seconds of the simulation, >= dt_discharge
     start_datetime: str = '1970-01-01'
 
@@ -127,6 +149,8 @@ class Configs:
         'static': frozenset({'standard', 'stabilized'}),
         'dynamic': frozenset({'standard'}),
     }
+    # the time steps given in whole seconds, where 0 derives the step from the other options and the runoff files
+    _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_routing', 'dt_discharge', 'dt_total')
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -138,6 +162,10 @@ class Configs:
             value = getattr(self, name)
             if value not in allowed:
                 raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
+        for name in self._TIME_STEPS:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < 0:
+                raise ValueError(f'{name} must be a whole number of seconds, or 0 to derive it, got {value!r}')
         # turn off progress bar if logging was turned off but progress was left at default on
         object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
         self._coerce_path_list_fields()
@@ -300,9 +328,8 @@ class Configs:
                     raise ValueError(f'{key} is required for channel routing')
             runoff_source = [key for key in ('runoff_files', 'grid_weights_file') if getattr(self, key)]
             if runoff_source:
-                build_logger(self, 'configs').warning(
-                    f'forcing is channel, so {", ".join(runoff_source)} will be ignored and no runoff is routed'
-                )
+                ignored = ', '.join(runoff_source)
+                logger.warning(f'forcing is channel, so {ignored} will be ignored and no runoff is routed')
             if len(self.discharge_files) != 1:
                 raise ValueError('Channel routing requires exactly one entry in discharge_files')
         else:
@@ -363,38 +390,29 @@ class Configs:
         if self.grid_weights_file:
             self._deep_validate_grid_weights_file(self.grid_weights_file, network_df)
         if self.channel_state_init_file:
-            self._deep_validate_channel_state_init_file(network_df)
+            self._deep_validate_channel_state_init_file(self.channel_state_init_file, network_df)
         return self
 
     def _deep_validate_network_file(self) -> pd.DataFrame:
-        # network file parquet has columns: riverId, nextRiverId, muskingumK, muskingumX, riverIndex, upstreamCount
-        # riverId should be non-null, positive, integer, and unique except for -1 (outlets/sinks)
-        # nextRiverId should be non-null, integer, all -1 or positive, and exist in riverId (except for -1)
-        # muskingumK should be positive float
-        # muskingumX should be positive float less than or equal to 0.5
+        # the columns and their values are checked here. Building the Network then checks the topology: unique ids,
+        # every nextRiverId a riverId or -1, rows sorted upstream to downstream, and upstreamCount describing their
+        # DFS order. It is imported here because the network module imports Configs.
+        from river_route.network.Network import REQUIRED_COLUMNS, Network
+
         try:
             network_df = pd.read_parquet(self.network_file)
         except Exception as e:
             raise ValueError('Error reading network file. Must be valid parquet file') from e
-        for column in ('riverId', 'nextRiverId', 'muskingumK', 'muskingumX'):
+        for column in REQUIRED_COLUMNS:
             if column not in network_df.columns:
                 raise ValueError(f'{self.network_file} missing {column} column')
-        if network_df['riverId'].isna().any():
-            raise ValueError(f'{self.network_file} riverId column contains null values')
-        if not pd.api.types.is_integer_dtype(network_df['riverId']):
-            raise ValueError(f'{self.network_file} riverId column must be integer type')
-        if not network_df['riverId'].is_unique:
-            raise ValueError(f'{self.network_file} riverId column must be unique')
+        for column in ('riverId', 'nextRiverId', 'riverIndex', 'upstreamCount'):
+            if network_df[column].isna().any():
+                raise ValueError(f'{self.network_file} {column} column contains null values')
+            if not pd.api.types.is_integer_dtype(network_df[column]):
+                raise ValueError(f'{self.network_file} {column} column must be integer type')
         if np.any(network_df['riverId'] == -1):
             raise ValueError(f'{self.network_file} riverId must not be -1, which marks a basin outlet in nextRiverId')
-        if network_df['nextRiverId'].isna().any():
-            raise ValueError(f'{self.network_file} nextRiverId column contains null values')
-        if not pd.api.types.is_integer_dtype(network_df['nextRiverId']):
-            raise ValueError(f'{self.network_file} nextRiverId column must be integer type')
-        downstream_ids = set(network_df['nextRiverId'].unique())
-        river_ids = set(network_df['riverId'].unique())
-        if not downstream_ids.issubset(river_ids.union({-1})):
-            raise ValueError(f'{self.network_file} nextRiverId values must exist in riverId (except -1)')
         if network_df[['muskingumK', 'muskingumX']].isna().any(axis=None):
             raise ValueError(f'{self.network_file} muskingumK and muskingumX columns must not contain null values')
         if np.any(network_df['muskingumK'] <= 0):
@@ -416,60 +434,30 @@ class Configs:
             if np.any(network_df['dynamicAlpha'] <= 0):
                 raise ValueError(f'{self.network_file} dynamicAlpha column must be strictly positive')
 
-        # check topological sort: every nextRiverId must appear later in the table than its upstream
-        river_id_index = {int(river_id): i for i, river_id in enumerate(network_df['riverId'])}
-        for upstream_idx, ds_id in enumerate(network_df['nextRiverId']):
-            if int(ds_id) == -1:
-                continue
-            if river_id_index[int(ds_id)] <= upstream_idx:
-                raise ValueError(f'{self.network_file} is not topologically sorted (upstream to downstream)')
-        self._deep_validate_dfs_order_columns(network_df)
-        return network_df
-
-    def _deep_validate_dfs_order_columns(self, network_df: pd.DataFrame) -> None:
-        # riverIndex numbers the rows one apart and upstreamCount counts the rivers upstream of each river, so in DFS
-        # order a river's upstream watershed is exactly the rows from its riverIndex - upstreamCount to its riverIndex.
-        # That holds when each count is the sum over the river's upstreams of their counts plus one, and each
-        # upstream's own range of rows lies inside the range of the river it drains into.
-        for column in ('riverIndex', 'upstreamCount'):
-            if column not in network_df.columns:
-                raise ValueError(f'{self.network_file} missing {column} column')
-            if not pd.api.types.is_integer_dtype(network_df[column]):
-                raise ValueError(f'{self.network_file} {column} column must be integer type')
+        Network(self.network_file)
+        # riverIndex numbers the rows of a river's watershed, the rows riverIndex - upstreamCount to riverIndex
         if np.any(np.diff(network_df['riverIndex'].to_numpy(dtype=np.int64)) != 1):
             raise ValueError(f'{self.network_file} riverIndex must increase by one from each row to the next')
-        count = network_df['upstreamCount'].to_numpy(dtype=np.int64)
-        downstream = pd.Index(network_df['riverId']).get_indexer(network_df['nextRiverId'])  # -1 at outlets
-        upstream = np.flatnonzero(downstream >= 0)
-        down = downstream[upstream]
-        if not np.array_equal(count, np.bincount(down, weights=count[upstream] + 1, minlength=count.shape[0])):
-            raise ValueError(f'{self.network_file} upstreamCount must count every river upstream of each river')
-        if np.any(upstream - count[upstream] < down - count[down]):
-            raise ValueError(
-                f'{self.network_file} is not in DFS order: the rivers upstream of each river must be the rows '
-                f'immediately before it'
-            )
-        return
+        return network_df
 
     def _deep_validate_grid_weights_file(self, grid_weights_file: PathInput, network_df: pd.DataFrame | None) -> None:
-        # weights should be netcdf with variables river_id, the cell index columns, x, y, area_sqm, proportion.
+        # weights should be netcdf with variables riverId, the cell index columns, x, y, area_sqm, proportion.
         # A reduced grid locates its cells with cell_index, a grid with x_index and y_index.
-        rid = self.var_river_id
         try:
             ds = xr.load_dataset(grid_weights_file)
         except Exception as e:
             raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
         cell_columns = ('cell_index',) if self.forcing == 'ecmwf_grib' else ('x_index', 'y_index')
-        expected_variables = (rid, *cell_columns, 'x', 'y', 'area_sqm', 'proportion')
+        expected_variables = ('riverId', *cell_columns, 'x', 'y', 'area_sqm', 'proportion')
         for variable in expected_variables:
             if variable not in ds:
                 raise ValueError(f'Grid weights file missing {variable} variable')
-        if np.any(ds[rid].isnull()):
-            raise ValueError(f'Grid weights {rid} variable contains null values')
-        if not pd.api.types.is_integer_dtype(ds[rid].dtype):
-            raise ValueError(f'Grid weights {rid} variable must be integer type')
-        if network_df is not None and not np.isin(ds[rid].values, network_df['riverId'].to_numpy()).all():
-            raise ValueError(f'Grid weights {rid} values must exist in the riverId column of the network file')
+        if np.any(ds['riverId'].isnull()):
+            raise ValueError('Grid weights riverId variable contains null values')
+        if not pd.api.types.is_integer_dtype(ds['riverId'].dtype):
+            raise ValueError('Grid weights riverId variable must be integer type')
+        if network_df is not None and not np.isin(ds['riverId'].values, network_df['riverId'].to_numpy()).all():
+            raise ValueError('Grid weights riverId values must exist in the riverId column of the network file')
         for variable in expected_variables[1:]:
             if np.any(ds[variable].isnull()):
                 raise ValueError(f'Grid weights {variable} variable contains null values')
@@ -479,23 +467,26 @@ class Configs:
             raise ValueError('Grid weights area_sqm variable must be positive')
         if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
             raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
-        # pandas groups in one hashed pass. xarray's groupby materializes a DataArray per group and concatenates
-        # them, which on a weight table with a group per river costs more than the whole routing it validates.
-        proportions_sum = pd.Series(ds['proportion'].values).groupby(ds[rid].values).sum()
+        # pandas groups the rows by hashing each river id once. xarray's groupby materializes a DataArray per group and
+        # concatenates them, which on a weight table with a group per river costs more than the routing it validates.
+        proportions_sum = pd.Series(ds['proportion'].values).groupby(ds['riverId'].values).sum()
         if not np.allclose(proportions_sum.to_numpy(), 1.0):
-            raise ValueError('Grid weights proportion variable must sum to 1 for each river_id')
+            raise ValueError('Grid weights proportion variable must sum to 1 for each riverId')
         return
 
-    def _deep_validate_channel_state_init_file(self, network_df: pd.DataFrame | None) -> None:
-        # initial channel state should be parquet with a column named Q, non-null, numeric, and non-negative.
-        # it has one row per river of the network file in the same order, or on a stabilized network one row per
-        # sub-reach, at least one per river, whose count depends on dt_routing and is checked when routing.
+    def _deep_validate_channel_state_init_file(self, state_file: PathInput, network_df: pd.DataFrame | None) -> None:
+        # initial channel state should be parquet with an integer riverId column and a column named Q, non-null,
+        # numeric, and non-negative. riverId lists the rivers of the network file in the same order, one row per
+        # river, or on a stabilized network one row per sub-reach, whose count is checked when routing.
         try:
-            state_df = pd.read_parquet(self.channel_state_init_file)
+            state_df = pd.read_parquet(state_file)
         except Exception as e:
             raise ValueError('Error reading initial state file. Must be valid parquet file') from e
-        if 'Q' not in state_df.columns:
-            raise ValueError('Initial state file missing Q column')
+        for column in ('riverId', 'Q'):
+            if column not in state_df.columns:
+                raise ValueError(f'Initial state file missing {column} column')
+        if not pd.api.types.is_integer_dtype(state_df['riverId']):
+            raise ValueError('Initial state file riverId column must be integer type')
         if state_df['Q'].isna().any():
             raise ValueError('Initial state file Q column contains null values')
         if not pd.api.types.is_numeric_dtype(state_df['Q']):
@@ -504,12 +495,12 @@ class Configs:
             raise ValueError('Initial state file Q column must be non-negative')
         if network_df is None:
             return
-        if self.network_type == 'stabilized' and state_df.shape[0] < network_df.shape[0]:
-            raise ValueError(
-                f'Initial state file must have a row per sub-reach, at least one per river of {self.network_file}'
-            )
-        if self.network_type == 'standard' and state_df.shape[0] != network_df.shape[0]:
-            raise ValueError(f'Initial state file must have the same number of rows as {self.network_file}')
+        check_channel_state_rivers(
+            state_df['riverId'].to_numpy(),
+            network_df['riverId'].to_numpy(),
+            self.network_type == 'stabilized',
+            state_file,
+        )
         return
 
 

@@ -51,7 +51,7 @@ def prepare_routing(
     Raises:
         ValueError: if the network file has no dynamicAlpha or dynamicBeta column
     """
-    alpha, beta = network.dynamicAlpha, network.dynamicBeta
+    alpha, beta = network.dynamic_alpha, network.dynamic_beta
     if alpha is None or beta is None:
         raise ValueError('dynamic coefficients need dynamicAlpha and dynamicBeta columns in the network file')
     return STANDARD_LAYOUT, DynamicMuskingum(

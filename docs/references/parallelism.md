@@ -99,7 +99,8 @@ job per thread and routed concurrently, followed by the main stem on a single th
 
 `river-route` never creates threads on its own. Threads are a runtime resource, not a config, so pass a
 `ThreadPoolExecutor` and `threads`, the number of jobs to pack the region's blocks into, to `Router.route`. The same
-pool aggregates gridded runoff, since that aggregation happens inside the jobs as each river is routed.
+pool aggregates gridded runoff, since that aggregation happens inside the jobs as each river is routed, except for
+cumulative or clipped runoff, which is aggregated on one thread before it is routed.
 
 ```python title="Threaded Routing"
 from concurrent.futures import ThreadPoolExecutor
@@ -138,7 +139,7 @@ from multiprocessing import Pool
 
 import river_route as rr
 
-network_file = 'routing_parameters.parquet'
+network_file = 'network.parquet'
 runoff_files = ['catchment_runoff_member_1.nc',
                 'catchment_runoff_member_2.nc', ]
 output_files = ['discharges_member_1.zarr',

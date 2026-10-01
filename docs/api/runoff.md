@@ -17,18 +17,20 @@ Only `from_configs` validates, since a directly built `GridRunoff` has no `Confi
 Every class subclasses the abstract `Runoff`, whose `to_netcdf` writes a catchment runoff array in the format
 `CatchmentRunoff` reads. The grid classes precompute that file from their grids with `aggregate_to_file`, so it can be
 routed later with `forcing` catchment. Routing the grids directly is faster, because the aggregation then happens
-inside the routing kernel.
+inside the routing kernel, except for cumulative or clipped runoff, which is aggregated before it is routed.
 
 Each class has a `generator` method that yields one `(dates, runoff, source_file)` tuple per input, with the runoff
 in the form routing reads: `CatchmentRunoffVolumes`, or a `GridCellRunoff` whose grid cells
-routing reads as it routes each river. It can be used on its own or by a `Router`. See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
+routing reads as it routes each river. It can be used on its own, and a `Router` builds the one its `forcing` names.
+See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
 
 ```python
 import river_route as rr
 
 configs = rr.Configs.from_json('config.json')
 runoff = rr.GridRunoff.from_configs(configs)
-router = rr.Router(configs, runoff=runoff)
+for dates, catchment_runoff, runoff_file in runoff.catchment_reader(configs.runoff_files):
+    ...  # each file's catchment runoff volumes, a (river, time) array overwritten by the next file
 ```
 
 ::: river_route.runoff.Runoff
@@ -76,6 +78,20 @@ router = rr.Router(configs, runoff=runoff)
       show_root_heading: true
       show_source: false
       show_root_full_path: false
+
+::: river_route.runoff.CatchmentRunoffVolumes
+    handler: python
+    options:
+      members_order: source
+      show_root_heading: true
+      show_source: false
+
+::: river_route.runoff.GridCellRunoff
+    handler: python
+    options:
+      members_order: source
+      show_root_heading: true
+      show_source: false
 
 ::: river_route.runoff.weights
     handler: python

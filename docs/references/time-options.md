@@ -4,12 +4,12 @@ Routing simulations have four different time steps, all given in seconds.
 
 - `dt_routing`: The routing computation step, dt in the Muskingum equation. Channel routing requires it, and routing
   with forcing defaults it from `dt_runoff`.
-- `dt_runoff`: Interval between runoff inputs. If you don't provide it, it will be identified when the runoff file is opened.
+- `dt_runoff`: Interval between runoff inputs. It is not a config: it is read from the time steps of each runoff file.
 - `dt_discharge`: Interval over which to average discharge to write to disk. Must be greater than or equal to `dt_runoff`.
 - `dt_total`: Total simulation duration.
 
-The most important time step is `dt_routing`. The others are read from the runoff inputs unless the configs give
-them.
+The most important time step is `dt_routing`. `dt_discharge` and `dt_total` are derived from the runoff inputs unless
+the configs give them.
 
 The following rules apply:
 
@@ -18,12 +18,15 @@ The following rules apply:
 3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge outputs are averaged over runoff intervals.
 4. By default `dt_total` is `dt_runoff` multiplied by the runoff record length. If you set it explicitly, it must be an integer 
    multiple of `dt_runoff` (and of `dt_discharge`). Recession routing is not available.
+5. Every step of a runoff file must be as long as its first, which is its `dt_runoff`. Runoff is never resampled, so a
+   file with irregular time steps is refused, and so is a file with a single time step, which has no step to read,
+   or with dates that do not increase.
 
 ## Router Defaults
 
 - Channel-only routing (`forcing: channel`): requires `dt_total` and `dt_routing`; `dt_discharge` defaults to `dt_routing`.
 - Routing with forcing (e.g. `forcing: catchment`):
-    - `dt_runoff` defaults to the runoff-file timestep.
+    - `dt_runoff` is the time step of each runoff file.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
     - `dt_routing` defaults to `dt_runoff`, or with `network_type: stabilized` to the largest divisor of `dt_runoff`

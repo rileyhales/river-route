@@ -11,12 +11,12 @@ efficient Muskingum-family routing at watershed scale.
 All routing runs through `Router`. The routing procedure is described by config selector keys,
 which together choose the kernel:
 
-| Key            | Options                                                                                                                                                                  |
-|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Key            | Options                                                                                                                                                                                  |
+|----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `coefficients` | `static` (constant Muskingum K from `muskingumK`,`muskingumX`) or `dynamic` (nonlinear K = dynamicAlpha*Q^dynamicBeta from `dynamicAlpha`,`dynamicBeta`,`muskingumX`). Default `static`. |
-| `forcing`      | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                           |
-| `transform`    | `uniform` (the default and only option): each step's catchment runoff enters its river at a constant rate over the step.                                                 |
-| `network_type` | `standard` (one reach per river, the default) or `stabilized` (every river routed stably at `dt_routing` in substeps or subcycles).                                      |
+| `forcing`      | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                                           |
+| `transform`    | `uniform` (the default and only option): each step's catchment runoff enters its river at a constant rate over the step.                                                                 |
+| `network_type` | `standard` (one reach per river, the default) or `stabilized` (each river routed in the substeps or subcycles that make it stable at `dt_routing`, where any do).                        |
 
 The one combination no routing method routes yet, `dynamic` coefficients on a `stabilized` network, raises
 `NotImplementedError` before any runoff is read.
@@ -52,9 +52,9 @@ Configuration is held by a frozen `Configs` object, built from:
 
 `Configs.to_json` writes the options to a file that `Configs.from_json` reads back. A
 `Configs` is set once when it is built and is frozen afterward, with no copy-with-changes: build the one you
-want. `Router` takes a `Configs`, and optionally a `Network` and the `Runoff` class its `forcing` names. `Network`
-and `GridRunoff` take the options they need directly and each has a `from_configs` classmethod that reads those same
-values off a `Configs`. `examples/config.json` lists every option.
+want. `Router` takes only a `Configs`, and builds its `Network` and the `Runoff` class its `forcing` names from it.
+`Network` and `GridRunoff` take the options they need directly and each has a `from_configs` classmethod that reads
+those same values off a `Configs`. `examples/config.json` lists every option.
 
 ## Classes
 
@@ -65,14 +65,7 @@ values off a `Configs`. `examples/config.json` lists every option.
 | `Router`     | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.                    |
 | `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many runoff files.                           |
 
-A `Network` parses and partitions a network table once and every simulation over it reuses the result, so it can
-be built directly and handed to a `Router` when many runs share one network:
-
-```python
-network = rr.Network.from_configs(configs)
-rr.Router(configs, network=network).route()
-rr.Router(other_configs, network=network).route()  # reuses the parsed and partitioned network
-```
+A `Router` parses and partitions its network table once, and every `route()` call on it reuses the result.
 
 Core required inputs are:
 
@@ -93,5 +86,5 @@ Subset a network table, and its grid weight table, to one river and everything u
 river becomes the outlet of the subset.
 
 ```bash
-rr subset 12345 --network network.parquet --out-network params_subset.parquet --weights weights.nc --out-weights weights_subset.nc
+rr subset 12345 --network network.parquet --out-network network_subset.parquet --weights weights.nc --out-weights weights_subset.nc
 ```

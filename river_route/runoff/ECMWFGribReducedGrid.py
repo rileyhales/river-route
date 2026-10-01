@@ -7,7 +7,7 @@ those files, read from their metadata, on which ``reduced_grid_weights`` (weight
 """
 
 import os
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import dataclass
 from typing import NamedTuple, Self
 
 import eccodes
@@ -125,18 +125,18 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
 
     Every message whose shortName is ``var_grid_runoff`` is read as one time step, in the order of the files and of
     their messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the
-    weight table and the routing is left to the caller. A GRIB message has no named dimensions, so ``var_cell`` and
-    ``var_t`` are not read: each cell is taken by its position in the message's values. IFS forecast runoff
-    accumulates from the start of the forecast, so it is routed with ``grid_accumulation_type`` cumulative.
+    weight table and the routing is left to the caller. A GRIB message has no named dimensions, so ``var_t`` is not
+    read: each cell is taken by its position in the message's values. IFS forecast runoff accumulates from the start of
+    the forecast, so it is routed with ``grid_accumulation_type`` cumulative.
     """
-
-    _: KW_ONLY
-    var_cell: str = 'cell'  # name of the grid cell dimension
 
     @property
     def cell_dimensions(self) -> dict[str, str]:
-        """The weight table column cell_index, the position of each cell in the values of a GRIB message."""
-        return {'cell_index': self.var_cell}
+        """
+        The weight table column cell_index, the position of each cell in the values of a GRIB message. A message has
+        no named dimensions, so the column names itself: ``read_runoff`` takes each cell by its position.
+        """
+        return {'cell_index': 'cell_index'}
 
     def read_runoff(self, runoff_data: PathInput | list[PathInput]) -> tuple[FloatArray, DatetimeArray, float]:
         """

@@ -100,7 +100,6 @@ def compute_voronoi_catchment_intersects(
     catchments_gdf: gpd.GeoDataFrame,
     save_path: PathInput | None = None,
     attributes: dict | None = None,
-    var_river_id: str = 'river_id',
 ) -> pd.DataFrame:
     """
     The weight table of the intersections between grid cell Voronoi polygons and catchments: the area of each
@@ -108,19 +107,18 @@ def compute_voronoi_catchment_intersects(
 
     Args:
         voronoi_gdf: cell polygons with columns x_index, y_index, x, and y, as from voronoi_diagram_from_regular_xy
-        catchments_gdf: catchment polygons with a river id column
+        catchments_gdf: catchment polygons with a riverId column
         save_path: optional netCDF file to save the weight table to
         attributes: optional attributes added to the saved file
-        var_river_id: name of the river id column in catchments_gdf, also used in the weight table
 
     Returns:
-        pd.DataFrame: columns var_river_id, x_index, y_index, x, y, area_sqm, area_sqm_total, and proportion
+        pd.DataFrame: columns riverId, x_index, y_index, x, y, area_sqm, area_sqm_total, and proportion
 
     Raises:
         KeyError: if a required column is missing
     """
-    if var_river_id not in catchments_gdf.columns:
-        raise KeyError(f'catchments_gdf must contain a {var_river_id} column')
+    if 'riverId' not in catchments_gdf.columns:
+        raise KeyError('catchments_gdf must contain a riverId column')
     if not {'x_index', 'y_index', 'x', 'y'}.issubset(voronoi_gdf.columns):
         raise KeyError('voronoi_gdf must include x_index, y_index, x, and y columns')
 
@@ -129,7 +127,7 @@ def compute_voronoi_catchment_intersects(
     logger.info('Calculating area of intersections')
     intersections['area_sqm'] = intersections.geometry.to_crs({'proj': 'cea'}).area
     cell_columns = ('x_index', 'y_index', 'x', 'y')
-    df = _proportions_of_catchment_areas(intersections, var_river_id, cell_columns)
+    df = _proportions_of_catchment_areas(intersections, cell_columns)
 
     if save_path:
         (
@@ -154,7 +152,6 @@ def grid_weights(
     *,
     var_x: str = 'lon',
     var_y: str = 'lat',
-    var_river_id: str = 'river_id',
     crs: int = 4326,
     save_voronoi_path: PathInput | None = None,
     save_weights_path: PathInput | None = None,
@@ -165,10 +162,9 @@ def grid_weights(
 
     Args:
         grid_path: path to a NetCDF file containing the grid's 1D x and y coordinate variables
-        catchments_path: path to a GeoParquet file containing the catchment geometries and a river id column
+        catchments_path: path to a GeoParquet file containing the catchment geometries and a riverId column
         var_x: x-coordinate variable name in the grid file
         var_y: y-coordinate variable name in the grid file
-        var_river_id: name of the river id column in the catchments file, also used in the weight table
         crs: EPSG code for the grid coordinate reference system (default: 4326)
         save_voronoi_path: optional path to save the Voronoi polygons as a GeoParquet file
         save_weights_path: optional path to save the grid weights as a NetCDF file
@@ -177,7 +173,7 @@ def grid_weights(
 
     Returns:
         pd.DataFrame: a DataFrame containing the grid weights with columns
-            [var_river_id, 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'area_sqm_total', 'proportion']. The saved
+            ['riverId', 'x_index', 'y_index', 'x', 'y', 'area_sqm', 'area_sqm_total', 'proportion']. The saved
             file omits area_sqm_total.
     """
     x, y = cell_xy_from_regular_grid(grid_path, var_x=var_x, var_y=var_y)
@@ -200,12 +196,10 @@ def grid_weights(
         catchments_gdf,
         save_path=None,
         attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)},
-        var_river_id=var_river_id,
     )
     return _order_and_save_weight_table(
         df,
         cell_columns=('x_index', 'y_index', 'x', 'y'),
-        var_river_id=var_river_id,
         network_path=network_path,
         save_weights_path=save_weights_path,
         attributes={'grid_path': str(grid_path), 'catchments_path': str(catchments_path)},
@@ -216,8 +210,6 @@ def reduced_grid_weights(
     grib_path: PathInput,
     catchments_path: PathInput,
     *,
-    var_river_id: str = 'river_id',
-    var_catchment_id: str = 'river_id',
     save_weights_path: PathInput | None = None,
     network_path: PathInput | None = None,
 ) -> pd.DataFrame:
@@ -232,18 +224,16 @@ def reduced_grid_weights(
 
     Args:
         grib_path: GRIB file whose first message's grid is used
-        catchments_path: GeoParquet file of the catchment polygons, in any CRS
-        var_river_id: name of the river id column in the weight table
-        var_catchment_id: name of the river id column in the catchments file
+        catchments_path: GeoParquet file of the catchment polygons with a riverId column, in any CRS
         save_weights_path: optional path to save the grid weights as a netCDF file
         network_path: optional path to a network file whose riverId column order is used to
             topologically sort the weight table rows. When omitted the row order is spatial (not topological).
 
     Returns:
-        pd.DataFrame: the grid weights with columns [river_id, cell_index, x, y, area_sqm, area_sqm_total, proportion]
+        pd.DataFrame: the grid weights with columns [riverId, cell_index, x, y, area_sqm, area_sqm_total, proportion]
     """
     grid = ReducedGaussianGrid.from_grib(grib_path)
-    catchments_gdf = gpd.read_parquet(catchments_path, columns=[var_catchment_id, 'geometry']).to_crs({'proj': 'cea'})
+    catchments_gdf = gpd.read_parquet(catchments_path, columns=['riverId', 'geometry']).to_crs({'proj': 'cea'})
     to_lonlat = Transformer.from_crs(catchments_gdf.crs, 4326, always_xy=True)
     min_x, min_y, max_x, max_y = catchments_gdf.total_bounds
     cells_gdf = grid.cell_polygons(bounds=(*to_lonlat.transform(min_x, min_y), *to_lonlat.transform(max_x, max_y)))
@@ -269,39 +259,34 @@ def reduced_grid_weights(
     cell_row = cell_of_part[part]
     pieces_df = pd.DataFrame(
         {
-            var_river_id: catchments_gdf[var_catchment_id].to_numpy()[catchment],
+            'riverId': catchments_gdf['riverId'].to_numpy()[catchment],
             'cell_index': cells_gdf['cell_index'].to_numpy()[cell_row],
             'x': cells_gdf['x'].to_numpy()[cell_row],
             'y': cells_gdf['y'].to_numpy()[cell_row],
             'area_sqm': area_sqm,
         }
     )
-    df = _proportions_of_catchment_areas(pieces_df[area_sqm > 0], var_river_id, ('cell_index', 'x', 'y'))
+    df = _proportions_of_catchment_areas(pieces_df[area_sqm > 0], ('cell_index', 'x', 'y'))
     return _order_and_save_weight_table(
         df,
         cell_columns=('cell_index', 'x', 'y'),
-        var_river_id=var_river_id,
         network_path=network_path,
         save_weights_path=save_weights_path,
         attributes={'grid_path': str(grib_path), 'catchments_path': str(catchments_path)},
     )
 
 
-def _proportions_of_catchment_areas(
-    pieces: pd.DataFrame, var_river_id: str, cell_columns: tuple[str, ...]
-) -> pd.DataFrame:
+def _proportions_of_catchment_areas(pieces: pd.DataFrame, cell_columns: tuple[str, ...]) -> pd.DataFrame:
     """Sum the area_sqm of the pieces of each catchment in each cell, then each cell's proportion of the catchment."""
     df = (
-        pieces[[var_river_id, *cell_columns, 'area_sqm']]
-        .groupby([var_river_id, *cell_columns], as_index=False)
+        pieces[['riverId', *cell_columns, 'area_sqm']]
+        .groupby(['riverId', *cell_columns], as_index=False)
         .agg({'area_sqm': 'sum'})
-        .sort_values([var_river_id, 'area_sqm'], ascending=[True, False])
+        .sort_values(['riverId', 'area_sqm'], ascending=[True, False])
         .reset_index(drop=True)
     )
-    total_area = (
-        df[[var_river_id, 'area_sqm']].groupby(var_river_id).sum().rename(columns={'area_sqm': 'area_sqm_total'})
-    )
-    df = df.merge(total_area, left_on=var_river_id, right_index=True, how='left')
+    total_area = df[['riverId', 'area_sqm']].groupby('riverId').sum().rename(columns={'area_sqm': 'area_sqm_total'})
+    df = df.merge(total_area, left_on='riverId', right_index=True, how='left')
     df['proportion'] = df['area_sqm'] / df['area_sqm_total']
     # computed in float64 so proportions come from exact areas, then stored as float32 to halve the table and every
     # catchment runoff array aggregated from it
@@ -312,7 +297,6 @@ def _order_and_save_weight_table(
     df: pd.DataFrame,
     *,
     cell_columns: tuple[str, ...],
-    var_river_id: str,
     network_path: PathInput | None,
     save_weights_path: PathInput | None,
     attributes: dict,
@@ -322,7 +306,7 @@ def _order_and_save_weight_table(
         ordered_ids = pd.read_parquet(network_path, columns=['riverId'])['riverId'].to_numpy()
         id_to_order = {int(rid): i for i, rid in enumerate(ordered_ids)}
         df = (
-            df.assign(_sort_key=df[var_river_id].map(id_to_order))
+            df.assign(_sort_key=df['riverId'].map(id_to_order))
             .sort_values(['_sort_key', 'area_sqm'], ascending=[True, False])
             .drop(columns='_sort_key')
             .reset_index(drop=True)
@@ -332,7 +316,7 @@ def _order_and_save_weight_table(
 
     if save_weights_path:
         (
-            df[[var_river_id, *cell_columns, 'area_sqm', 'proportion']]
+            df[['riverId', *cell_columns, 'area_sqm', 'proportion']]
             .to_xarray()
             .assign_attrs(
                 {

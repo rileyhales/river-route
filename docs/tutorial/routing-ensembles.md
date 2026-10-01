@@ -28,7 +28,7 @@ lead time (for example, +24 h) instead of the final routed timestep. In that cas
 1. writes routed discharge outputs, and
 2. extracts the specific timestep you want for the next initialization state while data are in memory.
 
-This avoids a second read/filter pass over output files. Your custom function needs to know either
+This avoids reading the output files again to filter them. Your custom function needs to know either
 the target datetime or the timestep offset corresponding to the next forecast cycle. For more
 information, see the [advanced concepts section](advanced.md#customizing-outputs).
 
@@ -47,31 +47,32 @@ import xarray as xr
 import river_route as rr
 
 
-def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file):
-    # router: the Router doing the routing, which provides router.network.river_ids and the router.configs options
+def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file, *, thread_pool, threads):
+    # router: the Router doing the routing, which provides router.network.original_river_ids and router.configs
     # dates: datetime array for the columns of the discharge array
-    # discharge_array: routed flows, C-order with shape (river_id, time)
+    # discharge_array: routed flows, C-order with shape (riverId, time)
     # discharge_file: the path to the output file provided by your config file
     # runoff_file: the path to the runoff file used to produce this output, if you need it
 
-    river_ids = router.network.river_ids
+    river_ids = router.network.original_river_ids  # the river of each row of discharge_array
     df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=river_ids)
 
     # you probably want to include the member number in the output file name which could come from the discharge or runoff file
     member_number = os.path.basename(runoff_file)
 
-    # option 1
-    init_values = df.loc['2023-10-01 12:00:00'].to_frame(name='Q')  # for if you know the exact time step to use
-    init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
+    # a state file has the columns riverId and Q
+    # option 1: for if you know the exact time step to use
+    init_values = df.loc['2023-10-01 12:00:00'].rename('Q').rename_axis('riverId').reset_index()
+    init_values.to_parquet(f'member_init_from_{member_number}.parquet', index=False)  # write the next state to a file
 
-    # option 2
-    init_values = df.iloc[24].to_frame(name='Q')  # for if you know the number of time steps after initialization
-    init_values.to_parquet(f'member_init_from_{member_number}.parquet')  # write the next state to a file
+    # option 2: for if you know the number of time steps after initialization
+    init_values = df.iloc[24].rename('Q').rename_axis('riverId').reset_index()
+    init_values.to_parquet(f'member_init_from_{member_number}.parquet', index=False)  # write the next state to a file
 
     # continue with writing the full outputs
     ds_out = xr.Dataset(
-        data_vars={'Q': (('river_id', 'time'), discharge_array)},
-        coords={'river_id': river_ids, 'time': pd.to_datetime(dates)}
+        data_vars={'Q': (('riverId', 'time'), discharge_array)},
+        coords={'riverId': river_ids, 'time': pd.to_datetime(dates)}
     )
     ds_out.to_netcdf(discharge_file)
     return
@@ -86,7 +87,7 @@ m = (
 
 # Now find all the member init files and average or otherwise combine them to get the next state
 member_init_files = sorted(glob.glob('member_init_from_*.parquet'))
-combo_init = pd.concat([pd.read_parquet(f) for f in member_init_files], axis=1).mean(axis=1)
-combo_init = combo_init.to_frame(name='Q')
-combo_init.to_parquet('ensemble_init_state.parquet')  # write the combined state to a file
+member_states = [pd.read_parquet(f).set_index('riverId')['Q'] for f in member_init_files]
+combo_init = pd.concat(member_states, axis=1).mean(axis=1).rename('Q').reset_index()
+combo_init.to_parquet('ensemble_init_state.parquet', index=False)  # write the combined state to a file
 ```

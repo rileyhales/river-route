@@ -13,7 +13,7 @@ This tutorial routes catchment runoff (`forcing: catchment`).
 
 ## Vocabulary
 
-- **VPU** (Vector Processing Unit): a named group of catchments and channels forming a complete routing domain.
+- **Region**: a named group of catchments and channels forming a complete routing domain.
 - **Catchment**: a subunit of a watershed. Water enters at one upstream location and exits at exactly one outlet.
 - **Depth first search (DFS) order**: rivers sorted so that each river comes after every river upstream of it and
   the rivers upstream of a river are the rows immediately before it, so every river's upstream watershed is one
@@ -105,19 +105,19 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 }
 ```
 
-The state file is a parquet with a column `Q` and one row per river segment, in the same order as the routing
-params. A final state file also holds each row's `river_id`.
+The state file is a parquet with the columns `riverId` and `Q` and one row per river, listing the rivers of the
+network file in the same order. A final state file is written this way, so it can start the next run.
 
 ## Reading the Output
 
-The routed discharge output is a zarr store with dimensions `river_id` and `time`, named for its runoff file:
+The routed discharge output is a zarr store with dimensions `riverId` and `time`, named for its runoff file:
 
 ```python
 import xarray as xr
 
 river_of_interest = 123456789
 ds = xr.open_zarr('output/discharge_catchment_runoff.zarr')
-series = ds['Q'].sel(river_id=river_of_interest).to_pandas()
+series = ds['Q'].sel(riverId=river_of_interest).to_pandas()
 
 # Save to CSV
 series.to_csv('hydrograph.csv')

@@ -5,7 +5,7 @@ from typing import Literal, Self
 import numpy as np
 import pandas as pd
 
-from ..configs import Configs
+from ..configs.Configs import Configs
 from ..types import Float64Array, FloatArray, Int32Array, IntArray, JobBlocks, PathInput
 from . import streams
 
@@ -13,8 +13,8 @@ __all__ = ['Network', 'NETWORK_DTYPES', 'REQUIRED_COLUMNS']
 
 # the dtype of every column a network table may have, enforced whenever one is written or stabilized
 NETWORK_DTYPES = {
-    'riverId': np.int32,
-    'nextRiverId': np.int32,
+    'riverId': np.int64,
+    'nextRiverId': np.int64,
     'muskingumK': np.float32,
     'muskingumX': np.float32,
     'dynamicAlpha': np.float32,
@@ -22,7 +22,7 @@ NETWORK_DTYPES = {
     'riverIndex': np.int32,
     'upstreamCount': np.int32,
     'synthetic': bool,
-    'parentRiverId': np.int32,
+    'parentRiverId': np.int64,
 }
 # the columns every network file has: its topology, its Muskingum parameters, and its DFS order
 REQUIRED_COLUMNS = ('riverId', 'nextRiverId', 'muskingumK', 'muskingumX', 'riverIndex', 'upstreamCount')
@@ -76,12 +76,12 @@ class Network:
         return self._df['upstreamCount'].to_numpy()
 
     @property
-    def dynamicAlpha(self) -> FloatArray | None:
+    def dynamic_alpha(self) -> FloatArray | None:
         """(n,) alpha of K = dynamicAlpha * Q ** dynamicBeta for dynamic coefficients, or None without the column."""
         return self._df['dynamicAlpha'].to_numpy() if 'dynamicAlpha' in self._df.columns else None
 
     @property
-    def dynamicBeta(self) -> FloatArray | None:
+    def dynamic_beta(self) -> FloatArray | None:
         """(n,) beta of K = dynamicAlpha * Q ** dynamicBeta for dynamic coefficients, or None without the column."""
         return self._df['dynamicBeta'].to_numpy() if 'dynamicBeta' in self._df.columns else None
 
@@ -94,6 +94,12 @@ class Network:
     def parent_river_ids(self) -> IntArray | None:
         """(n,) id of the original river each row was split from on a stabilized network, or None."""
         return self._df['parentRiverId'].to_numpy() if 'parentRiverId' in self._df.columns else None
+
+    @property
+    def original_river_ids(self) -> IntArray:
+        """Id of each river that is not a synthetic sub-reach, in order: the rows of every routed discharge array."""
+        synthetic = self.synthetic
+        return self.river_ids if synthetic is None else self.river_ids[~synthetic]
 
     @property
     def supports_dynamic_coefficients(self) -> bool:
@@ -109,34 +115,21 @@ class Network:
             raise ValueError('network_file is required to build a Network')
         self._routing_blocks = {}
 
-        # read the parameters
         if isinstance(network_file, pd.DataFrame):
             self.network_file = None
             self._df = network_file.copy()
         else:
             self.network_file = network_file
-            self.read_network_file()
+            self._df = pd.read_parquet(network_file)
         self.set_connectivity()
         return
-
-    def read_network_file(self) -> Self:
-        """Read the network table from its parquet file."""
-        self._df = pd.read_parquet(self.network_file)
-        return self
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
         """Build a Network from the network_file of a Configs object."""
         if not isinstance(configs, Configs):
-            raise TypeError('provide configs is not of type rr.Configs')
+            raise TypeError(f'from_configs takes an rr.Configs, got {type(configs).__name__}')
         return cls(configs.network_file)
-
-    @classmethod
-    def from_dataframe(cls, df: pd.DataFrame) -> Self:
-        """Instantiate a Network class with the DataFrame in memory already."""
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError('provide df is not of type pd.DataFrame')
-        return cls(df)
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}(n_rivers={self.size:,}, network_file={self.network_file!r})'
@@ -363,14 +356,15 @@ class Network:
         Stabilize this network in place: every river too long for ``dt`` is replaced by sub-reaches in series that
         each route stably at that fixed ``dt``. The original river keeps its id and becomes the outlet sub-reach,
         and the added sub-reaches are injected directly upstream of it with ``synthetic`` True and ids counting down
-        from -1,000,000. Deleting the synthetic rows gives back the original row order. A network that is already
-        stabilized is returned unchanged.
+        from -1,000,000. Deleting the synthetic rows gives back the original row order. A network is stabilized once:
+        to stabilize it at another dt, build a new Network from the original network file.
 
         A reach of travel time k divided into N substeps k_1..k_N in series is stable when every piece satisfies
         ``dt/(2*(1-x)) <= k_i <= dt/(2*x)``. Since the pieces must sum to k, N substeps are feasible exactly when
         ``N*k_lo <= k <= N*k_hi`` -- which does not depend on how the pieces are distributed. Uniform and nonuniform
         substeps therefore produce the SAME reach count and fix the same set of rivers; they differ only in where the
-        sub-reach boundaries fall.
+        sub-reach boundaries fall. Rivers left unstable are not reported here: ``unstable_mask`` finds them, and
+        routing reports them as ``unstable_coefficients`` says.
 
         Args:
             dt: the fixed routing time step every sub-reach must be stable for
@@ -382,15 +376,20 @@ class Network:
             weights: optional explicit substeps, one sequence of relative lengths per river in network table
                 order. Each river's k is apportioned in proportion to its weights, which is what matches
                 sub-reaches to real segment geometry. Overrides ``mode``. A river with a single weight is not
-                divided. Unlike the automatic modes, substeps given here are always built as asked: a river
-                whose pieces are not all stable is reported through ``resolvable`` rather than collapsed back to
-                a single reach.
+                divided. Unlike the automatic modes, which keep whole a river they cannot make stable, substeps
+                given here are always built as asked, even for a river whose pieces are not all stable.
 
         Returns:
             Self: this network, stabilized, with a ``synthetic`` flag on every row
+
+        Raises:
+            ValueError: if this network is already stabilized, dt is not positive, or mode is unknown
         """
         if self.synthetic is not None:
-            return self
+            raise ValueError(
+                f'{self.network_file or "this network"} is already stabilized; build a new Network from the original '
+                f'network file to stabilize it at another dt'
+            )
         if dt <= 0:
             raise ValueError(f'dt must be positive, got {dt}')
         if mode not in ('uniform', 'nonuniform'):
@@ -446,10 +445,11 @@ class Network:
         synthetic[first_piece + substeps - 1] = False
         df['synthetic'] = synthetic
         df['parentRiverId'] = df['riverId']
-        df.loc[synthetic, 'riverId'] = -1_000_000 - np.arange(np.count_nonzero(synthetic), dtype=np.int32)
+        river_ids = df['riverId'].to_numpy(dtype=np.int64, copy=True)
+        river_ids[synthetic] = -1_000_000 - np.arange(np.count_nonzero(synthetic), dtype=np.int64)
+        df['riverId'] = river_ids
         # a sub-reach drains into the next row; an outlet drains into the head of its downstream river's block
-        river_ids = df['riverId'].to_numpy()
-        next_river_ids = np.append(river_ids[1:], -1).astype(np.int32)
+        next_river_ids = np.append(river_ids[1:], -1)
         down = self.downstream_indices
         next_river_ids[~synthetic] = np.where(down >= 0, river_ids[first_piece][np.clip(down, 0, n_rivers - 1)], -1)
         df['nextRiverId'] = next_river_ids
@@ -495,10 +495,8 @@ class Network:
                 raise ValueError('this Network was built from a DataFrame, so write_stabilized needs a path')
             network_file = Path(self.network_file)
             path = network_file.with_name(f'{network_file.stem}_stabilized{dt:g}.parquet')
-        path = Path(path)
         self.stabilize(dt, mode=mode, weights=weights)
-        _enforce_dtypes(self._df).to_parquet(path, index=False)
-        return path
+        return self.to_parquet(path)
 
     @staticmethod
     def _pieces_at_target(k: Float64Array, k_hi: Float64Array, k_lo: Float64Array, substeps: IntArray) -> Float64Array:
@@ -533,12 +531,19 @@ class Network:
         totals = np.add.reduceat(flat, np.concatenate(([0], np.cumsum(substeps)[:-1])))
         return substeps, flat * np.repeat(k / totals, substeps)
 
-    def to_parquet(self) -> None:
-        """Write the network table to the parquet file it was read from, overwriting it."""
-        if self.network_file is None:
-            raise ValueError('this Network was built from a DataFrame, so it has no network file to write to')
-        _enforce_dtypes(self._df).to_parquet(self.network_file, index=False)
-        return
+    def to_parquet(self, path: PathInput) -> Path:
+        """
+        Write the network table, with every column in its dtype of NETWORK_DTYPES, to a parquet file.
+
+        Args:
+            path: the parquet file to write
+
+        Returns:
+            Path: the file written
+        """
+        path = Path(path)
+        _enforce_dtypes(self._df).to_parquet(path, index=False)
+        return path
 
 
 def _enforce_dtypes(df: pd.DataFrame) -> pd.DataFrame:

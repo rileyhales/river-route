@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from concurrent.futures import Executor
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -36,8 +37,8 @@ type RunoffGenerator = Generator[tuple[DatetimeArray, CatchmentRunoffVolumes | G
 
 
 class WriteDischargesFn(Protocol):
-    """A discharge writer. It is handed a C-order (river, time) array, the layout the kernels route in; see
-    river_route.router.writers."""
+    """A discharge writer. It is handed a C-order (river, time) array, the layout the kernels route in, and the thread
+    pool and thread count Router.route was given; see river_route.router.writers."""
 
     def __call__(
         self,
@@ -46,4 +47,7 @@ class WriteDischargesFn(Protocol):
         discharge_array: FloatArray,
         discharge_file: PathInput,
         runoff_file: PathInput = '',
+        *,
+        thread_pool: Executor | None = None,
+        threads: int = 1,
     ) -> None: ...

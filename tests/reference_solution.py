@@ -10,18 +10,19 @@ definition, so rebuild it only when the routing is deliberately changed. Build i
 
 which routes the Columbia River, river 720207783 at its mouth and the 29,404 rivers upstream of it in the level 2
 basin covering Washington, Oregon, and southwestern Canada, through March to June 2000. It cuts the region's network
-file, network.parquet, and grid weights down to that basin with ``streams.subset_network_to_river``, copies the runoff
-files unmodified into ``inputs/``, aggregates each runoff file into a catchment runoff file, routes every run of
-``reference_runs`` into ``outputs/`` with the months in sequence, and writes ``manifest.json`` describing how each
-output was made. Discharge is written by the default zarr writer with every float32 mantissa bit kept, so nothing is
-rounded.
+file, network.parquet, down to that basin with ``streams.subset_network_to_river``, and its grid weights to the same
+rivers with the river id renamed from the region's river_id to riverId, copies the runoff files unmodified into
+``inputs/``,
+aggregates each runoff file into a catchment runoff file, routes every run of ``reference_runs`` into ``outputs/`` with
+the months in sequence, and writes ``manifest.json`` describing how each output was made. Discharge is written by the
+default zarr writer with every float32 mantissa bit kept, so nothing is rounded.
 
 numba compiles for the machine it runs on, so a package built on one CPU architecture may differ in the last bit on
 another, where fused multiply-adds are formed differently. The manifest records the machine it was built on, and the
 tests compare to ``TOLERANCE`` rather than bit for bit, so they hold on any machine.
 
-The module also holds what the tests share: ``assert_same`` for answers that should be identical, ``ArrayRunoff`` for
-runoff shaped in memory, and ``route`` for routing and keeping what the router hands its discharge writer.
+The module also holds what the tests share: ``assert_same`` for answers that should be identical, and ``route`` for
+routing runoff read from files or shaped in memory and keeping what the router hands its discharge writer.
 """
 
 import argparse
@@ -37,6 +38,7 @@ from pathlib import Path
 
 import numba
 import numpy as np
+import pandas as pd
 import xarray as xr
 import zarr
 
@@ -46,6 +48,7 @@ from river_route.router import writers
 
 PACKAGE = Path(__file__).parent / 'data' / 'reference_solution'
 GRID_NAMES = {'var_x': 'longitude', 'var_y': 'latitude', 'var_t': 'valid_time'}
+REGION_VAR_RIVER_ID = 'river_id'  # the river id of the region's grid weights, which the package names riverId
 INPUT_PATH_OPTIONS = ('network_file', 'grid_weights_file', 'channel_state_init_file')
 TOLERANCE = 10e-4  # answers that should be identical may differ by this share of each river's largest value
 WILLAMETTE = 720184033  # the Willamette River where it joins the Columbia at Portland: 1,390 rivers
@@ -91,23 +94,6 @@ def assert_same(actual: np.ndarray, desired: np.ndarray, tolerance: float = TOLE
     )
 
 
-class ArrayRunoff(rr.CatchmentRunoff):
-    """
-    Catchment runoff volumes held in memory as one (dates, (river, time) volumes) pair per runoff file, with rows in
-    the order of ``river_ids``, for tests that shape the runoff themselves. The paths in ``runoff_files`` only have to
-    exist; they are not read.
-    """
-
-    def __init__(self, files: list[tuple[np.ndarray, np.ndarray]], river_ids: np.ndarray) -> None:
-        self.files = files
-        self.river_ids = river_ids
-
-    def generator(self, runoff_files):
-        for (dates, volumes), runoff_file in zip(self.files, runoff_files, strict=True):
-            runoff = np.ascontiguousarray(volumes, dtype=np.float32)
-            yield dates, rr.runoff.CatchmentRunoffVolumes(runoff, self.river_ids), runoff_file
-
-
 @dataclass
 class Routed:
     """What the router handed its discharge writer for each runoff file, and the channel state it ended with."""
@@ -124,19 +110,22 @@ def route(
     files: list[tuple[np.ndarray, np.ndarray]] | None = None,
     *,
     threads: int = 1,
-    network: rr.Network | None = None,
     writer=None,
     **options,
 ) -> Routed:
     """
-    Route and keep what the router hands its discharge writer. ``files`` are in-memory catchment runoff volumes, one
-    pair per runoff file, routed as ``forcing`` catchment; without them ``options`` name the runoff to read. Any
+    Route and keep what the router hands its discharge writer. ``files`` are catchment runoff volumes shaped in
+    memory, one (dates, (river, time) volumes) pair per runoff file with rows in network file order, written to
+    catchment runoff files and routed as ``forcing`` catchment; without them ``options`` name the runoff to read. Any
     file the run writes goes to ``directory``. ``writer`` also writes the discharge when given.
     """
-    runoff = None
     if files is not None:
-        runoff = ArrayRunoff(files, (network or rr.Network(options['network_file'])).river_ids)
-        options |= {'forcing': 'catchment', 'runoff_files': [options['network_file']] * len(files)}
+        river_ids = pd.read_parquet(options['network_file'], columns=['riverId'])['riverId'].to_numpy()
+        no_areas = np.full(river_ids.shape[0], np.nan)  # volumes are read without their catchment areas
+        runoff_files = [directory / f'catchment_runoff_{i}.nc' for i in range(len(files))]
+        for (dates, volumes), runoff_file in zip(files, runoff_files, strict=True):
+            rr.CatchmentRunoff.to_netcdf(runoff_file, dates, volumes, river_ids, no_areas, as_volumes=True)
+        options |= {'forcing': 'catchment', 'runoff_files': runoff_files}
     n_outputs = len(options.get('runoff_files', [])) or 1
     defaults = {
         'discharge_files': [directory / f'discharge_{i}.zarr' for i in range(n_outputs)],
@@ -147,14 +136,16 @@ def route(
     configs = rr.Configs(**(defaults | options))
     routed = Routed([], [], [], np.zeros(0), None)
 
-    def keep_discharge(router, dates, discharge_array, discharge_file, runoff_file=''):
+    def keep_discharge(router, dates, discharge_array, discharge_file, runoff_file='', *, thread_pool=None, threads=1):
         routed.dates.append(dates.copy())
         routed.discharge.append(discharge_array.copy())
         routed.discharge_files.append(Path(discharge_file).name)
         if writer is not None:
-            writer(router, dates, discharge_array, discharge_file, runoff_file)
+            writer(
+                router, dates, discharge_array, discharge_file, runoff_file, thread_pool=thread_pool, threads=threads
+            )
 
-    routed.router = rr.Router(configs, network=network, runoff=runoff).set_discharge_writer(keep_discharge)
+    routed.router = rr.Router(configs).set_discharge_writer(keep_discharge)
     with ThreadPoolExecutor(threads) if threads > 1 else contextlib.nullcontext() as pool:
         routed.router.route(thread_pool=pool, threads=threads)
     routed.final_state = np.asarray(routed.router.channel_state).copy()
@@ -224,11 +215,12 @@ def build(region_dir: Path, outlet_river_id: int | None, runoff: list[Path], pac
     (package / 'inputs').mkdir(parents=True)
     if outlet_river_id is None:
         shutil.copy2(network_source, package / network_file)
-        shutil.copy2(weights_source, package / weights)
     else:
-        streams.subset_network_to_river(
-            outlet_river_id, network_source, package / network_file, weights_source, package / weights
-        )
+        streams.subset_network_to_river(outlet_river_id, network_source, package / network_file)
+    river_ids = pd.read_parquet(package / network_file, columns=['riverId'])['riverId'].to_numpy()
+    with xr.open_dataset(weights_source) as region_weights:
+        in_package = np.isin(region_weights[REGION_VAR_RIVER_ID].to_numpy(), river_ids)
+        region_weights.isel(index=in_package).rename({REGION_VAR_RIVER_ID: 'riverId'}).to_netcdf(package / weights)
     for source in runoff:
         copy = shutil.copytree if source.is_dir() else shutil.copy2
         copy(source, package / 'inputs' / source.name)

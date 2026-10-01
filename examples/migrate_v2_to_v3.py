@@ -26,6 +26,8 @@ import xarray as xr
 import river_route as rr
 
 V2_UNIT_HYDROGRAPH_KEYS = ('uh_kernel_file', 'uh_state_init_file', 'uh_state_final_file')
+# v3 reads dt_runoff from the runoff files, and names the river id riverId and the discharge Q in every file
+V2_KEYS_V3_DOES_NOT_TAKE = ('dt_runoff', 'var_river_id', 'var_discharge')
 V2_TO_V3_COLUMNS = {'river_id': 'riverId', 'downstream_river_id': 'nextRiverId', 'k': 'muskingumK', 'x': 'muskingumX'}
 
 
@@ -112,49 +114,55 @@ def positions_of(river_ids: np.ndarray, file_river_ids: np.ndarray, path: str) -
 def convert_grid_weights(weights_path: str, river_ids: np.ndarray, output_path: str) -> np.ndarray:
     """
     Write the weight table with its rows in the river order of the v3 network file, the order each river's runoff is
-    read in. Returns the catchment area of each river in m².
+    read in, and its river_id variable renamed riverId. Returns the catchment area of each river in m².
     """
     with xr.open_dataset(weights_path) as ds:
-        weights = ds.load()
-    rows = weights['river_id'].to_numpy()
+        weights = ds.load().rename({'river_id': 'riverId'})
+    rows = weights['riverId'].to_numpy()
     first_row = pd.Series(np.arange(rows.shape[0])).groupby(rows).first()
     rank = pd.Series(np.arange(river_ids.shape[0]), index=river_ids).reindex(first_row.index)
     if rank.isna().any() or first_row.shape[0] != river_ids.shape[0]:
         raise ValueError(f'{weights_path} does not have exactly the rivers of the network file')
     weights.isel(index=np.argsort(rank.loc[rows].to_numpy(), kind='stable')).to_netcdf(output_path)
-    catchment_area = weights[['river_id', 'area_sqm']].to_dataframe().groupby('river_id')['area_sqm'].sum()
+    catchment_area = weights[['riverId', 'area_sqm']].to_dataframe().groupby('riverId')['area_sqm'].sum()
     return catchment_area.loc[river_ids].to_numpy()
 
 
 def convert_qlateral(qlateral_path: str, river_ids: np.ndarray, catchment_area: np.ndarray, output_path: str) -> None:
     """
     Write a v2 qlateral file, the runoff volume (m³) of each catchment per step with dimensions (time, river_id), as
-    a v3 catchment runoff file with dimensions (river_id, time) in the river order of the v3 network file.
+    a v3 catchment runoff file with dimensions (riverId, time) in the river order of the v3 network file.
     catchment_area is only read when catchment runoff holds depths, so it may be NaN for these volumes.
     """
     with xr.open_dataset(qlateral_path) as ds:
         rows = positions_of(river_ids, ds['river_id'].to_numpy(), qlateral_path)
-        rr.CatchmentRunoff().to_netcdf(
+        rr.CatchmentRunoff.to_netcdf(
             output_path,
             dates=ds['time'].to_numpy(),
             catchment_runoff=ds['qlateral'].transpose('river_id', 'time').to_numpy()[rows],
             river_ids=river_ids,
             catchment_area=catchment_area,
+            as_volumes=True,
         )
 
 
 def convert_channel_state(state_path: str, v2_river_ids: np.ndarray, river_ids: np.ndarray, output_path: str) -> None:
-    """Write a channel state file, one Q per river in v2 params file order, in the river order of the v3 file."""
+    """
+    Write a channel state file, one Q per river in v2 params file order, in the river order of the v3 file with the
+    riverId column v3 requires.
+    """
     state = pd.read_parquet(state_path, columns=['Q'])
     if state.shape[0] != v2_river_ids.shape[0]:
         raise ValueError(f'{state_path} has {state.shape[0]} rows but the params file has {v2_river_ids.shape[0]}')
-    state.iloc[positions_of(river_ids, v2_river_ids, state_path)].to_parquet(output_path, index=False)
+    discharge = state['Q'].to_numpy()[positions_of(river_ids, v2_river_ids, state_path)]
+    pd.DataFrame({'riverId': river_ids, 'Q': discharge}).to_parquet(output_path, index=False)
 
 
 def convert_config(config_path: str, output_path: str) -> None:
     """
     Write a v2 YAML or JSON config as a v3 JSON config. The forcing is the form of the runoff files the v2 config
-    routed, and params_file becomes network_file. Paths are copied unchanged, so point them at the converted files.
+    routed, params_file becomes network_file, and the keys of V2_KEYS_V3_DOES_NOT_TAKE are dropped. Paths are copied
+    unchanged, so point them at the converted files.
     Reading YAML needs pyyaml.
     """
     with open(config_path, encoding='utf-8') as f:
@@ -175,6 +183,8 @@ def convert_config(config_path: str, output_path: str) -> None:
     config['runoff_files'] = qlateral_files or grid_runoff_files
     if 'params_file' in config:
         config['network_file'] = config.pop('params_file')
+    for key in V2_KEYS_V3_DOES_NOT_TAKE:
+        config.pop(key, None)
     unknown = set(config) - {field.name for field in fields(rr.Configs) if field.init}
     if unknown:
         raise ValueError(f'{config_path} has keys that are not v3 configs: {sorted(unknown)}')

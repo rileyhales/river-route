@@ -103,25 +103,34 @@ and `add_river_forcing`. A new routing method is a new module with its parameter
 and its overload of `route_river`, an entry in `ROUTING_METHOD_FOR_COEFFICIENTS`, and the network types it routes in
 `Configs._NETWORK_TYPES_FOR_COEFFICIENTS`.
 
+!!! warning "Editing a stage leaves the cached `route_job` stale"
+    numba caches each compiled `route_job` in `river_route/router/__pycache__` and reuses it until
+    `router/_numba_kernels.py` changes, judged by that one file's modification time and size. The stages it compiles
+    in live in other files, such as `router/static_muskingum.py`, `router/dynamic_muskingum.py`, and
+    `runoff/bases.py`, so after editing only those, the cached `route_job` still runs the old code. Delete the
+    `_numba_kernels.route_job-*` files in `river_route/router/__pycache__`, or set `NUMBA_CACHE_DIR` to an empty
+    directory, before routing with the edited stages. Installing a release rewrites every file, so it is unaffected.
+
 Gridded runoff is never summed into a catchment runoff series before routing. As each river is routed, every one of its
 weights adds its cell's runoff depths, read straight from the cell's row, times the volume a unit depth gives the
 river, precombined in float32 when the file is read. jsrr, the browser port of river-route, routes this way in C, and
 doing the same in numba routed the Columbia about 1.4 times faster than aggregating the runoff of 64 rivers at a time
-into scratch rows and reading those as each river was routed. A file whose catchment runoff must be resampled,
-de-accumulated, or clipped at zero needs each river's whole series first, so it is aggregated when it is read and
-routed as catchment runoff.
+into scratch rows and reading those as each river was routed. A file whose catchment runoff must be de-accumulated or
+clipped at zero needs each river's whole series first, so it is aggregated when it is read and routed as catchment
+runoff.
 
 ## Runoff
 
 | You have                                          | What happens                                                      |
 |---------------------------------------------------|-------------------------------------------------------------------|
 | Gridded runoff and a weight table                 | aggregation is fused into routing, no catchment runoff array      |
-| Catchment runoff files, or your own runoff reader | the `(river, time)` array is read in place, one row per river     |
+| Catchment runoff files                            | the `(river, time)` array is read in place, one row per river     |
 
-A custom Runoff must yield catchment runoff as `CatchmentRunoffVolumes`: a `(river, time)` array of volumes whose rows
-are contiguous, and the river id of each row, which routing requires to be the rivers of the network file in the same
-order. Discharge is always written `(river, time)`, and that C-order array is what a discharge writer
-receives.
+Every Runoff yields catchment runoff as `CatchmentRunoffVolumes`, a `(river, time)` array of volumes whose rows are
+contiguous with the river id of each row, which routing requires to be the rivers of the network file in the same
+order, or as the grid cells of `GridCellRunoff`. A new Runoff class is added to the package with a `forcing` value
+and an entry in `RUNOFF_CLASS_FOR_FORCING`. Discharge is always written `(river, time)`, and that C-order array is
+what a discharge writer receives.
 
 Inputs are NaN free by the time they reach a kernel: gridded runoff has NaN cells set to zero before it is aggregated,
 so a missing cell contributes nothing while the other cells of its catchment still count, and catchment runoff read from

@@ -51,13 +51,14 @@ def test_steady_state_is_a_fixed_point(network_type: str, dt_routing: int, willa
     constant = np.repeat(np.maximum(volumes.mean(axis=1, keepdims=True), 0), volumes.shape[1], axis=1)
     rate = constant[:, 0].astype(np.float64) / DT
     steady = accumulate_downstream(rate, willamette.network.downstream_indices)
-    state = steady
+    state, river_ids = steady, willamette.network.river_ids
     if network_type == 'stabilized':
         # the j-th of a river's N equal pieces carries its inflow plus j/N of its own runoff
         pieces, _, _ = willamette.network.conditioning(dt_routing)
         inflow = steady - rate
         state = np.concatenate([inflow[r] + rate[r] * np.arange(1, n + 1) / n for r, n in enumerate(pieces)])
-    pd.DataFrame({'Q': state.astype(np.float32)}).to_parquet(tmp_path / 'steady.parquet')
+        river_ids = np.repeat(river_ids, pieces)
+    pd.DataFrame({'riverId': river_ids, 'Q': state.astype(np.float32)}).to_parquet(tmp_path / 'steady.parquet')
     routed = route(
         tmp_path,
         [(dates, constant)],
@@ -94,7 +95,7 @@ def test_a_restart_continues_the_run_it_was_saved_from(
     }
     continued = {}
 
-    def keep_discharge(router, dates, discharge_array, discharge_file, runoff_file=''):
+    def keep_discharge(router, dates, discharge_array, discharge_file, runoff_file='', *, thread_pool=None, threads=1):
         continued[Path(discharge_file).name] = discharge_array.copy()
 
     route_run(package, resumed, [tmp_path / 'may', tmp_path / 'june'], tmp_path / 'june.parquet', keep_discharge)
@@ -158,6 +159,8 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     A discrete Muskingum reach delays what flows in at its top by exactly k, so each river below the headwater adds its
     k. Runoff enters along a reach instead, and one reach delays it by k (1 - x). The headwater is split into N equal
     pieces that each take 1/N of its runoff, so its own runoff is delayed by k ((1 - x) / N + (N - 1) / 2N) on average.
+    The outlet writes the mean of its levels at the end of each of its S subcycles, which is centered (S - 1) / 2S of a
+    step before the end of its step.
     """
     network = willamette.network
     downstream = network.downstream_indices
@@ -165,18 +168,19 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     for river in range(network.size - 1, -1, -1):
         if downstream[river] >= 0:
             below[river] = network.k[downstream[river]] + below[downstream[river]]
-    headwater = int(np.argmax(below + network.k))
+    headwater, outlet = int(np.argmax(below + network.k)), outlet_of(willamette)
     k, x = float(network.k[headwater]), float(network.x[headwater])
-    pieces = int(network.conditioning(DT)[0][headwater])
+    substeps, subcycles, _ = network.conditioning(DT)
+    pieces, outlet_subcycles = int(substeps[headwater]), int(subcycles[outlet])
     travel_time = below[headwater] + k * ((1 - x) / pieces + (pieces - 1) / (2 * pieces))
     months = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months]
     pulse = 1e6  # m³
     months[0][1][headwater, 0] = pulse
     routed = route(tmp_path, months, network_file=willamette.network_file, network_type='stabilized')
-    outflow = np.concatenate([discharge[outlet_of(willamette)] for discharge in routed.discharge]).astype(np.float64)
+    outflow = np.concatenate([discharge[outlet] for discharge in routed.discharge]).astype(np.float64)
     assert abs(outflow.sum() * DT - pulse) <= TOLERANCE * pulse
-    step_ends = np.arange(1, outflow.size + 1) * DT
-    delay = (outflow * step_ends).sum() / outflow.sum() - DT / 2  # the pulse enters at a constant rate over one step
+    centers = np.arange(1, outflow.size + 1) * DT - (outlet_subcycles - 1) * DT / (2 * outlet_subcycles)
+    delay = (outflow * centers).sum() / outflow.sum() - DT / 2  # the pulse enters at a constant rate over one step
     assert abs(delay - travel_time) <= TOLERANCE * travel_time, (
         f'arrived after {delay / 3600:.2f} h against a travel time of {travel_time / 3600:.2f} h'
     )
@@ -209,8 +213,8 @@ def test_split_networks_route_like_kernel_stabilized_networks(willamette: Basin,
     them as substeps inside the kernel. The written network does not route rivers too short for the routing step in
     subcycles, so only rivers with no such river upstream of them are compared.
     """
-    split_network = rr.Network(willamette.network_file).stabilize(DT)
-    split = route(tmp_path, network=split_network, **willamette.gridded(months=2))
+    split_file = rr.Network(willamette.network_file).write_stabilized(DT, tmp_path / 'split.parquet')
+    split = route(tmp_path, **(willamette.gridded(months=2) | {'network_file': split_file}))
     in_kernel = route(tmp_path, network_type='stabilized', **willamette.gridded(months=2))
     _, too_short = willamette.network.unstable_mask(DT)
     comparable = accumulate_downstream(too_short, willamette.network.downstream_indices) == 0
