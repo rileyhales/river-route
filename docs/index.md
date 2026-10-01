@@ -84,4 +84,3 @@ A `Router` reads and partitions its network table once, and every `route()` call
 3. [Time Variables](references/time-options.md)
 4. [Math Derivations](references/math.md)
 5. [Parallelism](references/parallelism.md)
-6. [Kernels](references/kernels.md)

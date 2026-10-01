@@ -31,9 +31,9 @@ them. `examples/config.json` below lists every option.
   its river. A state file with one value per river is refused, and so is a run whose sub-reaches change between its
   runoff files, which setting `dt_routing` prevents.
 
-The selectors together choose the routing method and the form of runoff it reads; see [kernels](kernels.md). The one
-combination no routing method routes yet, `'dynamic'` coefficients on a `'stabilized'` network, raises
-`NotImplementedError` before any runoff is read.
+The selectors together choose the routing method and the form of runoff it reads. The one combination no routing
+method routes yet, `'dynamic'` coefficients on a `'stabilized'` network, raises `NotImplementedError` before any
+runoff is read.
 
 ## Minimum Required Inputs
 

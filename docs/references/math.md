@@ -19,6 +19,98 @@ Some key insights applying linear algebra and graph theory to river networks and
    diagonal; $c_1 A$ contributes entries only below.
 6. Unit lower triangular systems are best solved with forward substitution.
 
+## River Network Ordering
+
+Rivers are often described as "networks" or "systems". When being modeled, river networks have a few properties that are useful
+to take advantage of for mathematically more efficient algorithms.
+
+1. They are "directed" -- meaning water only flows in one direction from upstream to downstream.
+2. They are "acyclic" -- meaning there are no loops because water cannot flow upstream.
+3. They are "dendritic" -- meaning they branch out when going upstream and merge when going downstream (ignoring braided rivers and deltas, for instance).
+
+Rivers can be topologically sorted. Rather than sorting them from high to low by an attribute or an ID, topologically sorting means
+sorting them in the order they are connected in the network. That is, from "upstream to downstream". The further upstream a river is
+the earlier it should appear in the sorted list. A useful tool for conceptualizing and diagramming this is the Strahler stream order.
+The Strahler order assigns the number 1 to the most upstream, or headwater, segments. When two segments of the same order merge, the
+downstream segment is assigned an order 1 higher. If two different order merge, the downstream segment is assigned the higher of the
+two inlet orders. Streams that are a headwater area have no upstream segments.
+
+Some river datasets will have multiple segments in a row which have the same river order. In those cases, you could sort rivers of
+the same order by increasing cumulative drainage area or another attribute that increases as you go downstream. There are multiple
+valid ways to sort rivers which are all topologically sorted. It is not unique. The only requirement is that upstream segments
+appear before downstream segments in the sorted list.
+
+### Breadth First Search (BFS)
+
+<div style="text-align: center;">
+
+```mermaid
+graph TD
+    R1@{ shape: sm-circ } -->|" #1 · Order 1 "| R5@{ shape: sm-circ }
+    R2@{ shape: sm-circ } -->|" #2 · Order 1 "|R5
+    R3@{ shape: sm-circ } -->|" #3 · Order 1 "|R6@{ shape: sm-circ }
+    R4@{ shape: sm-circ } -->|" #4 · Order 1 "|R6
+    R5 -->|" #5 · Order 2 "|R7@{ shape: sm-circ }
+    R6 -->|" #6 · Order 2 "|R7
+    R8@{ shape: sm-circ } -->|" #8 · Order 1 "|R9@{ shape: sm-circ }
+    R7 -->|" #7 · Order 3 "|R9
+```
+
+<figcaption><em>Figure 1: A topologically sorted river network labeled with Strahler stream orders.</em></figcaption>
+</div>
+
+In the diagram above, rivers 1 through 4 and 8 are headwaters with no upstream dependencies. Rivers 5 and 6 each receive two headwater
+tributaries and are indexed after their upstream sources. River 7 merges two second-order streams and river 9, the outlet, appears last.
+Another way to describe rivers that are topologically sorted is that they are sorted in order of independence. Segments at the top of
+the list depend on no rivers and rivers further down the list depend on a greater number of upstream segments to get their inflow.
+River 5's inflow depends on what is discharged from rivers 1 and 2. A river's discharge cannot be computed until all of upstream
+contributors are known.
+
+### Depth first search (DFS) order
+
+A depth first search finds a topological order. It starts at each outlet and walks upstream, adding a river to the
+order only after every river upstream of it has been added. Its order also places the rivers
+upstream of each river in the rows immediately before it, so every river's whole upstream watershed is one contiguous
+range of rows ending at that river. `river-route` requires this order (see the
+[network file](io-file-schema.md#network-file) requirements).
+
+<div style="text-align: center;">
+
+```mermaid
+---
+config:
+  themeVariables:
+    fontSize: 12px
+---
+graph TD
+    S0@{ shape: sm-circ } -->|" idx: 0<br>count: 0 "| S2@{ shape: sm-circ }
+    S1@{ shape: sm-circ } -->|" idx: 1<br>count: 0 "| S2
+    S3@{ shape: sm-circ } -->|" idx: 3<br>count: 0 "| S5@{ shape: sm-circ }
+    S4@{ shape: sm-circ } -->|" idx: 4<br>count: 0 "| S5
+    S2 -->|" idx: 2<br>count: 2 "| S6@{ shape: sm-circ }
+    S5 -->|" idx: 5<br>count: 2 "| S6
+    S6 -->|" idx: 6<br>count: 6 "| S8@{ shape: sm-circ }
+    S7@{ shape: sm-circ } -->|" idx: 7<br>count: 0 "| S8
+    S9@{ shape: sm-circ } -->|" idx: 9<br>count: 0 "| S12@{ shape: sm-circ }
+    S10@{ shape: sm-circ } -->|" idx: 10<br>count: 0 "| S12
+    S11@{ shape: sm-circ } -->|" idx: 11<br>count: 0 "| S12
+    S8 -->|" idx: 8<br>count: 8 "| S13@{ shape: sm-circ }
+    S12 -->|" idx: 12<br>count: 3 "| S13
+    S13 -->|" idx: 13<br>count: 13 "| OUTLET@{ shape: sm-circ }
+    linkStyle default stroke-width:3px
+```
+
+<figcaption><em>Figure 2: A river network in DFS order, each river labeled with its <code>riverIndex</code> and <code>upstreamCount</code>.</em></figcaption>
+</div>
+
+A river's watershed is the rows from its `riverIndex` minus its `upstreamCount` to its `riverIndex`. In Figure 2,
+river 5's watershed is rivers 3 through 5, river 6's is rivers 0 through 6, river 12's is rivers 9 through 12, and river
+13's, at the outlet, is all 14 rivers.
+
+Figure 1 is numbered in a topological order that is not a DFS order: rivers 3 and 4 fall between river 5 and its
+upstream rivers 1 and 2. A depth first search from the outlet orders the same network 1, 2, 5, 3, 4, 6, 7, 8, 9.
+`examples/migrate_v2_to_v3.py` sorts a network into DFS order.
+
 ## Muskingum Routing
 
 The Muskingum equation relates the outflow $Q_{t+1}$ to the inflow at the next step $I_{t+1}$, inflow at the current step $I_{t}$,
@@ -49,52 +141,18 @@ Note that:
 - The $x$ parameter is a dimensionless "attenuation" factor between 0 (max attenuation) and 0.5 (no attenuation).
 - Every time step depends on the step before. The solution must be found sequentially rather than parallelized across time steps.
 
-## Matrix Formulation
+The Muskingum Cunge equation adds the term $c_4$ to weight adding a lateral inflow term $Q_l$ to
+each segment. In the RAPID assumption, lateral flow is the runoff volume divided by the runoff
+time step, meaning all runoff enters the channel and exits the basin in the interval it is generated.
+No overland flow time or attenuation occurs.
 
-### Topological sorting and network adjacency
+$$
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}
+$$
 
-Rivers are often described as "networks" or "systems". When being modeled, river networks have a few properties that are useful
-to take advantage of for mathematically more efficient algorithms.
+where $c_4 = c_1 + c_2$.
 
-1. They are "directed" -- meaning water only flows in one direction from upstream to downstream.
-2. They are "acyclic" -- meaning there are no loops because water cannot flow upstream.
-3. They are "dendritic" -- meaning they branch out when going upstream and merge when going downstream (ignoring braided rivers and deltas, for instance).
-
-Rivers can be topologically sorted. Rather than sorting them from high to low by an attribute or an ID, topologically sorting means
-sorting them in the order they are connected in the network. That is, from "upstream to downstream". The further upstream a river is
-the earlier it should appear in the sorted list. A useful tool for conceptualizing and diagramming this is the Strahler stream order.
-The Strahler order assigns the number 1 to the most upstream, or headwater, segments. When two segments of the same order merge, the
-downstream segment is assigned an order 1 higher. If two different order merge, the downstream segment is assigned the higher of the
-two inlet orders. Streams that are a headwater area have no upstream segments.
-
-<div style="text-align: center;">
-
-```mermaid
-graph TD
-    R1@{ shape: sm-circ } -->|" #1 · Order 1 "| R5@{ shape: sm-circ }
-    R2@{ shape: sm-circ } -->|" #2 · Order 1 "|R5
-    R3@{ shape: sm-circ } -->|" #3 · Order 1 "|R6@{ shape: sm-circ }
-    R4@{ shape: sm-circ } -->|" #4 · Order 1 "|R6
-    R5 -->|" #5 · Order 2 "|R7@{ shape: sm-circ }
-    R6 -->|" #6 · Order 2 "|R7
-    R8@{ shape: sm-circ } -->|" #8 · Order 1 "|R9@{ shape: sm-circ }
-    R7 -->|" #7 · Order 3 "|R9
-```
-
-<figcaption><em>Figure 1: A topologically sorted river network labeled with Strahler stream orders.</em></figcaption>
-</div>
-
-In the diagram above, rivers 1 through 4 and 8 are headwaters with no upstream dependencies. Rivers 5 and 6 each receive two headwater
-tributaries and are indexed after their upstream sources. River 7 merges two second-order streams and river 9, the outlet, appears last.
-Another way to describe rivers that are topologically sorted is that they are sorted in order of independence. Segments at the top of
-the list depend on no rivers and rivers further down the list depend on a greater number of upstream segments to get their inflow.
-River 5's inflow depends on what is discharged from rivers 1 and 2. A river's discharge cannot be computed until all of upstream
-contributors are known.
-
-Some river datasets will have multiple segments in a row which have the same river order. In those cases, you could sort rivers of
-the same order by increasing cumulative drainage area or another attribute that increases as you go downstream. There are multiple
-valid ways to sort rivers which are all topologically sorted. It is not unique. The only requirement is that upstream segments
-appear before downstream segments in the sorted list.
+## Derivation of Matrix Muskingum
 
 ### Adjacency matrix
 
@@ -131,9 +189,9 @@ $$
 Because the rivers are listed in a topological order, $A$ is strictly lower triangular and the diagonal is zero. $A$ is extremely sparse so computationally
 it's more efficient to store it in a sparse format and do math only on the non-zero elements.
 
-## Derivation of Matrix Muskingum
+### Matrix Muskingum
 
-Using the Adjacency matrix and the definition that $I_t$ is the sum of upstream discharges, we can replace all $I$ with $A\, Q$.
+Using the adjacency matrix and the definition that $I_t$ is the sum of upstream discharges, we can replace all $I$ with $A\, Q$.
 
 Muskingum equation:
 
@@ -159,6 +217,12 @@ $$
 \bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
 $$
 
+With the lateral inflow term of Muskingum Cunge:
+
+$$
+\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t + c_4\, Q_{l,t}
+$$
+
 Notes:
 
 - The LHS is the same for every time step (only depends on $A$ and $c_1$).
@@ -166,28 +230,7 @@ Notes:
 - $c_2$ and $c_3$ can be expressed as 1D vectors of length $n_\text{segments}$ for vector multiplication.
 - $c_1$ is an $NxN$ diagonal matrix so it can be subtracted from $I$ after multiplication with A.
 
-### Muskingum Cunge Routing
-
-The Muskingum Cunge equation adds the term $c_4$ to weight adding a lateral inflow term $Q_l$ to
-each segment. In the RAPID assumption, lateral flow is the runoff volume divided by the runoff
-time step, meaning all runoff enters the channel and exits the basin in the interval it is generated.
-No overland flow time or attenuation occurs.
-
-$$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}
-$$
-
-where $c_4 = c_1 + c_2$. In matrix form:
-
-$$
-\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t + c_4\, Q_{l,t}
-$$
-
 ## Unit Hydrograph Lateral Inflow (Planned)
-
-!!! warning
-    The unit-hydrograph lateral inflow routing procedure described in this section is **planned** and not yet implemented
-    in v3. There is no router for it. The math is documented here to describe the intended future method.
 
 ### Derivation
 
@@ -319,7 +362,9 @@ for i in range(n_rivers):                        # topological order: upstream b
 
 This is optimal — every edge is visited exactly once per routing step.
 
-## Numerical stability relationship between c1, c2, dt, k, x
+## Numerical stability
+
+### Relationship between dt, k, x
 
 Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly
 regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative
@@ -327,11 +372,13 @@ discharge or 2) oscillation from negative to positive discharge. These condition
 are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the
 numerators are positive comparing dt (a subjective choice) to k and x (physically derived parameters):
 
+this set of equations shows that for each coefficient, there is an inequality, and there is a range that dt must fall between depending on how large x is
+
 $$
 \begin{aligned}
-c_1 > 0 &\iff \Delta t > 2kx \\
-c_2 > 0 &\iff \Delta t > -2kx \\
-c_3 > 0 &\iff \Delta t < 2k(1-x)
+c_1 > 0 &\implies \Delta t > 2kx \\
+c_2 > 0 &\implies \Delta t > -2kx \\
+c_3 > 0 &\implies \Delta t < 2k(1-x)
 \end{aligned}
 $$
 
@@ -339,23 +386,47 @@ Note that $c_2$ is always positive because $dt$, $k$, and $x$ are all positive.
 The remaining 2 inequalities can be combined to find the range of valid $dt$ values:
 
 $$
-2kx < \Delta t < 2k(1-x)
+2kx < \Delta t < 2k(1-x) \\
+x = 0 \implies 0 < \Delta t < 2k \\
+x = 0.5 \implies k < \Delta t < k \implies \Delta t = k
+$$
+
+For a given $k$ and $x$, the valid range of $dt$ values is:
+
+$$
+2k(1-x) - 2kx \\
+2k(1-2x)
 $$
 
 There are several noteworthy insights from these equations:
 
-- The width of the valid range is $2k(1-x) - 2kx = 2k(1-2x)$ which is positive for $x < 0.5$.
+- When the is no attenuation ($x = 0.5$), the only valid $dt$ is $k$.
+- When the is maximum attenuation ($x = 0$), the valid range of $dt$ is from 0 to $2k$.
 - The lower bound of valid $dt$ values is 0 when $x = 0$ meaning maximum attenuation such as at a reservoir.
 - The upper bound of valid $dt$ values approaches $k$ as $x$ approaches 0.5 meaning no attenuation.
-- The width of the valid range approaches 0 as $x$ approaches 0.5 meaning no attenuation.
-- The width of the valid range approaches $2k$ as $x$ approaches 0 meaning maximum attenuation such as at a reservoir.
 
-With a single `dt_routing` for every river, numerical stability is easier when the following hold, and
-`network_type: stabilized` routes the rivers that still fall outside the range in substeps, sub-reaches in series, or
-in subcycles, shorter routing steps of their own:
+### When k >>> dt
 
-- There is more attenuation (smaller x) making the valid range wider, approaching $2k$.
-- Rivers are longer (larger k) and reaches are routed in substeps to accommodate $dt$.
+Long river segments have larger $k$ values. It can be hard to pick a large enough $dt$ to satisfy the $c1$ inequality $\Delta t > 2kx$ while
+still keeping it small enough for the simulation result to be meaningful. Rivers in this case should be split into a series of smaller rivers 
+with smaller k. When doing this, you can divide k proportional to the length of the smaller river segment. The `river-route` code refers to 
+this as making **_"substeps"_** down the river.
+
+### When dt >>> k
+
+Short river segments have smaller $k$ values. It can be hard to pick a small enough $dt$ to satisfy the $c3$ inequality $\Delta t < 2k(1-x)$ 
+while still keeping it large enough for the simulation to compute in a reasonable amount of time. Many higher density delineated rivers will 
+place confluences within a few pixels of each other causing short segments to be made to fill gap between confluences. This happens in real 
+rivers also but more often in DEM delineations. 
+
+**Option 1:** You can handle these rivers by decreasing the time step for all rivers or for only the invalid rivers. The `river-route` code 
+refers to this as making **_"subcycles"_** or multiple computations within what is normally only a single computation cycle. This is a good 
+solution as long as it doesn't make you simulation take an unreasonable amount of additional time. Sometimes the segments are only a few meters 
+long which theoretically need a $dt$ to a few seconds. That is burdensome for marginal accuracy gains. You might also consider:
+
+**Option 2:** Editing your delineated streams to force confluences to overlap that are within a few pixels of each other. The error introduced
+by this is likely quite small relative to the uncertainty you expect in hydrological reconstructions. This is more intense of an exercise 
+because it requires search for rivers and editing the topology information (ID and downstream ID) at minimum but more likely also the geometry.
 
 ## References
 
