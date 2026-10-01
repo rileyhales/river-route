@@ -113,32 +113,150 @@ upstream rivers 1 and 2. A depth first search from the outlet orders the same ne
 
 ## Muskingum Routing
 
-The Muskingum equation relates the outflow $Q_{t+1}$ to the inflow at the next step $I_{t+1}$, inflow at the current step $I_{t}$,
-and the current discharge $Q_t$. Equivalent forms also use the notations $Q_{t}$ and $Q_{t-1}$. For a primer on the
-derivation of the Muskingum equation as a relationship of storage, inflow, and outflow, try the HEC-HMS manual pages on the
-[Muskingum Model](https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model) and the
-[Muskingum-Cunge Model](https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model).
+The Muskingum routing method uses a conservation of mass approach to route flow through a river segment. It relates
+the discharge at the current time step $Q_{t}$ to the discharge at the previous time step $Q_{t-1}$ and the inflow at 
+both the current and previous time steps $I_{t}$ and $I_{t-1}$. This is also equivalently described and written as 
+the discharge the next step relative to the discharge at the current step, $Q_{t+1}$ and $Q_{t}$.
+
+### Inventory Equation
+
+The average inflow during an interval minus the average discharge during an interval is equal to the change in storage during that interval:
 
 $$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t
+\overline{I} - \overline{Q} = \frac{\Delta S}{\Delta t} \tag{1}
 $$
 
-Where the coefficients $c_1$, $c_2$, $c_3$ are given by:
+$\overline{I}$ is the average inflow from the upstream channel, not from overland or lateral flows.
+
+$\overline{Q}$ is the average discharge during the interval.
+
+$\Delta S$ is the change in storage during the interval.
+
+$\Delta t$ is the duration of the interval which is later parameterized as the time step of the routing.
+
+Rewriting $\overline{I}$ and $\overline{Q}$ as the average between the start and end of the interval gives the form:
+
+$$
+\frac{I_t + I_{t+1}}{2} - \frac{Q_t + Q_{t+1}}{2} = \frac{S_{t+1} - S_t}{\Delta t} \tag{2}
+$$
+
+!!! warning "Caution about selecting $\Delta t$"
+    This average is a trapezoidal integral approximation. Choose small $dt$ relative to travel time of the river for best results.
+    At minimum, you must pick $dt$ to satisfy the inequalities in [Numerical stability](#numerical-stability).
+
+### Storage Equation
+
+<div style="text-align: center;">
+<div class="storage-figure">
+<table class="storage-table">
+<tr><th></th><th scope="col">High <i>x</i> (<i>x</i> = 0.4)</th><th scope="col">Low <i>x</i> (<i>x</i> = 0.1)</th></tr>
+<tr><th scope="row"><i>Q</i> &gt; <i>I</i></th>
+<td>
+--8<-- "docs/static/images/storage-falling-high-x.svg"
+</td>
+<td>
+--8<-- "docs/static/images/storage-falling-low-x.svg"
+</td>
+</tr>
+<tr><th scope="row"><i>I</i> &gt; <i>Q</i></th>
+<td>
+--8<-- "docs/static/images/storage-rising-high-x.svg"
+</td>
+<td>
+--8<-- "docs/static/images/storage-rising-low-x.svg"
+</td>
+</tr>
+</table>
+</div>
+<figcaption><em>Figure 3: Prism and wedge storage in a river segment for a high and a low x, with the same inflow and discharge in every panel. Water flows from left to right. The dashed line is the water surface of steady flow, which bounds the prism storage, and the solid line is the water surface of the flood. When discharge exceeds inflow, as a flood falls, the wedge is water missing from the prism. When inflow exceeds discharge, as a flood rises, the wedge is water held above the prism. Both wedges grow with x.</em></figcaption>
+</div>
+
+If we say that the travel time of the flood wave through the segment is $k$ and weight the difference between the
+inflow and the discharge by $x$, the water stored in the segment can be split into two parts, prism storage and wedge
+storage:
+
+$$
+S_t = k\, Q_t + k\, x\, (I_t - Q_t) \tag{3}
+$$
+
+$S_t$ is the volume of water stored in the segment at time $t$.
+
+$k$ is the travel time of the flood wave through the segment, in seconds.
+
+$x$ is a dimensionless weight between 0 and 0.5.
+
+$I_t$ and $Q_t$ are the inflow and the discharge at time $t$.
+
+The first term, $k\, Q_t$, is the prism storage. It is the water the segment holds when the flow is steady, with the
+same flow entering and leaving. The water surface is then parallel to the channel bed, so the water fills a long prism
+shape. A discharge in cubic meters per second multiplied by a time in seconds is a volume in cubic meters, so the prism
+storage is the volume of water that leaves the segment during one travel time.
+
+The second term, $k\, x\, (I_t - Q_t)$, is the wedge storage. It is the water gained or lost on top of the prism when
+the flow changes. When a flood wave arrives, the upstream end of the segment rises before the downstream end, so the
+water surface tilts and holds an extra wedge of water on top of the prism. Inflow is greater than discharge, so
+$I_t - Q_t$ is positive and the wedge adds to the storage. After the peak passes, the upstream end falls first.
+Discharge is greater than inflow, so $I_t - Q_t$ is negative and the wedge takes away from the storage. The weight $x$
+sets how large the wedge is for a given difference between inflow and discharge, as Figure 3 shows.
+
+Multiplying out the wedge term and collecting the two $Q_t$ terms, $k\, Q_t - k\, x\, Q_t = k\, (1 - x)\, Q_t$,
+simplifies Equation 3 to
+
+$$
+S_t = k\, \bigl[x\, I_t + (1 - x)\, Q_t\bigr] \tag{4}
+$$
+
+Equation 4 says that the storage is the travel time multiplied by a weighted average of the inflow and the discharge.
+The weights $x$ and $1 - x$ add to 1, so $x\, I_t + (1 - x)\, Q_t$ is a flow between the inflow and the discharge. The
+value of $x$ decides how much each one counts:
+
+- When $x = 0$, the storage depends only on the discharge, $S_t = k\, Q_t$, like a lake or reservoir whose level and
+  outflow rise and fall together. There is no wedge storage, and the flood wave attenuates the most: its peak is
+  lowered and spread out over a longer time as it moves downstream.
+- When $x = 0.5$, the inflow and the discharge count equally, $S_t = k\, (I_t + Q_t) / 2$. The flood wave does not
+  attenuate. It reaches the downstream end with the same shape, only $k$ seconds later.
+- Natural rivers usually fall between these two, with $x$ from 0 to 0.3.
+- Values above 0.5 would make a flood wave grow as it moves downstream, which a river channel does not do.
+
+Substituting Equation 4 at the start and end of the time step into Equation 2 gives
+
+$$
+\begin{aligned}
+&\frac{I_t + I_{t+1}}{2} - \frac{Q_t + Q_{t+1}}{2} = \\
+&\qquad \frac{k}{\Delta t} \bigl[x\, (I_{t+1} - I_t) + (1 - x)\, (Q_{t+1} - Q_t)\bigr]
+\end{aligned} \tag{5}
+$$
+
+Multiplying both sides by $2 \Delta t / k$ and collecting the unknown outflow $Q_{t+1}$ on the left side gives
+
+$$
+\begin{aligned}
+\Bigl(\frac{\Delta t}{k} + 2(1 - x)\Bigr)\, Q_{t+1}
+&= \Bigl(\frac{\Delta t}{k} - 2x\Bigr)\, I_{t+1} + \Bigl(\frac{\Delta t}{k} + 2x\Bigr)\, I_t \\
+&\quad + \Bigl(2(1 - x) - \frac{\Delta t}{k}\Bigr)\, Q_t
+\end{aligned} \tag{6}
+$$
+
+Dividing both sides by $\Delta t / k + 2(1 - x)$ gives the Muskingum routing equation:
+
+$$
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t \tag{7}
+$$
+
+where the coefficients $c_1$, $c_2$, $c_3$ are given by:
 
 $$
 c_1 = \frac{\Delta t / k - 2x}{\Delta t / k + 2(1-x)}
 \qquad
 c_2 = \frac{\Delta t / k + 2x}{\Delta t / k + 2(1-x)}
 \qquad
-c_3 = \frac{2(1-x) - \Delta t / k}{\Delta t / k + 2(1-x)}
+c_3 = \frac{2(1-x) - \Delta t / k}{\Delta t / k + 2(1-x)} \tag{8}
 $$
 
 Note that:
 
 - Mass is conserved.
 - $c_1 + c_2 + c_3 = 1$
-- The $k$ parameters can be shown to be the flood wave travel time along the channel in seconds
-- The $x$ parameter is a dimensionless "attenuation" factor between 0 (max attenuation) and 0.5 (no attenuation).
 - Every time step depends on the step before. The solution must be found sequentially rather than parallelized across time steps.
 
 The Muskingum Cunge equation adds the term $c_4$ to weight adding a lateral inflow term $Q_l$ to
@@ -147,7 +265,7 @@ time step, meaning all runoff enters the channel and exits the basin in the inte
 No overland flow time or attenuation occurs.
 
 $$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t} \tag{9}
 $$
 
 where $c_4 = c_1 + c_2$.
@@ -386,16 +504,20 @@ Note that $c_2$ is always positive because $dt$, $k$, and $x$ are all positive.
 The remaining 2 inequalities can be combined to find the range of valid $dt$ values:
 
 $$
+\begin{gathered}
 2kx < \Delta t < 2k(1-x) \\
 x = 0 \implies 0 < \Delta t < 2k \\
 x = 0.5 \implies k < \Delta t < k \implies \Delta t = k
+\end{gathered}
 $$
 
 For a given $k$ and $x$, the valid range of $dt$ values is:
 
 $$
-2k(1-x) - 2kx \\
-2k(1-2x)
+\begin{aligned}
+&2k(1-x) - 2kx \\
+&= 2k(1-2x)
+\end{aligned}
 $$
 
 There are several noteworthy insights from these equations:

@@ -17,3 +17,28 @@
     font-size: 0.85em !important;
     border: 1px solid #ccc !important;
 }
+.storage-figure {
+    overflow-x: auto;
+}
+.storage-table {
+    width: 100%;
+    min-width: 560px;
+    table-layout: fixed;
+    border-collapse: collapse;
+}
+.storage-table th {
+    padding: 0.25em;
+    text-align: center;
+    vertical-align: middle;
+}
+.storage-table th:first-child {
+    width: 4.5em;
+}
+.storage-table td {
+    padding: 0.25em;
+}
+.storage-table svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
