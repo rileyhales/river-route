@@ -30,13 +30,13 @@ class Router:
     Muskingum style river routing allowing
     - coefficients: static (muskingum) or dynamic (muskingum-cunge style)
     - forcing: channel-only or runoff on grids/meshes or already aggregated to catchments
-    - network conditioning: standard, or "stabilized" routing rivers in the substeps or subcycles that make them
-      stable at dt_routing
+    - network conditioning: standard, or "stabilized" routing rivers in the substeps or subcycles that make every
+      coefficient non-negative at dt_routing
     - transformation: the uniform runoff transformation (e.g. runoff transform method)
     """
 
     configs: Configs
-    network: Network  # ids, topology, k, x, the partition, and the stability analysis
+    network: Network  # ids, topology, k, x, the partition, and the coefficient signs
     runoff: Runoff | None  # reads runoff_files, built from the configs the first time runoff is routed
 
     # what the routing method the coefficients config chooses prepared for the current time steps
@@ -170,7 +170,10 @@ class Router:
             self.dt_routing = self.configs.dt_routing
         elif self.configs.network_type == 'stabilized':
             self.dt_routing = self.network.largest_stable_dt(self.dt_runoff)
-            logger.info(f'dt_routing was not provided; using {self.dt_routing} s, the largest stable divisor')
+            logger.info(
+                f'dt_routing was not provided; using {self.dt_routing} s, the largest divisor at which every '
+                f'coefficient can be made non-negative'
+            )
         else:
             logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
             self.dt_routing = self.dt_runoff
@@ -372,7 +375,7 @@ class Router:
         self, dates: DatetimeArray, discharge_array: FloatArray
     ) -> tuple[DatetimeArray, FloatArray]:
         """The routed discharge averaged over each dt_discharge, and the date each average starts at. The kernels write
-        one value per runoff step, so coarser outputs are averaged from them here."""
+        the mean discharge over each runoff step, so the mean of consecutive ones is the mean over the longer step."""
         if self.dt_discharge == self.dt_runoff:
             return dates, discharge_array
         logger.debug('Resampling dates and discharges to specified timestep')

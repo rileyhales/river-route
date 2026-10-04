@@ -6,6 +6,8 @@ Routing simulations have four different time steps, all given in seconds.
   with forcing defaults it from `dt_runoff`.
 - `dt_runoff`: Interval between runoff inputs. It is not a config: it is read from the time steps of each runoff file.
 - `dt_discharge`: Interval over which to average discharge to write to disk. Must be greater than or equal to `dt_runoff`.
+  Each value written is the mean discharge over its interval: the trapezoidal mean of the computed discharges,
+  `(q_0/2 + q_1 + ... + q_(m-1) + q_m/2)/m` for m routing steps, labeled with the time the interval begins.
 - `dt_total`: Total simulation duration.
 
 The most important time step is `dt_routing`. `dt_discharge` and `dt_total` are derived from the runoff inputs unless
@@ -30,7 +32,7 @@ The following rules apply:
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
     - `dt_routing` defaults to `dt_runoff`, or with `network_type: stabilized` to the largest divisor of `dt_runoff`
-      at which every river can be made stable.
+      at which every coefficient of every river can be made non-negative, which for `x <= 1/3` is `dt_runoff`.
 
 ## Required Relationships
 
@@ -55,7 +57,10 @@ dt_discharge % dt_routing == 0
 
 ## Practical Notes
 
-1. `dt_routing` should be chosen for numerical stability and performance, not just convenience.
+1. `dt_routing` should be chosen from the runoff step and the travel times, not the resolution wanted in the output.
+   A step shorter than the travel times does not route more accurately: it does not change how much a river delays or
+   spreads a flood wave, and it puts more rivers below the lower bound `2*k*x`. The runoff step, or its largest divisor
+   at which most rivers have non-negative coefficients, is usually right, with `network_type: stabilized` for the rest.
 2. If you need a different runoff timestep, resample runoff before routing.
 3. To route longer than your runoff record, pad runoff with zeros upstream of routing.
 

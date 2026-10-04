@@ -21,12 +21,13 @@ them. `examples/config.json` below lists every option.
 - `transform` - `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over
   the step. Default `'uniform'`.
 - `network_type` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
-  `dt_routing` is routed in substeps, the fewest equal sub-reaches in series that are each Muskingum-stable, and each
-  river too short for it is routed in subcycles, the fewest equal steps of its own that are). Default `'standard'`.
+  `dt_routing` is routed in substeps, the fewest equal sub-reaches in series whose coefficients are all non-negative,
+  each with the x that keeps the river's diffusion, and each river too short for it is routed in subcycles, the fewest
+  equal steps of its own whose coefficients are). Default `'standard'`.
   `'stabilized'` needs static coefficients, and multiplies the routing work by the average
   number of substeps and subcycles per river. A river routed in subcycles interpolates its upstream inflow linearly
-  within each routing step. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which every river can
-  be made stable. The state files then hold one value per sub-reach, each river's sub-reaches upstream to
+  within each routing step. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which every
+  coefficient of every river can be made non-negative, which for `x <= 1/3` is `dt_runoff` itself. The state files then hold one value per sub-reach, each river's sub-reaches upstream to
   downstream, in the order a final state file is written, with each row's `riverId` repeated for every sub-reach of
   its river. A state file with one value per river is refused, and so is a run whose sub-reaches change between its
   runoff files, which setting `dt_routing` prevents.
@@ -121,7 +122,7 @@ uses fixed names, such as `riverId` for the river id.
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
 | `as_volumes`             | `GridRunoff` prepares volumes instead of depths        | `False`                                       |
-| `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` unstable rivers     | `'warn'`                                      |
+| `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` negative coefficients | `'warn'`                                      |
 
 ## Validation
 
@@ -139,16 +140,20 @@ once on inputs you have not checked before:
 rr.Configs.from_json('config.json').deep_validate()
 ```
 
-`unstable_coefficients` controls what happens when a river's parameters are not Muskingum-stable for the
-routing timestep, which requires `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window the solution for
-that river oscillates and negative discharges are clamped to zero, which does not conserve mass. The
-default `'warn'` issues a warning saying how many rivers are affected; `'raise'` refuses to route; `'ignore'` is
-silent. It applies to static coefficients, which routing checks with `Network.check_stability`. Dynamic
+`unstable_coefficients` controls what happens when a river has a negative Muskingum coefficient at the routing
+timestep. Every coefficient is non-negative when `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window routing is
+still stable and still conserves mass, but the river's discharge can dip below zero ahead of a rise (`c1 < 0`, a river
+too long for the step) or alternate from step to step and go negative (`c3 < 0`, a river too short for it). Negative
+discharge is written as routed, never clamped, so the written discharge conserves mass and shows the river that
+produced it. The default `'warn'` issues a warning saying how many rivers are affected; `'raise'` refuses to route;
+`'ignore'` is silent. It applies to static coefficients, which routing checks with `Network.check_stability`. Dynamic
 coefficients change as each river routes, so there is nothing to check before routing starts.
 
 Use `Network.unstable_mask(dt)` to inspect a network before routing it. `network_type='stabilized'` routes each river
-too long for `dt_routing` in `Network.substeps(dt)` sub-reaches inside the kernel, and each river too short for it,
-which substeps cannot fix, in `Network.subcycles(dt)` steps of its own. `Network.stabilize(dt)` instead rewrites the
+too long for `dt_routing` in `Network.substeps(dt)` sub-reaches inside the kernel, each with the x of
+`Network.substep_x`, `1/2 - N*(1/2 - x)` for N sub-reaches, which keeps the river's mean travel time and its travel time
+variance `k**2 * (1 - 2x)`. At `x = 0.2` two sub-reaches make every river too long for any step non-negative. Each
+river too short for `dt_routing`, which substeps cannot fix, is routed in `Network.subcycles(dt)` steps of its own. `Network.stabilize(dt)` instead rewrites the
 network in place with those sub-reaches as rows of their own, for the rivers substeps can fix, and
 `Network.write_stabilized(dt)` saves that network as a network table. Such a network routes with the `channel`,
 `grid`, and `ecmwf_grib` forcings, whose runoff is shared among the sub-reaches of each river; `catchment` forcing

@@ -1,8 +1,8 @@
 # Network
 
 The river network a simulation routes over: identity, topology, and Muskingum parameters read from a network
-file, plus the concurrent routing partition, the stability analysis derived from them, and the stabilized
-network that analysis produces. A `Router` builds one
+file, plus the concurrent routing partition, the signs of the routing coefficients derived from them, and the
+stabilized network that makes every coefficient non-negative. A `Router` builds one
 from its `Configs` and reuses it, so a network table is parsed and partitioned once no matter how many
 simulations run over it.
 

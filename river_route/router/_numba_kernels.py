@@ -146,8 +146,8 @@ def route_river(method, layout, q_t, r, catchment_runoff, inflow, downstream_inf
     """
     Route river r's whole series with the parameters of a routing method. ``inflow`` is the summed discharge of its
     upstreams before the first routing step and at every step. The river adds its own series, in the same form, into
-    ``downstream_inflow``, writes its discharge averaged over each runoff step into ``discharge``, and updates its
-    state in ``q_t``. ``work`` and ``chain`` are scratch sized for the ``layout``.
+    ``downstream_inflow``, writes its mean discharge over each runoff step, the trapezoidal mean of its discharges, into
+    ``discharge``, and updates its state in ``q_t``. ``work`` and ``chain`` are scratch sized for the ``layout``.
     """
 
 

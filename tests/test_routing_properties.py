@@ -116,26 +116,32 @@ def test_months_in_sequence_match_one_combined_series(package: Path, manifest: d
     assert_same(routed.discharge[0], read_discharge(package, run['discharge']))
 
 
-def test_headwaters_follow_the_muskingum_formula(willamette: Basin, tmp_path: Path) -> None:
-    """A stable headwater has no inflow, so its discharge is the recurrence q = c3 q + (c1 + c2) R, computed here in
-    float64 from its k and x."""
+@pytest.mark.parametrize('dt_routing', [3600, 900])
+def test_headwaters_follow_the_muskingum_formula(dt_routing: int, willamette: Basin, tmp_path: Path) -> None:
+    """
+    A headwater whose coefficients are all non-negative has no inflow, so its discharges follow the recurrence
+    q = c3 q + (c1 + c2) R, computed here in float64 from its k and x. Its discharge over each runoff step of m routing
+    steps is the trapezoidal mean of its discharges, (q_0/2 + q_1 + ... + q_(m-1) + q_m/2)/m, the mean of the averages
+    of consecutive discharges, each of which is the mean discharge over one routing step.
+    """
     network = willamette.network
     dates, volumes = willamette.months[0]
-    routed = route(tmp_path, [(dates, volumes)], network_file=willamette.network_file)
+    routed = route(tmp_path, [(dates, volumes)], network_file=willamette.network_file, dt_routing=dt_routing)
     has_upstream = np.zeros(network.size, dtype=bool)
     has_upstream[network.downstream_indices[network.downstream_indices >= 0]] = True
-    too_long, too_short = network.unstable_mask(DT)
+    too_long, too_short = network.unstable_mask(dt_routing)
     rivers = np.flatnonzero(~has_upstream & ~too_long & ~too_short)
-    assert rivers.size, 'the basin has no stable headwater to check'
-    dt_div_k = DT / network.k[rivers].astype(np.float64)
+    assert rivers.size, 'the basin has no headwater with non-negative coefficients to check'
+    dt_div_k = dt_routing / network.k[rivers].astype(np.float64)
     two_x = 2 * network.x[rivers].astype(np.float64)
     denominator = dt_div_k + 2 - two_x
     c1_plus_c2, c3 = 2 * dt_div_k / denominator, (2 - two_x - dt_div_k) / denominator
-    q = np.zeros(rivers.size)
-    expected = np.empty((rivers.size, volumes.shape[1]))
-    for step in range(volumes.shape[1]):
-        q = c3 * q + c1_plus_c2 * volumes[rivers, step] / DT
-        expected[:, step] = np.maximum(q, 0)
+    steps = DT // dt_routing
+    discharges = np.zeros((rivers.size, volumes.shape[1] * steps + 1))
+    for step in range(volumes.shape[1] * steps):
+        discharges[:, step + 1] = c3 * discharges[:, step] + c1_plus_c2 * volumes[rivers, step // steps] / DT
+    step_means = (discharges[:, :-1] + discharges[:, 1:]) / 2
+    expected = step_means.reshape(rivers.size, volumes.shape[1], steps).mean(axis=2)
     assert_same(routed.discharge[0][rivers], expected)
 
 
@@ -157,10 +163,10 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     of mass must arrive after the Muskingum travel time.
 
     A discrete Muskingum reach delays what flows in at its top by exactly k, so each river below the headwater adds its
-    k. Runoff enters along a reach instead, and one reach delays it by k (1 - x). The headwater is split into N equal
-    pieces that each take 1/N of its runoff, so its own runoff is delayed by k ((1 - x) / N + (N - 1) / 2N) on average.
-    The outlet writes the mean of its levels at the end of each of its S subcycles, which is centered (S - 1) / 2S of a
-    step before the end of its step.
+    k. Runoff enters along a reach instead, and one reach delays it by k (1 - x). A headwater divided into N equal
+    pieces that each take 1/N of its runoff delays it by k (1 - x) too, because each piece has the x of
+    Network.substep_x: (k/N)(1 - x_N) through its own piece and (N - 1)/2 pieces of k/N below it on average. The outlet
+    writes the mean discharge over each step, the trapezoidal mean of its discharges, which is centered on the step.
     """
     network = willamette.network
     downstream = network.downstream_indices
@@ -170,20 +176,58 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
             below[river] = network.k[downstream[river]] + below[downstream[river]]
     headwater, outlet = int(np.argmax(below + network.k)), outlet_of(willamette)
     k, x = float(network.k[headwater]), float(network.x[headwater])
-    substeps, subcycles, _ = network.conditioning(DT)
-    pieces, outlet_subcycles = int(substeps[headwater]), int(subcycles[outlet])
-    travel_time = below[headwater] + k * ((1 - x) / pieces + (pieces - 1) / (2 * pieces))
+    travel_time = below[headwater] + k * (1 - x)
     months = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months]
     pulse = 1e6  # m³
     months[0][1][headwater, 0] = pulse
     routed = route(tmp_path, months, network_file=willamette.network_file, network_type='stabilized')
     outflow = np.concatenate([discharge[outlet] for discharge in routed.discharge]).astype(np.float64)
     assert abs(outflow.sum() * DT - pulse) <= TOLERANCE * pulse
-    centers = np.arange(1, outflow.size + 1) * DT - (outlet_subcycles - 1) * DT / (2 * outlet_subcycles)
+    centers = (np.arange(outflow.size) + 0.5) * DT
     delay = (outflow * centers).sum() / outflow.sum() - DT / 2  # the pulse enters at a constant rate over one step
     assert abs(delay - travel_time) <= TOLERANCE * travel_time, (
         f'arrived after {delay / 3600:.2f} h against a travel time of {travel_time / 3600:.2f} h'
     )
+
+
+@pytest.mark.parametrize(('network_type', 'routed_reaches'), [('standard', 2), ('stabilized', 3)])
+def test_a_long_river_delays_and_spreads_a_pulse_by_its_own_moments(
+    network_type: str, routed_reaches: int, tmp_path: Path
+) -> None:
+    """
+    Whatever the step, the response of a Muskingum river to what flows in at its top has mean k and variance
+    k^2 (1 - 2x). A river of k = 20 h and x = 0.2 is too long for a step of 1 h, and a stabilized network routes it in
+    two substeps of x = -0.1, which keep both moments; substeps of the river's own x would halve the variance. A pulse
+    of runoff on a headwater flows into it, and the moments of the river's discharge exceed the headwater's by its own.
+    """
+    k, x = 20.0, 0.2  # hours
+    table = pd.DataFrame(
+        {
+            'riverId': [1, 2],
+            'nextRiverId': [2, -1],
+            'muskingumK': np.float32([2 * DT, k * DT]),
+            'muskingumX': np.float32([x, x]),
+            'riverIndex': np.int32([0, 1]),
+            'upstreamCount': np.int32([0, 1]),
+        }
+    )
+    table.to_parquet(tmp_path / 'chain.parquet')
+    dates = np.datetime64('2000-01-01T00:00:00', 's') + np.arange(1000) * np.timedelta64(DT, 's')
+    volumes = np.zeros((2, dates.size), dtype=np.float32)
+    volumes[0, 0] = 1e6
+    routed = route(tmp_path, [(dates, volumes)], network_file=tmp_path / 'chain.parquet', network_type=network_type)
+    assert routed.router.channel_state.shape[0] == routed_reaches
+
+    def mean_and_variance(discharge: np.ndarray) -> tuple[float, float]:
+        weights = discharge.astype(np.float64) / discharge.sum(dtype=np.float64)
+        hours = np.arange(discharge.size)
+        mean = float((weights * hours).sum())
+        return mean, float((weights * (hours - mean) ** 2).sum())
+
+    mean_in, variance_in = mean_and_variance(routed.discharge[0][0])
+    mean_out, variance_out = mean_and_variance(routed.discharge[0][1])
+    np.testing.assert_allclose(mean_out - mean_in, k, rtol=1e-4)
+    np.testing.assert_allclose(variance_out - variance_in, k**2 * (1 - 2 * x), rtol=1e-3)
 
 
 def test_gridded_and_catchment_file_runoff_route_the_same(package: Path, manifest: dict) -> None:

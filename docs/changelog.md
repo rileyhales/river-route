@@ -18,18 +18,28 @@ file format.
   by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
 - `coefficients='dynamic'` routes with nonlinear Muskingum K = `dynamicAlpha` * Q ^ `dynamicBeta`, from those two
   columns of the network file, recomputed at every routing step. Dynamic coefficients route standard networks.
-- `network_type='stabilized'` routes each river stably at `dt_routing` where it can: a river too long for it is
-  routed in substeps, sub-reaches in series inside the kernel, and a river too short for it is routed in subcycles,
-  shorter routing steps of its own. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which
-  every river can be made stable, `Network.largest_stable_dt`. It routes static coefficients with every forcing, and
-  its state files hold one row per sub-reach.
+- `network_type='stabilized'` routes each river with non-negative coefficients at `dt_routing` where it can: a river
+  too long for it is routed in substeps, the fewest equal sub-reaches in series inside the kernel, each with
+  `x_N = 1/2 - N*(1/2 - x)` (`Network.substep_x`), which keeps the river's mean travel time and travel time variance
+  (two substeps at `x = 0.2`), and a river too short for it is routed in subcycles, shorter routing steps of its own.
+  Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which the coefficients of every river can be
+  made non-negative, `Network.largest_stable_dt`, which for `x <= 1/3` is `dt_runoff`. It routes static coefficients
+  with every forcing, and its state files hold one row per sub-reach.
 - `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
-  their own, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
+  their own, each with the x that keeps its river's diffusion, `1/2 - (1/2 - x)*k/k_i`, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
   down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
   Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose Runoff classes share each
   river's runoff among its sub-reaches with `Runoff.distribute`.
-- Rivers whose parameters are not Muskingum stable for `dt_routing`, outside `2*k*x <= dt_routing <= 2*k*(1-x)`,
-  are reported. The new `unstable_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
+- Rivers with a negative coefficient at `dt_routing`, outside `2*k*x <= dt_routing <= 2*k*(1-x)`, are reported. The
+  new `unstable_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
+- Negative discharge is written as routed. It was clamped to zero in the written discharge, which hid the rivers that
+  produced it and broke the volume of their written discharge.
+- The discharge written for each output interval is the trapezoidal mean of the discharges computed at its routing
+  steps, `(q_0/2 + q_1 + ... + q_(m-1) + q_m/2)/m`, the mean discharge over the interval. It was the plain mean of
+  `q_1 ... q_m`, which leads the interval mean by half a routing step.
+- A Network refuses a river with `muskingumK` not positive and finite, such as a river of zero length, which no step
+  can route and which is resolved in the topology before routing; a river with `muskingumX` above 0.5, at which the
+  scheme amplifies its inflow; and a river that drains into itself. `muskingumX` may be negative.
 - `Router.route(thread_pool=pool, threads=n)` routes concurrently on a `ThreadPoolExecutor` the caller passes. The
   region's rivers are divided into blocks, contiguous index ranges of rivers, and the blocks are packed into one job
   per thread. The pool is used as given and never shut down, and the package never creates one: without a pool,

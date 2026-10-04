@@ -128,6 +128,20 @@ BROKEN_TABLES = {
         'is not in the riverId column',
     ),
     'rows out of upstream to downstream order': (lambda table: table.iloc[::-1], 'topologically sorted'),
+    'a river draining into itself': (
+        lambda table: table.assign(
+            nextRiverId=np.where(np.arange(len(table)) == 0, table['riverId'].iloc[0], table['nextRiverId'])
+        ),
+        'drains into itself',
+    ),
+    'a river of zero length': (
+        lambda table: table.assign(muskingumK=np.where(np.arange(len(table)) == 0, 0, table['muskingumK'])),
+        'muskingumK must be positive',
+    ),
+    'an x above one half': (
+        lambda table: table.assign(muskingumX=np.where(np.arange(len(table)) == 0, 0.6, table['muskingumX'])),
+        'muskingumX must be finite and at most 0.5',
+    ),
     'no upstream count': (lambda table: table.drop(columns='upstreamCount'), 'missing the required column'),
     'an upstream count that is off by one': (
         lambda table: table.assign(upstreamCount=table['upstreamCount'] + (np.arange(len(table)) == len(table) - 1)),
@@ -328,20 +342,27 @@ def test_river_ids_beyond_int32_are_kept(willamette: Basin, tmp_path: Path) -> N
     assert written['parentRiverId'].isin(table['riverId']).all()
 
 
-def test_stabilize_splits_each_river_into_stable_pieces_of_its_travel_time(willamette: Basin) -> None:
-    river_ids, k, x = willamette.network.river_ids, willamette.network.k.astype(np.float64), willamette.network.x
+def test_stabilize_splits_each_river_into_non_negative_pieces_that_keep_its_travel_time(willamette: Basin) -> None:
+    """
+    Every piece of a divided river has non-negative coefficients at dt, and its pieces keep the river's mean travel
+    time k and its travel time variance k^2 (1 - 2x), which each piece contributes as k_i^2 (1 - 2 x_i).
+    """
+    river_ids, k = willamette.network.river_ids, willamette.network.k.astype(np.float64)
+    variance = k**2 * (1 - 2 * willamette.network.x.astype(np.float64))
     pieces = {}
     for mode in ('uniform', 'nonuniform'):
         network = rr.Network(willamette.network_file).stabilize(DT, mode=mode)
         river = pd.Index(river_ids).get_indexer(network.parent_river_ids)  # the original river of each piece
         pieces[mode] = np.bincount(river, minlength=river_ids.shape[0])
-        assert_same(np.bincount(river, weights=network.k.astype(np.float64)), k)
-        split = pieces[mode][river] > 1  # only a river whose every piece is stable is split
-        piece_k, piece_x = network.k[split].astype(np.float64), x[river[split]].astype(np.float64)
-        assert np.all(piece_k >= DT / (2 * (1 - piece_x)) * (1 - 1e-6))
-        assert np.all(piece_k * 2 * piece_x <= DT * (1 + 1e-6))
+        piece_k, piece_x = network.k.astype(np.float64), network.x.astype(np.float64)
+        assert_same(np.bincount(river, weights=piece_k), k)
+        assert_same(np.bincount(river, weights=piece_k**2 * (1 - 2 * piece_x)), variance)
+        split = pieces[mode][river] > 1  # only a river whose every piece has non-negative coefficients is split
+        assert np.all(2 * piece_k[split] * piece_x[split] <= DT * (1 + 1e-6))
+        assert np.all(2 * piece_k[split] * (1 - piece_x[split]) >= DT * (1 - 1e-6))
     assert np.any(pieces['uniform'] > 1), 'no river of the basin is too long to route at dt'
     np.testing.assert_array_equal(pieces['nonuniform'], pieces['uniform'])
+    np.testing.assert_array_equal(pieces['uniform'], willamette.network.conditioning(DT)[0])
 
 
 def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
@@ -357,9 +378,9 @@ def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
 def test_networks_report_unstable_rivers(willamette: Basin) -> None:
     network = rr.Network(willamette.network_file)
     assert f'n_rivers={network.size:,}' in repr(network)
-    with pytest.warns(UserWarning, match='not Muskingum-stable'):
+    with pytest.warns(UserWarning, match='negative Muskingum coefficient'):
         network.check_stability(DT, action='warn')
-    with pytest.raises(ValueError, match='not Muskingum-stable'):
+    with pytest.raises(ValueError, match='negative Muskingum coefficient'):
         network.check_stability(DT, action='raise')
 
 

@@ -140,9 +140,14 @@ $$
 \frac{I_t + I_{t+1}}{2} - \frac{Q_t + Q_{t+1}}{2} = \frac{S_{t+1} - S_t}{\Delta t} \tag{2}
 $$
 
-!!! warning "Caution about selecting $\Delta t$"
-    This average is a trapezoidal integral approximation. Choose small $dt$ relative to travel time of the river for best results.
-    At minimum, you must pick $dt$ to satisfy the inequalities in [Numerical stability](#numerical-stability).
+!!! note "What the routed discharge is"
+    Each average replaces a mean over the interval, so the discharge Muskingum solves for, $Q_{t+1}$, is the discharge
+    that, averaged with $Q_t$, is the mean discharge over the interval. It is neither the instantaneous discharge at the
+    end of the step nor the mean over the step on its own. `river-route` writes the mean discharge over each output
+    interval of $m$ routing steps, the trapezoidal mean of the computed discharges,
+    $\left(\frac{Q_0}{2} + Q_1 + \dots + Q_{m-1} + \frac{Q_m}{2}\right)/m$; the plain mean of $Q_1 \dots Q_m$ would
+    lead it by half a routing step. A shorter $\Delta t$ is not more accurate (see
+    [Signs of the coefficients](#signs-of-the-coefficients)).
 
 ### Storage Equation
 
@@ -461,7 +466,7 @@ series is added into the inflow row of the river downstream:
 
 ```python
 for i in range(n_rivers):                        # topological order: upstream before downstream
-    inflow = inflow_rows[i]                      # summed discharge of the rivers upstream of i, at every level
+    inflow = inflow_rows[i]                      # summed discharge of the rivers upstream of i, at every step
     series[0] = q[i]
     for t in range(n_steps):
         q[i] = c1[i] * inflow[t + 1] + c2[i] * inflow[t] + c3[i] * q[i] + c4[i] * runoff_rate[i, t]
@@ -480,75 +485,84 @@ for i in range(n_rivers):                        # topological order: upstream b
 
 This is optimal — every edge is visited exactly once per routing step.
 
-## Numerical stability
+## Signs of the coefficients
 
 ### Relationship between dt, k, x
 
-Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly
-regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative
-discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_3$ is negative. The coefficients
-are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the
-numerators are positive comparing dt (a subjective choice) to k and x (physically derived parameters):
-
-this set of equations shows that for each coefficient, there is an inequality, and there is a range that dt must fall between depending on how large x is
+The coefficients sum to one, so the Muskingum equation conserves mass for any $\Delta t$, $k$, and $x$, and for $x \le 1/2$
+it is stable at every $\Delta t$: it never amplifies the inflow of a river. What the choice of $\Delta t$ relative to $k$
+and $x$ can break is the sign of the coefficients. A negative coefficient makes a negative response to a positive
+inflow: discharge that dips below zero ahead of a rise, or that alternates from step to step and goes negative. The
+coefficients share a denominator, positive for positive $\Delta t$ and $k$, so each is non-negative when its
+numerator is:
 
 $$
 \begin{aligned}
-c_1 > 0 &\implies \Delta t > 2kx \\
-c_2 > 0 &\implies \Delta t > -2kx \\
-c_3 > 0 &\implies \Delta t < 2k(1-x)
+c_1 \ge 0 &\iff \Delta t \ge 2kx \\
+c_2 \ge 0 &\iff \Delta t \ge -2kx \\
+c_3 \ge 0 &\iff \Delta t \le 2k(1-x)
 \end{aligned}
 $$
 
-Note that $c_2$ is always positive because $dt$, $k$, and $x$ are all positive.
-The remaining 2 inequalities can be combined to find the range of valid $dt$ values:
+For $x \ge 0$, $c_2$ is always positive. For $x < 0$ it can be negative, but the response of the river stays
+non-negative as long as $c_1$ and $c_3$ are, since its response to upstream inflow is $c_1$ at the first step and
+$(c_2 + c_1 c_3) c_3^{n-1}$ after, and $c_2 + c_1 c_3 > 0$. Every coefficient is therefore non-negative in the window:
 
 $$
 \begin{gathered}
-2kx < \Delta t < 2k(1-x) \\
-x = 0 \implies 0 < \Delta t < 2k \\
-x = 0.5 \implies k < \Delta t < k \implies \Delta t = k
+2kx \le \Delta t \le 2k(1-x) \\
+x = 0 \implies 0 \le \Delta t \le 2k \\
+x = 0.5 \implies k \le \Delta t \le k \implies \Delta t = k
 \end{gathered}
-$$
-
-For a given $k$ and $x$, the valid range of $dt$ values is:
-
-$$
-\begin{aligned}
-&2k(1-x) - 2kx \\
-&= 2k(1-2x)
-\end{aligned}
 $$
 
 There are several noteworthy insights from these equations:
 
-- When the is no attenuation ($x = 0.5$), the only valid $dt$ is $k$.
-- When the is maximum attenuation ($x = 0$), the valid range of $dt$ is from 0 to $2k$.
-- The lower bound of valid $dt$ values is 0 when $x = 0$ meaning maximum attenuation such as at a reservoir.
-- The upper bound of valid $dt$ values approaches $k$ as $x$ approaches 0.5 meaning no attenuation.
+- When there is no attenuation ($x = 0.5$), the only $\Delta t$ in the window is $k$.
+- When there is maximum attenuation ($x = 0$), the window is from 0 to $2k$.
+- The window spans a factor of $(1-x)/x$ in $k$, 4 at $x = 0.2$, so a network whose travel times span more than that
+  has no step at which every river is inside it.
+- Whatever $\Delta t$ is, the response of a river to its upstream inflow has mean $k$ and variance $k^2(1-2x)$. The
+  step does not change how much a river delays or spreads a flood wave, so a shorter step is not a more accurate one.
 
 ### When k >>> dt
 
-Long river segments have larger $k$ values. It can be hard to pick a large enough $dt$ to satisfy the $c1$ inequality $\Delta t > 2kx$ while
-still keeping it small enough for the simulation result to be meaningful. Rivers in this case should be split into a series of smaller rivers 
-with smaller k. When doing this, you can divide k proportional to the length of the smaller river segment. The `river-route` code refers to 
-this as making **_"substeps"_** down the river.
+A river too long for the step, $\Delta t < 2kx$, has $c_1 < 0$: its discharge dips ahead of a sharp rise. The dip is
+the behavior of the Muskingum model itself, which the step only resolves. Under real runoff it is small, and routing
+the river whole is usually best. To remove it, the river can be divided into $N$ equal sub-reaches of travel time
+$k/N$ in series, which `river-route` calls **_"substeps"_**. Sub-reaches that keep the river's $x$ divide its travel
+time variance by $N$ and route a different, less diffusive river. `river-route` gives each sub-reach
+
+$$
+x_N = \frac{1}{2} - N\left(\frac{1}{2} - x\right),
+$$
+
+the $x$ Muskingum-Cunge gives a reach $N$ times shorter, which keeps both the mean $k$ and the variance $k^2(1-2x)$.
+For $N \ge 2$ and $x < 1/4$, $x_N$ is negative and $c_1$ is positive at any step, so two substeps make the coefficients of
+every river too long at $x = 0.2$ non-negative. In general the fewest is $N = \lceil k / (\Delta t + (1-2x)k) \rceil$.
 
 ### When dt >>> k
 
-Short river segments have smaller $k$ values. It can be hard to pick a small enough $dt$ to satisfy the $c3$ inequality $\Delta t < 2k(1-x)$ 
-while still keeping it large enough for the simulation to compute in a reasonable amount of time. Many higher density delineated rivers will 
-place confluences within a few pixels of each other causing short segments to be made to fill gap between confluences. This happens in real 
-rivers also but more often in DEM delineations. 
+A river too short for the step, $\Delta t > 2k(1-x)$, has $c_3 < 0$: its discharge alternates from step to step,
+amplifies its own runoff by up to $\Delta t / (2k(1-x))$ at the period of two steps, and goes negative under real
+runoff. Many delineated networks place confluences within a few pixels of each other, making short rivers between
+them, and lake outlets are often short too. Such a river is real, and `river-route` routes it in
+**_"subcycles"_**, $m = \lceil \Delta t / (2k(1-x)) \rceil$ steps of its own within each routing step, with its upstream
+inflow interpolated linearly. This changes nothing about the river and costs $m$ times the work on that river only.
 
-**Option 1:** You can handle these rivers by decreasing the time step for all rivers or for only the invalid rivers. The `river-route` code 
-refers to this as making **_"subcycles"_** or multiple computations within what is normally only a single computation cycle. This is a good 
-solution as long as it doesn't make you simulation take an unreasonable amount of additional time. Sometimes the segments are only a few meters 
-long which theoretically need a $dt$ to a few seconds. That is burdensome for marginal accuracy gains. You might also consider:
+The alternatives change the river. Raising $k$ to $\Delta t / (2(1-x))$ adds travel time. Deleting the river and
+joining the rivers upstream of it to the river downstream of it removes its travel time, its storage, and its
+discharge, and moves peaks. Neither is needed to route the network. A river of zero length is the exception: it has no
+travel time or storage, its coefficients are undefined at every step, and it is an artifact of delineation, such as a
+junction of three streams written as two junctions joined by a link of zero length. `river-route` refuses it, and it
+is resolved before routing by joining the rivers upstream of it to the river downstream of it, which is exact.
 
-**Option 2:** Editing your delineated streams to force confluences to overlap that are within a few pixels of each other. The error introduced
-by this is likely quite small relative to the uncertainty you expect in hydrological reconstructions. This is more intense of an exercise 
-because it requires search for rivers and editing the topology information (ID and downstream ID) at minimum but more likely also the geometry.
+### Negative discharge
+
+`river-route` writes negative discharge as routed. Clamping it to zero would hide the river that produced it, keep
+the positive half of an alternation, and either gain the clamped water, if the clamped series flowed downstream, or
+report discharge that no longer adds up to the routed volume. A river with negative discharge is a river outside the
+window, which substeps or subcycles treat.
 
 ## References
 

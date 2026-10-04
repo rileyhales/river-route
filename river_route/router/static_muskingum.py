@@ -1,8 +1,8 @@
 """
 Muskingum routing with static coefficients: each river's c1, c2, and c3 are fixed for the whole run by its k and x and
 the routing step. On a stabilized network a river too long for the routing step is routed in substeps, equal
-sub-reaches in series, and a river too short for it is routed in subcycles, shorter steps of its own, each as
-``Network.conditioning`` finds it needs to be stable.
+sub-reaches in series with the x that keeps the river's diffusion, and a river too short for it is routed in subcycles,
+shorter steps of its own, each as ``Network.conditioning`` finds it needs for every coefficient to be non-negative.
 """
 
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -38,41 +38,43 @@ def prepare_routing(
 ) -> tuple[Layout, StaticMuskingum]:
     """
     Each river's layout and coefficients at ``dt_routing``. On a stabilized network a river too long for dt_routing is
-    divided into N substeps, sub-reaches that are each k/N long and take 1/N of its runoff, so one set of coefficients
-    serves all of them, and a river too short for it is routed in m subcycles of dt_routing/m, so its coefficients are
-    built for that step. Rivers that are still unstable are reported as ``unstable_coefficients`` says.
+    divided into N substeps, sub-reaches that are each k/N long with the x of ``Network.substep_x`` and take 1/N of its
+    runoff, so one set of coefficients serves all of them, and a river too short for it is routed in m subcycles of
+    dt_routing/m, so its coefficients are built for that step. Rivers that still have a negative coefficient are
+    reported as ``unstable_coefficients`` says.
 
     Args:
         network: the network whose k and x the coefficients are built from
         network_type: ``standard`` routes each river whole, ``stabilized`` in substeps and subcycles
         dt_routing: the routing step in seconds
         dt_runoff: the runoff step in seconds, which turns each catchment runoff volume into an inflow rate
-        unstable_coefficients: what to do about rivers that are not Muskingum-stable: warn, raise, or ignore
+        unstable_coefficients: what to do about rivers with a negative coefficient: warn, raise, or ignore
 
     Returns:
         tuple: (the Layout each river is routed with, the StaticMuskingum coefficients of every river)
 
     Raises:
-        ValueError: if the coefficients do not sum to 1, or unstable_coefficients is raise and a river is unstable
+        ValueError: if the coefficients do not sum to 1, or unstable_coefficients is raise and a coefficient is negative
     """
     substeps: IntArray | None = None
     subcycles: IntArray | None = None
     dt_river: FloatArray | int = dt_routing
-    layout, k = STANDARD_LAYOUT, network.k
+    layout, k, x = STANDARD_LAYOUT, network.k, network.x
     if network_type == 'stabilized':
         substeps, subcycles, _ = network.conditioning(dt_routing)
         reach_indptr = np.zeros(network.size + 1, dtype=np.int64)
         np.cumsum(substeps, out=reach_indptr[1:])
         layout = Layout(reach_indptr, subcycles if np.any(subcycles > 1) else STANDARD_LAYOUT.subcycles)
         k = (network.k / substeps).astype(np.float32)
+        x = network.substep_x(substeps).astype(np.float32)  # the river's own x where it is not divided
         dt_river = (dt_routing / subcycles).astype(np.float32)  # float32 like the standard network's math
     dt_div_k = dt_river / k
-    denominator = dt_div_k + (2 * (1 - network.x))
-    two_x = 2 * network.x
+    denominator = dt_div_k + (2 * (1 - x))
+    two_x = 2 * x
     # contiguous arrays iterate faster in kernels due to cpu and ram access patterns
     c1 = np.ascontiguousarray((dt_div_k - two_x) / denominator, dtype=np.float32)
     c2 = np.ascontiguousarray((dt_div_k + two_x) / denominator, dtype=np.float32)
-    c3 = np.ascontiguousarray(((2 * (1 - network.x)) - dt_div_k) / denominator, dtype=np.float32)
+    c3 = np.ascontiguousarray(((2 * (1 - x)) - dt_div_k) / denominator, dtype=np.float32)
     c4_dt = np.ascontiguousarray((c1 + c2) / dt_runoff, dtype=np.float32)
     if substeps is not None:
         c4_dt = np.ascontiguousarray(c4_dt / substeps, dtype=np.float32)
@@ -129,8 +131,8 @@ def _solve_muskingum_recurrence_in_place(q, c3, work, n):
 def _interpolate_upstream_inflow_for_subcycles(inflow, subcycles, c1, c2, work, n_routing):
     """
     The upstream forcing of a river routed in subcycles, steps of its own, per routing step, with the upstream series
-    interpolated linearly between the routing step levels: work[g * subcycles + s] = c1 * after + c2 * before for each
-    of its own steps.
+    interpolated linearly between its values at the routing steps: work[g * subcycles + s] = c1 * after + c2 * before
+    for each of its own steps.
 
     Compiled without fastmath contract, unlike the rest of the river routine. With contract, whether these multiply-
     adds were fused differed between freshly compiled code and the same code loaded from the numba cache, so a
@@ -152,16 +154,22 @@ def _route_river_with_static_coefficients(
 ):
     """
     Route river r's whole series through its ``n_pieces`` equal sub-reaches in series, whose states are
-    ``q_t[p0:p0 + n_pieces]``: one piece on a standard network, and as many as stability needs on a stabilized one.
-    The last piece's unclamped series is added into ``downstream_inflow`` and its clamped per-step mean is written into
-    ``discharge``; the states are updated in place. ``catchment_runoff`` is None for channel routing, and every piece
-    takes an equal share of it through ``c4_dt``, added into the piece's forcing by add_river_forcing.
+    ``q_t[p0:p0 + n_pieces]``: one piece on a standard network, and as many as keep the coefficients non-negative on a
+    stabilized one. The last piece's series of discharges is added into ``downstream_inflow``, and the trapezoidal mean
+    of its discharges over each runoff step, the mean discharge over the step, is written into ``discharge``; the states
+    are updated in place. ``catchment_runoff`` is None for channel routing, and every piece takes an equal share of it
+    through ``c4_dt``, added into the piece's forcing by add_river_forcing.
+
+    The discharge Muskingum solves for at each step, averaged with the discharge of the step before, is the mean
+    discharge over the step between them. The mean over a runoff step of m routing steps is therefore (q_0/2 + q_1 + ...
+    + q_(m-1) + q_m/2)/m, with q_0 the discharge at its start. The plain mean of q_1 ... q_m would lead it by half a
+    routing step.
 
     ``subcycles`` overrides the routing step of the river: each routing step is taken as that many equal steps of its
-    own, which is how a river too short for the routing step is kept stable. The upstream series arrives once per
-    routing step and is interpolated linearly between those levels, and the downstream river is handed the level at the
-    end of each routing step, since Muskingum inflow is the discharge at the time levels. With one subcycle the river
-    is routed at the routing step.
+    own, which is how a river too short for the routing step keeps every coefficient non-negative. The upstream series
+    arrives once per routing step and is interpolated linearly between those values, and the downstream river is handed
+    the discharge at the end of each routing step, since Muskingum inflow is the discharge at the routing steps. With
+    one subcycle the river is routed at the routing step.
 
     ``work`` holds every step the river takes and ``chain`` one more, which carries a piece's series to the next piece
     in the same layout as an inflow row.
@@ -179,10 +187,12 @@ def _route_river_with_static_coefficients(
     c3 = method.c3[r]
     c4_dt = method.c4_dt[r]
     zero = np.float32(0.0)
+    half = np.float32(0.5)
     n_steps = discharge.shape[0]
-    n_routing = inflow.shape[0] - 1  # an inflow row holds the level before the first routing step and at every step
+    n_routing = inflow.shape[0] - 1  # an inflow row holds the discharge before the first routing step and at every step
     n_per_step = (n_routing // n_steps) * subcycles  # the river's own steps per runoff step
     n_fine = n_steps * n_per_step
+    first_discharge = q_t[p0 + n_pieces - 1]  # the outlet piece's discharge at the start of the first runoff step
     piece_inflow = inflow
     for j in range(n_pieces):
         # forcing of every step, all known before the recurrence starts
@@ -212,18 +222,22 @@ def _route_river_with_static_coefficients(
                 chain[h + 1] = work[h]
             piece_inflow = chain
 
-    # only coefficients that are not Muskingum-stable give negative discharge, which unstable_coefficients reports.
-    # It is clamped to zero here, which does not conserve mass; the unclamped series is what flows downstream.
+    # only negative coefficients give negative discharge, which unstable_coefficients reports. It is written as
+    # routed, negative values included, so the written discharge conserves mass.
+    before = first_discharge
     if n_per_step == 1:
         for t in range(n_steps):
-            discharge[t] = max(zero, work[t])
+            discharge[t] = half * (before + work[t])
+            before = work[t]
     else:
         inv_per_step = np.float32(1.0 / n_per_step)
         for t in range(n_steps):
             interval_sum = zero
             for h in range(t * n_per_step, (t + 1) * n_per_step):
                 interval_sum += work[h]
-            discharge[t] = max(zero, interval_sum * inv_per_step)
+            after = work[(t + 1) * n_per_step - 1]
+            discharge[t] = (interval_sum + half * (before - after)) * inv_per_step
+            before = after
     return
 
 

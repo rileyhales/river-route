@@ -8,7 +8,7 @@ from .runoff import CatchmentRunoff, ECMWFGribReducedGrid, GridRunoff
 __all__ = [
     # configuration, the object every other class is built from
     'Configs',
-    # the river network: topology, parameters, partitioning, stability analysis, substeps and subcycles
+    # the river network: topology, parameters, partitioning, coefficient signs, substeps and subcycles
     'Network',
     # routing
     'Router',

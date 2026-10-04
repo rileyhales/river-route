@@ -65,7 +65,8 @@ def _route_river_with_dynamic_coefficients(
     """
     Nonlinear Muskingum for river r's whole series. The coefficients are rebuilt from the river's own discharge every
     routing step, and the upstream series is weighted by them. The layout is always standard, so ``chain`` goes unused,
-    and ``work`` holds the river's catchment runoff series, which each step reads as it is routed.
+    and ``work`` holds the river's catchment runoff series, which each step reads as it is routed. The discharge of a
+    runoff step is the trapezoidal mean of the river's discharges over it, as for static coefficients.
     """
     alpha = method.alpha[r]
     beta = method.beta[r]
@@ -73,11 +74,12 @@ def _route_river_with_dynamic_coefficients(
     dt_routing = method.dt_routing
     inv_dt_runoff = method.inv_dt_runoff
     zero = np.float32(0.0)
+    half = np.float32(0.5)
     qmin = np.float32(1e-6)
     two_x = np.float32(2.0) * x
     two_one_minus_x = np.float32(2.0) * (np.float32(1.0) - x)
     n_steps = discharge.shape[0]
-    # an inflow row holds the level before the first step and at every step
+    # an inflow row holds the discharge before the first step and at every step
     routing_steps_per_runoff_step = (inflow.shape[0] - 1) // n_steps
     inv_routing_steps_per_runoff_step = np.float32(1.0 / routing_steps_per_runoff_step)
     if catchment_runoff is not None:
@@ -92,6 +94,7 @@ def _route_river_with_dynamic_coefficients(
         external = zero
         if catchment_runoff is not None:
             external = work[t] * inv_dt_runoff
+        before = q  # the discharge at the start of the runoff step
         interval_sum = zero
         for _ in range(routing_steps_per_runoff_step):
             k = alpha * max(qmin, q) ** beta
@@ -106,9 +109,7 @@ def _route_river_with_dynamic_coefficients(
             downstream_inflow[g] += q
             interval_sum += q
             g += 1
-        # coefficients that are not Muskingum-stable give negative discharge, which is clamped to zero here and does not
-        # conserve mass; the unclamped value is what flows downstream and carries to the next step
-        discharge[t] = max(zero, interval_sum * inv_routing_steps_per_runoff_step)
+        discharge[t] = (interval_sum + half * (before - q)) * inv_routing_steps_per_runoff_step
     q_t[r] = q
     return
 

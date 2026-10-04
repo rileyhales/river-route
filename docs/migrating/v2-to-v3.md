@@ -106,7 +106,7 @@ New keys, each with a default that matches v2 except `forcing`, which must be se
 | `forcing`                 | `'channel'`  | `'channel'`, or the form of `runoff_files`: `'catchment'`, `'grid'`, `'ecmwf_grib'` |
 | `transform`               | `'uniform'`  | The only option                                                                     |
 | `network_type`            | `'standard'` | `'standard'`, or `'stabilized'` to route every resolvable river stably               |
-| `unstable_coefficients`   | `'warn'`     | `'warn'`, `'raise'`, or `'ignore'` rivers that are unstable at `dt_routing`         |
+| `unstable_coefficients`   | `'warn'`     | `'warn'`, `'raise'`, or `'ignore'` rivers with a negative coefficient at `dt_routing` |
 | `runoff_depth_unit`       | `None`       | Unit of gridded runoff depths; `None` reads the file attributes                     |
 | `force_positive_runoff`   | `false`      | Clip negative runoff depths to zero                                                 |
 | `as_volumes`              | `false`      | Prepare catchment runoff as volumes (m³) instead of depths (m)                      |

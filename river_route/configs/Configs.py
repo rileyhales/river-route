@@ -93,7 +93,7 @@ class Configs:
     forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
     transform: Literal['uniform'] = 'uniform'
     network_type: Literal['standard', 'stabilized'] = 'standard'  # route as given, or add substeps/subcycles
-    unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a river is not stable for dt
+    unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a coefficient is negative at dt
 
     # Network and routing descriptor
     network_file: PathInput | None = None
@@ -417,8 +417,9 @@ class Configs:
             raise ValueError(f'{self.network_file} muskingumK and muskingumX columns must not contain null values')
         if np.any(network_df['muskingumK'] <= 0):
             raise ValueError(f'{self.network_file} muskingumK column must be positive')
-        if np.any(network_df['muskingumX'] < 0) or np.any(network_df['muskingumX'] > 0.5):
-            raise ValueError(f'{self.network_file} muskingumX column must be in the range [0, 0.5]')
+        # x is negative on the sub-reaches Network.write_stabilized writes for a river too long for its routing step
+        if np.any(network_df['muskingumX'] > 0.5):
+            raise ValueError(f'{self.network_file} muskingumX column must be at most 0.5')
 
         # dynamic coefficients are rebuilt in the kernel from K = dynamicAlpha * Q ** dynamicBeta
         if self.coefficients == 'dynamic':

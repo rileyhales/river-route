@@ -16,7 +16,7 @@ which together choose the kernel:
 | `coefficients` | `static` (constant Muskingum K from `muskingumK`,`muskingumX`) or `dynamic` (nonlinear K = dynamicAlpha*Q^dynamicBeta from `dynamicAlpha`,`dynamicBeta`,`muskingumX`). Default `static`. |
 | `forcing`      | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                                           |
 | `transform`    | `uniform` (the default and only option): each step's catchment runoff enters its river at a constant rate over the step.                                                                 |
-| `network_type` | `standard` (one reach per river, the default) or `stabilized` (each river routed in the substeps or subcycles that make it stable at `dt_routing`, where any do).                        |
+| `network_type` | `standard` (one reach per river, the default) or `stabilized` (each river routed in the substeps or subcycles that make its coefficients non-negative at `dt_routing`). |
 
 The one combination no routing method routes yet, `dynamic` coefficients on a `stabilized` network, raises
 `NotImplementedError` before any runoff is read.
@@ -61,7 +61,7 @@ those same values off a `Configs`. `examples/config.json` lists every option.
 | Class        | Owns                                                                                                             |
 |--------------|------------------------------------------------------------------------------------------------------------------|
 | `Configs`    | Every option, frozen. Built once and passed to the classes below.                                                |
-| `Network`    | The river network: ids, topology, k and x, the concurrent partition, stability analysis, substeps and subcycles. |
+| `Network`    | The river network: ids, topology, k and x, the concurrent partition, coefficient signs, substeps and subcycles.  |
 | `Router`     | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.                    |
 | `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many runoff files.                           |
 
