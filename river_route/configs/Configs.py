@@ -33,8 +33,9 @@ def check_channel_state_rivers(
 ) -> None:
     """
     Raise ValueError unless the riverId column of a channel state file lists the rivers of the network in network
-    order: one row per river, or with ``per_sub_reach``, as a stabilized network's final state is written, a run of
-    rows per river, one per sub-reach. The number of sub-reaches depends on dt_routing and is checked when routing.
+    order: one row per river, or with ``per_sub_reach``, as the final state of a run with force_validity is written, a
+    run of rows per river, one per sub-reach. The number of sub-reaches depends on dt_routing and is checked when
+    routing.
     """
     if per_sub_reach and state_river_ids.shape[0]:
         first_row_of_river = np.ones(state_river_ids.shape[0], dtype=bool)
@@ -89,11 +90,11 @@ class Configs:
     # _derive_path_sets() will detect them by inspecting class annotations
 
     # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
-    coefficients: Literal['static', 'dynamic'] = 'static'
+    parameterization: Literal['static', 'power_law'] = 'static'  # constant k and x, or k recomputed from discharge
     forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
     transform: Literal['uniform'] = 'uniform'
-    network_type: Literal['standard', 'stabilized'] = 'standard'  # route as given, or add substeps/subcycles
-    unstable_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a coefficient is negative at dt
+    force_validity: bool = True  # route rivers in the substeps or subcycles that keep every coefficient non-negative
+    invalid_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a coefficient is negative at dt
 
     # Network and routing descriptor
     network_file: PathInput | None = None
@@ -144,11 +145,6 @@ class Configs:
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
     # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
     _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
-    # the network types the routing method of each coefficients option can route
-    _NETWORK_TYPES_FOR_COEFFICIENTS: ClassVar[dict[str, frozenset[str]]] = {
-        'static': frozenset({'standard', 'stabilized'}),
-        'dynamic': frozenset({'standard'}),
-    }
     # the time steps given in whole seconds, where 0 derives the step from the other options and the runoff files
     _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_routing', 'dt_discharge', 'dt_total')
 
@@ -347,9 +343,9 @@ class Configs:
             if len(set(outputs)) != len(outputs):
                 raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
         # options that are consistent, but that no routing method routes yet
-        if self.network_type not in self._NETWORK_TYPES_FOR_COEFFICIENTS[self.coefficients]:
+        if self.parameterization != 'static' and self.force_validity:
             raise NotImplementedError(
-                f'{self.coefficients} coefficients cannot route a {self.network_type} network yet'
+                f'the {self.parameterization} parameterization cannot force validity yet; set force_validity to False'
             )
         object.__setattr__(self, '_routing_validated', True)
         return self
@@ -376,8 +372,8 @@ class Configs:
         Validate the contents of the network file, the grid weight table, and the initial channel state, whichever are
         set, and their consistency with each other: the network file columns, types, and value ranges and that it is
         topologically sorted, that the grid weight table matches the network file and its proportions sum to 1 per
-        river, and that the initial channel state has one row per river, or on a stabilized network one per
-        sub-reach. The runoff files are not read.
+        river, and that the initial channel state has one row per river, or with force_validity one per sub-reach.
+        The runoff files are not read.
 
         Nothing calls this for you. It reads every input file, which is the same work routing is about to do, so
         run it once on inputs you have not checked before rather than on every route. ``validate_routing`` and
@@ -397,7 +393,7 @@ class Configs:
         # the columns and their values are checked here. Building the Network then checks the topology: unique ids,
         # every nextRiverId a riverId or -1, rows sorted upstream to downstream, and upstreamCount describing their
         # DFS order. It is imported here because the network module imports Configs.
-        from river_route.network.Network import REQUIRED_COLUMNS, Network
+        from river_route.network.Network import PARAMETERIZATION_COLUMNS, REQUIRED_COLUMNS, Network
 
         try:
             network_df = pd.read_parquet(self.network_file)
@@ -421,19 +417,19 @@ class Configs:
         if np.any(network_df['muskingumX'] > 0.5):
             raise ValueError(f'{self.network_file} muskingumX column must be at most 0.5')
 
-        # dynamic coefficients are rebuilt in the kernel from K = dynamicAlpha * Q ** dynamicBeta
-        if self.coefficients == 'dynamic':
-            for column in ('dynamicAlpha', 'dynamicBeta'):
-                if column not in network_df.columns:
-                    raise ValueError(
-                        f'{self.network_file} missing {column} column required when coefficients is dynamic'
-                    )
-                if network_df[column].isna().any():
-                    raise ValueError(f'{self.network_file} {column} column contains null values')
-                if not pd.api.types.is_numeric_dtype(network_df[column]):
-                    raise ValueError(f'{self.network_file} {column} column must be numeric type')
-            if np.any(network_df['dynamicAlpha'] <= 0):
-                raise ValueError(f'{self.network_file} dynamicAlpha column must be strictly positive')
+        # the columns the parameterization reads beyond the required ones; static reads only muskingumK and muskingumX
+        for column in PARAMETERIZATION_COLUMNS[self.parameterization]:
+            if column not in network_df.columns:
+                raise ValueError(
+                    f'{self.network_file} missing {column} column required by the {self.parameterization} '
+                    f'parameterization'
+                )
+            if network_df[column].isna().any():
+                raise ValueError(f'{self.network_file} {column} column contains null values')
+            if not pd.api.types.is_numeric_dtype(network_df[column]):
+                raise ValueError(f'{self.network_file} {column} column must be numeric type')
+        if self.parameterization == 'power_law' and np.any(network_df['powerLawAlpha'] <= 0):
+            raise ValueError(f'{self.network_file} powerLawAlpha column must be strictly positive')
 
         Network(self.network_file)
         # riverIndex numbers the rows of a river's watershed, the rows riverIndex - upstreamCount to riverIndex
@@ -478,7 +474,7 @@ class Configs:
     def _deep_validate_channel_state_init_file(self, state_file: PathInput, network_df: pd.DataFrame | None) -> None:
         # initial channel state should be parquet with an integer riverId column and a column named Q, non-null,
         # numeric, and non-negative. riverId lists the rivers of the network file in the same order, one row per
-        # river, or on a stabilized network one row per sub-reach, whose count is checked when routing.
+        # river, or with force_validity one row per sub-reach, whose count is checked when routing.
         try:
             state_df = pd.read_parquet(state_file)
         except Exception as e:
@@ -497,10 +493,7 @@ class Configs:
         if network_df is None:
             return
         check_channel_state_rivers(
-            state_df['riverId'].to_numpy(),
-            network_df['riverId'].to_numpy(),
-            self.network_type == 'stabilized',
-            state_file,
+            state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.force_validity, state_file
         )
         return
 

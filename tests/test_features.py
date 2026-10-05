@@ -38,9 +38,9 @@ REFUSED_CONFIGS = {
         'forcing must be one of',
     ),
     'selectors take only their values': (
-        lambda basin, d: {'coefficients': 'sideways'},
+        lambda basin, d: {'parameterization': 'sideways'},
         ValueError,
-        'coefficients must be one of',
+        'parameterization must be one of',
     ),
     'catchment runoff takes no grid weights': (
         lambda basin, d: {'forcing': 'catchment'},
@@ -150,9 +150,9 @@ BROKEN_TABLES = {
 }
 
 UNSUPPORTED_OPTIONS = {
-    'dynamic coefficients on a stabilized network': (
-        lambda basin: {'coefficients': 'dynamic', 'network_type': 'stabilized'},
-        'cannot route a stabilized network',
+    'a power law that forces validity': (
+        lambda basin: {'parameterization': 'power_law', 'force_validity': True},
+        'cannot force validity',
     )
 }
 
@@ -217,9 +217,9 @@ def test_configs_round_trip_through_json(outputs: str, willamette: Basin, tmp_pa
 
 
 def test_preparing_runoff_does_not_skip_routing_validation(willamette: Basin, tmp_path: Path) -> None:
-    configs = rr.Configs(**routing_options(willamette, tmp_path), coefficients='dynamic', network_type='stabilized')
+    configs = rr.Configs(**routing_options(willamette, tmp_path), parameterization='power_law', force_validity=True)
     rr.GridRunoff.from_configs(configs)  # validates the configs for preparing runoff, not for routing
-    with pytest.raises(NotImplementedError, match='cannot route a stabilized network'):
+    with pytest.raises(NotImplementedError, match='cannot force validity'):
         rr.Router(configs).route()
 
 
@@ -240,17 +240,17 @@ def test_deep_validate_finds_broken_network_files(breaks, message, willamette: B
         rr.Configs(network_file=tmp_path / 'network.parquet').deep_validate()
 
 
-def test_deep_validate_checks_a_state_against_the_network_type(willamette: Basin, tmp_path: Path) -> None:
+def test_deep_validate_checks_a_state_against_force_validity(willamette: Basin, tmp_path: Path) -> None:
     final_state = tmp_path / 'final_state.parquet'
     options = {'network_file': willamette.network_file, 'channel_state_final_file': final_state}
-    route(tmp_path, willamette.months[:1], network_type='stabilized', **options)
-    stabilized_state = {'network_file': willamette.network_file, 'channel_state_init_file': final_state}
-    rr.Configs(**stabilized_state, network_type='stabilized').deep_validate()  # one row per sub-reach
+    route(tmp_path, willamette.months[:1], force_validity=True, **options)
+    sub_reach_state = {'network_file': willamette.network_file, 'channel_state_init_file': final_state}
+    rr.Configs(**sub_reach_state, force_validity=True).deep_validate()  # one row per sub-reach
     with pytest.raises(ValueError, match='rivers, the network has'):
-        rr.Configs(**stabilized_state).deep_validate()
+        rr.Configs(**sub_reach_state, force_validity=False).deep_validate()
     pd.read_parquet(final_state, columns=['Q']).to_parquet(tmp_path / 'no_ids.parquet')
     with pytest.raises(ValueError, match='missing riverId'):
-        rr.Configs(**(stabilized_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
+        rr.Configs(**(sub_reach_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
 
 
 def test_deep_validate_finds_weights_that_do_not_sum_to_one(willamette: Basin, tmp_path: Path) -> None:
@@ -294,16 +294,16 @@ def test_the_routing_blocks_route_every_river_once(threads: int, package: Path, 
 
 
 @pytest.mark.parametrize('dt', [3600, 900])
-def test_conditioning_makes_every_river_stable(dt: int, package: Path, manifest: dict) -> None:
+def test_conditioning_makes_every_river_valid(dt: int, package: Path, manifest: dict) -> None:
     network = rr.Network(package / manifest['runs']['static_standard']['configs']['network_file'])
     substeps, subcycles, resolvable = network.conditioning(dt)
     assert resolvable.all()
-    too_long, too_short = network.unstable_mask(dt, substeps, subcycles)
+    too_long, too_short = network.invalid_mask(dt, substeps, subcycles)
     assert not too_long.any() and not too_short.any()
 
 
-def test_the_largest_stable_dt_divides_the_runoff_step(willamette: Basin) -> None:
-    dt = willamette.network.largest_stable_dt(DT)
+def test_the_largest_valid_dt_divides_the_runoff_step(willamette: Basin) -> None:
+    dt = willamette.network.largest_valid_dt(DT)
     assert DT % dt == 0 and willamette.network.conditioning(dt)[2].all()
 
 
@@ -317,7 +317,7 @@ def test_write_stabilized_writes_only_its_output(willamette: Basin, tmp_path: Pa
     np.testing.assert_array_equal(written['riverId'], stabilized.river_ids)
     np.testing.assert_array_equal(written['synthetic'], stabilized.synthetic)
     assert np.all(np.diff(written['riverIndex']) == 1), 'the added sub-reaches are numbered in with the rivers'
-    rr.Configs(network_file=tmp_path / 'stabilized.parquet', network_type='stabilized').deep_validate()
+    rr.Configs(network_file=tmp_path / 'stabilized.parquet', force_validity=True).deep_validate()
     with pytest.raises(ValueError, match='needs a path'):
         rr.Network(pd.read_parquet(source)).write_stabilized(DT)
 
@@ -375,13 +375,13 @@ def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
     np.testing.assert_array_equal(network.next_river_ids[0::2], network.river_ids[1::2])
 
 
-def test_networks_report_unstable_rivers(willamette: Basin) -> None:
+def test_networks_report_invalid_rivers(willamette: Basin) -> None:
     network = rr.Network(willamette.network_file)
     assert f'n_rivers={network.size:,}' in repr(network)
     with pytest.warns(UserWarning, match='negative Muskingum coefficient'):
-        network.check_stability(DT, action='warn')
+        network.check_validity(DT, action='warn')
     with pytest.raises(ValueError, match='negative Muskingum coefficient'):
-        network.check_stability(DT, action='raise')
+        network.check_validity(DT, action='raise')
 
 
 @pytest.fixture(scope='module')
@@ -516,6 +516,14 @@ def test_unsupported_options_raise_before_routing(changes, message, willamette: 
         route(tmp_path, **(willamette.gridded(months=1) | changes(willamette)))
 
 
+def test_a_parameterization_needs_its_columns(willamette: Basin, tmp_path: Path) -> None:
+    power_law = {'network_file': willamette.network_file, 'parameterization': 'power_law', 'force_validity': False}
+    with pytest.raises(ValueError, match='missing powerLawAlpha column required by the power_law parameterization'):
+        rr.Configs(**power_law).deep_validate()
+    with pytest.raises(ValueError, match='powerLawAlpha, powerLawBeta that the power_law parameterization'):
+        route(tmp_path, willamette.months[:1], **power_law)
+
+
 @pytest.mark.parametrize('threads', [0, True, 2.0])
 def test_threads_must_be_a_positive_integer(threads, willamette: Basin, tmp_path: Path) -> None:
     router = rr.Router(rr.Configs(**routing_options(willamette, tmp_path)))
@@ -541,18 +549,20 @@ def test_runoff_must_come_in_uniform_time_steps(cut, message, willamette: Basin,
         route(tmp_path, [cut(*willamette.months[0])], network_file=willamette.network_file)
 
 
-def test_a_stabilized_run_refuses_sub_reaches_that_change_between_files(willamette: Basin, tmp_path: Path) -> None:
+def test_a_run_that_forces_validity_refuses_sub_reaches_that_change_between_files(
+    willamette: Basin, tmp_path: Path
+) -> None:
     (march_dates, march), (april_dates, april) = willamette.months[:2]
     n_steps = april.shape[1] // 3 * 3
     three_hourly = april[:, :n_steps].reshape(april.shape[0], -1, 3).sum(axis=2)
     network = willamette.network
     hourly_reaches, three_hourly_reaches = (
-        network.conditioning(network.largest_stable_dt(dt))[0].sum() for dt in (DT, 3 * DT)
+        network.conditioning(network.largest_valid_dt(dt))[0].sum() for dt in (DT, 3 * DT)
     )
     assert hourly_reaches != three_hourly_reaches, 'both time steps route the same sub-reaches'
     months = [(march_dates, march), (april_dates[:n_steps:3], three_hourly)]
     with pytest.raises(ValueError, match='sub-reaches'):
-        route(tmp_path, months, network_file=willamette.network_file, network_type='stabilized')
+        route(tmp_path, months, network_file=willamette.network_file, force_validity=True)
 
 
 def test_null_device_outputs_are_routed_and_discarded(willamette: Basin, tmp_path: Path) -> None:
@@ -675,7 +685,7 @@ def test_the_command_line_routes_a_config_file(willamette: Basin, tmp_path: Path
     command = [sys.executable, '-m', 'river_route._cli', 'route', str(tmp_path / 'configs.json')]
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    expected = route(tmp_path, **willamette.gridded(months=1)).discharge[0]
+    expected = route(tmp_path, **willamette.gridded(months=1), force_validity=configs.force_validity).discharge[0]
     with xr.open_zarr(tmp_path / 'discharge.zarr') as written:
         assert_same(written['Q'].to_numpy(), expected)
 

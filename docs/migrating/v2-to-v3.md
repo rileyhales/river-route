@@ -98,18 +98,19 @@ file into it. The following config keys have been renamed, removed, or added.
 | `var_river_id`        | _(removed)_, every file uses `riverId`   |
 | `var_discharge`       | _(removed)_, discharge is always `Q`     |
 
-New keys, each with a default that matches v2 except `forcing`, which must be set to route runoff:
+New keys, each with a default that matches v2 except `forcing`, which must be set to route runoff, and
+`force_validity`, which routes in substeps or subcycles the rivers v2 routed whole with a negative coefficient:
 
-| Key                       | Default      | Description                                                                         |
-|---------------------------|--------------|-------------------------------------------------------------------------------------|
-| `coefficients`            | `'static'`   | `'static'` Muskingum K from `muskingumK`, or `'dynamic'` from `dynamicAlpha`, `dynamicBeta` |
-| `forcing`                 | `'channel'`  | `'channel'`, or the form of `runoff_files`: `'catchment'`, `'grid'`, `'ecmwf_grib'` |
-| `transform`               | `'uniform'`  | The only option                                                                     |
-| `network_type`            | `'standard'` | `'standard'`, or `'stabilized'` to route every resolvable river stably               |
-| `unstable_coefficients`   | `'warn'`     | `'warn'`, `'raise'`, or `'ignore'` rivers with a negative coefficient at `dt_routing` |
-| `runoff_depth_unit`       | `None`       | Unit of gridded runoff depths; `None` reads the file attributes                     |
-| `force_positive_runoff`   | `false`      | Clip negative runoff depths to zero                                                 |
-| `as_volumes`              | `false`      | Prepare catchment runoff as volumes (m³) instead of depths (m)                      |
+| Key                     | Default     | Description                                                                                                                            |
+|-------------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| `parameterization`      | `'static'`  | `'static'` Muskingum k and x from `muskingumK` and `muskingumX`, or `'power_law'`: k = `powerLawAlpha` * Q ^ `powerLawBeta` every step |
+| `forcing`               | `'channel'` | `'channel'`, or the form of `runoff_files`: `'catchment'`, `'grid'`, `'ecmwf_grib'`                                                    |
+| `transform`             | `'uniform'` | The only option                                                                                                                        |
+| `force_validity`        | `True`      | Route rivers in substeps and subcycles so every coefficient is non-negative; `False` routes each river whole, as v2 did                |
+| `invalid_coefficients`  | `'warn'`    | `'warn'`, `'raise'`, or `'ignore'` rivers with a negative coefficient at `dt_routing`                                                  |
+| `runoff_depth_unit`     | `None`      | Unit of gridded runoff depths; `None` reads the file attributes                                                                        |
+| `force_positive_runoff` | `false`     | Clip negative runoff depths to zero                                                                                                    |
+| `as_volumes`            | `false`     | Prepare catchment runoff as volumes (m³) instead of depths (m)                                                                         |
 
 `forcing` must be set to route runoff: with the default, `channel`, any `runoff_files` are ignored.
 

@@ -1,11 +1,11 @@
 """
 Muskingum routing with static coefficients: each river's c1, c2, and c3 are fixed for the whole run by its k and x and
-the routing step. On a stabilized network a river too long for the routing step is routed in substeps, equal
-sub-reaches in series with the x that keeps the river's diffusion, and a river too short for it is routed in subcycles,
-shorter steps of its own, each as ``Network.conditioning`` finds it needs for every coefficient to be non-negative.
+the routing step. With force_validity a river too long for the routing step is routed in substeps, equal sub-reaches in
+series with the x that keeps the river's diffusion, and a river too short for it is routed in subcycles, shorter steps
+of its own, each as ``Network.conditioning`` finds it needs for every coefficient to be non-negative.
 """
 
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numba
 import numpy as np
@@ -14,6 +14,7 @@ from numba.extending import overload
 from ._numba_kernels import STANDARD_LAYOUT, Layout, add_river_forcing, is_argument_type, route_river
 
 if TYPE_CHECKING:
+    from ..configs.Configs import Configs
     from ..network.Network import Network
     from ..types import FloatArray, IntArray
 
@@ -30,44 +31,40 @@ class StaticMuskingum(NamedTuple):
 
 
 def prepare_routing(
-    network: Network,
-    network_type: Literal['standard', 'stabilized'],
-    dt_routing: int,
-    dt_runoff: int,
-    unstable_coefficients: Literal['warn', 'raise', 'ignore'],
+    network: Network, configs: Configs, dt_routing: int, dt_runoff: int
 ) -> tuple[Layout, StaticMuskingum]:
     """
-    Each river's layout and coefficients at ``dt_routing``. On a stabilized network a river too long for dt_routing is
+    Each river's layout and coefficients at ``dt_routing``. With ``force_validity`` a river too long for dt_routing is
     divided into N substeps, sub-reaches that are each k/N long with the x of ``Network.substep_x`` and take 1/N of its
     runoff, so one set of coefficients serves all of them, and a river too short for it is routed in m subcycles of
     dt_routing/m, so its coefficients are built for that step. Rivers that still have a negative coefficient are
-    reported as ``unstable_coefficients`` says.
+    reported as ``invalid_coefficients`` says.
 
     Args:
         network: the network whose k and x the coefficients are built from
-        network_type: ``standard`` routes each river whole, ``stabilized`` in substeps and subcycles
+        configs: ``force_validity`` routes rivers in substeps and subcycles, and ``invalid_coefficients`` says what
+            to do about rivers with a negative coefficient: warn, raise, or ignore
         dt_routing: the routing step in seconds
         dt_runoff: the runoff step in seconds, which turns each catchment runoff volume into an inflow rate
-        unstable_coefficients: what to do about rivers with a negative coefficient: warn, raise, or ignore
 
     Returns:
         tuple: (the Layout each river is routed with, the StaticMuskingum coefficients of every river)
 
     Raises:
-        ValueError: if the coefficients do not sum to 1, or unstable_coefficients is raise and a coefficient is negative
+        ValueError: if the coefficients do not sum to 1, or invalid_coefficients is raise and a coefficient is negative
     """
     substeps: IntArray | None = None
     subcycles: IntArray | None = None
     dt_river: FloatArray | int = dt_routing
     layout, k, x = STANDARD_LAYOUT, network.k, network.x
-    if network_type == 'stabilized':
+    if configs.force_validity:
         substeps, subcycles, _ = network.conditioning(dt_routing)
         reach_indptr = np.zeros(network.size + 1, dtype=np.int64)
         np.cumsum(substeps, out=reach_indptr[1:])
         layout = Layout(reach_indptr, subcycles if np.any(subcycles > 1) else STANDARD_LAYOUT.subcycles)
         k = (network.k / substeps).astype(np.float32)
         x = network.substep_x(substeps).astype(np.float32)  # the river's own x where it is not divided
-        dt_river = (dt_routing / subcycles).astype(np.float32)  # float32 like the standard network's math
+        dt_river = (dt_routing / subcycles).astype(np.float32)  # float32 like the math of rivers routed whole
     dt_div_k = dt_river / k
     denominator = dt_div_k + (2 * (1 - x))
     two_x = 2 * x
@@ -78,7 +75,7 @@ def prepare_routing(
     c4_dt = np.ascontiguousarray((c1 + c2) / dt_runoff, dtype=np.float32)
     if substeps is not None:
         c4_dt = np.ascontiguousarray(c4_dt / substeps, dtype=np.float32)
-    network.check_stability(dt_routing, action=unstable_coefficients, substeps=substeps, subcycles=subcycles)
+    network.check_validity(dt_routing, action=configs.invalid_coefficients, substeps=substeps, subcycles=subcycles)
     if not np.allclose(c1 + c2 + c3, 1):
         raise ValueError('Muskingum coefficients do not sum to 1, check k and x of the network file and dt_routing')
     return layout, StaticMuskingum(c1, c2, c3, c4_dt)
@@ -154,8 +151,8 @@ def _route_river_with_static_coefficients(
 ):
     """
     Route river r's whole series through its ``n_pieces`` equal sub-reaches in series, whose states are
-    ``q_t[p0:p0 + n_pieces]``: one piece on a standard network, and as many as keep the coefficients non-negative on a
-    stabilized one. The last piece's series of discharges is added into ``downstream_inflow``, and the trapezoidal mean
+    ``q_t[p0:p0 + n_pieces]``: one piece, or with force_validity as many as keep the coefficients non-negative. The
+    last piece's series of discharges is added into ``downstream_inflow``, and the trapezoidal mean
     of its discharges over each runoff step, the mean discharge over the step, is written into ``discharge``; the states
     are updated in place. ``catchment_runoff`` is None for channel routing, and every piece takes an equal share of it
     through ``c4_dt``, added into the piece's forcing by add_river_forcing.
@@ -222,7 +219,7 @@ def _route_river_with_static_coefficients(
                 chain[h + 1] = work[h]
             piece_inflow = chain
 
-    # only negative coefficients give negative discharge, which unstable_coefficients reports. It is written as
+    # only negative coefficients give negative discharge, which invalid_coefficients reports. It is written as
     # routed, negative values included, so the written discharge conserves mass.
     before = first_discharge
     if n_per_step == 1:

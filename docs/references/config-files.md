@@ -2,8 +2,8 @@
 
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
 JSON file with `Configs.from_json`.
-All routing runs through `Router`. The procedure it runs is set by the selector keys (`coefficients`, `forcing`,
-`transform`, `network_type`), and the required config keys depend on which selections you make.
+All routing runs through `Router`. The procedure it runs is set by the selector keys (`parameterization`, `forcing`,
+`transform`, `force_validity`), and the required config keys depend on which selections you make.
 
 `Router` takes only a `Configs`. `Network` and the Runoff classes take the options they need as ordinary arguments
 and each has a `from_configs` classmethod that reads those same values off a `Configs`, which is how `Router` builds
@@ -11,20 +11,21 @@ them. `examples/config.json` below lists every option.
 
 ### Routing procedure selectors
 
-- `coefficients` - `'static'` (constant Muskingum K from columns `muskingumK`, `muskingumX`) or `'dynamic'`
-  (nonlinear K = dynamicAlpha\*Q^dynamicBeta from columns `dynamicAlpha`, `dynamicBeta`, `muskingumX`). Default
-  `'static'`.
+- `parameterization` - how each river's Muskingum k and x are set, which also chooses the routing method:
+  `'static'` builds constant coefficients from columns `muskingumK`, `muskingumX`, and `'power_law'` recomputes k from
+  the river's discharge every routing step (variable parameter Muskingum), k = powerLawAlpha\*Q^powerLawBeta from
+  columns `powerLawAlpha`, `powerLawBeta`, with column `muskingumX`. Default `'static'`.
 - `forcing` - `'channel'` (channel routing only, no inflows), or the form of the `runoff_files` whose runoff enters the
   rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
   `'grid'` (a grid with x and y dimensions, read by `GridRunoff`), or `'ecmwf_grib'` (ECMWF GRIB
   files on a reduced gaussian grid, read by `ECMWFGribReducedGrid`). A single value. Default `'channel'`.
 - `transform` - `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over
   the step. Default `'uniform'`.
-- `network_type` - `'standard'` (one reach per river) or `'stabilized'` (each river too long for
-  `dt_routing` is routed in substeps, the fewest equal sub-reaches in series whose coefficients are all non-negative,
-  each with the x that keeps the river's diffusion, and each river too short for it is routed in subcycles, the fewest
-  equal steps of its own whose coefficients are). Default `'standard'`.
-  `'stabilized'` needs static coefficients, and multiplies the routing work by the average
+- `force_validity` - `True` (the default) makes every Muskingum coefficient non-negative, the condition for valid
+  routing: each river too long for `dt_routing` is routed in substeps, the fewest equal sub-reaches in series whose
+  coefficients are all non-negative, each with the x that keeps the river's diffusion, and each river too short for
+  it is routed in subcycles, the fewest equal steps of its own whose coefficients are. `False` routes each river whole
+  as given. `True` needs the `'static'` parameterization, and multiplies the routing work by the average
   number of substeps and subcycles per river. A river routed in subcycles interpolates its upstream inflow linearly
   within each routing step. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which every
   coefficient of every river can be made non-negative, which for `x <= 1/3` is `dt_runoff` itself. The state files then hold one value per sub-reach, each river's sub-reaches upstream to
@@ -33,8 +34,8 @@ them. `examples/config.json` below lists every option.
   runoff files, which setting `dt_routing` prevents.
 
 The selectors together choose the routing method and the form of runoff it reads. The one combination no routing
-method routes yet, `'dynamic'` coefficients on a `'stabilized'` network, raises `NotImplementedError` before any
-runoff is read.
+method routes yet, a parameterization other than `'static'` with `force_validity`, raises `NotImplementedError` before
+any runoff is read, so route `'power_law'` with `force_validity=False`.
 
 ## Minimum Required Inputs
 
@@ -67,11 +68,11 @@ Beyond the always-required keys above, additional keys are required depending on
   possible, and the runoff time step is always read from the runoff files; see the
   [time options](time-options.md). `start_datetime` is only read by channel routing, which has no input dates to copy.
 
-**`coefficients` selection** determines the required `network_file` columns:
+**`parameterization` selection** determines the required `network_file` columns:
 
-- `coefficients: static` requires columns `muskingumK`, `muskingumX`
-- `coefficients: dynamic` also requires columns `dynamicAlpha`, `dynamicBeta` (the K formula uses `dynamicAlpha`,
-  `dynamicBeta`, `muskingumX`, but a `muskingumK` column must still be present)
+- `parameterization: static` requires columns `muskingumK`, `muskingumX`
+- `parameterization: power_law` also requires columns `powerLawAlpha`, `powerLawBeta` (k is recomputed from them and
+  `muskingumX` is read, but a `muskingumK` column must still be present)
 
 Every network file also has the columns `riverId`, `nextRiverId`, `riverIndex`, and `upstreamCount`; see the
 [File Schemas reference](io-file-schema.md#network-file).
@@ -102,27 +103,27 @@ The following table lists where each remaining key applies.
 The `var_` options name the variables of the gridded runoff files that are read. Every other file, read or written,
 uses fixed names, such as `riverId` for the river id.
 
-| Config Key               | Description                                            | Default                                       |
-|--------------------------|--------------------------------------------------------|-----------------------------------------------|
-| `coefficients`           | Muskingum K source: `'static'` or `'dynamic'`          | `'static'`                                    |
-| `forcing`                | Channel routing, or the form of the runoff files       | `'channel'`                                   |
-| `transform`              | Runoff transform: `'uniform'`                          | `'uniform'`                                   |
-| `network_type`           | Reach handling: `'standard'` or `'stabilized'`         | `'standard'`                                  |
-| `log`                    | Enable or disable logging                              | `True`                                        |
-| `progress_bar`           | Show tqdm progress bar                                 | `True`                                        |
-| `log_level`              | Logger level, defaults to between INFO and WARNING     | `'PROGRESS'`                                  |
-| `log_stream`             | `'stdout'` or a file path                              | `'stdout'`                                    |
-| `log_format`             | Python logging format string                           | `'%(levelname)s - %(asctime)s - %(message)s'` |
-| `var_grid_runoff`        | Runoff variable name in grid `runoff_files`            | `'ro'`                                        |
-| `var_x`                  | X-dimension name in `grid` runoff files                | `'x'`                                         |
-| `var_y`                  | Y-dimension name in `grid` runoff files                | `'y'`                                         |
-| `var_t`                  | Time dimension name in depth grids                     | `'time'`                                      |
-| `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`       | `'incremental'`                               |
-| `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs       | `'sequential'`                                |
-| `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file    | `None`                                        |
-| `force_positive_runoff`  | Clip negative grid runoff depths to zero               | `False`                                       |
-| `as_volumes`             | `GridRunoff` prepares volumes instead of depths        | `False`                                       |
-| `unstable_coefficients`  | `'warn'`, `'raise'`, or `'ignore'` negative coefficients | `'warn'`                                      |
+| Config Key               | Description                                              | Default                                       |
+|--------------------------|----------------------------------------------------------|-----------------------------------------------|
+| `parameterization`       | Muskingum k and x: `'static'` or `'power_law'`           | `'static'`                                    |
+| `forcing`                | Channel routing, or the form of the runoff files         | `'channel'`                                   |
+| `transform`              | Runoff transform: `'uniform'`                            | `'uniform'`                                   |
+| `force_validity`         | Route in substeps and subcycles so coefficients are >= 0 | `True`                                        |
+| `log`                    | Enable or disable logging                                | `True`                                        |
+| `progress_bar`           | Show tqdm progress bar                                   | `True`                                        |
+| `log_level`              | Logger level, defaults to between INFO and WARNING       | `'PROGRESS'`                                  |
+| `log_stream`             | `'stdout'` or a file path                                | `'stdout'`                                    |
+| `log_format`             | Python logging format string                             | `'%(levelname)s - %(asctime)s - %(message)s'` |
+| `var_grid_runoff`        | Runoff variable name in grid `runoff_files`              | `'ro'`                                        |
+| `var_x`                  | X-dimension name in `grid` runoff files                  | `'x'`                                         |
+| `var_y`                  | Y-dimension name in `grid` runoff files                  | `'y'`                                         |
+| `var_t`                  | Time dimension name in depth grids                       | `'time'`                                      |
+| `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`         | `'incremental'`                               |
+| `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs         | `'sequential'`                                |
+| `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file      | `None`                                        |
+| `force_positive_runoff`  | Clip negative grid runoff depths to zero                 | `False`                                       |
+| `as_volumes`             | `GridRunoff` prepares volumes instead of depths          | `False`                                       |
+| `invalid_coefficients`   | `'warn'`, `'raise'`, or `'ignore'` negative coefficients | `'warn'`                                      |
 
 ## Validation
 
@@ -140,17 +141,18 @@ once on inputs you have not checked before:
 rr.Configs.from_json('config.json').deep_validate()
 ```
 
-`unstable_coefficients` controls what happens when a river has a negative Muskingum coefficient at the routing
-timestep. Every coefficient is non-negative when `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside that window routing is
-still stable and still conserves mass, but the river's discharge can dip below zero ahead of a rise (`c1 < 0`, a river
+`invalid_coefficients` controls what happens when a river has a negative Muskingum coefficient at the routing
+timestep. Every coefficient is non-negative, and the routing valid, when `2*k*x <= dt_routing <= 2*k*(1-x)`. Outside
+that window routing is still stable and still conserves mass, but the river's discharge can dip below zero ahead of a rise (`c1 < 0`, a river
 too long for the step) or alternate from step to step and go negative (`c3 < 0`, a river too short for it). Negative
 discharge is written as routed, never clamped, so the written discharge conserves mass and shows the river that
 produced it. The default `'warn'` issues a warning saying how many rivers are affected; `'raise'` refuses to route;
-`'ignore'` is silent. It applies to static coefficients, which routing checks with `Network.check_stability`. Dynamic
-coefficients change as each river routes, so there is nothing to check before routing starts.
+`'ignore'` is silent. It applies to the `'static'` parameterization, which routing checks with
+`Network.check_validity`. The coefficients of the other parameterizations change as each river routes, so there is
+nothing to check before routing starts.
 
-Use `Network.unstable_mask(dt)` to inspect a network before routing it. `network_type='stabilized'` routes each river
-too long for `dt_routing` in `Network.substeps(dt)` sub-reaches inside the kernel, each with the x of
+Use `Network.invalid_mask(dt)` to inspect a network before routing it. `force_validity=True` routes each river too
+long for `dt_routing` in `Network.substeps(dt)` sub-reaches inside the kernel, each with the x of
 `Network.substep_x`, `1/2 - N*(1/2 - x)` for N sub-reaches, which keeps the river's mean travel time and its travel time
 variance `k**2 * (1 - 2x)`. At `x = 0.2` two sub-reaches make every river too long for any step non-negative. Each
 river too short for `dt_routing`, which substeps cannot fix, is routed in `Network.subcycles(dt)` steps of its own. `Network.stabilize(dt)` instead rewrites the

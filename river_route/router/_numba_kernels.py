@@ -39,10 +39,11 @@ Terminology:
         ├── get_river_forcing(runoff, r)              stage
         ├── transform_runoff(transform, ...)          stage, skipped for the uniform transform
         ├── route_river(method, ...)                  stage
-        │   └── add_river_forcing(forcing, ...)       stage, called by the routing method
+        │   ├── add_river_forcing(forcing, ...)       stage, called by the routing method
+        │   └── muskingum_k(parameterization, ...)    stage, called by the dynamic routing method every step
         └── release_inflow_row_to_pool()
 
-4. There are 4 stages of routing 1 river which can be overloaded for different types of inputs or methods.
+4. There are 5 stages of routing 1 river which can be overloaded for different types of inputs or methods.
 
     stage              argument type           what the overload does                      registered in
     get_river_forcing  None (channel)          returns None, for channel routing           this module
@@ -53,13 +54,15 @@ Terminology:
                        DynamicMuskingum        routes river r with dynamic coefficients    router/dynamic_muskingum.py
     add_river_forcing  1D array                adds a catchment runoff series into work    runoff/bases.py
                        RiverGridCells          adds each grid cell's runoff into work      runoff/bases.py
+    muskingum_k        PowerLaw                k = alpha * Q ** beta                       router/dynamic_muskingum.py
 
 The stages are the functions without a body below. numba picks the overload that matches the type of the argument and
 compiles one version of route_job for each combination of argument types it is given. transform_runoff has no
 overload yet: the only transform is the uniform one, which is None, so route_job skips that call.
 
 To add a kind of runoff, add overloads of get_river_forcing and add_river_forcing next to its type; to add a routing
-method, add an overload of route_river. Nothing else in this module changes. Overloads should not use inline='always'.
+method, add an overload of route_river; to add a parameterization of dynamic coefficients, add an overload of
+muskingum_k. Nothing else in this module changes. Overloads should not use inline='always'.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -84,6 +87,7 @@ __all__ = [
     'transform_runoff',
     'add_river_forcing',
     'route_river',
+    'muskingum_k',
     'is_argument_type',
     # what a job reads, routing a job, and running the jobs of a Router's blocks
     'Layout',
@@ -96,10 +100,10 @@ __all__ = [
 
 class Layout(NamedTuple):
     """
-    How each river is routed. Both are empty on a standard network, where ``q_t`` holds one state per river. On a
-    stabilized network river r is routed in substeps, the sub-reaches ``reach_indptr[r]:reach_indptr[r + 1]`` in
-    series, with one state per sub-reach in ``q_t``, and ``subcycles`` gives the steps of its own each river takes per
-    routing step, or is empty when no river is subcycled.
+    How each river is routed. Both are empty unless validity is forced, and ``q_t`` holds one state per river. With
+    force_validity river r is routed in substeps, the sub-reaches ``reach_indptr[r]:reach_indptr[r + 1]`` in series,
+    with one state per sub-reach in ``q_t``, and ``subcycles`` gives the steps of its own each river takes per routing
+    step, or is empty when no river is subcycled.
     """
 
     reach_indptr: np.ndarray  # (n + 1,) int64, or empty
@@ -149,6 +153,10 @@ def route_river(method, layout, q_t, r, catchment_runoff, inflow, downstream_inf
     ``downstream_inflow``, writes its mean discharge over each runoff step, the trapezoidal mean of its discharges, into
     ``discharge``, and updates its state in ``q_t``. ``work`` and ``chain`` are scratch sized for the ``layout``.
     """
+
+
+def muskingum_k(parameterization, r, q):
+    """River r's Muskingum k in seconds at discharge ``q``, by a parameterization of dynamic coefficients."""
 
 
 def is_argument_type(numba_type, kind: type) -> bool:

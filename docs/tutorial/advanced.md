@@ -3,7 +3,7 @@
 ```mermaid
 graph TD
     A[Router] --> C[build Network from network_file<br/>topology, k and x]
-    C --> B[route method: validate config for coefficients/forcing/network_type]
+    C --> B[route method: validate config for parameterization/forcing/force_validity]
     B --> D[read initial state]
     D --> E{forcing}
 
@@ -35,10 +35,11 @@ graph TD
 ```
 
 A `Router` builds its [`Network`](../api/network.md) from the network file when it is created. The network supplies
-the topology and the `k` and `x` vectors, and the routing method chosen by `coefficients` builds its parameters from
-them. The network divides its rivers into the blocks threads route the first time it routes with each thread count.
-`Router.route()` first validates the required config keys and runoff source for the selected `coefficients`,
-`forcing`, `transform`, and `network_type` before any runoff is read. Options no routing method supports yet raise
+the topology and the `k` and `x` vectors, and the routing method chosen by `parameterization` builds its parameters
+from them. The network divides its rivers into the blocks threads route the first time it routes with each thread
+count.
+`Router.route()` first validates the required config keys and runoff source for the selected `parameterization`,
+`forcing`, `transform`, and `force_validity` before any runoff is read. Options no routing method supports yet raise
 `NotImplementedError` then. The `Network` and its blocks are built once and reused, so routing repeatedly on one
 `Router` reads and partitions the network only once, and each `route()` starts again from `channel_state_init_file`.
 When `forcing` is `'channel'`, time parameters are read directly from the config and the channel alone is routed once

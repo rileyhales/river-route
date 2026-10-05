@@ -25,8 +25,8 @@ Optional columns:
 
 | Column            | Data Type | Description                                                                          |
 |-------------------|-----------|--------------------------------------------------------------------------------------|
-| `dynamicAlpha`    | float     | Required for `coefficients: dynamic`: K = dynamicAlpha * Q ^ dynamicBeta             |
-| `dynamicBeta`     | float     | Required for `coefficients: dynamic`                                                 |
+| `powerLawAlpha`   | float     | Required for `parameterization: power_law`: k = powerLawAlpha * Q ^ powerLawBeta     |
+| `powerLawBeta`    | float     | Required for `parameterization: power_law`                                           |
 | `synthetic`       | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                   |
 | `parentRiverId`   | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from       |
 
@@ -179,7 +179,7 @@ in the same order. `channel_state_final_file` is written in this format, so a fi
 | `riverId`  | integer | ID of the river, in the order of the network file      |
 | `Q`        | float   | Discharge of the river in m³/s at the end of the run   |
 
-With `network_type: stabilized` a state file has one row per sub-reach instead, each river's sub-reaches upstream to
+With `force_validity`, the default, a state file has one row per sub-reach instead, each river's sub-reaches upstream to
 downstream with its `riverId` repeated on each. Routing refuses a state file without `riverId` or whose rivers are
 not the rivers of the network file in order.
 

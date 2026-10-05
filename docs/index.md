@@ -8,20 +8,20 @@ solvers that route each river's whole time series in turn, from upstream to down
 All routing runs through `rr.Router`. You describe the routing procedure with config selector keys,
 which together choose the kernel.
 
-| Selector       | Options                                                                                                                                                            | Default      |
-|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
-| `coefficients` | `'static'` (constant Muskingum K from columns `muskingumK`, `muskingumX`) or `'dynamic'` (nonlinear K = dynamicAlpha*Q^dynamicBeta from columns `dynamicAlpha`, `dynamicBeta`, `muskingumX`). | `'static'`   |
-| `forcing`      | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`.                          | `'channel'`  |
-| `transform`    | `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over the step.                                                      | `'uniform'`  |
-| `network_type` | `'standard'` (one reach per river) or `'stabilized'` (each river routed in the substeps or subcycles that make its coefficients non-negative at `dt_routing`). | `'standard'` |
+| Selector           | Options                                                                                                                                                                                                                                                                                          | Default     |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
+| `parameterization` | `'static'` builds constant Muskingum coefficients from columns `muskingumK`, `muskingumX`. `'power_law'` recomputes k from discharge every routing step (variable parameter Muskingum), k = powerLawAlpha*Q^powerLawBeta from columns `powerLawAlpha`, `powerLawBeta`, with column `muskingumX`. | `'static'`  |
+| `forcing`          | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`.                                                                                                                                                        | `'channel'` |
+| `transform`        | `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over the step.                                                                                                                                                                                    | `'uniform'` |
+| `force_validity`   | `True` routes each river in the substeps or subcycles that make its coefficients non-negative at `dt_routing`, the condition for valid Muskingum routing; `False` routes each river whole.                                                                                                       | `True`      |
 
-The one combination no routing method routes yet, `'dynamic'` coefficients on a `'stabilized'` network, raises
-`NotImplementedError` before any runoff is read.
+The one combination no routing method routes yet, a parameterization other than `'static'` with `force_validity`,
+raises `NotImplementedError` before any runoff is read, so route `'power_law'` with `force_validity=False`.
 
 ```python
 import river_route as rr
 
-configs = rr.Configs.from_json("/path/to/config.json")  # sets coefficients, forcing, network_type, and the other options
+configs = rr.Configs.from_json("/path/to/config.json")  # sets parameterization, forcing, and the other options
 rr.Router(configs).route()
 ```
 

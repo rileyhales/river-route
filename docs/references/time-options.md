@@ -31,8 +31,8 @@ The following rules apply:
     - `dt_runoff` is the time step of each runoff file.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
-    - `dt_routing` defaults to `dt_runoff`, or with `network_type: stabilized` to the largest divisor of `dt_runoff`
-      at which every coefficient of every river can be made non-negative, which for `x <= 1/3` is `dt_runoff`.
+    - `dt_routing` defaults to `dt_runoff`, or with `force_validity`, the default, to the largest divisor of
+      `dt_runoff` at which every coefficient of every river can be made non-negative, which for `x <= 1/3` is `dt_runoff`.
 
 ## Required Relationships
 
@@ -60,7 +60,7 @@ dt_discharge % dt_routing == 0
 1. `dt_routing` should be chosen from the runoff step and the travel times, not the resolution wanted in the output.
    A step shorter than the travel times does not route more accurately: it does not change how much a river delays or
    spreads a flood wave, and it puts more rivers below the lower bound `2*k*x`. The runoff step, or its largest divisor
-   at which most rivers have non-negative coefficients, is usually right, with `network_type: stabilized` for the rest.
+   at which most rivers have non-negative coefficients, is usually right, with `force_validity` for the rest.
 2. If you need a different runoff timestep, resample runoff before routing.
 3. To route longer than your runoff record, pad runoff with zeros upstream of routing.
 

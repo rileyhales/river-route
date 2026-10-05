@@ -31,10 +31,10 @@ if __name__ == '__main__':
         # the network file
         network_file=network_file,
         # primary modeling choices
-        coefficients='static',
+        parameterization='static',
         forcing='grid',
         transform='uniform',
-        network_type='standard',
+        force_validity=False,
         dt_routing=dt_routing,
         # model state files
         channel_state_init_file=None,
@@ -51,7 +51,7 @@ if __name__ == '__main__':
         # logging and validation options
         progress_bar=True,
         log_level='ERROR',
-        unstable_coefficients='ignore',
+        invalid_coefficients='ignore',
     )
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()

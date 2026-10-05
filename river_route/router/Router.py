@@ -17,21 +17,25 @@ from . import dynamic_muskingum, static_muskingum
 from ._numba_kernels import Layout, route_region
 from .writers import null_writer, zarr_writer
 
-__all__ = ['Router', 'ROUTING_METHOD_FOR_COEFFICIENTS']
+__all__ = ['Router', 'ROUTING_METHOD_FOR_PARAMETERIZATION']
 
 logger = logging.getLogger(__name__)
 
-# the module of the routing method each coefficients config chooses; each routes one river with its own parameters
-ROUTING_METHOD_FOR_COEFFICIENTS: dict[str, ModuleType] = {'static': static_muskingum, 'dynamic': dynamic_muskingum}
+# the module of the routing method each parameterization is routed by; each routes one river with its own parameters
+ROUTING_METHOD_FOR_PARAMETERIZATION: dict[str, ModuleType] = {
+    'static': static_muskingum,
+    'power_law': dynamic_muskingum,
+}
 
 
 class Router:
     """
     Muskingum style river routing allowing
-    - coefficients: static (muskingum) or dynamic (muskingum-cunge style)
+    - parameterization: static coefficients from constant k and x (muskingum), or dynamic coefficients from k
+      recomputed from discharge every routing step (variable parameter muskingum), e.g. by a power law
     - forcing: channel-only or runoff on grids/meshes or already aggregated to catchments
-    - network conditioning: standard, or "stabilized" routing rivers in the substeps or subcycles that make every
-      coefficient non-negative at dt_routing
+    - validity: force_validity routes rivers in the substeps or subcycles that make every coefficient non-negative at
+      dt_routing
     - transformation: the uniform runoff transformation (e.g. runoff transform method)
     """
 
@@ -39,12 +43,12 @@ class Router:
     network: Network  # ids, topology, k, x, the partition, and the coefficient signs
     runoff: Runoff | None  # reads runoff_files, built from the configs the first time runoff is routed
 
-    # what the routing method the coefficients config chooses prepared for the current time steps
+    # what the routing method the parameterization config chooses prepared for the current time steps
     routing_parameters: static_muskingum.StaticMuskingum | dynamic_muskingum.DynamicMuskingum  # per river
-    layout: Layout  # each river routed whole, or in substeps and subcycles on a stabilized network
+    layout: Layout  # each river routed whole, or with force_validity in substeps and subcycles
 
     # State variables
-    channel_state: FloatArray  # one value per river, or per sub-reach on a stabilized network
+    channel_state: FloatArray  # one value per river, or with force_validity one per sub-reach
 
     # Time options, in seconds
     dt_routing: int  # routing step, an integer divisor of dt_runoff
@@ -96,18 +100,19 @@ class Router:
         missing = [column for column in ('riverId', 'Q') if column not in state.columns]
         if missing:
             raise ValueError(f'channel_state_init_file {state_file} is missing the column(s) {", ".join(missing)}')
-        # a stabilized network starts from one value per sub-reach, whose count is checked once the layout is known
-        per_sub_reach = self.configs.network_type == 'stabilized'
-        check_channel_state_rivers(state['riverId'].to_numpy(), self.network.river_ids, per_sub_reach, state_file)
+        # force_validity starts from one value per sub-reach, whose count is checked once the layout is known
+        check_channel_state_rivers(
+            state['riverId'].to_numpy(), self.network.river_ids, self.configs.force_validity, state_file
+        )
         self.channel_state = state['Q'].to_numpy(dtype=np.float32)
         return
 
     def _check_channel_state(self) -> None:
         """
-        Require channel_state to have one value per routed reach: one per river on a standard network, one per
-        sub-reach on a stabilized one. Without an initial state file a stabilized network starts from zero in every
-        sub-reach. Any other state that does not match the layout raises, whether it was read from a state file or
-        carried from the previous runoff file; its values are never changed to fit.
+        Require channel_state to have one value per routed reach: one per river, or with force_validity one per
+        sub-reach. Without an initial state file force_validity starts from zero in every sub-reach. Any other state
+        that does not match the layout raises, whether it was read from a state file or carried from the previous
+        runoff file; its values are never changed to fit.
         """
         if not self.layout.reach_indptr.shape[0]:
             return
@@ -118,7 +123,7 @@ class Router:
             self.channel_state = np.zeros(n_reaches, dtype=np.float32)  # a zero state is zero in any layout
             return
         raise ValueError(
-            f'the channel state has {self.channel_state.shape[0]} values, but the stabilized network has {n_reaches} '
+            f'the channel state has {self.channel_state.shape[0]} values, but force_validity routes {n_reaches} '
             f'sub-reaches at dt_routing={self.dt_routing} s. A channel_state_init_file must have one row per sub-reach '
             f'in the order a final state file is written, and the sub-reaches cannot change between the runoff files '
             f'of one sequential run: set dt_routing to route every file at the same step.'
@@ -168,8 +173,8 @@ class Router:
         self.dt_total = self.configs.dt_total or self.dt_runoff * dates.shape[0]
         if self.configs.dt_routing:
             self.dt_routing = self.configs.dt_routing
-        elif self.configs.network_type == 'stabilized':
-            self.dt_routing = self.network.largest_stable_dt(self.dt_runoff)
+        elif self.configs.force_validity:
+            self.dt_routing = self.network.largest_valid_dt(self.dt_runoff)
             logger.info(
                 f'dt_routing was not provided; using {self.dt_routing} s, the largest divisor at which every '
                 f'coefficient can be made non-negative'
@@ -209,14 +214,14 @@ class Router:
     def _prepare_routing_method(self) -> None:
         """Lay out each river and build the routing method's parameters for the current dt_routing and dt_runoff."""
         logger.debug('Preparing the routing method')
-        method = ROUTING_METHOD_FOR_COEFFICIENTS[self.configs.coefficients]
+        method = ROUTING_METHOD_FOR_PARAMETERIZATION[self.configs.parameterization]
         self.layout, self.routing_parameters = method.prepare_routing(
-            self.network, self.configs.network_type, self.dt_routing, self.dt_runoff, self.configs.unstable_coefficients
+            self.network, self.configs, self.dt_routing, self.dt_runoff
         )
         reach_indptr, subcycles = self.layout
         if reach_indptr.shape[0]:
             logger.info(
-                f'Stabilized network: {self.network.size} rivers routed in substeps as {int(reach_indptr[-1])} '
+                f'force_validity: {self.network.size} rivers routed in substeps as {int(reach_indptr[-1])} '
                 f'sub-reaches at dt_routing={self.dt_routing} s, and {int(np.count_nonzero(subcycles > 1))} rivers '
                 f'routed in subcycles'
             )

@@ -1,8 +1,8 @@
 {
-  "coefficients": "static",
+  "parameterization": "static",
   "forcing": "channel",
   "transform": "uniform",
-  "network_type": "standard",
+  "force_validity": true,
   "network_file": "",
   "runoff_files": [],
   "grid_weights_file": "",
@@ -28,5 +28,5 @@
   "log_level": "PROGRESS",
   "log_stream": "stdout",
   "log_format": "%(levelname)s - %(asctime)s - %(message)s",
-  "unstable_coefficients": "warn"
+  "invalid_coefficients": "warn"
 }

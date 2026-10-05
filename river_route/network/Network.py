@@ -9,7 +9,7 @@ from ..configs.Configs import Configs
 from ..types import Float64Array, FloatArray, Int32Array, IntArray, JobBlocks, PathInput
 from . import streams
 
-__all__ = ['Network', 'NETWORK_DTYPES', 'REQUIRED_COLUMNS']
+__all__ = ['Network', 'NETWORK_DTYPES', 'PARAMETERIZATION_COLUMNS', 'REQUIRED_COLUMNS']
 
 # the dtype of every column a network table may have, enforced whenever one is written or stabilized
 NETWORK_DTYPES = {
@@ -17,8 +17,8 @@ NETWORK_DTYPES = {
     'nextRiverId': np.int64,
     'muskingumK': np.float32,
     'muskingumX': np.float32,
-    'dynamicAlpha': np.float32,
-    'dynamicBeta': np.float32,
+    'powerLawAlpha': np.float32,
+    'powerLawBeta': np.float32,
     'riverIndex': np.int32,
     'upstreamCount': np.int32,
     'synthetic': bool,
@@ -26,6 +26,8 @@ NETWORK_DTYPES = {
 }
 # the columns every network file has: its topology, its Muskingum parameters, and its DFS order
 REQUIRED_COLUMNS = ('riverId', 'nextRiverId', 'muskingumK', 'muskingumX', 'riverIndex', 'upstreamCount')
+# the columns each parameterization reads beyond REQUIRED_COLUMNS, in the order of the fields of its parameters
+PARAMETERIZATION_COLUMNS = {'static': (), 'power_law': ('powerLawAlpha', 'powerLawBeta')}
 
 
 class Network:
@@ -77,16 +79,6 @@ class Network:
         return self._df['upstreamCount'].to_numpy()
 
     @property
-    def dynamic_alpha(self) -> FloatArray | None:
-        """(n,) alpha of K = dynamicAlpha * Q ** dynamicBeta for dynamic coefficients, or None without the column."""
-        return self._df['dynamicAlpha'].to_numpy() if 'dynamicAlpha' in self._df.columns else None
-
-    @property
-    def dynamic_beta(self) -> FloatArray | None:
-        """(n,) beta of K = dynamicAlpha * Q ** dynamicBeta for dynamic coefficients, or None without the column."""
-        return self._df['dynamicBeta'].to_numpy() if 'dynamicBeta' in self._df.columns else None
-
-    @property
     def synthetic(self) -> np.ndarray | None:
         """(n,) True for each sub-reach ``stabilize`` added, or None on a network that was never stabilized."""
         return self._df['synthetic'].to_numpy() if 'synthetic' in self._df.columns else None
@@ -102,10 +94,25 @@ class Network:
         synthetic = self.synthetic
         return self.river_ids if synthetic is None else self.river_ids[~synthetic]
 
-    @property
-    def supports_dynamic_coefficients(self) -> bool:
-        """Whether the network table has the dynamicAlpha and dynamicBeta columns dynamic coefficients need."""
-        return 'dynamicAlpha' in self._df.columns and 'dynamicBeta' in self._df.columns
+    def parameterization_columns(self, parameterization: str) -> tuple[FloatArray, ...]:
+        """
+        (n,) arrays of the columns a parameterization reads beyond REQUIRED_COLUMNS, in PARAMETERIZATION_COLUMNS order.
+
+        Raises:
+            ValueError: if the parameterization is unknown or the network table lacks one of its columns
+        """
+        if parameterization not in PARAMETERIZATION_COLUMNS:
+            raise ValueError(
+                f'parameterization must be one of {sorted(PARAMETERIZATION_COLUMNS)}, got {parameterization!r}'
+            )
+        columns = PARAMETERIZATION_COLUMNS[parameterization]
+        missing = [column for column in columns if column not in self._df.columns]
+        if missing:
+            raise ValueError(
+                f'{self.network_file or "the network table"} is missing the column(s) {", ".join(missing)} that the '
+                f'{parameterization} parameterization reads'
+            )
+        return tuple(self._df[column].to_numpy() for column in columns)
 
     def __init__(self, network_file: PathInput | pd.DataFrame) -> None:
         """
@@ -231,12 +238,12 @@ class Network:
             self._routing_blocks[threads] = blocks
         return self._routing_blocks[threads]
 
-    def stability_window(self, substeps: IntArray | None = None) -> tuple[Float64Array, Float64Array]:
+    def validity_window(self, substeps: IntArray | None = None) -> tuple[Float64Array, Float64Array]:
         """
         The inclusive range of routing time steps over which every Muskingum coefficient of each river is non-negative,
-        ``(2*k*x, 2*k*(1-x))``. Outside it the scheme is still stable and conserves mass, but its discharge can go
-        negative. With ``substeps`` the window is that of one of the river's equal sub-reaches, whose travel time is
-        ``k / substeps`` and whose x is ``substep_x``.
+        ``(2*k*x, 2*k*(1-x))``, the steps at which its routing is valid. Outside it the scheme is still stable and
+        conserves mass, but its discharge can go negative. With ``substeps`` the window is that of one of the river's
+        equal sub-reaches, whose travel time is ``k / substeps`` and whose x is ``substep_x``.
         """
         k = self.k.astype(np.float64)
         x = self.x.astype(np.float64)
@@ -245,7 +252,7 @@ class Network:
             x = self.substep_x(substeps)
         return 2 * k * x, 2 * k * (1 - x)
 
-    def unstable_mask(
+    def invalid_mask(
         self, dt: float, substeps: IntArray | None = None, subcycles: IntArray | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -258,7 +265,7 @@ class Network:
                 by substeps. ``too_short`` is ``2*k*(1-x) < dt``, which makes c3 negative and is fixable by
                 subcycles.
         """
-        lower, upper = self.stability_window(substeps)
+        lower, upper = self.validity_window(substeps)
         step = dt if subcycles is None else dt / subcycles
         return lower > step, upper < step
 
@@ -275,8 +282,8 @@ class Network:
     def substeps(self, dt: float) -> tuple[IntArray, np.ndarray]:
         """
         The substeps of each river at ``dt``: the fewest equal sub-reaches, each with the x of ``substep_x``, whose
-        coefficients are all non-negative at ``dt``, which is what ``Configs(network_type='stabilized')`` routes for
-        rivers too long for dt. A sub-reach of travel time ``k/N`` has a non-negative c1 when ``k/N <= dt + (1-2x)*k``,
+        coefficients are all non-negative at ``dt``, which is what ``Configs(force_validity=True)`` routes for rivers
+        too long for dt. A sub-reach of travel time ``k/N`` has a non-negative c1 when ``k/N <= dt + (1-2x)*k``,
         so the count is ``ceil(k / (dt + (1-2x)*k))``: 2 for every river too long at ``x = 0.2``, and never more than
         ``ceil(1/(1-2x))``. It is the same count ``stabilize`` uses, laid out the same way, so a per-reach state from
         one lines up with the other.
@@ -301,7 +308,7 @@ class Network:
         """
         The subcycles of each river at ``dt``: the fewest equal steps a river is routed in within each step of ``dt``,
         overriding dt with the shorter routing step ``dt / subcycles`` of its own, which is what
-        ``Configs(network_type='stabilized')`` does for rivers too short for dt. The count is ``ceil(dt/(2*k*(1-x)))``:
+        ``Configs(force_validity=True)`` does for rivers too short for dt. The count is ``ceil(dt/(2*k*(1-x)))``:
         the smallest that brings the river's own step under the upper bound ``2*k*(1-x)``. A river that is not too
         short takes 1.
 
@@ -323,7 +330,7 @@ class Network:
 
     def conditioning(self, dt: float) -> tuple[IntArray, IntArray, np.ndarray]:
         """
-        How ``Configs(network_type='stabilized')`` makes every coefficient of each river non-negative at ``dt``: a
+        How ``Configs(force_validity=True)`` makes every coefficient of each river non-negative at ``dt``: a
         river too long for dt is divided into ``substeps`` equal sub-reaches with the x of ``substep_x``, and a river
         too short for it is routed in ``subcycles`` equal steps of its own. No river needs both, since for
         ``x <= 0.5`` a river cannot be too long and too short at once.
@@ -333,11 +340,11 @@ class Network:
         """
         substeps, substeps_resolvable = self.substeps(dt)
         subcycles, subcycles_resolvable = self.subcycles(dt)
-        too_long, too_short = self.unstable_mask(dt)
+        too_long, too_short = self.invalid_mask(dt)
         resolvable = np.where(too_short, subcycles_resolvable, substeps_resolvable)
         return np.where(too_long, substeps, 1), np.where(too_short, subcycles, 1), resolvable
 
-    def largest_stable_dt(self, period: int) -> int:
+    def largest_valid_dt(self, period: int) -> int:
         """
         The largest routing time step that divides ``period`` evenly and at which ``conditioning`` can make every
         coefficient of every river non-negative. The fewest substeps a river needs, ``ceil(k / (dt + (1-2x)*k))``,
@@ -354,7 +361,7 @@ class Network:
                 return int(dt)
         return 1
 
-    def check_stability(
+    def check_validity(
         self,
         dt: float,
         action: Literal['warn', 'raise', 'ignore'] = 'warn',
@@ -378,18 +385,18 @@ class Network:
         """
         if action == 'ignore':
             return
-        too_long, too_short = self.unstable_mask(dt, substeps, subcycles)
+        too_long, too_short = self.invalid_mask(dt, substeps, subcycles)
         n_long, n_short = int(np.count_nonzero(too_long)), int(np.count_nonzero(too_short))
         if n_long == 0 and n_short == 0:
             return
         message = (
             f'{n_long + n_short} of {self.size} rivers have a negative Muskingum coefficient at dt_routing={dt} s '
-            f'({n_long} are too long for it, with c1 < 0, and {n_short} too short, with c3 < 0). Every coefficient is '
-            f'non-negative when 2*k*x <= dt_routing <= 2*k*(1-x). Outside that window routing is stable and conserves '
-            f'mass, but discharge can dip below zero ahead of a rise or alternate and go negative, and it is written '
-            f"as routed. Use Network.unstable_mask to find these rivers, route with network_type='stabilized' to "
-            f'route rivers too long in substeps and rivers too short in subcycles, or set unstable_coefficients to '
-            f"'ignore' to silence this."
+            f'({n_long} are too long for it, with c1 < 0, and {n_short} too short, with c3 < 0), so their routing is '
+            f'not valid. Every coefficient is non-negative when 2*k*x <= dt_routing <= 2*k*(1-x). Outside that window '
+            f'routing is stable and conserves mass, but discharge can dip below zero ahead of a rise or alternate and '
+            f'go negative, and it is written as routed. Use Network.invalid_mask to find these rivers, route with '
+            f'force_validity=True to route rivers too long in substeps and rivers too short in subcycles, or set '
+            f"invalid_coefficients to 'ignore' to silence this."
         )
         if action == 'raise':
             raise ValueError(message)
@@ -413,7 +420,7 @@ class Network:
         feasible exactly when ``N*k_lo <= k <= N*k_hi`` -- which does not depend on how the pieces are distributed.
         Uniform and nonuniform substeps therefore produce the SAME reach count and fix the same set of rivers; they
         differ only in where the sub-reach boundaries fall. Rivers left with a negative coefficient are not reported
-        here: ``unstable_mask`` finds them, and routing reports them as ``unstable_coefficients`` says.
+        here: ``invalid_mask`` finds them, and routing reports them as ``invalid_coefficients`` says.
 
         Args:
             dt: the fixed routing time step at which every coefficient of every sub-reach must be non-negative
@@ -499,10 +506,11 @@ class Network:
         down = self.downstream_indices
         next_river_ids[~synthetic] = np.where(down >= 0, river_ids[first_piece][np.clip(down, 0, n_rivers - 1)], -1)
         df['nextRiverId'] = next_river_ids
-        # the split travel times are fractions, so they take the table's float dtype even where k was integers
-        if 'dynamicAlpha' in df.columns:
-            alpha = df['dynamicAlpha'].to_numpy(dtype=np.float64) * k_reach / np.repeat(k, substeps)
-            df['dynamicAlpha'] = alpha.astype(NETWORK_DTYPES['dynamicAlpha'])
+        # the split travel times are fractions, so they take the table's float dtype even where k was integers. The
+        # power law's k is proportional to its alpha, so each piece takes the share of alpha it takes of k.
+        if 'powerLawAlpha' in df.columns:
+            alpha = df['powerLawAlpha'].to_numpy(dtype=np.float64) * k_reach / np.repeat(k, substeps)
+            df['powerLawAlpha'] = alpha.astype(NETWORK_DTYPES['powerLawAlpha'])
         df['muskingumK'] = k_reach.astype(NETWORK_DTYPES['muskingumK'])
         # every piece of a divided river keeps the river's diffusion; a river kept whole keeps its x exactly
         divided = np.repeat(substeps > 1, substeps)

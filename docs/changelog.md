@@ -10,28 +10,30 @@ file format.
 **Routing**
 
 - One class, `rr.Router`, routes every combination in place of the `Muskingum`, `RapidMuskingum`, and
-  `UnitMuskingum` classes. The routing procedure is chosen by configs: `coefficients` (`static` or `dynamic`),
-  `forcing` (`channel`, `catchment`, `grid`, or `ecmwf_grib`), `transform` (`uniform`), and `network_type`
-  (`standard` or `stabilized`). Options no routing method routes yet raise `NotImplementedError` before any runoff
-  is read.
+  `UnitMuskingum` classes. The routing procedure is chosen by configs: `parameterization` (`static` or `power_law`),
+  `forcing` (`channel`, `catchment`, `grid`, or `ecmwf_grib`), `transform` (`uniform`), and `force_validity` (`True`
+  or `False`). Options no routing method routes yet raise `NotImplementedError` before any runoff is read.
 - Rivers are routed one at a time from upstream to downstream, each river's whole time series before the next river,
   by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
-- `coefficients='dynamic'` routes with nonlinear Muskingum K = `dynamicAlpha` * Q ^ `dynamicBeta`, from those two
-  columns of the network file, recomputed at every routing step. Dynamic coefficients route standard networks.
-- `network_type='stabilized'` routes each river with non-negative coefficients at `dt_routing` where it can: a river
-  too long for it is routed in substeps, the fewest equal sub-reaches in series inside the kernel, each with
-  `x_N = 1/2 - N*(1/2 - x)` (`Network.substep_x`), which keeps the river's mean travel time and travel time variance
-  (two substeps at `x = 0.2`), and a river too short for it is routed in subcycles, shorter routing steps of its own.
-  Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which the coefficients of every river can be
-  made non-negative, `Network.largest_stable_dt`, which for `x <= 1/3` is `dt_runoff`. It routes static coefficients
-  with every forcing, and its state files hold one row per sub-reach.
+- `parameterization` sets each river's Muskingum k and x and chooses the routing method. `static` builds constant
+  coefficients from `muskingumK` and `muskingumX`. `power_law` routes with variable parameter Muskingum, recomputing
+  each river's k from its discharge at every routing step as k = `powerLawAlpha` * Q ^ `powerLawBeta`, from those two
+  columns of the network file, and routes with `force_validity=False`.
+- `force_validity=True`, the default, routes each river with non-negative coefficients at `dt_routing`, the condition
+  for valid Muskingum routing, where it can: a river too long for it is routed in substeps, the fewest equal
+  sub-reaches in series inside the kernel, each with `x_N = 1/2 - N*(1/2 - x)` (`Network.substep_x`), which keeps the
+  river's mean travel time and travel time variance (two substeps at `x = 0.2`), and a river too short for it is
+  routed in subcycles, shorter routing steps of its own. Without `dt_routing` it routes at the largest divisor of
+  `dt_runoff` at which the coefficients of every river can be made non-negative, `Network.largest_valid_dt`, which for
+  `x <= 1/3` is `dt_runoff`. It routes the `static` parameterization with every forcing, and its state files hold one
+  row per sub-reach.
 - `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
   their own, each with the x that keeps its river's diffusion, `1/2 - (1/2 - x)*k/k_i`, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
   down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
   Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose Runoff classes share each
   river's runoff among its sub-reaches with `Runoff.distribute`.
 - Rivers with a negative coefficient at `dt_routing`, outside `2*k*x <= dt_routing <= 2*k*(1-x)`, are reported. The
-  new `unstable_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
+  new `invalid_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
 - Negative discharge is written as routed. It was clamped to zero in the written discharge, which hid the rivers that
   produced it and broke the volume of their written discharge.
 - The discharge written for each output interval is the trapezoidal mean of the discharges computed at its routing
@@ -57,15 +59,15 @@ file format.
 **Network**
 
 - `rr.Network` owns the river network: the ids, topology, and parameters of the network file, the partition of the
-  rivers into blocks, the stability analysis, and stabilization. A Router takes only a Configs and builds its
+  rivers into blocks, the validity analysis, and stabilization. A Router takes only a Configs and builds its
   Network from it, and reuses it, with its partition, for every `route()` call. A Network is built from a network
   file or a DataFrame, is stabilized once, since `stabilize` refuses a network that already is, and is written with
   `to_parquet(path)`. `Router.river_ids`, `k`, and `x` are read off the network, as `router.network.river_ids`.
 - The params file is renamed the network file, set with the `network_file` config in place of `params_file`: it
   describes the network the `Network` class is built from, not only its Muskingum parameters. Its columns are
   camelCase: `riverId`, `nextRiverId` (was `downstream_river_id`), `muskingumK` (was `k`), and `muskingumX` (was
-  `x`), with `dynamicAlpha` and `dynamicBeta` for dynamic coefficients and `synthetic` and `parentRiverId` on a
-  stabilized network.
+  `x`), with `powerLawAlpha` and `powerLawBeta` for the `power_law` parameterization and
+  `synthetic` and `parentRiverId` on a stabilized network.
 - The rivers of the network file must be in depth first search (DFS) order, where v2 required only upstream before
   downstream: the rivers upstream of each river are the rows immediately before it, so every river's upstream
   watershed is one contiguous range of rows. Two new required columns describe that order: `riverIndex`, each river's
@@ -74,10 +76,10 @@ file format.
   not the rivers of the network file in that order. `examples/migrate_v2_to_v3.py` converts v2 inputs, writing the
   params file as a network file in DFS order with both columns, and the grid weights, qlateral files, and channel
   state files in the same order.
-- `Network` analyzes Muskingum stability with `stability_window`, `unstable_mask`, `substeps`, `subcycles`,
-  `conditioning`, `largest_stable_dt`, and `check_stability`, and divides the rivers into the blocks threads route
-  with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a `Network` refuses
-  a table whose `upstreamCount` does not describe its DFS order.
+- `Network` analyzes the validity of Muskingum coefficients with `validity_window`, `invalid_mask`, `substeps`,
+  `subcycles`, `conditioning`, `largest_valid_dt`, and `check_validity`, and divides the rivers into the blocks
+  threads route with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a
+  `Network` refuses a table whose `upstreamCount` does not describe its DFS order.
 - `river_route.tools` is removed. `subset_network_to_river` is in `river_route.network.streams`, with
   `assign_blocks` and `analyze_partitioning`, which partition networks, and cuts a basin as the rows its outlet's
   `riverIndex` and `upstreamCount` give, without building a graph. `connectivity_to_digraph` and `adjacency_matrix`

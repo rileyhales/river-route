@@ -1,5 +1,5 @@
 """
-Functions of a network table in DFS order: the divisors of a time step, which Network.largest_stable_dt searches, the
+Functions of a network table in DFS order: the divisors of a time step, which Network.largest_valid_dt searches, the
 sub-watershed blocks threads route and how evenly they divide a network, and the subset of a network file, and of its
 grid weights, to one river and every river upstream of it. The blocks and the subset only read the contiguous run of
 rows that a river's riverIndex and upstreamCount give.
