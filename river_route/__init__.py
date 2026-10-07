@@ -1,25 +1,25 @@
-from . import metrics, network, router, runoff
+from . import forcings, metrics, network, router
 from ._metadata import __author__, __url__, __version__
 from .configs import Configs
+from .forcings import CatchmentRunoff, ECMWFGribReducedGrid, GridRunoff
 from .network import Network
 from .router import Router
-from .runoff import CatchmentRunoff, ECMWFGribReducedGrid, GridRunoff
 
 __all__ = [
     # configuration, the object every other class is built from
     'Configs',
-    # the river network: topology, parameters, partitioning, coefficient signs, substeps and subcycles
+    # the river network: topology, parameters, partitioning, coefficient signs, sub-reaches and subcycles
     'Network',
     # routing
     'Router',
-    # runoff preparation
+    # forcings: the runoff classes that read and prepare runoff_files
     'CatchmentRunoff',
     'GridRunoff',
     'ECMWFGribReducedGrid',
     # modules
     'network',
     'router',
-    'runoff',
+    'forcings',
     'metrics',
     # metadata
     '__version__',

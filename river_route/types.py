@@ -7,8 +7,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
+    from .forcings import CatchmentRunoffVolumes, GridCellRunoff
+    from .forcings.bases import RiverGridCells
+    from .router.dynamic_muskingum import DynamicCoefficients, PowerLaw
     from .router.Router import Router
-    from .runoff import CatchmentRunoffVolumes, GridCellRunoff
+    from .router.static_muskingum import StaticCoefficients
 
 __all__ = [
     'PathInput',
@@ -20,6 +23,11 @@ __all__ = [
     'DatetimeArray',
     'JobBlocks',
     'RunoffGenerator',
+    'Forcing',
+    'RiverForcing',
+    'DynamicParameters',
+    'Coefficients',
+    'Transform',
     'WriteDischargesFn',
 ]
 
@@ -34,6 +42,17 @@ type DatetimeArray = NDArray[np.datetime64]
 type JobBlocks = tuple[Int32Array, Int32Array, Int32Array, Int32Array]
 # what Runoff.generator yields for each input: its dates, its runoff in the form routing reads, and the file
 type RunoffGenerator = Generator[tuple[DatetimeArray, CatchmentRunoffVolumes | GridCellRunoff, PathInput]]
+# the forcing route_job is compiled for, chosen by the forcing config: None is channel routing
+type Forcing = CatchmentRunoffVolumes | GridCellRunoff | None
+# one river's forcing, as forcing_of_river reads it: its row of catchment runoff volumes, or its grid cells
+type RiverForcing = FloatArray | RiverGridCells
+# the parameters of a dynamic method, which give each river's k and x at its discharge in every routing step
+type DynamicParameters = PowerLaw
+# the coefficients route_job is compiled for, chosen by the parameters config
+type Coefficients = StaticCoefficients | DynamicCoefficients
+# the runoff transform route_job is compiled for, chosen by the transform config: None is the uniform transform, and
+# any other will be a NamedTuple of its parameters
+type Transform = tuple | None
 
 
 class WriteDischargesFn(Protocol):

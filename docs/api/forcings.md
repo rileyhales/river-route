@@ -1,6 +1,7 @@
-# Runoff
+# Forcings
 
-The Runoff classes aggregate runoff to catchments. There is one for each `forcing` that routes runoff, and
+The `river_route.forcings` package holds the Runoff classes, which aggregate runoff to catchments. There is one for each
+`forcing` that routes runoff, and
 `RUNOFF_CLASS_FOR_FORCING[configs.forcing]` is the class the `forcing` of a `Configs` names:
 
 | `forcing`    | Class                  | Aggregates                                                                          |
@@ -9,7 +10,7 @@ The Runoff classes aggregate runoff to catchments. There is one for each `forcin
 | `grid`       | `GridRunoff`           | grids with x and y dimensions, with a weight table                                  |
 | `ecmwf_grib` | `ECMWFGribReducedGrid` | ECMWF GRIB files on a reduced gaussian grid, read with eccodes, with a weight table |
 
-Gridded runoff is aggregated with a grid weight table built with the functions in `river_route.runoff.weights`.
+Gridded runoff is aggregated with a grid weight table built with the functions in `river_route.forcings.weights`.
 Build a `GridRunoff` with `GridRunoff(grid_weights_file, ...)`, or with
 `GridRunoff.from_configs(configs)` to read those same values off a `Configs`, which is how a `Router` builds one.
 Only `from_configs` validates, since a directly built `GridRunoff` has no `Configs` to check.
@@ -33,29 +34,21 @@ for dates, catchment_runoff, runoff_file in runoff.catchment_reader(configs.runo
     ...  # each file's catchment runoff volumes, a (river, time) array overwritten by the next file
 ```
 
-::: river_route.runoff.Runoff
+::: river_route.forcings.Runoff
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
 
-::: river_route.runoff.BaseGridRunoff
+::: river_route.forcings.BaseGridRunoff
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
 
-::: river_route.runoff.GridRunoff.GridRunoff
-    handler: python
-    options:
-      members_order: source
-      show_root_heading: true
-      show_source: false
-      show_root_full_path: false
-
-::: river_route.runoff.CatchmentRunoff.CatchmentRunoff
+::: river_route.forcings.GridRunoff.GridRunoff
     handler: python
     options:
       members_order: source
@@ -63,7 +56,7 @@ for dates, catchment_runoff, runoff_file in runoff.catchment_reader(configs.runo
       show_source: false
       show_root_full_path: false
 
-::: river_route.runoff.ECMWFGribReducedGrid.ECMWFGribReducedGrid
+::: river_route.forcings.CatchmentRunoff.CatchmentRunoff
     handler: python
     options:
       members_order: source
@@ -71,7 +64,7 @@ for dates, catchment_runoff, runoff_file in runoff.catchment_reader(configs.runo
       show_source: false
       show_root_full_path: false
 
-::: river_route.runoff.ECMWFGribReducedGrid.ReducedGaussianGrid
+::: river_route.forcings.ECMWFGribReducedGrid.ECMWFGribReducedGrid
     handler: python
     options:
       members_order: source
@@ -79,21 +72,29 @@ for dates, catchment_runoff, runoff_file in runoff.catchment_reader(configs.runo
       show_source: false
       show_root_full_path: false
 
-::: river_route.runoff.CatchmentRunoffVolumes
+::: river_route.forcings.ECMWFGribReducedGrid.ReducedGaussianGrid
+    handler: python
+    options:
+      members_order: source
+      show_root_heading: true
+      show_source: false
+      show_root_full_path: false
+
+::: river_route.forcings.CatchmentRunoffVolumes
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
 
-::: river_route.runoff.GridCellRunoff
+::: river_route.forcings.GridCellRunoff
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
 
-::: river_route.runoff.weights
+::: river_route.forcings.weights
     handler: python
     options:
       members_order: source

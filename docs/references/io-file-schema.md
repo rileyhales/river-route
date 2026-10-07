@@ -25,8 +25,8 @@ Optional columns:
 
 | Column            | Data Type | Description                                                                          |
 |-------------------|-----------|--------------------------------------------------------------------------------------|
-| `powerLawAlpha`   | float     | Required for `parameterization: power_law`: k = powerLawAlpha * Q ^ powerLawBeta     |
-| `powerLawBeta`    | float     | Required for `parameterization: power_law`                                           |
+| `powerLawAlpha`   | float     | Required for `parameters: power_law`: k = powerLawAlpha * Q ^ powerLawBeta           |
+| `powerLawBeta`    | float     | Required for `parameters: power_law`                                                 |
 | `synthetic`       | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                   |
 | `parentRiverId`   | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from       |
 
@@ -136,7 +136,7 @@ The grid weights netCDF has the following variables, each with the one dimension
 | `proportion` | float     | Fraction of catchment area covered by this grid cell, sums to 1.0 per riverId  |
 
 The names are fixed. A weight table made before v3 names the river id `river_id`, and must be renamed `riverId` before
-it is read. The weight table functions of `river_route.runoff.weights` read the catchments' `riverId` column and write
+it is read. The weight table functions of `river_route.forcings.weights` read the catchments' `riverId` column and write
 these names.
 
 ### Reduced Gaussian Grid Runoff Depths
@@ -160,11 +160,11 @@ messages, at its validity date and time. Choosing files whose grid, ensemble mem
 and the routing is left to the caller. IFS forecast runoff accumulates from the start of the forecast, so it is
 routed with `grid_accumulation_type` cumulative.
 
-`river_route.runoff.ReducedGaussianGrid.from_grib` reads the grid of a file from its metadata: `N` and the number of
+`river_route.forcings.ReducedGaussianGrid.from_grib` reads the grid of a file from its metadata: `N` and the number of
 cells on each row. Its `cell_polygons` are the area each cell represents, one polygon per cell of the
 world in cell order: a box of longitude and latitude halfway to the cells beside it and between latitude edges that
 give each row of cells the area of its gaussian quadrature weight, in two parts on either edge of the map for the
-cells centered on 180 degrees. `river_route.runoff.reduced_grid_weights` intersects those boxes with the catchments.
+cells centered on 180 degrees. `river_route.forcings.reduced_grid_weights` intersects those boxes with the catchments.
 Its weight table has the columns of the table above with `cell_index`, the position of the cell in the values of a
 GRIB message, in place of `x_index` and `y_index`.
 

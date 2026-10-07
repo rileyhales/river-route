@@ -10,22 +10,23 @@ file format.
 **Routing**
 
 - One class, `rr.Router`, routes every combination in place of the `Muskingum`, `RapidMuskingum`, and
-  `UnitMuskingum` classes. The routing procedure is chosen by configs: `parameterization` (`static` or `power_law`),
+  `UnitMuskingum` classes. The routing procedure is chosen by configs: `parameters` (`static` or `power_law`),
   `forcing` (`channel`, `catchment`, `grid`, or `ecmwf_grib`), `transform` (`uniform`), and `force_validity` (`True`
   or `False`). Options no routing method routes yet raise `NotImplementedError` before any runoff is read.
 - Rivers are routed one at a time from upstream to downstream, each river's whole time series before the next river,
   by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
-- `parameterization` sets each river's Muskingum k and x and chooses the routing method. `static` builds constant
-  coefficients from `muskingumK` and `muskingumX`. `power_law` routes with variable parameter Muskingum, recomputing
-  each river's k from its discharge at every routing step as k = `powerLawAlpha` * Q ^ `powerLawBeta`, from those two
-  columns of the network file, and routes with `force_validity=False`.
+- `parameters` sets each river's Muskingum k and x and chooses the routing method. `static` builds constant
+  coefficients from `muskingumK` and `muskingumX`. A dynamic method routes with variable parameter Muskingum,
+  rebuilding the coefficients every routing step from the k and x it gives at each river's discharge. `power_law`, the
+  first, gives k = `powerLawAlpha` * Q ^ `powerLawBeta` from those two columns of the network file and the fixed x of
+  `muskingumX`, and routes with `force_validity=False`.
 - `force_validity=True`, the default, routes each river with non-negative coefficients at `dt_routing`, the condition
-  for valid Muskingum routing, where it can: a river too long for it is routed in substeps, the fewest equal
-  sub-reaches in series inside the kernel, each with `x_N = 1/2 - N*(1/2 - x)` (`Network.substep_x`), which keeps the
-  river's mean travel time and travel time variance (two substeps at `x = 0.2`), and a river too short for it is
-  routed in subcycles, shorter routing steps of its own. Without `dt_routing` it routes at the largest divisor of
+  for valid Muskingum routing, where it can: a river too long for it is split into sub-reaches, the fewest equal
+  sub-reaches in series inside the kernel, each with `x_N = 1/2 - N*(1/2 - x)` (`Network.sub_reach_x`), which keeps
+  the river's mean travel time and travel time variance (two sub-reaches at `x = 0.2`), and a river too short for it
+  is routed in subcycles, shorter routing steps of its own. Without `dt_routing` it routes at the largest divisor of
   `dt_runoff` at which the coefficients of every river can be made non-negative, `Network.largest_valid_dt`, which for
-  `x <= 1/3` is `dt_runoff`. It routes the `static` parameterization with every forcing, and its state files hold one
+  `x <= 1/3` is `dt_runoff`. It routes the `static` parameters with every forcing, and its state files hold one
   row per sub-reach.
 - `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
   their own, each with the x that keeps its river's diffusion, `1/2 - (1/2 - x)*k/k_i`, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
@@ -66,7 +67,7 @@ file format.
 - The params file is renamed the network file, set with the `network_file` config in place of `params_file`: it
   describes the network the `Network` class is built from, not only its Muskingum parameters. Its columns are
   camelCase: `riverId`, `nextRiverId` (was `downstream_river_id`), `muskingumK` (was `k`), and `muskingumX` (was
-  `x`), with `powerLawAlpha` and `powerLawBeta` for the `power_law` parameterization and
+  `x`), with `powerLawAlpha` and `powerLawBeta` for the `power_law` parameters and
   `synthetic` and `parentRiverId` on a stabilized network.
 - The rivers of the network file must be in depth first search (DFS) order, where v2 required only upstream before
   downstream: the rivers upstream of each river are the rows immediately before it, so every river's upstream
@@ -76,7 +77,7 @@ file format.
   not the rivers of the network file in that order. `examples/migrate_v2_to_v3.py` converts v2 inputs, writing the
   params file as a network file in DFS order with both columns, and the grid weights, qlateral files, and channel
   state files in the same order.
-- `Network` analyzes the validity of Muskingum coefficients with `validity_window`, `invalid_mask`, `substeps`,
+- `Network` analyzes the validity of Muskingum coefficients with `validity_window`, `invalid_mask`, `sub_reaches`,
   `subcycles`, `conditioning`, `largest_valid_dt`, and `check_validity`, and divides the rivers into the blocks
   threads route with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a
   `Network` refuses a table whose `upstreamCount` does not describe its DFS order.
@@ -114,8 +115,9 @@ file format.
   catchment still count.
 - A runoff `units` attribute of `kg m-2` is read as millimeters of water; v2 read it as meters.
 - The weight table functions `grid_weights`, `compute_voronoi_catchment_intersects`,
-  `voronoi_diagram_from_regular_xy`, and `cell_xy_from_regular_grid` are in `river_route.runoff.weights`, and still
-  importable from `river_route.runoff`.
+  `voronoi_diagram_from_regular_xy`, and `cell_xy_from_regular_grid` are in `river_route.forcings.weights`, and
+  still importable from `river_route.forcings`, the package named after the `forcing` config that replaces
+  `river_route.runoff`.
 
 **Configs**
 

@@ -8,16 +8,16 @@ subclass names the weight table columns that locate a cell with ``cell_dimension
 by overriding ``read_runoff``.
 
 A routing job takes each river through the stages without a body in router/_numba_kernels.py. Each form of runoff
-implements two of them with numba overloads registered here, next to its NamedTuple:
+is a kind of forcing and implements two of them with numba overloads registered here, next to its NamedTuple:
 
-    get_river_forcing   river r's catchment runoff, from the runoff a file was read into
-    add_river_forcing   adds that catchment runoff into the river's forcing
+    forcing_of_river    the forcing of the river at river_index, from the runoff a file was read into
+    add_forcing_terms   adds c4 times that forcing's runoff volumes into the known terms of the river's steps
 
-    CatchmentRunoffVolumes  (river, time) volumes whose row r is river r's catchment runoff series. A series, a 1D
-                            array, is also the form of the catchment runoff a transform gives.
-    GridCellRunoff          runoff depths at grid cells and the sparse weights of each river. River r's catchment
-                            runoff is a RiverGridCells, its cells and weights, added into its forcing one cell at a time
-                            so no catchment runoff series is built.
+    CatchmentRunoffVolumes  (river, time) volumes whose row at river_index is that river's forcing. A series, a 1D
+                            array, is also the form of the forcing a transform gives.
+    GridCellRunoff          runoff depths at grid cells and the sparse weights of each river. A river's forcing is a
+                            RiverGridCells, its cells and weights, added into its known terms one cell at a time so no
+                            series of its runoff volumes is built.
 
 A new form of runoff needs a NamedTuple with ``check`` and ``first_steps``, and an overload of both stages for it.
 """
@@ -33,12 +33,11 @@ import numpy as np
 import pandas as pd
 import scipy.sparse
 import xarray as xr
-from numba import types
 from numba.extending import overload
 
 from .._metadata import __version__
 from ..configs import Configs
-from ..router._numba_kernels import add_river_forcing, get_river_forcing, is_argument_type
+from ..router._numba_kernels import add_forcing_terms, forcing_of_river, is_argument_type
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
 
@@ -65,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 def _check_river_order(runoff_river_ids: IntArray, river_ids: IntArray) -> None:
     """Raise ValueError unless the runoff is for the rivers of the network in the same order, since routing reads the
-    runoff of river r from its row r."""
+    runoff of the river at each river_index from the row at that index."""
     if runoff_river_ids.shape != river_ids.shape:
         raise ValueError(f'the runoff is for {runoff_river_ids.shape[0]} rivers, the network has {river_ids.shape[0]}')
     if np.array_equal(runoff_river_ids, river_ids):
@@ -100,29 +99,47 @@ class CatchmentRunoffVolumes(NamedTuple):
         return CatchmentRunoffVolumes(self.runoff[:, :n_steps], self.river_ids)
 
 
-@overload(get_river_forcing)
-def _catchment_runoff_of_river(runoff, r):
-    if is_argument_type(runoff, CatchmentRunoffVolumes):
-        return lambda runoff, r: runoff.runoff[r]
+def _catchment_runoff_row(forcing: CatchmentRunoffVolumes, river_index: int) -> FloatArray:
+    """The row of catchment runoff volumes of the river at river_index, read in place."""
+    return forcing.runoff[river_index]
 
 
-def _add_catchment_runoff_series(catchment_runoff, multiplier, n_steps, n_per_step, work):
-    """Add multiplier times each step of a river's catchment runoff series, read in place, into its steps of work."""
-    if n_per_step == 1:
-        for t in range(n_steps):
-            work[t] += multiplier * np.float32(catchment_runoff[t])
+@overload(forcing_of_river)
+def _overload_forcing_of_river_for_catchment_runoff(forcing: CatchmentRunoffVolumes, river_index: int):
+    if is_argument_type(forcing, CatchmentRunoffVolumes):
+        return _catchment_runoff_row
+
+
+def _add_runoff_series_terms(
+    river_forcing: FloatArray,
+    c4: np.float32,
+    runoff_steps: int,
+    river_steps_per_runoff_step: int,
+    known_terms: FloatArray,
+) -> None:
+    """Add c4 times the runoff volume of each runoff step to known_terms at each of the river's steps it spans."""
+    if river_steps_per_runoff_step == 1:
+        for runoff_step in range(runoff_steps):
+            known_terms[runoff_step] += c4 * np.float32(river_forcing[runoff_step])
     else:
-        for t in range(n_steps):
-            external = multiplier * np.float32(catchment_runoff[t])
-            for h in range(t * n_per_step, (t + 1) * n_per_step):
-                work[h] += external
+        for runoff_step in range(runoff_steps):
+            term = c4 * np.float32(river_forcing[runoff_step])
+            first_step = runoff_step * river_steps_per_runoff_step
+            for step in range(first_step, first_step + river_steps_per_runoff_step):
+                known_terms[step] += term
 
 
-@overload(add_river_forcing, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _catchment_runoff_series_is_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
-    """Add a series, the form of a CatchmentRunoffVolumes row and of any catchment runoff a transform gives."""
-    if isinstance(catchment_runoff, types.Array) and catchment_runoff.ndim == 1:
-        return _add_catchment_runoff_series
+@overload(add_forcing_terms, jit_options={'nogil': True, 'fastmath': {'contract'}})
+def _overload_add_forcing_terms_for_runoff_series(
+    river_forcing: FloatArray,
+    c4: np.float32,
+    runoff_steps: int,
+    river_steps_per_runoff_step: int,
+    known_terms: FloatArray,
+):
+    """A series is the form of a CatchmentRunoffVolumes row and of any forcing a transform gives."""
+    if is_argument_type(river_forcing, np.ndarray):
+        return _add_runoff_series_terms
 
 
 class GridCellRunoff(NamedTuple):
@@ -132,7 +149,7 @@ class GridCellRunoff(NamedTuple):
     """
 
     runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths, each cell's time series contiguous
-    indptr: IntArray  # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
+    indptr: IntArray  # (n_rivers + 1,) sparse row pointers to the weights of each river_index
     cell: IntArray  # (n_weights,) row of runoff_by_cell each weight applies to
     # (n_weights,) float32 volume (m³) a unit of the cell's runoff depth gives the river: the weight's proportion of the
     # river's catchment area, times that area, times the factor converting the depth unit to meters
@@ -166,40 +183,58 @@ class RiverGridCells(NamedTuple):
     weight: FloatArray  # (n_river_weights,) volume a unit of the cell's runoff depth gives the river
 
 
-@overload(get_river_forcing)
-def _grid_cells_of_river(runoff, r):
-    if is_argument_type(runoff, GridCellRunoff):
-        return lambda runoff, r: RiverGridCells(
-            runoff.runoff_by_cell,
-            runoff.cell[runoff.indptr[r] : runoff.indptr[r + 1]],
-            runoff.weight[runoff.indptr[r] : runoff.indptr[r + 1]],
-        )
+def _grid_cells_of_river(forcing: GridCellRunoff, river_index: int) -> RiverGridCells:
+    """The grid cells and weights of the river at river_index, slices of the weight table."""
+    first_weight = forcing.indptr[river_index]
+    stop_weight = forcing.indptr[river_index + 1]
+    return RiverGridCells(
+        forcing.runoff_by_cell, forcing.cell[first_weight:stop_weight], forcing.weight[first_weight:stop_weight]
+    )
 
 
-def _add_runoff_of_river_grid_cells(catchment_runoff, multiplier, n_steps, n_per_step, work):
+@overload(forcing_of_river)
+def _overload_forcing_of_river_for_grid_cell_runoff(forcing: GridCellRunoff, river_index: int):
+    if is_argument_type(forcing, GridCellRunoff):
+        return _grid_cells_of_river
+
+
+def _add_grid_cell_runoff_terms(
+    river_forcing: RiverGridCells,
+    c4: np.float32,
+    runoff_steps: int,
+    river_steps_per_runoff_step: int,
+    known_terms: FloatArray,
+) -> None:
     """
-    Add multiplier times the river's catchment runoff volume into its steps of work a cell at a time, each cell's
-    runoff depths read straight from its row, so no catchment runoff series is built first. The C kernel of jsrr, the
-    browser port of river-route, reads the cells this way, and doing the same routed the Columbia about 1.4 times faster
-    than aggregating the runoff of 64 rivers at a time into scratch rows and reading those as each river was routed.
+    Add c4 times the river's runoff volume to known_terms one grid cell at a time, each cell's runoff depths read
+    straight from its row, so no series of the river's runoff volumes is built first. The C kernel of jsrr, the browser
+    port of river-route, reads the cells this way, and doing the same routed the Columbia about 1.4 times faster than
+    aggregating the runoff of 64 rivers at a time into scratch rows and reading those as each river was routed.
     """
-    for k in range(catchment_runoff.cell.shape[0]):
-        series = catchment_runoff.runoff_by_cell[catchment_runoff.cell[k]]
-        forcing = multiplier * catchment_runoff.weight[k]
-        if n_per_step == 1:
-            for t in range(n_steps):
-                work[t] += forcing * series[t]
+    for weight_number in range(river_forcing.cell.shape[0]):
+        runoff_depths = river_forcing.runoff_by_cell[river_forcing.cell[weight_number]]
+        cell_c4 = c4 * river_forcing.weight[weight_number]  # the weight turns a runoff depth into a volume (m³)
+        if river_steps_per_runoff_step == 1:
+            for runoff_step in range(runoff_steps):
+                known_terms[runoff_step] += cell_c4 * runoff_depths[runoff_step]
         else:
-            for t in range(n_steps):
-                external = forcing * series[t]
-                for h in range(t * n_per_step, (t + 1) * n_per_step):
-                    work[h] += external
+            for runoff_step in range(runoff_steps):
+                term = cell_c4 * runoff_depths[runoff_step]
+                first_step = runoff_step * river_steps_per_runoff_step
+                for step in range(first_step, first_step + river_steps_per_runoff_step):
+                    known_terms[step] += term
 
 
-@overload(add_river_forcing, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _river_grid_cells_are_added(catchment_runoff, multiplier, n_steps, n_per_step, work):
-    if is_argument_type(catchment_runoff, RiverGridCells):
-        return _add_runoff_of_river_grid_cells
+@overload(add_forcing_terms, jit_options={'nogil': True, 'fastmath': {'contract'}})
+def _overload_add_forcing_terms_for_grid_cells(
+    river_forcing: RiverGridCells,
+    c4: np.float32,
+    runoff_steps: int,
+    river_steps_per_runoff_step: int,
+    known_terms: FloatArray,
+):
+    if is_argument_type(river_forcing, RiverGridCells):
+        return _add_grid_cell_runoff_terms
 
 
 class Runoff(ABC):
@@ -340,7 +375,7 @@ class BaseGridRunoff(Runoff):
     (river, time) array.
     """
 
-    grid_weights_file: PathInput  # weight table netCDF produced by the functions in ``river_route.runoff.weights``
+    grid_weights_file: PathInput  # weight table netCDF produced by the functions in ``river_route.forcings.weights``
     _: KW_ONLY
     var_grid_runoff: str = 'ro'  # name of the runoff variable in the gridded runoff files
     var_t: str = 'time'  # name of the time coordinate variable
@@ -354,7 +389,7 @@ class BaseGridRunoff(Runoff):
     river_ids: IntArray = field(init=False)  # (n_rivers,) river id of each catchment runoff column
     # each cell_dimensions column's (n_cells,) index of every unique cell any catchment touches
     cell_indexes: dict[str, IntArray] = field(init=False)
-    # (n_rivers + 1,) sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
+    # (n_rivers + 1,) sparse row pointers to the weights of each river_index
     indptr: IntArray = field(init=False)
     cell: IntArray = field(init=False)  # (n_weights,) position in cell_indexes of the cell of each weight
     proportion: FloatArray = field(init=False)  # (n_weights,) share of the river's catchment area inside the cell

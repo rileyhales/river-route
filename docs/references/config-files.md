@@ -2,7 +2,7 @@
 
 `river-route` computations are controlled by a `Configs` object, built from keyword arguments or read from a
 JSON file with `Configs.from_json`.
-All routing runs through `Router`. The procedure it runs is set by the selector keys (`parameterization`, `forcing`,
+All routing runs through `Router`. The procedure it runs is set by the selector keys (`parameters`, `forcing`,
 `transform`, `force_validity`), and the required config keys depend on which selections you make.
 
 `Router` takes only a `Configs`. `Network` and the Runoff classes take the options they need as ordinary arguments
@@ -11,10 +11,11 @@ them. `examples/config.json` below lists every option.
 
 ### Routing procedure selectors
 
-- `parameterization` - how each river's Muskingum k and x are set, which also chooses the routing method:
-  `'static'` builds constant coefficients from columns `muskingumK`, `muskingumX`, and `'power_law'` recomputes k from
-  the river's discharge every routing step (variable parameter Muskingum), k = powerLawAlpha\*Q^powerLawBeta from
-  columns `powerLawAlpha`, `powerLawBeta`, with column `muskingumX`. Default `'static'`.
+- `parameters` - how each river's Muskingum k and x are set, which also chooses the routing method:
+  `'static'` builds constant coefficients from columns `muskingumK`, `muskingumX`. A dynamic method rebuilds the
+  coefficients every routing step from the k and x it gives at the river's discharge (variable parameter Muskingum).
+  `'power_law'` is the only dynamic method so far: k = powerLawAlpha\*Q^powerLawBeta from columns `powerLawAlpha`,
+  `powerLawBeta`, with the fixed x of column `muskingumX`. Default `'static'`.
 - `forcing` - `'channel'` (channel routing only, no inflows), or the form of the `runoff_files` whose runoff enters the
   rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
   `'grid'` (a grid with x and y dimensions, read by `GridRunoff`), or `'ecmwf_grib'` (ECMWF GRIB
@@ -22,11 +23,11 @@ them. `examples/config.json` below lists every option.
 - `transform` - `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over
   the step. Default `'uniform'`.
 - `force_validity` - `True` (the default) makes every Muskingum coefficient non-negative, the condition for valid
-  routing: each river too long for `dt_routing` is routed in substeps, the fewest equal sub-reaches in series whose
+  routing: each river too long for `dt_routing` is split into the fewest equal sub-reaches in series whose
   coefficients are all non-negative, each with the x that keeps the river's diffusion, and each river too short for
   it is routed in subcycles, the fewest equal steps of its own whose coefficients are. `False` routes each river whole
-  as given. `True` needs the `'static'` parameterization, and multiplies the routing work by the average
-  number of substeps and subcycles per river. A river routed in subcycles interpolates its upstream inflow linearly
+  as given. `True` needs the `'static'` parameters, and multiplies the routing work by the average
+  number of sub-reaches and subcycles per river. A river routed in subcycles interpolates its upstream inflow linearly
   within each routing step. Without `dt_routing` it routes at the largest divisor of `dt_runoff` at which every
   coefficient of every river can be made non-negative, which for `x <= 1/3` is `dt_runoff` itself. The state files then hold one value per sub-reach, each river's sub-reaches upstream to
   downstream, in the order a final state file is written, with each row's `riverId` repeated for every sub-reach of
@@ -34,7 +35,7 @@ them. `examples/config.json` below lists every option.
   runoff files, which setting `dt_routing` prevents.
 
 The selectors together choose the routing method and the form of runoff it reads. The one combination no routing
-method routes yet, a parameterization other than `'static'` with `force_validity`, raises `NotImplementedError` before
+method routes yet, parameters other than `'static'` with `force_validity`, raises `NotImplementedError` before
 any runoff is read, so route `'power_law'` with `force_validity=False`.
 
 ## Minimum Required Inputs
@@ -68,11 +69,11 @@ Beyond the always-required keys above, additional keys are required depending on
   possible, and the runoff time step is always read from the runoff files; see the
   [time options](time-options.md). `start_datetime` is only read by channel routing, which has no input dates to copy.
 
-**`parameterization` selection** determines the required `network_file` columns:
+**`parameters` selection** determines the required `network_file` columns:
 
-- `parameterization: static` requires columns `muskingumK`, `muskingumX`
-- `parameterization: power_law` also requires columns `powerLawAlpha`, `powerLawBeta` (k is recomputed from them and
-  `muskingumX` is read, but a `muskingumK` column must still be present)
+- `parameters: static` requires columns `muskingumK`, `muskingumX`
+- `parameters: power_law` also requires columns `powerLawAlpha`, `powerLawBeta` (k is recomputed from them and x is
+  read from `muskingumX`, but a `muskingumK` column must still be present)
 
 Every network file also has the columns `riverId`, `nextRiverId`, `riverIndex`, and `upstreamCount`; see the
 [File Schemas reference](io-file-schema.md#network-file).
@@ -105,10 +106,10 @@ uses fixed names, such as `riverId` for the river id.
 
 | Config Key               | Description                                              | Default                                       |
 |--------------------------|----------------------------------------------------------|-----------------------------------------------|
-| `parameterization`       | Muskingum k and x: `'static'` or `'power_law'`           | `'static'`                                    |
+| `parameters`             | Muskingum k and x: `'static'` or `'power_law'`           | `'static'`                                    |
 | `forcing`                | Channel routing, or the form of the runoff files         | `'channel'`                                   |
 | `transform`              | Runoff transform: `'uniform'`                            | `'uniform'`                                   |
-| `force_validity`         | Route in substeps and subcycles so coefficients are >= 0 | `True`                                        |
+| `force_validity`         | Route in sub-reaches or subcycles so coefficients >= 0   | `True`                                        |
 | `log`                    | Enable or disable logging                                | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                   | `True`                                        |
 | `log_level`              | Logger level, defaults to between INFO and WARNING       | `'PROGRESS'`                                  |
@@ -147,16 +148,16 @@ that window routing is still stable and still conserves mass, but the river's di
 too long for the step) or alternate from step to step and go negative (`c3 < 0`, a river too short for it). Negative
 discharge is written as routed, never clamped, so the written discharge conserves mass and shows the river that
 produced it. The default `'warn'` issues a warning saying how many rivers are affected; `'raise'` refuses to route;
-`'ignore'` is silent. It applies to the `'static'` parameterization, which routing checks with
-`Network.check_validity`. The coefficients of the other parameterizations change as each river routes, so there is
+`'ignore'` is silent. It applies to the `'static'` parameters, which routing checks with
+`Network.check_validity`. The coefficients of the other parameters change as each river routes, so there is
 nothing to check before routing starts.
 
 Use `Network.invalid_mask(dt)` to inspect a network before routing it. `force_validity=True` routes each river too
-long for `dt_routing` in `Network.substeps(dt)` sub-reaches inside the kernel, each with the x of
-`Network.substep_x`, `1/2 - N*(1/2 - x)` for N sub-reaches, which keeps the river's mean travel time and its travel time
+long for `dt_routing` in `Network.sub_reaches(dt)` sub-reaches inside the kernel, each with the x of
+`Network.sub_reach_x`, `1/2 - N*(1/2 - x)` for N sub-reaches, which keeps the river's mean travel time and its travel time
 variance `k**2 * (1 - 2x)`. At `x = 0.2` two sub-reaches make every river too long for any step non-negative. Each
-river too short for `dt_routing`, which substeps cannot fix, is routed in `Network.subcycles(dt)` steps of its own. `Network.stabilize(dt)` instead rewrites the
-network in place with those sub-reaches as rows of their own, for the rivers substeps can fix, and
+river too short for `dt_routing`, which sub-reaches cannot fix, is routed in `Network.subcycles(dt)` steps of its own. `Network.stabilize(dt)` instead rewrites the
+network in place with those sub-reaches as rows of their own, for the rivers sub-reaches can fix, and
 `Network.write_stabilized(dt)` saves that network as a network table. Such a network routes with the `channel`,
 `grid`, and `ecmwf_grib` forcings, whose runoff is shared among the sub-reaches of each river; `catchment` forcing
 refuses it, since a catchment runoff file has one row per river.

@@ -1,5 +1,5 @@
 {
-  "parameterization": "static",
+  "parameters": "static",
   "forcing": "channel",
   "transform": "uniform",
   "force_validity": true,

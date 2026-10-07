@@ -10,18 +10,18 @@ which together choose the kernel.
 
 | Selector           | Options                                                                                                                                                                                                                                                                                          | Default     |
 |--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
-| `parameterization` | `'static'` builds constant Muskingum coefficients from columns `muskingumK`, `muskingumX`. `'power_law'` recomputes k from discharge every routing step (variable parameter Muskingum), k = powerLawAlpha*Q^powerLawBeta from columns `powerLawAlpha`, `powerLawBeta`, with column `muskingumX`. | `'static'`  |
+| `parameters`       | `'static'` builds constant Muskingum coefficients from columns `muskingumK`, `muskingumX`. `'power_law'` recomputes k from discharge every routing step (variable parameter Muskingum), k = powerLawAlpha*Q^powerLawBeta from columns `powerLawAlpha`, `powerLawBeta`, with column `muskingumX`. | `'static'`  |
 | `forcing`          | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`.                                                                                                                                                        | `'channel'` |
 | `transform`        | `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over the step.                                                                                                                                                                                    | `'uniform'` |
-| `force_validity`   | `True` routes each river in the substeps or subcycles that make its coefficients non-negative at `dt_routing`, the condition for valid Muskingum routing; `False` routes each river whole.                                                                                                       | `True`      |
+| `force_validity`   | `True` routes each river in the sub-reaches or subcycles that make its coefficients non-negative at `dt_routing`, the condition for valid Muskingum routing; `False` routes each river whole.                                                                                                       | `True`   |
 
-The one combination no routing method routes yet, a parameterization other than `'static'` with `force_validity`,
+The one combination no routing method routes yet, parameters other than `'static'` with `force_validity`,
 raises `NotImplementedError` before any runoff is read, so route `'power_law'` with `force_validity=False`.
 
 ```python
 import river_route as rr
 
-configs = rr.Configs.from_json("/path/to/config.json")  # sets parameterization, forcing, and the other options
+configs = rr.Configs.from_json("/path/to/config.json")  # sets parameters, forcing, and the other options
 rr.Router(configs).route()
 ```
 
@@ -61,7 +61,7 @@ rr.Router(configs).route()
 | Class     | Owns                                                                                                   |
 |-----------|--------------------------------------------------------------------------------------------------------|
 | `Configs` | Every option, frozen. Built once and given to the classes below.                                        |
-| `Network` | The river network: ids, topology, `k` and `x`, the concurrent partition, coefficient signs, substeps and subcycles. |
+| `Network` | The river network: ids, topology, `k` and `x`, the concurrent partition, coefficient signs, sub-reaches, subcycles. |
 | `Router`  | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.            |
 | `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many runoff files.              |
 

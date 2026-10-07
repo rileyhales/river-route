@@ -75,8 +75,8 @@ discharge on millions of rivers and producing a 5 trillion data point simulation
 
 What you control is how much work you ask that kernel to do.
 
-1. **Choose the simplest routing procedure your problem needs.** `parameterization: static` computes Muskingum
-   coefficients once and reuses them for every file with the same time steps. `parameterization: power_law` rebuilds
+1. **Choose the simplest routing procedure your problem needs.** `parameters: static` computes Muskingum
+   coefficients once and reuses them for every file with the same time steps. `parameters: power_law` rebuilds
    them inside the kernel on every routing step. Only pay for dynamic coefficients when the application needs them.
    See the [config file reference](config-files.md#routing-procedure-selectors).
 2. **Use the largest valid routing time step.** Every river is routed at every routing step, so halving

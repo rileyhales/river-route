@@ -90,10 +90,10 @@ class Configs:
     # _derive_path_sets() will detect them by inspecting class annotations
 
     # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
-    parameterization: Literal['static', 'power_law'] = 'static'  # constant k and x, or k recomputed from discharge
+    parameters: Literal['static', 'power_law'] = 'static'  # static coefficients, or a dynamic method of k and x
     forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
     transform: Literal['uniform'] = 'uniform'
-    force_validity: bool = True  # route rivers in the substeps or subcycles that keep every coefficient non-negative
+    force_validity: bool = True  # route rivers in sub-reaches or subcycles that keep every coefficient non-negative
     invalid_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a coefficient is negative at dt
 
     # Network and routing descriptor
@@ -343,9 +343,9 @@ class Configs:
             if len(set(outputs)) != len(outputs):
                 raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
         # options that are consistent, but that no routing method routes yet
-        if self.parameterization != 'static' and self.force_validity:
+        if self.parameters != 'static' and self.force_validity:
             raise NotImplementedError(
-                f'the {self.parameterization} parameterization cannot force validity yet; set force_validity to False'
+                f'the {self.parameters} parameters cannot force validity yet; set force_validity to False'
             )
         object.__setattr__(self, '_routing_validated', True)
         return self
@@ -393,7 +393,7 @@ class Configs:
         # the columns and their values are checked here. Building the Network then checks the topology: unique ids,
         # every nextRiverId a riverId or -1, rows sorted upstream to downstream, and upstreamCount describing their
         # DFS order. It is imported here because the network module imports Configs.
-        from river_route.network.Network import PARAMETERIZATION_COLUMNS, REQUIRED_COLUMNS, Network
+        from river_route.network.Network import COLUMNS_FOR_PARAMETERS, REQUIRED_COLUMNS, Network
 
         try:
             network_df = pd.read_parquet(self.network_file)
@@ -417,18 +417,17 @@ class Configs:
         if np.any(network_df['muskingumX'] > 0.5):
             raise ValueError(f'{self.network_file} muskingumX column must be at most 0.5')
 
-        # the columns the parameterization reads beyond the required ones; static reads only muskingumK and muskingumX
-        for column in PARAMETERIZATION_COLUMNS[self.parameterization]:
+        # the columns a dynamic method's parameters are built from; static reads only muskingumK and muskingumX
+        for column in COLUMNS_FOR_PARAMETERS[self.parameters]:
             if column not in network_df.columns:
                 raise ValueError(
-                    f'{self.network_file} missing {column} column required by the {self.parameterization} '
-                    f'parameterization'
+                    f'{self.network_file} missing {column} column required by the {self.parameters} parameters'
                 )
             if network_df[column].isna().any():
                 raise ValueError(f'{self.network_file} {column} column contains null values')
             if not pd.api.types.is_numeric_dtype(network_df[column]):
                 raise ValueError(f'{self.network_file} {column} column must be numeric type')
-        if self.parameterization == 'power_law' and np.any(network_df['powerLawAlpha'] <= 0):
+        if self.parameters == 'power_law' and np.any(network_df['powerLawAlpha'] <= 0):
             raise ValueError(f'{self.network_file} powerLawAlpha column must be strictly positive')
 
         Network(self.network_file)

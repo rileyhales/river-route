@@ -53,10 +53,10 @@ def assign_blocks(
         threads: number of jobs to pack the blocks into
 
     Returns:
-        tuple: (job_blocks, cut_target). Each entry of job_blocks is (block_starts, block_stops, block_outlet,
+        tuple: (job_blocks, boundary_target). Each entry of job_blocks is (block_starts, block_stops, block_outlet,
             block_number) for one job, with its blocks in index order. The last entry is the main stem, whose blocks
             are the runs of rows between the sub-watershed blocks and have no outlet (-1). The outlet of block b drains
-            into cut_target[b], -1 at a basin outlet.
+            into boundary_target[b], -1 at a basin outlet.
     """
     n_rivers = upstream_counts.shape[0]
     watershed_sizes = upstream_counts.astype(np.int64) + 1

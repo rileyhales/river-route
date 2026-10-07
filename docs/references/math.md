@@ -529,8 +529,8 @@ There are several noteworthy insights from these equations:
 
 A river too long for the step, $\Delta t < 2kx$, has $c_1 < 0$: its discharge dips ahead of a sharp rise. The dip is
 the behavior of the Muskingum model itself, which the step only resolves. Under real runoff it is small, and routing
-the river whole is usually best. To remove it, the river can be divided into $N$ equal sub-reaches of travel time
-$k/N$ in series, which `river-route` calls **_"substeps"_**. Sub-reaches that keep the river's $x$ divide its travel
+the river whole is usually best. To remove it, the river can be split into $N$ equal **_"sub-reaches"_** of travel
+time $k/N$ in series. Sub-reaches that keep the river's $x$ divide its travel
 time variance by $N$ and route a different, less diffusive river. `river-route` gives each sub-reach
 
 $$
@@ -538,7 +538,7 @@ x_N = \frac{1}{2} - N\left(\frac{1}{2} - x\right),
 $$
 
 the $x$ Muskingum-Cunge gives a reach $N$ times shorter, which keeps both the mean $k$ and the variance $k^2(1-2x)$.
-For $N \ge 2$ and $x < 1/4$, $x_N$ is negative and $c_1$ is positive at any step, so two substeps make the coefficients of
+For $N \ge 2$ and $x < 1/4$, $x_N$ is negative and $c_1$ is positive at any step, so two sub-reaches make the coefficients of
 every river too long at $x = 0.2$ non-negative. In general the fewest is $N = \lceil k / (\Delta t + (1-2x)k) \rceil$.
 
 ### When dt >>> k
@@ -562,7 +562,7 @@ is resolved before routing by joining the rivers upstream of it to the river dow
 `river-route` writes negative discharge as routed. Clamping it to zero would hide the river that produced it, keep
 the positive half of an alternation, and either gain the clamped water, if the clamped series flowed downstream, or
 report discharge that no longer adds up to the routed volume. A river with negative discharge is a river outside the
-window, which substeps or subcycles treat.
+window, which sub-reaches or subcycles treat.
 
 ## References
 

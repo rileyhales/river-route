@@ -38,9 +38,9 @@ REFUSED_CONFIGS = {
         'forcing must be one of',
     ),
     'selectors take only their values': (
-        lambda basin, d: {'parameterization': 'sideways'},
+        lambda basin, d: {'parameters': 'sideways'},
         ValueError,
-        'parameterization must be one of',
+        'parameters must be one of',
     ),
     'catchment runoff takes no grid weights': (
         lambda basin, d: {'forcing': 'catchment'},
@@ -151,7 +151,7 @@ BROKEN_TABLES = {
 
 UNSUPPORTED_OPTIONS = {
     'a power law that forces validity': (
-        lambda basin: {'parameterization': 'power_law', 'force_validity': True},
+        lambda basin: {'parameters': 'power_law', 'force_validity': True},
         'cannot force validity',
     )
 }
@@ -217,7 +217,7 @@ def test_configs_round_trip_through_json(outputs: str, willamette: Basin, tmp_pa
 
 
 def test_preparing_runoff_does_not_skip_routing_validation(willamette: Basin, tmp_path: Path) -> None:
-    configs = rr.Configs(**routing_options(willamette, tmp_path), parameterization='power_law', force_validity=True)
+    configs = rr.Configs(**routing_options(willamette, tmp_path), parameters='power_law', force_validity=True)
     rr.GridRunoff.from_configs(configs)  # validates the configs for preparing runoff, not for routing
     with pytest.raises(NotImplementedError, match='cannot force validity'):
         rr.Router(configs).route()
@@ -271,7 +271,7 @@ def test_networks_refuse_broken_tables(breaks, message, willamette: Basin) -> No
 @pytest.mark.parametrize('threads', [1, 4])
 def test_the_routing_blocks_route_every_river_once(threads: int, package: Path, manifest: dict) -> None:
     network = rr.Network(package / manifest['runs']['static_standard']['configs']['network_file'])
-    job_blocks, cut_target = network.routing_blocks(threads)
+    job_blocks, boundary_target = network.routing_blocks(threads)
     *sub_watershed_jobs, main_stem = job_blocks
 
     def rivers_of(starts: np.ndarray, stops: np.ndarray) -> np.ndarray:
@@ -288,17 +288,17 @@ def test_the_routing_blocks_route_every_river_once(threads: int, package: Path, 
             np.testing.assert_array_equal(leaving, [outlet])  # only a block's outlet drains out of it
             entering = np.flatnonzero((downstream >= start) & (downstream < stop))
             assert np.all((entering >= start) & (entering < stop)), 'a block holds every river upstream of it'
-            assert cut_target[block_number] == downstream[outlet]
-            assert cut_target[block_number] < 0 or cut_target[block_number] in main_stem_rivers
+            assert boundary_target[block_number] == downstream[outlet]
+            assert boundary_target[block_number] < 0 or boundary_target[block_number] in main_stem_rivers
     assert (len(job_blocks) > 1) == (threads > 1)
 
 
 @pytest.mark.parametrize('dt', [3600, 900])
 def test_conditioning_makes_every_river_valid(dt: int, package: Path, manifest: dict) -> None:
     network = rr.Network(package / manifest['runs']['static_standard']['configs']['network_file'])
-    substeps, subcycles, resolvable = network.conditioning(dt)
+    sub_reaches, subcycles, resolvable = network.conditioning(dt)
     assert resolvable.all()
-    too_long, too_short = network.invalid_mask(dt, substeps, subcycles)
+    too_long, too_short = network.invalid_mask(dt, sub_reaches, subcycles)
     assert not too_long.any() and not too_short.any()
 
 
@@ -342,34 +342,36 @@ def test_river_ids_beyond_int32_are_kept(willamette: Basin, tmp_path: Path) -> N
     assert written['parentRiverId'].isin(table['riverId']).all()
 
 
-def test_stabilize_splits_each_river_into_non_negative_pieces_that_keep_its_travel_time(willamette: Basin) -> None:
+def test_stabilize_splits_each_river_into_non_negative_sub_reaches_that_keep_its_travel_time(willamette: Basin) -> None:
     """
-    Every piece of a divided river has non-negative coefficients at dt, and its pieces keep the river's mean travel
-    time k and its travel time variance k^2 (1 - 2x), which each piece contributes as k_i^2 (1 - 2 x_i).
+    Every sub-reach of a split river has non-negative coefficients at dt, and its sub-reaches keep the river's mean
+    travel time k and its travel time variance k^2 (1 - 2x), which each sub-reach contributes as k_i^2 (1 - 2 x_i).
     """
     river_ids, k = willamette.network.river_ids, willamette.network.k.astype(np.float64)
     variance = k**2 * (1 - 2 * willamette.network.x.astype(np.float64))
-    pieces = {}
+    sub_reaches = {}
     for mode in ('uniform', 'nonuniform'):
         network = rr.Network(willamette.network_file).stabilize(DT, mode=mode)
-        river = pd.Index(river_ids).get_indexer(network.parent_river_ids)  # the original river of each piece
-        pieces[mode] = np.bincount(river, minlength=river_ids.shape[0])
-        piece_k, piece_x = network.k.astype(np.float64), network.x.astype(np.float64)
-        assert_same(np.bincount(river, weights=piece_k), k)
-        assert_same(np.bincount(river, weights=piece_k**2 * (1 - 2 * piece_x)), variance)
-        split = pieces[mode][river] > 1  # only a river whose every piece has non-negative coefficients is split
-        assert np.all(2 * piece_k[split] * piece_x[split] <= DT * (1 + 1e-6))
-        assert np.all(2 * piece_k[split] * (1 - piece_x[split]) >= DT * (1 - 1e-6))
-    assert np.any(pieces['uniform'] > 1), 'no river of the basin is too long to route at dt'
-    np.testing.assert_array_equal(pieces['nonuniform'], pieces['uniform'])
-    np.testing.assert_array_equal(pieces['uniform'], willamette.network.conditioning(DT)[0])
+        river = pd.Index(river_ids).get_indexer(network.parent_river_ids)  # the original river of each sub-reach
+        sub_reaches[mode] = np.bincount(river, minlength=river_ids.shape[0])
+        sub_reach_k, sub_reach_x = network.k.astype(np.float64), network.x.astype(np.float64)
+        assert_same(np.bincount(river, weights=sub_reach_k), k)
+        assert_same(np.bincount(river, weights=sub_reach_k**2 * (1 - 2 * sub_reach_x)), variance)
+        split = (
+            sub_reaches[mode][river] > 1
+        )  # only a river whose every sub-reach has non-negative coefficients is split
+        assert np.all(2 * sub_reach_k[split] * sub_reach_x[split] <= DT * (1 + 1e-6))
+        assert np.all(2 * sub_reach_k[split] * (1 - sub_reach_x[split]) >= DT * (1 - 1e-6))
+    assert np.any(sub_reaches['uniform'] > 1), 'no river of the basin is too long to route at dt'
+    np.testing.assert_array_equal(sub_reaches['nonuniform'], sub_reaches['uniform'])
+    np.testing.assert_array_equal(sub_reaches['uniform'], willamette.network.conditioning(DT)[0])
 
 
 def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
     n_rivers, k = willamette.network.size, willamette.network.k.astype(np.float64)
     network = rr.Network(willamette.network_file).stabilize(DT, weights=[[1, 3]] * n_rivers)
-    np.testing.assert_allclose(network.k[0::2], k / 4, rtol=1e-6)  # the added piece upstream of each river
-    np.testing.assert_allclose(network.k[1::2], 3 * k / 4, rtol=1e-6)  # the river itself, now its outlet piece
+    np.testing.assert_allclose(network.k[0::2], k / 4, rtol=1e-6)  # the added sub-reach upstream of each river
+    np.testing.assert_allclose(network.k[1::2], 3 * k / 4, rtol=1e-6)  # the river itself, now its outlet sub-reach
     np.testing.assert_array_equal(network.synthetic, np.tile([True, False], n_rivers))
     np.testing.assert_array_equal(network.river_ids[1::2], willamette.network.river_ids)
     np.testing.assert_array_equal(network.next_river_ids[0::2], network.river_ids[1::2])
@@ -486,14 +488,14 @@ def test_a_weight_table_in_another_river_order_is_refused(willamette: Basin, tmp
 def test_catchment_runoff_volumes_check_their_layout(willamette: Basin) -> None:
     dates, volumes = willamette.months[0]
     river_ids = willamette.network.river_ids
-    runoff = rr.runoff.CatchmentRunoffVolumes(volumes, river_ids)
+    runoff = rr.forcings.CatchmentRunoffVolumes(volumes, river_ids)
     runoff.check(river_ids, dates.size)
     with pytest.raises(ValueError, match='has shape'):
         runoff.check(river_ids, dates.size + 1)
     with pytest.raises(ValueError, match='in the same order'):
         runoff.check(river_ids[::-1], dates.size)
     with pytest.raises(ValueError, match='row contiguous'):
-        rr.runoff.CatchmentRunoffVolumes(np.asfortranarray(volumes), river_ids).check(river_ids, dates.size)
+        rr.forcings.CatchmentRunoffVolumes(np.asfortranarray(volumes), river_ids).check(river_ids, dates.size)
     first = runoff.first_steps(4)
     assert first.runoff.shape == (river_ids.shape[0], 4) and first.runoff.strides[1] == first.runoff.itemsize
     assert first.river_ids is river_ids
@@ -516,11 +518,11 @@ def test_unsupported_options_raise_before_routing(changes, message, willamette: 
         route(tmp_path, **(willamette.gridded(months=1) | changes(willamette)))
 
 
-def test_a_parameterization_needs_its_columns(willamette: Basin, tmp_path: Path) -> None:
-    power_law = {'network_file': willamette.network_file, 'parameterization': 'power_law', 'force_validity': False}
-    with pytest.raises(ValueError, match='missing powerLawAlpha column required by the power_law parameterization'):
+def test_parameters_need_their_columns(willamette: Basin, tmp_path: Path) -> None:
+    power_law = {'network_file': willamette.network_file, 'parameters': 'power_law', 'force_validity': False}
+    with pytest.raises(ValueError, match='missing powerLawAlpha column required by the power_law parameters'):
         rr.Configs(**power_law).deep_validate()
-    with pytest.raises(ValueError, match='powerLawAlpha, powerLawBeta that the power_law parameterization'):
+    with pytest.raises(ValueError, match='powerLawAlpha, powerLawBeta that the power_law parameters'):
         route(tmp_path, willamette.months[:1], **power_law)
 
 

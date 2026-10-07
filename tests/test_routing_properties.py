@@ -55,11 +55,11 @@ def test_steady_state_is_a_fixed_point(
     steady = accumulate_downstream(rate, willamette.network.downstream_indices)
     state, river_ids = steady, willamette.network.river_ids
     if force_validity:
-        # the j-th of a river's N equal pieces carries its inflow plus j/N of its own runoff
-        pieces, _, _ = willamette.network.conditioning(dt_routing)
+        # the j-th of a river's N equal sub-reaches carries its inflow plus j/N of its own runoff
+        sub_reaches, _, _ = willamette.network.conditioning(dt_routing)
         inflow = steady - rate
-        state = np.concatenate([inflow[r] + rate[r] * np.arange(1, n + 1) / n for r, n in enumerate(pieces)])
-        river_ids = np.repeat(river_ids, pieces)
+        state = np.concatenate([inflow[r] + rate[r] * np.arange(1, n + 1) / n for r, n in enumerate(sub_reaches)])
+        river_ids = np.repeat(river_ids, sub_reaches)
     pd.DataFrame({'riverId': river_ids, 'Q': state.astype(np.float32)}).to_parquet(tmp_path / 'steady.parquet')
     routed = route(
         tmp_path,
@@ -165,10 +165,11 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     of mass must arrive after the Muskingum travel time.
 
     A discrete Muskingum reach delays what flows in at its top by exactly k, so each river below the headwater adds its
-    k. Runoff enters along a reach instead, and one reach delays it by k (1 - x). A headwater divided into N equal
-    pieces that each take 1/N of its runoff delays it by k (1 - x) too, because each piece has the x of
-    Network.substep_x: (k/N)(1 - x_N) through its own piece and (N - 1)/2 pieces of k/N below it on average. The outlet
-    writes the mean discharge over each step, the trapezoidal mean of its discharges, which is centered on the step.
+    k. Runoff enters along a reach instead, and one reach delays it by k (1 - x). A headwater split into N equal
+    sub-reaches that each take 1/N of its runoff delays it by k (1 - x) too, because each sub-reach has the x of
+    Network.sub_reach_x: (k/N)(1 - x_N) through its own sub-reach and (N - 1)/2 sub-reaches of k/N below it on
+    average. The outlet writes the mean discharge over each step, the trapezoidal mean of its discharges, which is
+    centered on the step.
     """
     network = willamette.network
     downstream = network.downstream_indices
@@ -199,7 +200,7 @@ def test_a_long_river_delays_and_spreads_a_pulse_by_its_own_moments(
     """
     Whatever the step, the response of a Muskingum river to what flows in at its top has mean k and variance
     k^2 (1 - 2x). A river of k = 20 h and x = 0.2 is too long for a step of 1 h, and force_validity routes it in two
-    substeps of x = -0.1, which keep both moments; substeps of the river's own x would halve the variance. A pulse
+    sub-reaches of x = -0.1, which keep both moments; sub-reaches of the river's own x would halve the variance. A pulse
     of runoff on a headwater flows into it, and the moments of the river's discharge exceed the headwater's by its own.
     """
     k, x = 20.0, 0.2  # hours
@@ -256,7 +257,7 @@ def test_threaded_and_single_threaded_runs_agree(name: str, package: Path, manif
 def test_split_networks_route_like_forced_validity(willamette: Basin, tmp_path: Path) -> None:
     """
     A network stabilized by writing its sub-reaches as rows must route like force_validity=True, which routes them as
-    substeps inside the kernel. The written network does not route rivers too short for the routing step in
+    sub-reaches inside the kernel. The written network does not route rivers too short for the routing step in
     subcycles, so only rivers with no such river upstream of them are compared.
     """
     split_file = rr.Network(willamette.network_file).write_stabilized(DT, tmp_path / 'split.parquet')
@@ -276,9 +277,7 @@ def test_a_power_law_without_an_exponent_routes_like_static(willamette: Basin, t
     power_law = table.assign(powerLawAlpha=table['muskingumK'], powerLawBeta=np.float32(0))
     power_law.to_parquet(tmp_path / 'dynamic.parquet')
     static = route(tmp_path, willamette.months[:1], network_file=willamette.network_file)
-    dynamic = route(
-        tmp_path, willamette.months[:1], network_file=tmp_path / 'dynamic.parquet', parameterization='power_law'
-    )
+    dynamic = route(tmp_path, willamette.months[:1], network_file=tmp_path / 'dynamic.parquet', parameters='power_law')
     assert_same(dynamic.discharge[0], static.discharge[0])
     assert_same(dynamic.final_state, static.final_state)
 

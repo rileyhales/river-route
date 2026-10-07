@@ -1,12 +1,13 @@
 """
-Muskingum routing with dynamic coefficients, the variable parameter Muskingum method: each river's k is recomputed from
-its own discharge every routing step by the parameterization the configs choose, so its coefficients change as it
-routes. Each parameterization reads its own columns of the network file, PARAMETERIZATION_COLUMNS, into its own
-parameters, and is an overload of the muskingum_k stage:
+Muskingum routing with dynamic coefficients, the variable parameter Muskingum method: every routing step, a dynamic
+method gives each river's k and x at its own discharge, and its coefficients are rebuilt from them. Each method reads
+its columns of the network file, COLUMNS_FOR_PARAMETERS, into its own NamedTuple of parameters, and is an overload of
+the k_and_x_at_discharge stage:
 
-- power_law: k = powerLawAlpha * Q ** powerLawBeta
+- power_law: k = powerLawAlpha * Q ** powerLawBeta, with the fixed x of muskingumX
 
-Validity cannot be forced yet: routing a river whose k moves in substeps and subcycles needs a rule for choosing them.
+Validity cannot be forced yet: routing a river whose k and x move in sub-reaches and subcycles needs a rule to choose
+them.
 """
 
 from typing import TYPE_CHECKING, NamedTuple
@@ -14,127 +15,137 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from numba.extending import overload
 
-from ._numba_kernels import STANDARD_LAYOUT, Layout, add_river_forcing, is_argument_type, muskingum_k, route_river
+from ..types import DynamicParameters, FloatArray, RiverForcing
+from ._numba_kernels import ComputePlan, add_forcing_terms, is_argument_type, k_and_x_at_discharge, route_river
 
 if TYPE_CHECKING:
     from ..configs.Configs import Configs
     from ..network.Network import Network
 
-__all__ = ['DynamicMuskingum', 'PowerLaw', 'PARAMETERS_FOR_PARAMETERIZATION', 'prepare_routing']
+__all__ = ['DynamicCoefficients', 'PowerLaw', 'PARAMETERS_CLASS_FOR_PARAMETERS', 'prepare_routing']
 
 
 class PowerLaw(NamedTuple):
-    """The power law parameterization, k = alpha * Q ** beta, from the powerLawAlpha and powerLawBeta columns."""
+    """The power law parameters, k = alpha * Q ** beta with a fixed x, from powerLawAlpha, powerLawBeta, muskingumX."""
 
-    alpha: np.ndarray  # (n,)
-    beta: np.ndarray  # (n,)
+    alpha: FloatArray  # (n,)
+    beta: FloatArray  # (n,)
+    x: FloatArray  # (n,)
 
 
-class DynamicMuskingum(NamedTuple):
-    """Muskingum parameters per river whose k the parameterization recomputes from its discharge every step."""
+class DynamicCoefficients(NamedTuple):
+    """What each river's coefficients are rebuilt from at every routing step: the parameters of a dynamic method."""
 
-    parameterization: PowerLaw
-    x: np.ndarray  # (n,)
+    parameters: DynamicParameters
     dt_routing: np.float32
-    inv_dt_runoff: np.float32
+    inverse_dt_runoff: np.float32
 
 
-# the parameters of each parameterization, built from its PARAMETERIZATION_COLUMNS in the order of its fields
-PARAMETERS_FOR_PARAMETERIZATION: dict[str, type[PowerLaw]] = {'power_law': PowerLaw}
+# the NamedTuple of each dynamic method's parameters, built from its COLUMNS_FOR_PARAMETERS in the order of its fields
+PARAMETERS_CLASS_FOR_PARAMETERS: dict[str, type[DynamicParameters]] = {'power_law': PowerLaw}
 
 
 def prepare_routing(
     network: Network, configs: Configs, dt_routing: int, dt_runoff: int
-) -> tuple[Layout, DynamicMuskingum]:
+) -> tuple[ComputePlan, DynamicCoefficients]:
     """
-    The standard layout and the parameters of each river. The coefficients change as each river routes, so there is
-    nothing for ``invalid_coefficients`` to check before routing starts.
-
-    Args:
-        network: the network whose x and parameterization columns the parameters are read from
-        configs: ``parameterization`` chooses how k is recomputed; Configs refuses every parameterization but
-            ``static`` with ``force_validity``
-        dt_routing: the routing step in seconds
-        dt_runoff: the runoff step in seconds, which turns each catchment runoff volume into an inflow rate
-
-    Returns:
-        tuple: (the standard Layout, the DynamicMuskingum parameters of every river)
+    A compute plan that routes every river whole, and what each river's coefficients are rebuilt from. The coefficients
+    change as each river routes, so there is nothing for ``invalid_coefficients`` to check before routing starts.
 
     Raises:
-        ValueError: if the network file lacks a column of the parameterization
+        ValueError: if the network file lacks a column of the parameters
     """
-    columns = network.parameterization_columns(configs.parameterization)
-    parameters = PARAMETERS_FOR_PARAMETERIZATION[configs.parameterization](*columns)
-    return STANDARD_LAYOUT, DynamicMuskingum(parameters, network.x, np.float32(dt_routing), np.float32(1.0 / dt_runoff))
+    columns = network.columns_for_parameters(configs.parameters)
+    parameters = PARAMETERS_CLASS_FOR_PARAMETERS[configs.parameters](*columns)
+    whole_rivers = np.ones(network.size, dtype=np.int64)
+    compute_plan = ComputePlan.from_counts(whole_rivers, whole_rivers)
+    return compute_plan, DynamicCoefficients(parameters, np.float32(dt_routing), np.float32(1.0 / dt_runoff))
 
 
 def _route_river_with_dynamic_coefficients(
-    method, layout, q_t, r, catchment_runoff, inflow, downstream_inflow, discharge, work, chain
-):
+    river_index: int,
+    compute_plan: ComputePlan,
+    coefficients: DynamicCoefficients,
+    river_forcing: RiverForcing | None,
+    channel_state: FloatArray,
+    upstream_inflow: FloatArray,
+    downstream_inflow: FloatArray,
+    mean_discharge: FloatArray,
+    known_terms: FloatArray,
+    sub_reach_inflow: FloatArray,
+) -> None:
     """
-    Variable parameter Muskingum for river r's whole series. The parameterization recomputes k from the river's own
-    discharge every routing step, the coefficients are rebuilt from it, and the upstream series is weighted by them. The
-    layout is always standard, so ``chain`` goes unused, and ``work`` holds the river's catchment runoff series, which
-    each step reads as it is routed. The discharge of a runoff step is the trapezoidal mean of the river's discharges
-    over it, as for static coefficients.
+    Route the river at river_index whole with c1, c2, and c3 rebuilt from k_and_x_at_discharge at every routing step.
+    They depend on Q, so each step is solved before the terms of the next are known.
     """
-    parameterization = method.parameterization
-    x = method.x[r]
-    dt_routing = method.dt_routing
-    inv_dt_runoff = method.inv_dt_runoff
+    parameters = coefficients.parameters
+    dt_routing = coefficients.dt_routing
     zero = np.float32(0.0)
     half = np.float32(0.5)
-    two_x = np.float32(2.0) * x
-    two_one_minus_x = np.float32(2.0) * (np.float32(1.0) - x)
-    n_steps = discharge.shape[0]
-    # an inflow row holds the discharge before the first step and at every step
-    routing_steps_per_runoff_step = (inflow.shape[0] - 1) // n_steps
-    inv_routing_steps_per_runoff_step = np.float32(1.0 / routing_steps_per_runoff_step)
-    if catchment_runoff is not None:
-        for t in range(n_steps):
-            work[t] = zero
-        add_river_forcing(catchment_runoff, np.float32(1.0), n_steps, 1, work)
-    q = q_t[r]
-    u_prev = inflow[0]
-    downstream_inflow[0] += q
-    g = 1
-    for t in range(n_steps):
-        external = zero
-        if catchment_runoff is not None:
-            external = work[t] * inv_dt_runoff
-        before = q  # the discharge at the start of the runoff step
-        interval_sum = zero
+    runoff_steps = mean_discharge.shape[0]
+    routing_steps_per_runoff_step = (upstream_inflow.shape[0] - 1) // runoff_steps
+    inverse_routing_steps_per_runoff_step = np.float32(1.0 / routing_steps_per_runoff_step)
+    runoff_volumes = known_terms  # the scratch holds the river's runoff volume (m³) of each runoff step
+    if river_forcing is not None:
+        for runoff_step in range(runoff_steps):
+            runoff_volumes[runoff_step] = zero
+        add_forcing_terms(river_forcing, np.float32(1.0), runoff_steps, 1, runoff_volumes)
+    outflow = channel_state[river_index]
+    previous_inflow = upstream_inflow[0]
+    downstream_inflow[0] += outflow
+    routing_step = 1
+    for runoff_step in range(runoff_steps):
+        lateral_inflow = zero  # m³/s over the runoff step
+        if river_forcing is not None:
+            lateral_inflow = runoff_volumes[runoff_step] * coefficients.inverse_dt_runoff
+        outflow_at_runoff_step_start = outflow
+        step_sum = zero
         for _ in range(routing_steps_per_runoff_step):
-            dt_div_k = dt_routing / muskingum_k(parameterization, r, q)
+            k, x = k_and_x_at_discharge(parameters, river_index, outflow)
+            dt_div_k = dt_routing / k
+            two_x = np.float32(2.0) * x
+            two_one_minus_x = np.float32(2.0) * (np.float32(1.0) - x)
             denominator = dt_div_k + two_one_minus_x
             c1 = (dt_div_k - two_x) / denominator
             c2 = (dt_div_k + two_x) / denominator
             c3 = (two_one_minus_x - dt_div_k) / denominator
-            u = inflow[g]
-            q = c3 * q + ((c1 + c2) * external + c1 * u + c2 * u_prev)
-            u_prev = u
-            downstream_inflow[g] += q
-            interval_sum += q
-            g += 1
-        discharge[t] = (interval_sum + half * (before - q)) * inv_routing_steps_per_runoff_step
-    q_t[r] = q
+            inflow = upstream_inflow[routing_step]
+            outflow = c3 * outflow + ((c1 + c2) * lateral_inflow + c1 * inflow + c2 * previous_inflow)
+            previous_inflow = inflow
+            downstream_inflow[routing_step] += outflow
+            step_sum += outflow
+            routing_step += 1
+        mean_discharge[runoff_step] = (
+            step_sum + half * (outflow_at_runoff_step_start - outflow)
+        ) * inverse_routing_steps_per_runoff_step
+    channel_state[river_index] = outflow
     return
 
 
 @overload(route_river, jit_options={'nogil': True})
-def _route_river_with_dynamic_muskingum(
-    method, layout, q_t, r, catchment_runoff, inflow, downstream_inflow, discharge, work, chain
+def _overload_route_river_for_dynamic_coefficients(
+    river_index: int,
+    compute_plan: ComputePlan,
+    coefficients: DynamicCoefficients,
+    river_forcing: RiverForcing | None,
+    channel_state: FloatArray,
+    upstream_inflow: FloatArray,
+    downstream_inflow: FloatArray,
+    mean_discharge: FloatArray,
+    known_terms: FloatArray,
+    sub_reach_inflow: FloatArray,
 ):
-    if is_argument_type(method, DynamicMuskingum):
+    if is_argument_type(coefficients, DynamicCoefficients):
         return _route_river_with_dynamic_coefficients
 
 
-def _muskingum_k_by_power_law(parameterization, r, q):
-    """k = alpha * Q ** beta, with Q held at 1e-6 m³/s or more so that a negative beta never divides by zero."""
-    return parameterization.alpha[r] * max(np.float32(1e-6), q) ** parameterization.beta[r]
+def _k_and_x_by_power_law(parameters: PowerLaw, river_index: int, q: np.float32) -> tuple[np.float32, np.float32]:
+    """k = alpha * Q ** beta, with Q held at 1e-6 m³/s or more so that a negative beta never divides by zero, and x."""
+    k = parameters.alpha[river_index] * max(np.float32(1e-6), q) ** parameters.beta[river_index]
+    return k, parameters.x[river_index]
 
 
-@overload(muskingum_k, jit_options={'nogil': True})
-def _muskingum_k_of_power_law(parameterization, r, q):
-    if is_argument_type(parameterization, PowerLaw):
-        return _muskingum_k_by_power_law
+@overload(k_and_x_at_discharge, jit_options={'nogil': True})
+def _overload_k_and_x_at_discharge_for_power_law(parameters: PowerLaw, river_index: int, q: np.float32):
+    if is_argument_type(parameters, PowerLaw):
+        return _k_and_x_by_power_law

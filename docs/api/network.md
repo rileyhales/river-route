@@ -1,9 +1,9 @@
 # Network
 
 The river network a simulation routes over: identity, topology, and Muskingum parameters read from a network
-file, plus the concurrent routing partition, the signs of the routing coefficients derived from them, the substeps
+file, plus the concurrent routing partition, the signs of the routing coefficients derived from them, the sub-reaches
 and subcycles `force_validity` routes to make every coefficient non-negative, and the stabilized network that writes
-those substeps as rows. A `Router` builds one from its `Configs` and reuses it, so a network table is parsed and
+those sub-reaches as rows. A `Router` builds one from its `Configs` and reuses it, so a network table is parsed and
 partitioned once no matter how many simulations run over it.
 
 ::: river_route.network.Network.Network

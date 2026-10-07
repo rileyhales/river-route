@@ -9,7 +9,7 @@ from ..configs.Configs import Configs
 from ..types import Float64Array, FloatArray, Int32Array, IntArray, JobBlocks, PathInput
 from . import streams
 
-__all__ = ['Network', 'NETWORK_DTYPES', 'PARAMETERIZATION_COLUMNS', 'REQUIRED_COLUMNS']
+__all__ = ['Network', 'NETWORK_DTYPES', 'COLUMNS_FOR_PARAMETERS', 'REQUIRED_COLUMNS']
 
 # the dtype of every column a network table may have, enforced whenever one is written or stabilized
 NETWORK_DTYPES = {
@@ -26,8 +26,9 @@ NETWORK_DTYPES = {
 }
 # the columns every network file has: its topology, its Muskingum parameters, and its DFS order
 REQUIRED_COLUMNS = ('riverId', 'nextRiverId', 'muskingumK', 'muskingumX', 'riverIndex', 'upstreamCount')
-# the columns each parameterization reads beyond REQUIRED_COLUMNS, in the order of the fields of its parameters
-PARAMETERIZATION_COLUMNS = {'static': (), 'power_law': ('powerLawAlpha', 'powerLawBeta')}
+# the columns each dynamic method's parameters are built from, in the order of the fields of its NamedTuple. static
+# builds its coefficients from muskingumK and muskingumX
+COLUMNS_FOR_PARAMETERS = {'static': (), 'power_law': ('powerLawAlpha', 'powerLawBeta', 'muskingumX')}
 
 
 class Network:
@@ -45,7 +46,7 @@ class Network:
     # the contents of the network table
     _df: pd.DataFrame
     downstream_indices: Int32Array  # (n,) index of each river's downstream river, -1 at a basin outlet
-    _routing_blocks: dict[int, tuple[tuple[JobBlocks, ...], Int32Array]]  # threads -> (job_blocks, cut_target)
+    _routing_blocks: dict[int, tuple[tuple[JobBlocks, ...], Int32Array]]  # threads -> (job_blocks, boundary_target)
 
     @property
     def size(self) -> int:
@@ -94,23 +95,21 @@ class Network:
         synthetic = self.synthetic
         return self.river_ids if synthetic is None else self.river_ids[~synthetic]
 
-    def parameterization_columns(self, parameterization: str) -> tuple[FloatArray, ...]:
+    def columns_for_parameters(self, parameters: str) -> tuple[FloatArray, ...]:
         """
-        (n,) arrays of the columns a parameterization reads beyond REQUIRED_COLUMNS, in PARAMETERIZATION_COLUMNS order.
+        (n,) arrays of the columns the ``parameters`` are built from, in COLUMNS_FOR_PARAMETERS order.
 
         Raises:
-            ValueError: if the parameterization is unknown or the network table lacks one of its columns
+            ValueError: if the parameters are unknown or the network table lacks one of their columns
         """
-        if parameterization not in PARAMETERIZATION_COLUMNS:
-            raise ValueError(
-                f'parameterization must be one of {sorted(PARAMETERIZATION_COLUMNS)}, got {parameterization!r}'
-            )
-        columns = PARAMETERIZATION_COLUMNS[parameterization]
+        if parameters not in COLUMNS_FOR_PARAMETERS:
+            raise ValueError(f'parameters must be one of {sorted(COLUMNS_FOR_PARAMETERS)}, got {parameters!r}')
+        columns = COLUMNS_FOR_PARAMETERS[parameters]
         missing = [column for column in columns if column not in self._df.columns]
         if missing:
             raise ValueError(
                 f'{self.network_file or "the network table"} is missing the column(s) {", ".join(missing)} that the '
-                f'{parameterization} parameterization reads'
+                f'{parameters} parameters read'
             )
         return tuple(self._df[column].to_numpy() for column in columns)
 
@@ -229,8 +228,8 @@ class Network:
             threads: number of jobs the sub-watershed blocks are packed into
 
         Returns:
-            tuple: (job_blocks, cut_target). Each entry of job_blocks is (block_starts, block_stops, block_outlet,
-                block_number) for one job, and the last is the main stem. cut_target gives the river each block's
+            tuple: (job_blocks, boundary_target). Each entry of job_blocks is (block_starts, block_stops, block_outlet,
+                block_number) for one job, and the last is the main stem. boundary_target gives the river each block's
                 outlet drains into, -1 at a basin outlet.
         """
         if threads not in self._routing_blocks:
@@ -238,71 +237,72 @@ class Network:
             self._routing_blocks[threads] = blocks
         return self._routing_blocks[threads]
 
-    def validity_window(self, substeps: IntArray | None = None) -> tuple[Float64Array, Float64Array]:
+    def validity_window(self, sub_reaches: IntArray | None = None) -> tuple[Float64Array, Float64Array]:
         """
         The inclusive range of routing time steps over which every Muskingum coefficient of each river is non-negative,
         ``(2*k*x, 2*k*(1-x))``, the steps at which its routing is valid. Outside it the scheme is still stable and
-        conserves mass, but its discharge can go negative. With ``substeps`` the window is that of one of the river's
-        equal sub-reaches, whose travel time is ``k / substeps`` and whose x is ``substep_x``.
+        conserves mass, but its discharge can go negative. With ``sub_reaches`` the window is that of one of the
+        river's equal sub-reaches, whose travel time is ``k / sub_reaches`` and whose x is ``sub_reach_x``.
         """
         k = self.k.astype(np.float64)
         x = self.x.astype(np.float64)
-        if substeps is not None:
-            k = k / substeps
-            x = self.substep_x(substeps)
+        if sub_reaches is not None:
+            k = k / sub_reaches
+            x = self.sub_reach_x(sub_reaches)
         return 2 * k * x, 2 * k * (1 - x)
 
     def invalid_mask(
-        self, dt: float, substeps: IntArray | None = None, subcycles: IntArray | None = None
+        self, dt: float, sub_reaches: IntArray | None = None, subcycles: IntArray | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Per-river masks of the two ways a river's coefficients go negative at ``dt``, for the whole river or, with
-        ``substeps``, for each of its equal sub-reaches. With ``subcycles`` each river is checked at its own shorter
+        ``sub_reaches``, for each of its equal sub-reaches. With ``subcycles`` each river is checked at its own shorter
         routing step ``dt / subcycles``.
 
         Returns:
             tuple: (too_long, too_short). ``too_long`` is ``2*k*x > dt``, which makes c1 negative and is fixable
-                by substeps. ``too_short`` is ``2*k*(1-x) < dt``, which makes c3 negative and is fixable by
+                by sub-reaches. ``too_short`` is ``2*k*(1-x) < dt``, which makes c3 negative and is fixable by
                 subcycles.
         """
-        lower, upper = self.validity_window(substeps)
+        lower, upper = self.validity_window(sub_reaches)
         step = dt if subcycles is None else dt / subcycles
         return lower > step, upper < step
 
-    def substep_x(self, substeps: IntArray) -> Float64Array:
+    def sub_reach_x(self, sub_reaches: IntArray) -> Float64Array:
         """
-        (n,) Muskingum x of each of a river's ``substeps`` equal sub-reaches, ``1/2 - substeps * (1/2 - x)``. Equal
-        sub-reaches in series keep the river's mean travel time k whatever their x, and with this x they also keep its
-        travel time variance ``k**2 * (1 - 2x)``, which sub-reaches of the river's own x divide by ``substeps``. It is
-        the x Muskingum-Cunge gives a reach ``substeps`` times shorter, and it is negative for two or more substeps of a
-        river with ``x < 1/4``, which leaves no lower bound on the routing step of a sub-reach.
+        (n,) Muskingum x of each of a river's ``sub_reaches`` equal sub-reaches, ``1/2 - sub_reaches * (1/2 - x)``.
+        Equal sub-reaches in series keep the river's mean travel time k whatever their x, and with this x they also
+        keep its travel time variance ``k**2 * (1 - 2x)``, which sub-reaches of the river's own x divide by
+        ``sub_reaches``. It is the x Muskingum-Cunge gives a reach ``sub_reaches`` times shorter, and it is negative
+        for two or more sub-reaches of a river with ``x < 1/4``, which leaves no lower bound on the routing step of a
+        sub-reach.
         """
-        return 0.5 - substeps * (0.5 - self.x.astype(np.float64))
+        return 0.5 - sub_reaches * (0.5 - self.x.astype(np.float64))
 
-    def substeps(self, dt: float) -> tuple[IntArray, np.ndarray]:
+    def sub_reaches(self, dt: float) -> tuple[IntArray, np.ndarray]:
         """
-        The substeps of each river at ``dt``: the fewest equal sub-reaches, each with the x of ``substep_x``, whose
-        coefficients are all non-negative at ``dt``, which is what ``Configs(force_validity=True)`` routes for rivers
-        too long for dt. A sub-reach of travel time ``k/N`` has a non-negative c1 when ``k/N <= dt + (1-2x)*k``,
-        so the count is ``ceil(k / (dt + (1-2x)*k))``: 2 for every river too long at ``x = 0.2``, and never more than
-        ``ceil(1/(1-2x))``. It is the same count ``stabilize`` uses, laid out the same way, so a per-reach state from
-        one lines up with the other.
+        The sub-reaches of each river at ``dt``: the fewest equal sub-reaches, each with the x of ``sub_reach_x``,
+        whose coefficients are all non-negative at ``dt``, which is what ``Configs(force_validity=True)`` routes for
+        rivers too long for dt. A sub-reach of travel time ``k/N`` has a non-negative c1 when
+        ``k/N <= dt + (1-2x)*k``, so the count is ``ceil(k / (dt + (1-2x)*k))``: 2 for every river too long at
+        ``x = 0.2``, and never more than ``ceil(1/(1-2x))``. It is the same count ``stabilize`` uses, laid out the
+        same way, so a per-reach state from one lines up with the other.
 
         A sub-reach has a non-negative c3 when ``k/N >= dt - (1-2x)*k``. A river too short for dt cannot meet it, since
         its sub-reaches are shorter still, and for ``x <= 3/8`` every river too long for dt does. A river that cannot
         keeps one reach and is reported as unresolvable.
 
         Returns:
-            tuple: (substeps, resolvable). ``substeps`` is int64 and at least 1 for every river. ``resolvable`` is
-                True where every coefficient of the sub-reaches is non-negative at dt.
+            tuple: (sub_reaches, resolvable). ``sub_reaches`` is int64 and at least 1 for every river. ``resolvable``
+                is True where every coefficient of the sub-reaches is non-negative at dt.
         """
         if dt <= 0:
             raise ValueError(f'dt must be positive, got {dt}')
         k = self.k.astype(np.float64)
         x = self.x.astype(np.float64)
-        substeps = np.maximum(1, np.ceil(k / (dt + (1 - 2 * x) * k))).astype(np.int64)
-        resolvable = k / substeps >= dt - (1 - 2 * x) * k
-        return np.where(resolvable, substeps, 1), resolvable
+        sub_reaches = np.maximum(1, np.ceil(k / (dt + (1 - 2 * x) * k))).astype(np.int64)
+        resolvable = k / sub_reaches >= dt - (1 - 2 * x) * k
+        return np.where(resolvable, sub_reaches, 1), resolvable
 
     def subcycles(self, dt: float) -> tuple[IntArray, np.ndarray]:
         """
@@ -331,23 +331,23 @@ class Network:
     def conditioning(self, dt: float) -> tuple[IntArray, IntArray, np.ndarray]:
         """
         How ``Configs(force_validity=True)`` makes every coefficient of each river non-negative at ``dt``: a
-        river too long for dt is divided into ``substeps`` equal sub-reaches with the x of ``substep_x``, and a river
+        river too long for dt is split into ``sub_reaches`` equal sub-reaches with the x of ``sub_reach_x``, and a river
         too short for it is routed in ``subcycles`` equal steps of its own. No river needs both, since for
         ``x <= 0.5`` a river cannot be too long and too short at once.
 
         Returns:
-            tuple: (substeps, subcycles, resolvable). ``resolvable`` is True where every coefficient is non-negative.
+            tuple: (sub_reaches, subcycles, resolvable). ``resolvable`` is True where every coefficient is non-negative.
         """
-        substeps, substeps_resolvable = self.substeps(dt)
+        sub_reaches, sub_reaches_resolvable = self.sub_reaches(dt)
         subcycles, subcycles_resolvable = self.subcycles(dt)
         too_long, too_short = self.invalid_mask(dt)
-        resolvable = np.where(too_short, subcycles_resolvable, substeps_resolvable)
-        return np.where(too_long, substeps, 1), np.where(too_short, subcycles, 1), resolvable
+        resolvable = np.where(too_short, subcycles_resolvable, sub_reaches_resolvable)
+        return np.where(too_long, sub_reaches, 1), np.where(too_short, subcycles, 1), resolvable
 
     def largest_valid_dt(self, period: int) -> int:
         """
         The largest routing time step that divides ``period`` evenly and at which ``conditioning`` can make every
-        coefficient of every river non-negative. The fewest substeps a river needs, ``ceil(k / (dt + (1-2x)*k))``,
+        coefficient of every river non-negative. The fewest sub-reaches a river needs, ``ceil(k / (dt + (1-2x)*k))``,
         only shrinks as dt grows, so the largest such dt also gives the fewest reaches and the fewest steps. Rivers too
         short for dt take subcycles of their own, so they do not pull the whole network down to the dt of its shortest
         river. For ``x <= 1/3`` every river is resolvable at any dt, so this returns ``period`` itself.
@@ -365,12 +365,12 @@ class Network:
         self,
         dt: float,
         action: Literal['warn', 'raise', 'ignore'] = 'warn',
-        substeps: IntArray | None = None,
+        sub_reaches: IntArray | None = None,
         subcycles: IntArray | None = None,
     ) -> None:
         """
-        Report rivers with a negative Muskingum coefficient at ``dt`` and take the configured action. With ``substeps``
-        and ``subcycles`` a river is checked as its equal sub-reaches at its own routing step.
+        Report rivers with a negative Muskingum coefficient at ``dt`` and take the configured action. With
+        ``sub_reaches`` and ``subcycles`` a river is checked as its equal sub-reaches at its own routing step.
 
         Every coefficient is non-negative when ``2*k*x <= dt <= 2*k*(1-x)``. Outside that window the scheme is still
         stable and still conserves mass, since c1+c2+c3 == 1 holds for negative coefficients too, but its discharge can
@@ -380,12 +380,12 @@ class Network:
         Args:
             dt: the routing time step to check against
             action: ``warn`` issues a warning, ``raise`` raises ValueError, ``ignore`` does nothing
-            substeps: optional sub-reaches per river, as from ``conditioning``
+            sub_reaches: optional sub-reaches per river, as from ``conditioning``
             subcycles: optional steps of its own per routing step for each river, as from ``conditioning``
         """
         if action == 'ignore':
             return
-        too_long, too_short = self.invalid_mask(dt, substeps, subcycles)
+        too_long, too_short = self.invalid_mask(dt, sub_reaches, subcycles)
         n_long, n_short = int(np.count_nonzero(too_long)), int(np.count_nonzero(too_short))
         if n_long == 0 and n_short == 0:
             return
@@ -395,7 +395,7 @@ class Network:
             f'not valid. Every coefficient is non-negative when 2*k*x <= dt_routing <= 2*k*(1-x). Outside that window '
             f'routing is stable and conserves mass, but discharge can dip below zero ahead of a rise or alternate and '
             f'go negative, and it is written as routed. Use Network.invalid_mask to find these rivers, route with '
-            f'force_validity=True to route rivers too long in substeps and rivers too short in subcycles, or set '
+            f'force_validity=True to route rivers too long in sub-reaches and rivers too short in subcycles, or set '
             f"invalid_coefficients to 'ignore' to silence this."
         )
         if action == 'raise':
@@ -413,26 +413,28 @@ class Network:
         counting down from -1,000,000. Deleting the synthetic rows gives back the original row order. A network is
         stabilized once: to stabilize it at another dt, build a new Network from the original network file.
 
-        A piece of travel time k_i cut from a river of travel time k and weight x takes ``x_i = 1/2 - (1/2 - x)*k/k_i``,
-        which keeps the river's diffusion: the pieces in series keep its mean travel time k and its travel time
-        variance ``k**2 * (1 - 2x)``, and for equal pieces x_i is ``substep_x``. Every coefficient of the piece is then
-        non-negative when ``dt - (1-2x)*k <= k_i <= dt + (1-2x)*k``. Since the pieces must sum to k, N substeps are
-        feasible exactly when ``N*k_lo <= k <= N*k_hi`` -- which does not depend on how the pieces are distributed.
-        Uniform and nonuniform substeps therefore produce the SAME reach count and fix the same set of rivers; they
+        A sub-reach of travel time k_i split from a river of travel time k and weight x takes
+        ``x_i = 1/2 - (1/2 - x)*k/k_i``, which keeps the river's diffusion: the sub-reaches in series keep its mean
+        travel time k and its travel time variance ``k**2 * (1 - 2x)``, and for equal sub-reaches x_i is
+        ``sub_reach_x``. Every coefficient of the sub-reach is then non-negative when
+        ``dt - (1-2x)*k <= k_i <= dt + (1-2x)*k``. Since the sub-reaches must sum to k, N sub-reaches are feasible
+        exactly when ``N*k_lo <= k <= N*k_hi`` -- which does not depend on how the sub-reaches are distributed.
+        Uniform and nonuniform sub-reaches therefore produce the SAME reach count and fix the same set of rivers; they
         differ only in where the sub-reach boundaries fall. Rivers left with a negative coefficient are not reported
         here: ``invalid_mask`` finds them, and routing reports them as ``invalid_coefficients`` says.
 
         Args:
             dt: the fixed routing time step at which every coefficient of every sub-reach must be non-negative
             mode: ``uniform`` gives every sub-reach of a river the same travel time ``k/N``, so boundaries are
-                evenly spaced along the reach. ``nonuniform`` packs each river into the fewest pieces of the
-                largest travel time ``dt + (1-2x)*k`` and leaves the leftover as a shorter final piece. A river whose
-                leftover piece would itself be too short falls back to uniform pieces.
-            weights: optional explicit substeps, one sequence of relative lengths per river in network table
+                evenly spaced along the reach. ``nonuniform`` packs each river into the fewest sub-reaches of the
+                largest travel time ``dt + (1-2x)*k`` and leaves the leftover as a shorter final sub-reach. A river
+                whose leftover sub-reach would itself be too short falls back to uniform sub-reaches.
+            weights: optional explicit sub-reaches, one sequence of relative lengths per river in network table
                 order. Each river's k is apportioned in proportion to its weights, which is what matches
                 sub-reaches to real segment geometry. Overrides ``mode``. A river with a single weight is not
-                divided. Unlike the automatic modes, which keep whole a river they cannot make non-negative, substeps
-                given here are always built as asked, even for a river with a piece that has a negative coefficient.
+                split. Unlike the automatic modes, which keep whole a river they cannot make non-negative, sub-reaches
+                given here are always built as asked, even for a river with a sub-reach that has a negative
+                coefficient.
 
         Returns:
             Self: this network, stabilized, with a ``synthetic`` flag on every row
@@ -459,43 +461,43 @@ class Network:
         k_lo = dt - (1 - 2 * x) * k
 
         if weights is not None:
-            substeps, k_reach = self._pieces_from_weights(weights, k)
+            sub_reaches, k_reach = self._sub_reach_k_from_weights(weights, k)
         else:
-            # both modes need the same count: the fewest pieces whose travel time is at or under the upper bound
-            substeps = np.maximum(1, np.ceil(k / k_hi)).astype(np.int64)
+            # both modes need the same count: the fewest sub-reaches whose travel time is at or under the upper bound
+            sub_reaches = np.maximum(1, np.ceil(k / k_hi)).astype(np.int64)
             k_reach = (
-                np.repeat(k / substeps, substeps)
+                np.repeat(k / sub_reaches, sub_reaches)
                 if mode == 'uniform'
-                else self._pieces_at_target(k, k_hi, k_lo, substeps)
+                else self._sub_reach_k_at_target(k, k_hi, k_lo, sub_reaches)
             )
 
-        # a river is fixed only when every one of its pieces lands inside the window
-        reach_lo = np.repeat(k_lo, substeps)
-        reach_hi = np.repeat(k_hi, substeps)
-        piece_ok = (k_reach >= reach_lo) & (k_reach <= reach_hi)
+        # a river is fixed only when every one of its sub-reaches lands inside the window
+        reach_lo = np.repeat(k_lo, sub_reaches)
+        reach_hi = np.repeat(k_hi, sub_reaches)
+        sub_reach_ok = (k_reach >= reach_lo) & (k_reach <= reach_hi)
         indptr = np.zeros(n_rivers + 1, dtype=np.int64)
-        np.cumsum(substeps, out=indptr[1:])
-        resolvable = np.logical_and.reduceat(piece_ok, indptr[:-1]) if k_reach.size else np.ones(0, dtype=bool)
-        resolvable &= substeps > 0
+        np.cumsum(sub_reaches, out=indptr[1:])
+        resolvable = np.logical_and.reduceat(sub_reach_ok, indptr[:-1]) if k_reach.size else np.ones(0, dtype=bool)
+        resolvable &= sub_reaches > 0
 
-        # An unresolvable river is kept whole rather than split into pieces with a negative coefficient, since the
+        # An unresolvable river is kept whole rather than split into sub-reaches with a negative coefficient, since the
         # automatic modes exist to make coefficients non-negative and extra reaches that do not are only extra compute.
         # Explicit weights are a request to represent real geometry, so they are honored as given and the river
-        # is only flagged. Both layouts are in river order, so the kept rivers' pieces drop straight into the
+        # is only flagged. Both layouts are in river order, so the kept rivers' sub-reaches drop straight into the
         # slots the final layout leaves them.
         if weights is None and not resolvable.all():
-            kept_pieces = k_reach[np.repeat(resolvable, substeps)]
-            substeps = np.where(resolvable, substeps, 1)
-            keep = np.repeat(resolvable, substeps)
-            k_reach = np.empty(int(substeps.sum()), dtype=np.float64)
-            k_reach[keep] = kept_pieces
+            kept_k_reach = k_reach[np.repeat(resolvable, sub_reaches)]
+            sub_reaches = np.where(resolvable, sub_reaches, 1)
+            keep = np.repeat(resolvable, sub_reaches)
+            k_reach = np.empty(int(sub_reaches.sum()), dtype=np.float64)
+            k_reach[keep] = kept_k_reach
             k_reach[~keep] = k[~resolvable]
 
         # each river's block is its synthetic sub-reaches followed by the river itself as the outlet
-        first_piece = np.concatenate(([0], np.cumsum(substeps)[:-1]))  # the row of each river's first piece
-        df = self._df.iloc[np.repeat(np.arange(n_rivers), substeps)].reset_index(drop=True)
+        first_sub_reach = np.concatenate(([0], np.cumsum(sub_reaches)[:-1]))  # the row of each river's first sub-reach
+        df = self._df.iloc[np.repeat(np.arange(n_rivers), sub_reaches)].reset_index(drop=True)
         synthetic = np.ones(len(df), dtype=bool)
-        synthetic[first_piece + substeps - 1] = False
+        synthetic[first_sub_reach + sub_reaches - 1] = False
         df['synthetic'] = synthetic
         df['parentRiverId'] = df['riverId']
         river_ids = df['riverId'].to_numpy(dtype=np.int64, copy=True)
@@ -504,24 +506,26 @@ class Network:
         # a sub-reach drains into the next row; an outlet drains into the head of its downstream river's block
         next_river_ids = np.append(river_ids[1:], -1)
         down = self.downstream_indices
-        next_river_ids[~synthetic] = np.where(down >= 0, river_ids[first_piece][np.clip(down, 0, n_rivers - 1)], -1)
+        next_river_ids[~synthetic] = np.where(down >= 0, river_ids[first_sub_reach][np.clip(down, 0, n_rivers - 1)], -1)
         df['nextRiverId'] = next_river_ids
         # the split travel times are fractions, so they take the table's float dtype even where k was integers. The
-        # power law's k is proportional to its alpha, so each piece takes the share of alpha it takes of k.
+        # power law's k is proportional to its alpha, so each sub-reach takes the share of alpha it takes of k.
         if 'powerLawAlpha' in df.columns:
-            alpha = df['powerLawAlpha'].to_numpy(dtype=np.float64) * k_reach / np.repeat(k, substeps)
+            alpha = df['powerLawAlpha'].to_numpy(dtype=np.float64) * k_reach / np.repeat(k, sub_reaches)
             df['powerLawAlpha'] = alpha.astype(NETWORK_DTYPES['powerLawAlpha'])
         df['muskingumK'] = k_reach.astype(NETWORK_DTYPES['muskingumK'])
-        # every piece of a divided river keeps the river's diffusion; a river kept whole keeps its x exactly
-        divided = np.repeat(substeps > 1, substeps)
-        piece_x = 0.5 - (0.5 - np.repeat(x, substeps)) * np.repeat(k, substeps) / k_reach
-        df['muskingumX'] = np.where(divided, piece_x, np.repeat(x, substeps)).astype(NETWORK_DTYPES['muskingumX'])
+        # every sub-reach of a split river keeps the river's diffusion; a river kept whole keeps its x exactly
+        divided = np.repeat(sub_reaches > 1, sub_reaches)
+        x_reach = 0.5 - (0.5 - np.repeat(x, sub_reaches)) * np.repeat(k, sub_reaches) / k_reach
+        df['muskingumX'] = np.where(divided, x_reach, np.repeat(x, sub_reaches)).astype(NETWORK_DTYPES['muskingumX'])
         # the added sub-reaches shift every row after them, so the DFS order columns are renumbered: the rows upstream
-        # of each row run back to the first piece of the first river upstream of the river it belongs to
-        first_row_upstream = first_piece[np.arange(n_rivers) - self.upstream_counts]
+        # of each row run back to the first sub-reach of the first river upstream of the river it belongs to
+        first_row_upstream = first_sub_reach[np.arange(n_rivers) - self.upstream_counts]
         rows = np.arange(len(df))
         df['riverIndex'] = (int(self._df['riverIndex'].iloc[0]) + rows).astype(NETWORK_DTYPES['riverIndex'])
-        df['upstreamCount'] = (rows - np.repeat(first_row_upstream, substeps)).astype(NETWORK_DTYPES['upstreamCount'])
+        df['upstreamCount'] = (rows - np.repeat(first_row_upstream, sub_reaches)).astype(
+            NETWORK_DTYPES['upstreamCount']
+        )
         self._df = df
         self._routing_blocks = {}
         self.set_connectivity()
@@ -557,36 +561,39 @@ class Network:
         return self.to_parquet(path)
 
     @staticmethod
-    def _pieces_at_target(k: Float64Array, k_hi: Float64Array, k_lo: Float64Array, substeps: IntArray) -> Float64Array:
+    def _sub_reach_k_at_target(
+        k: Float64Array, k_hi: Float64Array, k_lo: Float64Array, sub_reaches: IntArray
+    ) -> Float64Array:
         """
-        Pieces of the largest travel time inside the window with the leftover as a shorter final piece.
-
-        Where the leftover would itself fall below the lower bound the river is evened out into uniform pieces
-        instead, which is the only other distribution guaranteed to be inside the window whenever any is.
+        The k of each sub-reach: the largest travel time inside the window, with the leftover as a shorter final
+        sub-reach. Where the leftover would itself fall below the lower bound the river is evened out into uniform
+        sub-reaches instead, which is the only other distribution guaranteed to be inside the window whenever any is.
         """
-        total = int(substeps.sum())
-        pos_in_block = np.arange(total) - np.repeat(np.concatenate(([0], np.cumsum(substeps)[:-1])), substeps)
-        block_size = np.repeat(substeps, substeps)
-        leftover = k - (substeps - 1) * np.minimum(k_hi, k)  # a river kept whole is its own leftover
-        packed = np.where(pos_in_block == block_size - 1, np.repeat(leftover, substeps), np.repeat(k_hi, substeps))
-        # even the river out when its leftover piece is below the lower bound
-        even_out = np.repeat(leftover < k_lo, substeps)
-        return np.where(even_out, np.repeat(k / substeps, substeps), packed)
+        total = int(sub_reaches.sum())
+        pos_in_block = np.arange(total) - np.repeat(np.concatenate(([0], np.cumsum(sub_reaches)[:-1])), sub_reaches)
+        block_size = np.repeat(sub_reaches, sub_reaches)
+        leftover = k - (sub_reaches - 1) * np.minimum(k_hi, k)  # a river kept whole is its own leftover
+        packed = np.where(
+            pos_in_block == block_size - 1, np.repeat(leftover, sub_reaches), np.repeat(k_hi, sub_reaches)
+        )
+        # even the river out when its leftover sub-reach is below the lower bound
+        even_out = np.repeat(leftover < k_lo, sub_reaches)
+        return np.where(even_out, np.repeat(k / sub_reaches, sub_reaches), packed)
 
     @staticmethod
-    def _pieces_from_weights(weights: list, k: Float64Array) -> tuple[IntArray, Float64Array]:
-        """Apportion each river's k over an explicit sequence of relative lengths."""
+    def _sub_reach_k_from_weights(weights: list, k: Float64Array) -> tuple[IntArray, Float64Array]:
+        """The sub-reaches of each river and the k of each, apportioning its k over a sequence of relative lengths."""
         n_rivers = k.shape[0]
         if len(weights) != n_rivers:
             raise ValueError(f'weights must have one sequence per river: got {len(weights)} for {n_rivers} rivers')
-        substeps = np.array([len(w) for w in weights], dtype=np.int64)
-        if np.any(substeps < 1):
+        sub_reaches = np.array([len(w) for w in weights], dtype=np.int64)
+        if np.any(sub_reaches < 1):
             raise ValueError('every river needs at least one weight')
         flat = np.concatenate([np.asarray(w, dtype=np.float64).ravel() for w in weights])
         if np.any(flat <= 0):
             raise ValueError('weights must be strictly positive')
-        totals = np.add.reduceat(flat, np.concatenate(([0], np.cumsum(substeps)[:-1])))
-        return substeps, flat * np.repeat(k / totals, substeps)
+        totals = np.add.reduceat(flat, np.concatenate(([0], np.cumsum(sub_reaches)[:-1])))
+        return sub_reaches, flat * np.repeat(k / totals, sub_reaches)
 
     def to_parquet(self, path: PathInput) -> Path:
         """

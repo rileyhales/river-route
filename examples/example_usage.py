@@ -28,10 +28,9 @@ if __name__ == '__main__':
 
     # ── 1. Configs: every option, frozen, in one object ──────────────────────
     conf = rr.Configs(
-        # the network file
         network_file=network_file,
         # primary modeling choices
-        parameterization='static',
+        parameters='static',
         forcing='grid',
         transform='uniform',
         force_validity=False,

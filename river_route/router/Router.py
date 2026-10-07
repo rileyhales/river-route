@@ -2,7 +2,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import pandas as pd
@@ -11,31 +11,31 @@ from tqdm import tqdm
 from .._logging import PROGRESS, configure_logging
 from ..configs import Configs, check_channel_state_rivers, is_dev_null
 from ..network import Network
-from ..runoff import RUNOFF_CLASS_FOR_FORCING, CatchmentRunoffVolumes, GridCellRunoff, Runoff
-from ..types import DatetimeArray, Float64Array, FloatArray, PathInput, WriteDischargesFn
+from ..types import Coefficients, DatetimeArray, Float64Array, FloatArray, Forcing, PathInput, WriteDischargesFn
 from . import dynamic_muskingum, static_muskingum
-from ._numba_kernels import Layout, route_region
+from ._numba_kernels import ComputePlan, route_region
 from .writers import null_writer, zarr_writer
 
-__all__ = ['Router', 'ROUTING_METHOD_FOR_PARAMETERIZATION']
+if TYPE_CHECKING:
+    from ..forcings import Runoff
+
+__all__ = ['Router', 'ROUTING_METHOD_FOR_PARAMETERS']
 
 logger = logging.getLogger(__name__)
 
-# the module of the routing method each parameterization is routed by; each routes one river with its own parameters
-ROUTING_METHOD_FOR_PARAMETERIZATION: dict[str, ModuleType] = {
-    'static': static_muskingum,
-    'power_law': dynamic_muskingum,
-}
+# the module of the routing method each choice of parameters is routed by; each routes one river with its own
+ROUTING_METHOD_FOR_PARAMETERS: dict[str, ModuleType] = {'static': static_muskingum, 'power_law': dynamic_muskingum}
 
 
 class Router:
     """
     Muskingum style river routing allowing
-    - parameterization: static coefficients from constant k and x (muskingum), or dynamic coefficients from k
-      recomputed from discharge every routing step (variable parameter muskingum), e.g. by a power law
+    - parameters: static coefficients from constant k and x (muskingum), or dynamic coefficients rebuilt every
+      routing step from the k and x a dynamic method gives at each river's discharge (variable parameter muskingum),
+      such as the power law
     - forcing: channel-only or runoff on grids/meshes or already aggregated to catchments
-    - validity: force_validity routes rivers in the substeps or subcycles that make every coefficient non-negative at
-      dt_routing
+    - validity: force_validity routes rivers in the sub-reaches or subcycles that make every coefficient non-negative
+      at dt_routing
     - transformation: the uniform runoff transformation (e.g. runoff transform method)
     """
 
@@ -43,9 +43,9 @@ class Router:
     network: Network  # ids, topology, k, x, the partition, and the coefficient signs
     runoff: Runoff | None  # reads runoff_files, built from the configs the first time runoff is routed
 
-    # what the routing method the parameterization config chooses prepared for the current time steps
-    routing_parameters: static_muskingum.StaticMuskingum | dynamic_muskingum.DynamicMuskingum  # per river
-    layout: Layout  # each river routed whole, or with force_validity in substeps and subcycles
+    # what the routing method the parameters config chooses prepared for the current time steps
+    coefficients: Coefficients  # per river
+    compute_plan: ComputePlan  # each river's sub-reaches and subcycles, all one unless force_validity
 
     # State variables
     channel_state: FloatArray  # one value per river, or with force_validity one per sub-reach
@@ -100,7 +100,7 @@ class Router:
         missing = [column for column in ('riverId', 'Q') if column not in state.columns]
         if missing:
             raise ValueError(f'channel_state_init_file {state_file} is missing the column(s) {", ".join(missing)}')
-        # force_validity starts from one value per sub-reach, whose count is checked once the layout is known
+        # force_validity starts from one value per sub-reach, whose count is checked once the compute plan is known
         check_channel_state_rivers(
             state['riverId'].to_numpy(), self.network.river_ids, self.configs.force_validity, state_file
         )
@@ -111,16 +111,14 @@ class Router:
         """
         Require channel_state to have one value per routed reach: one per river, or with force_validity one per
         sub-reach. Without an initial state file force_validity starts from zero in every sub-reach. Any other state
-        that does not match the layout raises, whether it was read from a state file or carried from the previous
+        that does not match the compute plan raises, whether it was read from a state file or carried from the previous
         runoff file; its values are never changed to fit.
         """
-        if not self.layout.reach_indptr.shape[0]:
-            return
-        n_reaches = int(self.layout.reach_indptr[-1])
+        n_reaches = int(self.compute_plan.sub_reach_starts[-1])
         if self.channel_state.shape[0] == n_reaches:
             return
         if not self.configs.channel_state_init_file and not self.channel_state.any():
-            self.channel_state = np.zeros(n_reaches, dtype=np.float32)  # a zero state is zero in any layout
+            self.channel_state = np.zeros(n_reaches, dtype=np.float32)  # a zero state is zero in any compute plan
             return
         raise ValueError(
             f'the channel state has {self.channel_state.shape[0]} values, but force_validity routes {n_reaches} '
@@ -134,9 +132,7 @@ class Router:
         if not final_state_file:
             return
         logger.debug('Writing Final State to Parquet')
-        ids = self.network.river_ids
-        reach_indptr = self.layout.reach_indptr
-        ids = np.repeat(ids, np.diff(reach_indptr)) if reach_indptr.shape[0] else ids
+        ids = np.repeat(self.network.river_ids, np.diff(self.compute_plan.sub_reach_starts))  # a row per sub-reach
         pd.DataFrame({'riverId': ids, 'Q': self.channel_state}).to_parquet(self.configs.channel_state_final_file)
         return
 
@@ -212,18 +208,18 @@ class Router:
         return
 
     def _prepare_routing_method(self) -> None:
-        """Lay out each river and build the routing method's parameters for the current dt_routing and dt_runoff."""
+        """Plan each river's computation and build its coefficients for the current dt_routing and dt_runoff."""
         logger.debug('Preparing the routing method')
-        method = ROUTING_METHOD_FOR_PARAMETERIZATION[self.configs.parameterization]
-        self.layout, self.routing_parameters = method.prepare_routing(
+        method = ROUTING_METHOD_FOR_PARAMETERS[self.configs.parameters]
+        self.compute_plan, self.coefficients = method.prepare_routing(
             self.network, self.configs, self.dt_routing, self.dt_runoff
         )
-        reach_indptr, subcycles = self.layout
-        if reach_indptr.shape[0]:
+        sub_reach_starts, subcycles = self.compute_plan
+        if self.configs.force_validity:
             logger.info(
-                f'force_validity: {self.network.size} rivers routed in substeps as {int(reach_indptr[-1])} '
-                f'sub-reaches at dt_routing={self.dt_routing} s, and {int(np.count_nonzero(subcycles > 1))} rivers '
-                f'routed in subcycles'
+                f'force_validity: {self.network.size} rivers routed as {int(sub_reach_starts[-1])} sub-reaches at '
+                f'dt_routing={self.dt_routing} s, and {int(np.count_nonzero(subcycles > 1))} rivers routed in '
+                f'subcycles'
             )
         self._check_channel_state()
         return
@@ -274,10 +270,10 @@ class Router:
         self._prepare_routing_method()
 
         logger.debug('Starting routing computation')
-        q_t = self.channel_state.astype(np.float32, copy=True)
+        channel_state = self.channel_state.astype(np.float32, copy=True)
         discharge_array = self._new_discharge_buffer()
-        self._route_region(q_t, discharge_array, None, thread_pool, threads)
-        self.channel_state = q_t
+        self._route_region(channel_state, discharge_array, None, thread_pool, threads)
+        self.channel_state = channel_state
 
         # generate dates since they cannot be copied from an external forcing file
         dates = pd.date_range(
@@ -298,6 +294,9 @@ class Router:
     def _execute_routing_forced(self, thread_pool: ThreadPoolExecutor | None, threads: int) -> None:
         runoff_files = self.configs.runoff_files
         if self.runoff is None:
+            # imported here because the forcings package imports the stages of router._numba_kernels
+            from ..forcings import RUNOFF_CLASS_FOR_FORCING
+
             self.runoff = RUNOFF_CLASS_FOR_FORCING[self.configs.forcing].from_configs(self.configs)
         if self.network.synthetic is not None:
             self.runoff.distribute(self.network)
@@ -333,14 +332,16 @@ class Router:
                 self._prepare_routing_method()
                 prepared_for_time_steps = (self.dt_routing, self.dt_runoff)
             logger.debug('Starting routing computation')
-            q_t = self.channel_state.astype(np.float32, copy=True)
+            channel_state = self.channel_state.astype(np.float32, copy=True)
             discharge_array = self._new_discharge_buffer()
-            self._route_region(q_t, discharge_array, runoff, thread_pool, threads)
+            self._route_region(channel_state, discharge_array, runoff, thread_pool, threads)
             if self.configs.runoff_processing_mode == 'sequential':
                 logger.debug('Updating Channel State for Next Sequential Computation')
-                self.channel_state = q_t
+                self.channel_state = channel_state
             else:  # every ensemble member starts from the same state, and the final state is the mean of theirs
-                member_state_sum = q_t.astype(np.float64) if member_state_sum is None else member_state_sum + q_t
+                member_state_sum = (
+                    channel_state.astype(np.float64) if member_state_sum is None else member_state_sum + channel_state
+                )
 
             dates, discharge_array = self._average_to_discharge_steps(dates, discharge_array)
             logger.debug('Writing Discharge Array to File')
@@ -356,21 +357,21 @@ class Router:
 
     def _route_region(
         self,
-        q_t: FloatArray,
+        channel_state: FloatArray,
         discharge_array: FloatArray,
-        runoff: CatchmentRunoffVolumes | GridCellRunoff | None,
+        forcing: Forcing,
         thread_pool: ThreadPoolExecutor | None,
         threads: int,
     ) -> None:
         """Route one file of runoff, or the channel alone, over the network with the prepared routing method."""
         route_region(
             self.network,
-            self.routing_parameters,
-            self.layout,
+            self.coefficients,
+            self.compute_plan,
             self.num_routing_steps_per_runoff,
-            q_t,
+            channel_state,
             discharge_array,
-            runoff,
+            forcing,
             thread_pool,
             threads,
         )
