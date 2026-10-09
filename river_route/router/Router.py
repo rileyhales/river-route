@@ -24,7 +24,7 @@ __all__ = ['Router', 'ROUTING_METHOD_FOR_PARAMETERS']
 logger = logging.getLogger(__name__)
 
 # the module of the routing method each choice of parameters is routed by; each routes one river with its own
-ROUTING_METHOD_FOR_PARAMETERS: dict[str, ModuleType] = {'static': static_muskingum, 'power_law': dynamic_muskingum}
+ROUTING_METHOD_FOR_PARAMETERS: dict[str, ModuleType] = {'static': static_muskingum, 'cunge': dynamic_muskingum}
 
 
 class Router:
@@ -32,7 +32,7 @@ class Router:
     Muskingum style river routing allowing
     - parameters: static coefficients from constant k and x (muskingum), or dynamic coefficients rebuilt every
       routing step from the k and x a dynamic method gives at each river's discharge (variable parameter muskingum),
-      such as the power law
+      such as Muskingum-Cunge
     - forcing: channel-only or runoff on grids/meshes or already aggregated to catchments
     - validity: force_validity routes rivers in the sub-reaches or subcycles that make every coefficient non-negative
       at dt_routing
@@ -53,7 +53,7 @@ class Router:
     # Time options, in seconds
     dt_routing: int  # routing step, an integer divisor of dt_runoff
     dt_runoff: int  # time between runoff steps, read from each runoff file, an integer divisor of dt_discharge
-    dt_discharge: int  # time routed discharge is averaged over before it is written, an integer divisor of dt_total
+    dt_discharge: int  # time between the routed discharges written, an integer divisor of dt_total
     dt_total: int  # how long to simulate
     num_runoff_steps: int
     num_routing_steps_per_runoff: int
@@ -314,6 +314,7 @@ class Router:
 
         prepared_for_time_steps: tuple[int, int] | None = None  # (dt_routing, dt_runoff) of the routing parameters
         member_state_sum: Float64Array | None = None  # the sum of the final states of the ensemble members
+        discharge_memory = np.empty(0, dtype=np.float32)  # every file's routed discharge, grown only for a longer file
         for dates, runoff, runoff_file, discharge_file in file_iter:
             logger.info('-' * 60)
             logger.info(f'Routing catchment runoff: {runoff_file}')
@@ -333,8 +334,13 @@ class Router:
                 prepared_for_time_steps = (self.dt_routing, self.dt_runoff)
             logger.debug('Starting routing computation')
             channel_state = self.channel_state.astype(np.float32, copy=True)
-            discharge_array = self._new_discharge_buffer()
-            self._route_region(channel_state, discharge_array, runoff, thread_pool, threads)
+            # the kernels write every value, so each file is routed into the memory of the files before it rather than
+            # into a new array, which the operating system would page in again
+            n_values = self.network.original_river_ids.shape[0] * self.num_runoff_steps
+            if discharge_memory.shape[0] < n_values:
+                discharge_memory = self._new_discharge_buffer().reshape(-1)
+            routed_discharge = discharge_memory[:n_values].reshape(-1, self.num_runoff_steps)
+            self._route_region(channel_state, routed_discharge, runoff, thread_pool, threads)
             if self.configs.runoff_processing_mode == 'sequential':
                 logger.debug('Updating Channel State for Next Sequential Computation')
                 self.channel_state = channel_state
@@ -343,7 +349,7 @@ class Router:
                     channel_state.astype(np.float64) if member_state_sum is None else member_state_sum + channel_state
                 )
 
-            dates, discharge_array = self._average_to_discharge_steps(dates, discharge_array)
+            dates, discharge_array = self._discharge_at_end_of_discharge_steps(dates, routed_discharge)
             logger.debug('Writing Discharge Array to File')
             self._discharge_writer(
                 self, dates, discharge_array, discharge_file, runoff_file, thread_pool=thread_pool, threads=threads
@@ -377,17 +383,16 @@ class Router:
         )
         return
 
-    def _average_to_discharge_steps(
+    def _discharge_at_end_of_discharge_steps(
         self, dates: DatetimeArray, discharge_array: FloatArray
     ) -> tuple[DatetimeArray, FloatArray]:
-        """The routed discharge averaged over each dt_discharge, and the date each average starts at. The kernels write
-        the mean discharge over each runoff step, so the mean of consecutive ones is the mean over the longer step."""
+        """The routed discharge at the end of each dt_discharge, that of its last runoff step, and the date each
+        dt_discharge begins at, as a C-order (river, time) array."""
         if self.dt_discharge == self.dt_runoff:
             return dates, discharge_array
-        logger.debug('Resampling dates and discharges to specified timestep')
-        n_discharge_steps = self.dt_total // self.dt_discharge
-        averaged = discharge_array.reshape(discharge_array.shape[0], n_discharge_steps, -1).mean(axis=2)
-        return dates[:: self.num_runoff_steps_per_discharge], averaged
+        logger.debug('Taking the discharge at the end of each dt_discharge')
+        runoff_steps = self.num_runoff_steps_per_discharge
+        return dates[::runoff_steps], np.ascontiguousarray(discharge_array[:, runoff_steps - 1 :: runoff_steps])
 
     def _new_discharge_buffer(self) -> FloatArray:
         """A zeroed C-order (river, time) array for the routed discharge of the original, non-synthetic rivers."""

@@ -5,9 +5,9 @@ Routing simulations have four different time steps, all given in seconds.
 - `dt_routing`: The routing computation step, dt in the Muskingum equation. Channel routing requires it, and routing
   with forcing defaults it from `dt_runoff`.
 - `dt_runoff`: Interval between runoff inputs. It is not a config: it is read from the time steps of each runoff file.
-- `dt_discharge`: Interval over which to average discharge to write to disk. Must be greater than or equal to `dt_runoff`.
-  Each value written is the mean discharge over its interval: the trapezoidal mean of the computed discharges,
-  `(q_0/2 + q_1 + ... + q_(m-1) + q_m/2)/m` for m routing steps, labeled with the time the interval begins.
+- `dt_discharge`: Interval between the discharges written to disk. Must be greater than or equal to `dt_runoff`.
+  Each value written is the discharge at the end of its interval, after routing it, labeled with the time the interval
+  begins. Nothing is averaged.
 - `dt_total`: Total simulation duration.
 
 The most important time step is `dt_routing`. `dt_discharge` and `dt_total` are derived from the runoff inputs unless
@@ -17,7 +17,7 @@ The following rules apply:
 
 1. You must route each runoff increment at least 1 time so `dt_routing` must be less than or equal to `dt_runoff`.
 2. `dt_routing` must be an integer divisor of `dt_runoff` because runoff distributions won't be resampled.
-3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge outputs are averaged over runoff intervals.
+3. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge is written at the end of runoff intervals.
 4. By default `dt_total` is `dt_runoff` multiplied by the runoff record length. If you set it explicitly, it must be an integer 
    multiple of `dt_runoff` (and of `dt_discharge`). Recession routing is not available.
 5. Every step of a runoff file must be as long as its first, which is its `dt_runoff`. Runoff is never resampled, so a

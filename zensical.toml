@@ -19,6 +19,7 @@ nav = [
         { "File Schemas" = "references/io-file-schema.md" },
         { "Time Variables" = "references/time-options.md" },
         { "Math Derivations" = "references/math.md" },
+        { "Dynamic Parameters" = "references/dynamic-parameters.md" },
         { "Parallelism" = "references/parallelism.md" },
     ] },
     { "Tutorials" = [

@@ -141,13 +141,9 @@ $$
 $$
 
 !!! note "What the routed discharge is"
-    Each average replaces a mean over the interval, so the discharge Muskingum solves for, $Q_{t+1}$, is the discharge
-    that, averaged with $Q_t$, is the mean discharge over the interval. It is neither the instantaneous discharge at the
-    end of the step nor the mean over the step on its own. `river-route` writes the mean discharge over each output
-    interval of $m$ routing steps, the trapezoidal mean of the computed discharges,
-    $\left(\frac{Q_0}{2} + Q_1 + \dots + Q_{m-1} + \frac{Q_m}{2}\right)/m$; the plain mean of $Q_1 \dots Q_m$ would
-    lead it by half a routing step. A shorter $\Delta t$ is not more accurate (see
-    [Signs of the coefficients](#signs-of-the-coefficients)).
+    `river-route` writes $Q_{t+1}$ at the end of each output interval, the discharge after routing the interval, and
+    averages nothing: for an output interval of $m$ routing steps it writes $Q_m$. A shorter $\Delta t$ is not more
+    accurate (see [Signs of the coefficients](#signs-of-the-coefficients)).
 
 ### Storage Equation
 
@@ -504,9 +500,8 @@ c_3 \ge 0 &\iff \Delta t \le 2k(1-x)
 \end{aligned}
 $$
 
-For $x \ge 0$, $c_2$ is always positive. For $x < 0$ it can be negative, but the response of the river stays
-non-negative as long as $c_1$ and $c_3$ are, since its response to upstream inflow is $c_1$ at the first step and
-$(c_2 + c_1 c_3) c_3^{n-1}$ after, and $c_2 + c_1 c_3 > 0$. Every coefficient is therefore non-negative in the window:
+Muskingum $x$ is never negative, and for $x \ge 0$, $c_2$ is always positive, so every coefficient is non-negative
+in the window:
 
 $$
 \begin{gathered}
@@ -529,17 +524,23 @@ There are several noteworthy insights from these equations:
 
 A river too long for the step, $\Delta t < 2kx$, has $c_1 < 0$: its discharge dips ahead of a sharp rise. The dip is
 the behavior of the Muskingum model itself, which the step only resolves. Under real runoff it is small, and routing
-the river whole is usually best. To remove it, the river can be split into $N$ equal **_"sub-reaches"_** of travel
-time $k/N$ in series. Sub-reaches that keep the river's $x$ divide its travel
-time variance by $N$ and route a different, less diffusive river. `river-route` gives each sub-reach
+the river whole is usually best. To remove it, the river can be split into $N$ **_"sub-reaches"_** in series, whose
+travel times are the shares $w_i$ of $k$. Whatever their $x$, they keep the river's mean travel time $k$, and if they
+all take
 
 $$
-x_N = \frac{1}{2} - N\left(\frac{1}{2} - x\right),
+x_N = \frac{1}{2} - \frac{1/2 - x}{\sum_i w_i^2},
 $$
 
-the $x$ Muskingum-Cunge gives a reach $N$ times shorter, which keeps both the mean $k$ and the variance $k^2(1-2x)$.
-For $N \ge 2$ and $x < 1/4$, $x_N$ is negative and $c_1$ is positive at any step, so two sub-reaches make the coefficients of
-every river too long at $x = 0.2$ non-negative. In general the fewest is $N = \lceil k / (\Delta t + (1-2x)k) \rceil$.
+they also keep its variance $k^2(1-2x)$, since $\sum_i (w_i k)^2 (1 - 2x_N) = k^2(1-2x)$. Sub-reaches that kept the
+river's own $x$ would divide its variance by $N$ and route a different, less diffusive river. Equal shares give
+$x_N = 1/2 - N(1/2 - x)$, the $x$ Muskingum-Cunge gives a reach $N$ times shorter, and `river-route` splits a river
+equally wherever that is not negative. Muskingum $x$ is never negative, so where it would be, as for $N \ge 2$ and
+$x < 1/4$, the sub-reaches take $x_N = 0$, linear reservoirs with $c_1$ positive at any step, and unequal shares: the
+first $N - 1$ take equal shares larger than the last's, the shares whose squares sum to $1 - 2x$. Two sub-reaches of a
+river at $x = 0.2$ take 0.724 and 0.276 of its $k$, which keeps its variance and makes the coefficients of every river
+too long at $x = 0.2$ non-negative. In general the fewest is $N = \lceil k / (\Delta t + (1-2x)k) \rceil$, and
+each sub-reach takes its share of the river's runoff.
 
 ### When dt >>> k
 

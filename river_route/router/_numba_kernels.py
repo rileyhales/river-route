@@ -23,6 +23,7 @@ from ..types import (
     RiverForcing,
     Transform,
 )
+from ._simd import FourLanes
 
 if TYPE_CHECKING:
     from ..network.Network import Network
@@ -32,8 +33,9 @@ __all__ = [
     'forcing_of_river',
     'transform_runoff',
     'add_forcing_terms',
+    'add_forcing_of_four_steps',
     'route_river',
-    'k_and_x_at_discharge',
+    'k_and_x_at_discharges',
     'is_argument_type',
     # how each river is computed, what a job routes, and routing the jobs of a region
     'ComputePlan',
@@ -42,12 +44,16 @@ __all__ = [
     'route_region',
 ]
 
+# the rows of scratch route_job gives every river, each as long as the river's steps: two for static coefficients, eight
+# for dynamic ones
+SCRATCH_ROWS = 8
+
 
 class ComputePlan(NamedTuple):
     """How each river is computed: split into sub-reaches in series, and in subcycles of the routing step."""
 
     sub_reach_starts: Int32Array  # (n + 1,) channel_state index of each river's first sub-reach, then the total
-    subcycles: Int32Array  # (n,) steps each river takes per routing step
+    subcycles: Int32Array  # (n,) steps each river takes per routing step, the most it takes with dynamic coefficients
 
     @classmethod
     def from_counts(cls, sub_reaches: IntArray, subcycles: IntArray) -> ComputePlan:
@@ -102,6 +108,16 @@ def add_forcing_terms(
     raise NotImplementedError('stages run only inside kernels, where numba compiles them from their overloads')
 
 
+def add_forcing_of_four_steps(
+    river_forcing: RiverForcing, c4: np.float32, first_step: int, steps: int, terms: FourLanes
+) -> FourLanes:
+    """
+    terms plus c4 V_t in each lane, for the up to four runoff steps t from first_step, a lane each, when each runoff
+    step is one routing step. Lanes past the last step of the series are left as they are.
+    """
+    raise NotImplementedError('stages run only inside kernels, where numba compiles them from their overloads')
+
+
 def route_river(
     river_index: int,
     compute_plan: ComputePlan,
@@ -110,22 +126,29 @@ def route_river(
     channel_state: FloatArray,
     upstream_inflow: FloatArray,
     downstream_inflow: FloatArray,
-    mean_discharge: FloatArray,
-    known_terms: FloatArray,
-    sub_reach_inflow: FloatArray,
+    discharge_at_runoff_steps: FloatArray,
+    scratch: FloatArray,
 ) -> None:
     """
     Route the river at river_index over every routing step: add its Q at each step into downstream_inflow, write its
-    mean Q over each runoff step into mean_discharge, and leave its last Q in channel_state. The last two arguments are
-    scratch.
+    Q at the end of each runoff step into discharge_at_runoff_steps, and leave its last Q in channel_state. scratch is
+    (SCRATCH_ROWS, routing steps times the most subcycles + 1) rows the routing method works in.
     """
     raise NotImplementedError('stages run only inside kernels, where numba compiles them from their overloads')
 
 
-def k_and_x_at_discharge(
-    parameters: DynamicParameters, river_index: int, q: np.float32
-) -> tuple[np.float32, np.float32]:
-    """The Muskingum k (s) and x of the river at river_index at discharge q, by the dynamic method's parameters."""
+def k_and_x_at_discharges(
+    parameters: DynamicParameters,
+    river_index: int,
+    discharge: FloatArray,
+    dt_div_k: FloatArray,
+    one_minus_two_x: FloatArray,
+    work: FloatArray,
+) -> None:
+    """
+    dt/k and 1 - 2x of the river at river_index at each of the discharges, by the dynamic method's parameters, the
+    forms its coefficients are built from. The discharges and the rows of work are scratch the method may overwrite.
+    """
     raise NotImplementedError('stages run only inside kernels, where numba compiles them from their overloads')
 
 
@@ -277,7 +300,7 @@ def route_job(
 ) -> None:
     """
     Route the rivers of each block of job in index order, each river's whole series before the next river. Each river's
-    mean discharge over each runoff step is written into its own row of the C-order (river, time) discharge_array.
+    discharge at the end of each runoff step is written into its own row of the C-order (river, time) discharge_array.
     """
     runoff_steps = discharge_array.shape[1]
     routing_steps = runoff_steps * routing_steps_per_runoff_step
@@ -290,8 +313,7 @@ def route_job(
     boundaries_in_target_order = sort_boundaries_by_target_river(boundary_target)
     next_boundary = 0
     transform_scratch = np.empty(0 if transform is None else runoff_steps, dtype=np.float32)
-    known_terms = np.empty(routing_steps * compute_plan.subcycles.max(), dtype=np.float32)
-    sub_reach_inflow = np.empty(routing_steps + 1, dtype=np.float32)  # a river split in sub-reaches has no subcycles
+    scratch = np.empty((SCRATCH_ROWS, routing_steps * compute_plan.subcycles.max() + 1), dtype=np.float32)
     has_synthetic_rivers = discharge_row.shape[0] > 0
     synthetic_river_discharge = np.empty(runoff_steps if has_synthetic_rivers else 0, dtype=discharge_array.dtype)
 
@@ -323,7 +345,7 @@ def route_job(
                     free_inflow_row_count,
                 )
             row = discharge_row[river_index] if has_synthetic_rivers else river_index
-            mean_discharge = discharge_array[row] if row >= 0 else synthetic_river_discharge
+            discharge_at_runoff_steps = discharge_array[row] if row >= 0 else synthetic_river_discharge
             river_forcing = forcing_of_river(forcing, river_index)
             if transform is not None:  # numba compiles the uniform transform, None, without this
                 river_forcing = transform_runoff(transform, river_forcing, river_index, transform_scratch)
@@ -335,9 +357,8 @@ def route_job(
                 channel_state,
                 upstream_inflow,
                 downstream_inflow,
-                mean_discharge,
-                known_terms,
-                sub_reach_inflow,
+                discharge_at_runoff_steps,
+                scratch,
             )
             release_inflow_row_to_pool(
                 river_index - first_river, inflow_row_of_river, free_inflow_rows, free_inflow_row_count
@@ -425,8 +446,6 @@ def _check_everything_a_job_reads(
         )
     if subcycles.shape != (n_rivers,) or np.any(subcycles < 1):
         raise ValueError(f'subcycles must be ({n_rivers},) counts of at least 1')
-    if np.any((sub_reaches > 1) & (subcycles > 1)):
-        raise ValueError('a river is routed in sub-reaches or in subcycles, never both')
     n_states = int(sub_reach_starts[-1])  # one state per sub-reach
     n_out = network.original_river_ids.shape[0]  # synthetic rivers have no discharge row
     expected_shapes = {
@@ -436,12 +455,18 @@ def _check_everything_a_job_reads(
     for name, (want, got) in expected_shapes.items():
         if got != want:
             raise ValueError(f'{name} has shape {got}, expected {want} for {n_rivers} rivers and {n_steps} steps')
+    # static coefficients have a value per sub-reach, and the parameters of a dynamic method one per river
     per_river = {'downstream_indices': network.downstream_indices}
-    for name, value in coefficients._asdict().items():  # a dynamic method's parameters are a NamedTuple of arrays
-        per_river |= value._asdict() if hasattr(value, '_asdict') else {name: value}
-    for name, array in per_river.items():
-        if isinstance(array, np.ndarray) and array.shape != (n_rivers,):
-            raise ValueError(f'{name} has shape {array.shape}, expected ({n_rivers},)')
+    per_sub_reach = {}
+    for name, value in coefficients._asdict().items():
+        if hasattr(value, '_asdict'):
+            per_river |= value._asdict()
+        elif isinstance(value, np.ndarray):
+            per_sub_reach[name] = value
+    for expected, arrays in ((n_rivers, per_river), (n_states, per_sub_reach)):
+        for name, array in arrays.items():
+            if isinstance(array, np.ndarray) and array.shape != (expected,):
+                raise ValueError(f'{name} has shape {array.shape}, expected ({expected},)')
     if forcing is not None:
         forcing.check(network.river_ids, n_steps)
 

@@ -76,13 +76,13 @@ discharge on millions of rivers and producing a 5 trillion data point simulation
 What you control is how much work you ask that kernel to do.
 
 1. **Choose the simplest routing procedure your problem needs.** `parameters: static` computes Muskingum
-   coefficients once and reuses them for every file with the same time steps. `parameters: power_law` rebuilds
+   coefficients once and reuses them for every file with the same time steps. `parameters: cunge` rebuilds
    them inside the kernel on every routing step. Only pay for dynamic coefficients when the application needs them.
    See the [config file reference](config-files.md#routing-procedure-selectors).
 2. **Use the largest valid routing time step.** Every river is routed at every routing step, so halving
    `dt_routing` doubles the work. Check validity with `Network.invalid_mask(dt)` rather than
    defaulting to a small step. See [Time Variables](time-options.md).
-3. **Only produce the output you will use.** A coarser `dt_discharge` averages results before they are written, and
+3. **Only produce the output you will use.** A coarser `dt_discharge` writes fewer of the discharges routed, and
    a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
    `zarr_writer` is built to write as fast as possible when you need everything.
 4. **Route what matters.** Rivers that do not contribute to the results you need do not have to be in the network.

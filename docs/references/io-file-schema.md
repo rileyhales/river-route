@@ -23,12 +23,16 @@ Required for all routing:
 
 Optional columns:
 
-| Column            | Data Type | Description                                                                          |
-|-------------------|-----------|--------------------------------------------------------------------------------------|
-| `powerLawAlpha`   | float     | Required for `parameters: power_law`: k = powerLawAlpha * Q ^ powerLawBeta           |
-| `powerLawBeta`    | float     | Required for `parameters: power_law`                                                 |
-| `synthetic`       | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                   |
-| `parentRiverId`   | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from       |
+| Column              | Data Type | Description                                                                                |
+|---------------------|-----------|--------------------------------------------------------------------------------------------|
+| `cungeKCoefficient` | float     | Required for `parameters: cunge`: k = cungeKCoefficient * Q ^ cungeKExponent, in seconds   |
+| `cungeKExponent`    | float     | Required for `parameters: cunge`                                                           |
+| `cungeXCoefficient` | float     | Required for `parameters: cunge`: x = max(0, 1/2 - cungeXCoefficient * Q ^ cungeXExponent) |
+| `cungeXExponent`    | float     | Required for `parameters: cunge`                                                           |
+| `cungeMinQ`         | float     | Required for `parameters: cunge`: the least discharge k and x are evaluated at, in m³/s    |
+| `cungeMaxQ`         | float     | Required for `parameters: cunge`: the greatest discharge k and x are evaluated at, in m³/s |
+| `synthetic`         | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                         |
+| `parentRiverId`     | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from             |
 
 A network file with `synthetic` rows routes with the `channel`, `grid`, and `ecmwf_grib` forcings. The `catchment`
 forcing refuses it, since a catchment runoff file has one row per river and none for the added sub-reaches.

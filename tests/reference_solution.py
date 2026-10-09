@@ -129,7 +129,6 @@ def route(
     n_outputs = len(options.get('runoff_files', [])) or 1
     defaults = {
         'discharge_files': [directory / f'discharge_{i}.zarr' for i in range(n_outputs)],
-        'force_validity': False,
         'invalid_coefficients': 'ignore',
         'log': False,
         'progress_bar': False,
@@ -158,14 +157,9 @@ def reference_runs(network_file: str, weights: str, runoff: list[str], catchment
     Each run's thread count and configs, with its input paths relative to the package. They are built in this order,
     since later runs read the catchment runoff files and the standard run's final state.
     """
-    common = {
-        'network_file': network_file,
-        'dt_routing': 3600,
-        'force_validity': False,
-        'invalid_coefficients': 'ignore',
-    }
+    common = {'network_file': network_file, 'dt_routing': 3600, 'invalid_coefficients': 'ignore'}
     grid = common | GRID_NAMES | {'forcing': 'grid', 'runoff_files': runoff, 'grid_weights_file': weights}
-    stabilized = grid | {'force_validity': True}
+    unforced = grid | {'force_validity': False}  # the option to route each river whole, as given
     catchment = common | {'forcing': 'catchment', 'runoff_files': catchment_runoff}
     channel = common | {
         'forcing': 'channel',
@@ -175,9 +169,9 @@ def reference_runs(network_file: str, weights: str, runoff: list[str], catchment
     }
     return {
         'static_standard': {'threads': 1, 'configs': grid},
-        'static_stabilized': {'threads': 1, 'configs': stabilized},
+        'static_unforced': {'threads': 1, 'configs': unforced},
         'static_standard_4_threads': {'threads': 4, 'configs': grid},
-        'static_stabilized_4_threads': {'threads': 4, 'configs': stabilized},
+        'static_unforced_4_threads': {'threads': 4, 'configs': unforced},
         'catchment_file': {'threads': 1, 'configs': catchment},
         'channel': {'threads': 1, 'configs': channel},
     }

@@ -19,7 +19,7 @@ graph TD
     M --> N[set coefficients]
     N --> O[route with catchment runoff]
     O --> P{dt_discharge > dt_runoff?}
-    P -->|yes| Q[average over each discharge timestep]
+    P -->|yes| Q[keep the discharge at the end of each discharge timestep]
     P -->|no| R[write discharges]
     Q --> R
     R --> S{more runoff files?}
@@ -39,13 +39,12 @@ the topology and the `k` and `x` vectors, and the routing method chosen by `para
 from them. The network divides its rivers into the blocks threads route the first time it routes with each thread
 count.
 `Router.route()` first validates the required config keys and runoff source for the selected `parameters`,
-`forcing`, `transform`, and `force_validity` before any runoff is read. Options no routing method supports yet raise
-`NotImplementedError` then. The `Network` and its blocks are built once and reused, so routing repeatedly on one
+`forcing`, `transform`, and `force_validity` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
 `Router` reads and partitions the network only once, and each `route()` starts again from `channel_state_init_file`.
 When `forcing` is `'channel'`, time parameters are read directly from the config and the channel alone is routed once
 over `dt_total`. Otherwise the router loops over the runoff input files (processed sequentially or as an ensemble),
-reading `dt_runoff` from each file's dates, routes each one, averages the output over a longer `dt_discharge` when one
-is set, and writes the result.
+reading `dt_runoff` from each file's dates, routes each one, keeps the discharge at the end of each longer
+`dt_discharge` when one is set, and writes the result.
 
 ## Finding Inputs and Config Files at Runtime
 
@@ -120,7 +119,8 @@ routing, with 5 arguments and 2 keywords:
    `router.configs`.
 2. `dates`: datetime array for the columns of the discharge array.
 3. `discharge_array`: routed discharge array, C-order with shape `(riverId, time)`. The kernels route one river's
-   whole series at a time and write it into that river's row, so this is the layout every writer is handed.
+   whole series at a time and write it into that river's row, so this is the layout every writer is handed. The next
+   file is routed into the same array, so a writer that keeps it after returning must keep a copy.
 4. `discharge_file`: path to the output file.
 5. `runoff_file`: path to the runoff input used to produce this output, or `''` for channel routing.
 6. `thread_pool`: the thread pool given to `Router.route`, or `None`, for a writer that writes concurrently.

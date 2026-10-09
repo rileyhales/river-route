@@ -140,20 +140,17 @@ BROKEN_TABLES = {
     ),
     'an x above one half': (
         lambda table: table.assign(muskingumX=np.where(np.arange(len(table)) == 0, 0.6, table['muskingumX'])),
-        'muskingumX must be finite and at most 0.5',
+        'muskingumX must be finite and from 0 to 0.5',
+    ),
+    'a negative x': (
+        lambda table: table.assign(muskingumX=np.where(np.arange(len(table)) == 0, -0.1, table['muskingumX'])),
+        'muskingumX must be finite and from 0 to 0.5',
     ),
     'no upstream count': (lambda table: table.drop(columns='upstreamCount'), 'missing the required column'),
     'an upstream count that is off by one': (
         lambda table: table.assign(upstreamCount=table['upstreamCount'] + (np.arange(len(table)) == len(table) - 1)),
         'upstreamCount must count',
     ),
-}
-
-UNSUPPORTED_OPTIONS = {
-    'a power law that forces validity': (
-        lambda basin: {'parameters': 'power_law', 'force_validity': True},
-        'cannot force validity',
-    )
 }
 
 IRREGULAR_TIME_STEPS = {
@@ -217,9 +214,10 @@ def test_configs_round_trip_through_json(outputs: str, willamette: Basin, tmp_pa
 
 
 def test_preparing_runoff_does_not_skip_routing_validation(willamette: Basin, tmp_path: Path) -> None:
-    configs = rr.Configs(**routing_options(willamette, tmp_path), parameters='power_law', force_validity=True)
+    two_outputs = [tmp_path / 'discharge_a.zarr', tmp_path / 'discharge_b.zarr']  # for one runoff file
+    configs = rr.Configs(**(routing_options(willamette, tmp_path) | {'discharge_files': two_outputs}))
     rr.GridRunoff.from_configs(configs)  # validates the configs for preparing runoff, not for routing
-    with pytest.raises(NotImplementedError, match='cannot force validity'):
+    with pytest.raises(ValueError, match='must match number of input files'):
         rr.Router(configs).route()
 
 
@@ -344,27 +342,25 @@ def test_river_ids_beyond_int32_are_kept(willamette: Basin, tmp_path: Path) -> N
 
 def test_stabilize_splits_each_river_into_non_negative_sub_reaches_that_keep_its_travel_time(willamette: Basin) -> None:
     """
-    Every sub-reach of a split river has non-negative coefficients at dt, and its sub-reaches keep the river's mean
-    travel time k and its travel time variance k^2 (1 - 2x), which each sub-reach contributes as k_i^2 (1 - 2 x_i).
+    Every sub-reach of a split river has non-negative coefficients at dt and an x of 0 or more, and its sub-reaches keep
+    the river's mean travel time k and its travel time variance k^2 (1 - 2x), which each sub-reach contributes as
+    k_i^2 (1 - 2 x_i). At x = 0.2 two equal sub-reaches would need x = -0.1 to keep it, so the sub-reaches are linear
+    reservoirs of unequal travel times.
     """
     river_ids, k = willamette.network.river_ids, willamette.network.k.astype(np.float64)
     variance = k**2 * (1 - 2 * willamette.network.x.astype(np.float64))
-    sub_reaches = {}
-    for mode in ('uniform', 'nonuniform'):
-        network = rr.Network(willamette.network_file).stabilize(DT, mode=mode)
-        river = pd.Index(river_ids).get_indexer(network.parent_river_ids)  # the original river of each sub-reach
-        sub_reaches[mode] = np.bincount(river, minlength=river_ids.shape[0])
-        sub_reach_k, sub_reach_x = network.k.astype(np.float64), network.x.astype(np.float64)
-        assert_same(np.bincount(river, weights=sub_reach_k), k)
-        assert_same(np.bincount(river, weights=sub_reach_k**2 * (1 - 2 * sub_reach_x)), variance)
-        split = (
-            sub_reaches[mode][river] > 1
-        )  # only a river whose every sub-reach has non-negative coefficients is split
-        assert np.all(2 * sub_reach_k[split] * sub_reach_x[split] <= DT * (1 + 1e-6))
-        assert np.all(2 * sub_reach_k[split] * (1 - sub_reach_x[split]) >= DT * (1 - 1e-6))
-    assert np.any(sub_reaches['uniform'] > 1), 'no river of the basin is too long to route at dt'
-    np.testing.assert_array_equal(sub_reaches['nonuniform'], sub_reaches['uniform'])
-    np.testing.assert_array_equal(sub_reaches['uniform'], willamette.network.conditioning(DT)[0])
+    network = rr.Network(willamette.network_file).stabilize(DT)
+    river = pd.Index(river_ids).get_indexer(network.parent_river_ids)  # the original river of each sub-reach
+    sub_reaches = np.bincount(river, minlength=river_ids.shape[0])
+    sub_reach_k, sub_reach_x = network.k.astype(np.float64), network.x.astype(np.float64)
+    assert_same(np.bincount(river, weights=sub_reach_k), k)
+    assert_same(np.bincount(river, weights=sub_reach_k**2 * (1 - 2 * sub_reach_x)), variance)
+    assert np.all(sub_reach_x >= 0)
+    split = sub_reaches[river] > 1  # only a river whose every sub-reach has non-negative coefficients is split
+    assert np.all(2 * sub_reach_k[split] * sub_reach_x[split] <= DT * (1 + 1e-6))
+    assert np.all(2 * sub_reach_k[split] * (1 - sub_reach_x[split]) >= DT * (1 - 1e-6))
+    assert np.any(sub_reaches > 1), 'no river of the basin is too long to route at dt'
+    np.testing.assert_array_equal(sub_reaches, willamette.network.conditioning(DT)[0])
 
 
 def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
@@ -512,18 +508,12 @@ def test_grid_cell_runoff_checks_its_weight_table(willamette: Basin) -> None:
     assert cell_runoff.first_steps(10) is cell_runoff
 
 
-@pytest.mark.parametrize(('changes', 'message'), UNSUPPORTED_OPTIONS.values(), ids=UNSUPPORTED_OPTIONS.keys())
-def test_unsupported_options_raise_before_routing(changes, message, willamette: Basin, tmp_path: Path) -> None:
-    with pytest.raises(NotImplementedError, match=message):
-        route(tmp_path, **(willamette.gridded(months=1) | changes(willamette)))
-
-
 def test_parameters_need_their_columns(willamette: Basin, tmp_path: Path) -> None:
-    power_law = {'network_file': willamette.network_file, 'parameters': 'power_law', 'force_validity': False}
-    with pytest.raises(ValueError, match='missing powerLawAlpha column required by the power_law parameters'):
-        rr.Configs(**power_law).deep_validate()
-    with pytest.raises(ValueError, match='powerLawAlpha, powerLawBeta that the power_law parameters'):
-        route(tmp_path, willamette.months[:1], **power_law)
+    cunge = {'network_file': willamette.network_file, 'parameters': 'cunge'}
+    with pytest.raises(ValueError, match='missing cungeKCoefficient column required by the cunge parameters'):
+        rr.Configs(**cunge).deep_validate()
+    with pytest.raises(ValueError, match='cungeMinQ, cungeMaxQ that the cunge parameters'):
+        route(tmp_path, willamette.months[:1], **cunge)
 
 
 @pytest.mark.parametrize('threads', [0, True, 2.0])

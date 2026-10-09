@@ -8,10 +8,11 @@ subclass names the weight table columns that locate a cell with ``cell_dimension
 by overriding ``read_runoff``.
 
 A routing job takes each river through the stages without a body in router/_numba_kernels.py. Each form of runoff
-is a kind of forcing and implements two of them with numba overloads registered here, next to its NamedTuple:
+is a kind of forcing and implements three of them with numba overloads registered here, next to its NamedTuple:
 
-    forcing_of_river    the forcing of the river at river_index, from the runoff a file was read into
-    add_forcing_terms   adds c4 times that forcing's runoff volumes into the known terms of the river's steps
+    forcing_of_river            the forcing of the river at river_index, from the runoff a file was read into
+    add_forcing_terms           adds c4 times that forcing's runoff volumes into the known terms of the river's steps
+    add_forcing_of_four_steps   adds c4 times the runoff volumes of four steps into the four lanes of a SIMD vector
 
     CatchmentRunoffVolumes  (river, time) volumes whose row at river_index is that river's forcing. A series, a 1D
                             array, is also the form of the forcing a transform gives.
@@ -19,7 +20,7 @@ is a kind of forcing and implements two of them with numba overloads registered 
                             RiverGridCells, its cells and weights, added into its known terms one cell at a time so no
                             series of its runoff volumes is built.
 
-A new form of runoff needs a NamedTuple with ``check`` and ``first_steps``, and an overload of both stages for it.
+A new form of runoff needs a NamedTuple with ``check`` and ``first_steps``, and an overload of each stage for it.
 """
 
 import logging
@@ -37,7 +38,8 @@ from numba.extending import overload
 
 from .._metadata import __version__
 from ..configs import Configs
-from ..router._numba_kernels import add_forcing_terms, forcing_of_river, is_argument_type
+from ..router._numba_kernels import add_forcing_of_four_steps, add_forcing_terms, forcing_of_river, is_argument_type
+from ..router._simd import FourLanes, broadcast, load_up_to_four, multiply_add
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
 
@@ -142,6 +144,22 @@ def _overload_add_forcing_terms_for_runoff_series(
         return _add_runoff_series_terms
 
 
+def _add_runoff_series_of_four_steps(
+    river_forcing: FloatArray, c4: np.float32, first_step: int, steps: int, terms: FourLanes
+) -> FourLanes:
+    """terms plus c4 times the runoff volume of each of the up to four steps from first_step."""
+    return multiply_add(broadcast(c4), load_up_to_four(river_forcing, first_step, steps), terms)
+
+
+@overload(add_forcing_of_four_steps, jit_options={'nogil': True, 'fastmath': {'contract'}})
+def _overload_add_forcing_of_four_steps_for_runoff_series(
+    river_forcing: FloatArray, c4: np.float32, first_step: int, steps: int, terms: FourLanes
+):
+    """Not inlined by numba, like the overload for grid cells: LLVM inlines it into the routing loop."""
+    if is_argument_type(river_forcing, np.ndarray):
+        return _add_runoff_series_of_four_steps
+
+
 class GridCellRunoff(NamedTuple):
     """
     One file of gridded runoff depths read at the weight table's grid cells, with the weights that turn them into each
@@ -176,10 +194,15 @@ class GridCellRunoff(NamedTuple):
 
 
 class RiverGridCells(NamedTuple):
-    """The grid cells of one river's catchment: the runoff of every cell, and the cell and weight of each of its own."""
+    """
+    The grid cells of one river's catchment: the runoff of every cell, and the cell and weight of each of its own. The
+    runoff is one row, the series of each cell after the one before, so the depth of cell c at step t is
+    ``runoff_depths[c * steps_per_cell + t]`` and is read without making a view of the cell's row at every step.
+    """
 
-    runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths
-    cell: IntArray  # (n_river_weights,) row of runoff_by_cell each of the river's weights applies to
+    runoff_depths: FloatArray  # (n_cells * steps_per_cell,) the rows of GridCellRunoff.runoff_by_cell one after another
+    steps_per_cell: int  # the length of each cell's series in runoff_depths
+    cell: IntArray  # (n_river_weights,) cell each of the river's weights applies to
     weight: FloatArray  # (n_river_weights,) volume a unit of the cell's runoff depth gives the river
 
 
@@ -188,7 +211,10 @@ def _grid_cells_of_river(forcing: GridCellRunoff, river_index: int) -> RiverGrid
     first_weight = forcing.indptr[river_index]
     stop_weight = forcing.indptr[river_index + 1]
     return RiverGridCells(
-        forcing.runoff_by_cell, forcing.cell[first_weight:stop_weight], forcing.weight[first_weight:stop_weight]
+        forcing.runoff_by_cell.reshape(-1),  # a view, since check requires the runoff to be C-contiguous
+        forcing.runoff_by_cell.shape[1],
+        forcing.cell[first_weight:stop_weight],
+        forcing.weight[first_weight:stop_weight],
     )
 
 
@@ -212,7 +238,8 @@ def _add_grid_cell_runoff_terms(
     aggregating the runoff of 64 rivers at a time into scratch rows and reading those as each river was routed.
     """
     for weight_number in range(river_forcing.cell.shape[0]):
-        runoff_depths = river_forcing.runoff_by_cell[river_forcing.cell[weight_number]]
+        first_depth = river_forcing.cell[weight_number] * river_forcing.steps_per_cell
+        runoff_depths = river_forcing.runoff_depths[first_depth : first_depth + runoff_steps]
         cell_c4 = c4 * river_forcing.weight[weight_number]  # the weight turns a runoff depth into a volume (m³)
         if river_steps_per_runoff_step == 1:
             for runoff_step in range(runoff_steps):
@@ -235,6 +262,31 @@ def _overload_add_forcing_terms_for_grid_cells(
 ):
     if is_argument_type(river_forcing, RiverGridCells):
         return _add_grid_cell_runoff_terms
+
+
+def _add_grid_cell_runoff_of_four_steps(
+    river_forcing: RiverGridCells, c4: np.float32, first_step: int, steps: int, terms: FourLanes
+) -> FourLanes:
+    """terms plus c4 times the river's runoff volume of each of the up to four steps from first_step, cell by cell."""
+    forced_terms = terms
+    for weight_number in range(river_forcing.cell.shape[0]):
+        cell_c4 = c4 * river_forcing.weight[weight_number]  # the weight turns a runoff depth into a volume (m³)
+        first_depth = river_forcing.cell[weight_number] * river_forcing.steps_per_cell + first_step
+        depths = load_up_to_four(river_forcing.runoff_depths, first_depth, steps)
+        forced_terms = multiply_add(broadcast(cell_c4), depths, forced_terms)
+    return forced_terms
+
+
+@overload(add_forcing_of_four_steps, jit_options={'nogil': True, 'fastmath': {'contract'}})
+def _overload_add_forcing_of_four_steps_for_grid_cells(
+    river_forcing: RiverGridCells, c4: np.float32, first_step: int, steps: int, terms: FourLanes
+):
+    """
+    Not inlined by numba, whose inliner loses track of the variables of a loop, which it reports as an internal
+    pedantic check: LLVM inlines it into the routing loop, where the count of steps is known to be four.
+    """
+    if is_argument_type(river_forcing, RiverGridCells):
+        return _add_grid_cell_runoff_of_four_steps
 
 
 class Runoff(ABC):
@@ -456,9 +508,10 @@ class BaseGridRunoff(Runoff):
 
     def distribute(self, network: Network) -> None:
         """
-        Match the weight table to a stabilized network: each river's runoff volume is split evenly between every row
-        with it as parentRiverId, which is the river and the synthetic sub-reaches injected upstream of it. Does
-        nothing when the table already has a row per network row.
+        Match the weight table to a stabilized network: each river's runoff volume is split between every row with it
+        as parentRiverId, which is the river and the synthetic sub-reaches injected upstream of it, in proportion to
+        their travel times, the share of the river each one is. Does nothing when the table already has a row per
+        network row.
         """
         n = network.river_ids.shape[0]
         if self.river_ids.shape[0] == n:
@@ -470,7 +523,9 @@ class BaseGridRunoff(Runoff):
         indptr = np.concatenate(([0], np.cumsum(counts))).astype(self.indptr.dtype)
         take = np.repeat(self.indptr[parent] - indptr[:-1], counts) + np.arange(indptr[-1])
         self.indptr, self.cell, self.proportion = indptr, self.cell[take], self.proportion[take]
-        self.catchment_area = self.catchment_area[parent] / np.bincount(parent, minlength=len(self.river_ids))[parent]
+        k = network.k.astype(np.float64)
+        share = k / np.bincount(parent, weights=k, minlength=len(self.river_ids))[parent]
+        self.catchment_area = (self.catchment_area[parent] * share).astype(self.catchment_area.dtype)
         self.river_ids = network.river_ids
         self._buffer = np.empty(0, dtype=np.float32)
         return

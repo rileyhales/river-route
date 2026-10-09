@@ -9,9 +9,10 @@ import river_route as rr
 if __name__ == '__main__':
     # Amazon: 6020006540, Caribbean: 7020065090
     parser = argparse.ArgumentParser()
+    # parser.add_argument('--bucket-root', default=Path.home() / 'river-forecast-system-v3')
     parser.add_argument('--bucket-root', default=Path.home() / 'data' / 'rfsv3')
     parser.add_argument('--region', default='6020006540')
-    parser.add_argument('--threads', type=int, default=1)
+    parser.add_argument('--threads', type=int, default=8)
     args = parser.parse_args()
 
     dt_routing = 3600  # all times in seconds, 1 hour
@@ -33,7 +34,8 @@ if __name__ == '__main__':
         parameters='static',
         forcing='grid',
         transform='uniform',
-        force_validity=False,
+        force_validity=True,
+        restrict_x_range=False,
         dt_routing=dt_routing,
         # model state files
         channel_state_init_file=None,

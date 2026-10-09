@@ -11,15 +11,15 @@ efficient Muskingum-family routing at watershed scale.
 All routing runs through `Router`. The routing procedure is described by config selector keys,
 which together choose the kernel:
 
-| Key                | Options                                                                                                                                                                                                                                                                             |
-|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `parameters`       | `static` (the default) builds constant Muskingum coefficients from `muskingumK`, `muskingumX`. `power_law` recomputes k from discharge every routing step (variable parameter Muskingum), k = powerLawAlpha*Q^powerLawBeta from `powerLawAlpha`, `powerLawBeta`, with `muskingumX`. |
-| `forcing`          | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                                                                                                                                      |
-| `transform`        | `uniform` (the default and only option): each step's catchment runoff enters its river at a constant rate over the step.                                                                                                                                                            |
-| `force_validity`   | `true` (the default) routes each river in the sub-reaches or subcycles that make its coefficients non-negative at `dt_routing`, the condition for valid Muskingum routing; `false` routes each river whole.                                                                         |
+| Key              | Options                                                                                                                                                                                                                                                                                                                                                    |
+|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `parameters`     | `static` (the default) builds constant Muskingum coefficients from `muskingumK`, `muskingumX`. `cunge` recomputes k and x from discharge every routing step (variable parameter Muskingum-Cunge), k = cungeKCoefficient * Q ^ cungeKExponent and x = max(0, 1/2 - cungeXCoefficient * Q ^ cungeXExponent), with Q held within `cungeMinQ` and `cungeMaxQ`. |
+| `forcing`        | `channel` (channel routing only, the default), or the form of the `runoff_files` routed into the rivers: `catchment`, `grid`, or `ecmwf_grib`.                                                                                                                                                                                                             |
+| `transform`      | `uniform` (the default and only option): each step's catchment runoff enters its river at a constant rate over the step.                                                                                                                                                                                                                                   |
+| `force_validity` | `true` (the default) routes each river in the sub-reaches or subcycles that make its coefficients non-negative at `dt_routing`, the condition for valid Muskingum routing; `false` routes each river whole.                                                                                                                                                |
 
-The one combination no routing method routes yet, parameters other than `static` with `force_validity`,
-raises `NotImplementedError` before any runoff is read, so route `power_law` with `force_validity` set to `false`.
+Every combination of the selectors routes, and `force_validity` makes every coefficient of every river non-negative
+with static and dynamic parameters alike.
 
 ## Installation
 
