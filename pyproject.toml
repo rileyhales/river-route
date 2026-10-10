@@ -26,19 +26,19 @@ classifiers = [
 ]
 dependencies = [
     "dask>=2026.8.0",
-    "eccodes>=2.48.0,<3",
+    "eccodes==2.49.0",
     "geopandas>=1.2.0,<2",
     "netcdf4>=1.6,<2",
-    "numba>=0.67,<1",
+    "numba>=0.68,<1",
     "numpy>=2.5.3,<3",
     "pandas>=3.0.6,<4",
-    "pyarrow>=25.0.1",
-    "pyproj>=3.7.2,<4",
+    "pyarrow==26.0.0",
+    "pyproj==3.8.0",
     "scipy>=1.18.1,<2",
-    "shapely>=2.0,<3",
+    "shapely==2.2.0",
     "tqdm>=4.70.1,<5",
-    "xarray>=2026.7.0",
-    "zarr>=3.4.0,<4",
+    "xarray==2026.9.0",
+    "zarr==3.4.1",
 ]
 
 [dependency-groups]
@@ -88,6 +88,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 markers = [
     "slow: checks that take a minute or more, such as compiling every kernel from an empty numba cache",
+    "wasm: checks of the WebAssembly kernel in wasm/, which need node and the llvm that wasm/build.js names",
 ]
 
 [tool.hatch.version]
