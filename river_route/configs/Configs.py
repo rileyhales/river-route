@@ -33,9 +33,9 @@ def check_channel_state_rivers(
 ) -> None:
     """
     Raise ValueError unless the riverId column of a channel state file lists the rivers of the network in network
-    order: one row per river, or with ``per_sub_reach``, as the final state of a run with force_validity is written, a
-    run of rows per river, one per sub-reach. The number of sub-reaches depends on dt_routing and is checked when
-    routing.
+    order: one row per river, or with ``per_sub_reach``, as the final state of a run with dt_routing auto is written,
+    a run of rows per river, one per sub-reach. The number of sub-reaches depends on the runoff step and is checked
+    when routing.
     """
     if per_sub_reach and state_river_ids.shape[0]:
         first_row_of_river = np.ones(state_river_ids.shape[0], dtype=bool)
@@ -90,11 +90,10 @@ class Configs:
     # _derive_path_sets() will detect them by inspecting class annotations
 
     # Routing procedure selectors — the Router chooses the routing method and the runoff reader from these
-    parameters: Literal['static', 'cunge'] = 'static'  # static coefficients, or a dynamic method of k and x
+    parameters: Literal['static', 'dynamic'] = 'static'  # static coefficients, or k and x regressed on discharge
     forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
     transform: Literal['uniform'] = 'uniform'
-    force_validity: bool = True  # route rivers in sub-reaches or subcycles that keep every coefficient non-negative
-    restrict_x_range: bool = True  # route x from 0 to 0.45 rather than 0.5, which bounds force_validity's steps
+    restrict_x_range: bool = True  # route x from 0 to 0.45 rather than 0.5, which bounds dt_routing auto's steps
     invalid_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a coefficient is negative at dt
 
     # Network and routing descriptor
@@ -123,7 +122,8 @@ class Configs:
     var_t: str = 'time'
 
     # Time options
-    dt_routing: int = 0  # Interval in seconds between calculating discharges, <= the time step of the runoff files
+    # 'auto' routes each river in the sub-reaches and subcycles that keep every coefficient non-negative
+    dt_routing: int | Literal['auto'] = 'auto'  # or every river's step in seconds, a divisor of the runoff step
     dt_discharge: int = 0  # Interval in seconds between discharge outputs, >= the time step of the runoff files
     dt_total: int = 0  # Length in seconds of the simulation, >= dt_discharge
     start_datetime: str = '1970-01-01'
@@ -147,7 +147,7 @@ class Configs:
     # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
     _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
     # the time steps given in whole seconds, where 0 derives the step from the other options and the runoff files
-    _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_routing', 'dt_discharge', 'dt_total')
+    _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_discharge', 'dt_total')
 
     # Populated at module level below
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -163,6 +163,9 @@ class Configs:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < 0:
                 raise ValueError(f'{name} must be a whole number of seconds, or 0 to derive it, got {value!r}')
+        step: object = self.dt_routing  # a dataclass does not enforce its annotations
+        if step != 'auto' and (isinstance(step, bool) or not isinstance(step, numbers.Integral) or step <= 0):
+            raise ValueError(f"dt_routing must be 'auto' or a positive whole number of seconds, got {step!r}")
         # turn off progress bar if logging was turned off but progress was left at default on
         object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
         self._coerce_path_list_fields()
@@ -319,9 +322,11 @@ class Configs:
         if self.forcing == 'channel':
             if not self.discharge_files:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
-            for key in ('channel_state_init_file', 'dt_routing', 'dt_total'):
+            for key in ('channel_state_init_file', 'dt_total'):
                 if not getattr(self, key, None):
                     raise ValueError(f'{key} is required for channel routing')
+            if not self.dt_discharge and self.dt_routing == 'auto':
+                raise ValueError('dt_discharge, or dt_routing in seconds, is required for channel routing')
             runoff_source = [key for key in ('runoff_files', 'grid_weights_file') if getattr(self, key)]
             if runoff_source:
                 ignored = ', '.join(runoff_source)
@@ -367,7 +372,7 @@ class Configs:
         Validate the contents of the network file, the grid weight table, and the initial channel state, whichever are
         set, and their consistency with each other: the network file columns, types, and value ranges and that it is
         topologically sorted, that the grid weight table matches the network file and its proportions sum to 1 per
-        river, and that the initial channel state has one row per river, or with force_validity one per sub-reach.
+        river, and that the initial channel state has one row per river, or with dt_routing auto one per sub-reach.
         The runoff files are not read.
 
         Nothing calls this for you. It reads every input file, which is the same work routing is about to do, so
@@ -411,7 +416,7 @@ class Configs:
         if np.any((network_df['muskingumX'] < 0) | (network_df['muskingumX'] > 0.5)):
             raise ValueError(f'{self.network_file} muskingumX column must be from 0 to 0.5')
 
-        # the columns a dynamic method's parameters are built from; static reads only muskingumK and muskingumX
+        # the columns the dynamic parameters are built from; static reads only muskingumK and muskingumX
         for column in COLUMNS_FOR_PARAMETERS[self.parameters]:
             if column not in network_df.columns:
                 raise ValueError(
@@ -421,14 +426,14 @@ class Configs:
                 raise ValueError(f'{self.network_file} {column} column contains null values')
             if not pd.api.types.is_numeric_dtype(network_df[column]):
                 raise ValueError(f'{self.network_file} {column} column must be numeric type')
-        if self.parameters == 'cunge':
-            if np.any(network_df['cungeKCoefficient'] <= 0):
-                raise ValueError(f'{self.network_file} cungeKCoefficient column must be strictly positive')
-            # x = max(0, 1/2 - cungeXCoefficient * Q ** cungeXExponent), so x is at most 1/2 at every discharge
-            if np.any(network_df['cungeXCoefficient'] < 0):
-                raise ValueError(f'{self.network_file} cungeXCoefficient column must not be negative')
-            if np.any(network_df['cungeMinQ'] <= 0) or np.any(network_df['cungeMinQ'] > network_df['cungeMaxQ']):
-                raise ValueError(f'{self.network_file} cungeMinQ column must be positive and at most cungeMaxQ')
+        if self.parameters == 'dynamic':
+            if np.any(network_df['dynamicKCoefficient'] <= 0):
+                raise ValueError(f'{self.network_file} dynamicKCoefficient column must be strictly positive')
+            # x = max(0, 1/2 - dynamicXCoefficient * Q ** dynamicXExponent), so x is at most 1/2 at every discharge
+            if np.any(network_df['dynamicXCoefficient'] < 0):
+                raise ValueError(f'{self.network_file} dynamicXCoefficient column must not be negative')
+            if np.any(network_df['dynamicMinQ'] <= 0) or np.any(network_df['dynamicMinQ'] > network_df['dynamicMaxQ']):
+                raise ValueError(f'{self.network_file} dynamicMinQ column must be positive and at most dynamicMaxQ')
 
         Network(self.network_file)
         # riverIndex numbers the rows of a river's watershed, the rows riverIndex - upstreamCount to riverIndex
@@ -473,7 +478,7 @@ class Configs:
     def _deep_validate_channel_state_init_file(self, state_file: PathInput, network_df: pd.DataFrame | None) -> None:
         # initial channel state should be parquet with an integer riverId column and a column named Q, non-null,
         # numeric, and non-negative. riverId lists the rivers of the network file in the same order, one row per
-        # river, or with force_validity one row per sub-reach, whose count is checked when routing.
+        # river, or with dt_routing auto one row per sub-reach, whose count is checked when routing.
         try:
             state_df = pd.read_parquet(state_file)
         except Exception as e:
@@ -492,7 +497,7 @@ class Configs:
         if network_df is None:
             return
         check_channel_state_rivers(
-            state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.force_validity, state_file
+            state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.dt_routing == 'auto', state_file
         )
         return
 

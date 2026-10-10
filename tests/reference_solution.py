@@ -157,21 +157,22 @@ def reference_runs(network_file: str, weights: str, runoff: list[str], catchment
     Each run's thread count and configs, with its input paths relative to the package. They are built in this order,
     since later runs read the catchment runoff files and the standard run's final state.
     """
-    common = {'network_file': network_file, 'dt_routing': 3600, 'invalid_coefficients': 'ignore'}
+    common = {'network_file': network_file, 'invalid_coefficients': 'ignore'}  # each river takes its fewest steps
     grid = common | GRID_NAMES | {'forcing': 'grid', 'runoff_files': runoff, 'grid_weights_file': weights}
-    unforced = grid | {'force_validity': False}  # the option to route each river whole, as given
+    fixed_step = grid | {'dt_routing': 3600}  # every river routed whole in steps of the hourly runoff
     catchment = common | {'forcing': 'catchment', 'runoff_files': catchment_runoff}
     channel = common | {
         'forcing': 'channel',
         'channel_state_init_file': 'outputs/static_standard/final_state.parquet',
+        'dt_discharge': 3600,
         'dt_total': 30 * 86400,
         'start_datetime': '2000-07-01',
     }
     return {
         'static_standard': {'threads': 1, 'configs': grid},
-        'static_unforced': {'threads': 1, 'configs': unforced},
+        'static_dt_routing': {'threads': 1, 'configs': fixed_step},
         'static_standard_4_threads': {'threads': 4, 'configs': grid},
-        'static_unforced_4_threads': {'threads': 4, 'configs': unforced},
+        'static_dt_routing_4_threads': {'threads': 4, 'configs': fixed_step},
         'catchment_file': {'threads': 1, 'configs': catchment},
         'channel': {'threads': 1, 'configs': channel},
     }

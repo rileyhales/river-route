@@ -1,7 +1,7 @@
 # Router
 
 All routing is performed by the `Router` class. The routing procedure is described by the `parameters`,
-`forcing`, `transform`, and `force_validity` configuration keys, from which the Router chooses the numerical kernel.
+`forcing`, `transform`, and `dt_routing` configuration keys, from which the Router chooses the numerical kernel.
 
 A `Router` takes a `Configs` and nothing else: `Router(configs)`. It owns one simulation: the coefficients, the time
 options, the channel state, and the routing loop. The network it routes over belongs to [`Network`](network.md) and

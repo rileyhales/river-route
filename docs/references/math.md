@@ -142,7 +142,7 @@ $$
 
 !!! note "What the routed discharge is"
     `river-route` writes $Q_{t+1}$ at the end of each output interval, the discharge after routing the interval, and
-    averages nothing: for an output interval of $m$ routing steps it writes $Q_m$. A shorter $\Delta t$ is not more
+    averages nothing: for an output interval of $m$ steps it writes $Q_m$. A shorter $\Delta t$ is not more
     accurate (see [Signs of the coefficients](#signs-of-the-coefficients)).
 
 ### Storage Equation
@@ -548,8 +548,9 @@ A river too short for the step, $\Delta t > 2k(1-x)$, has $c_3 < 0$: its dischar
 amplifies its own runoff by up to $\Delta t / (2k(1-x))$ at the period of two steps, and goes negative under real
 runoff. Many delineated networks place confluences within a few pixels of each other, making short rivers between
 them, and lake outlets are often short too. Such a river is real, and `river-route` routes it in
-**_"subcycles"_**, $m = \lceil \Delta t / (2k(1-x)) \rceil$ steps of its own within each routing step, with its upstream
-inflow interpolated linearly. This changes nothing about the river and costs $m$ times the work on that river only.
+**_"subcycles"_**, $m = \lceil \Delta t / (2k(1-x)) \rceil$ steps of its own within each runoff step, with its upstream
+inflow interpolated linearly. This changes nothing about the river. With static coefficients the $m$ subcycles of a river
+of one reach are combined into one step of coefficients that give the same discharge, so they cost one step.
 
 The alternatives change the river. Raising $k$ to $\Delta t / (2(1-x))$ adds travel time. Deleting the river and
 joining the rivers upstream of it to the river downstream of it removes its travel time, its storage, and its

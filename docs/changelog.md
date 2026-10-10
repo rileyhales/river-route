@@ -10,9 +10,9 @@ file format.
 **Routing**
 
 - One class, `rr.Router`, routes every combination in place of the `Muskingum`, `RapidMuskingum`, and
-  `UnitMuskingum` classes. The routing procedure is chosen by configs: `parameters` (`static` or `cunge`),
-  `forcing` (`channel`, `catchment`, `grid`, or `ecmwf_grib`), `transform` (`uniform`), and `force_validity` (`True`
-  or `False`).
+  `UnitMuskingum` classes. The routing procedure is chosen by configs: `parameters` (`static` or `dynamic`),
+  `forcing` (`channel`, `catchment`, `grid`, or `ecmwf_grib`), `transform` (`uniform`), and `dt_routing` (`'auto'` or
+  a step in seconds).
 - Rivers are routed one at a time from upstream to downstream, each river's whole time series before the next river,
   by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
   A river routed whole with static coefficients is routed in one loop over eight steps at a time, held in two SIMD
@@ -20,38 +20,42 @@ file format.
   routed the Amazon 1.55 times faster than taking each river through its upstream terms, runoff, recurrence,
   downstream inflow, and discharge in loops of their own.
 - `parameters` sets each river's Muskingum k and x and chooses the routing method. `static` builds constant
-  coefficients from `muskingumK` and `muskingumX`. A dynamic method routes with variable parameter Muskingum,
-  rebuilding the coefficients every routing step from the k and x it gives at each river's discharge. `cunge`, the
-  first, gives the Muskingum-Cunge k and x of a regression on each river's hydraulic geometry,
-  k = `cungeKCoefficient` * Q ^ `cungeKExponent` and x = max(0, 1/2 - `cungeXCoefficient` * Q ^ `cungeXExponent`) with Q
-  held within `cungeMinQ` and `cungeMaxQ`, from those columns of the network file. Each step's k and x are evaluated at
+  coefficients from `muskingumK` and `muskingumX`. `dynamic` routes with variable parameter Muskingum,
+  rebuilding the coefficients every runoff step from the k and x that regression equations give at each river's
+  discharge, k = `dynamicKCoefficient` * Q ^ `dynamicKExponent` and x = max(0, 1/2 - `dynamicXCoefficient` * Q ^ `dynamicXExponent`) with Q
+  held within `dynamicMinQ` and `dynamicMaxQ`, from those columns of the network file. Each step's k and x are evaluated at
   the discharge entering the river over the step, which is known for its whole series before it is routed, so they are
-  evaluated for every step at once. With `force_validity`, each river is split into the fewest sub-reaches that leave
+  evaluated for every step at once. With `dt_routing: auto`, each river is split into the fewest sub-reaches that leave
   a whole number of subcycles keeping every coefficient non-negative at every discharge of its range, and each step
   takes the fewest subcycles its own k and x need; see the Dynamic Parameters reference.
-- `force_validity=True`, the default, routes each river with non-negative coefficients at `dt_routing`, the condition
-  for valid Muskingum routing, where it can: a river too long for it is split into sub-reaches, the fewest
+- Every river hands its discharge downstream, and records it, at the end of each runoff step, and computes within it
+  in a plan of its own: with `dt_routing: auto`, the default, the sub-reaches and the fewest subcycles that keep its
+  coefficients valid, and with `dt_routing` given in seconds, `dt_runoff / dt_routing` subcycles of exactly
+  `dt_routing`, whole. A step that is given is never shortened and splits no river: a river with a negative
+  coefficient at it is reported. The subcycles of a river of one
+  reach with static coefficients are combined into one step of coefficients that give the discharge of taking them one
+  at a time, so they cost one step. `Network.largest_valid_dt` is gone, since no step is searched for.
+- `dt_routing: auto`, the default, routes each river with non-negative coefficients in its own step, the condition
+  for valid Muskingum routing, where it can: a river too long for the runoff step is split into sub-reaches, the fewest
   sub-reaches in series inside the kernel, laid out by `Network.sub_reach_k_and_x` to keep the river's mean travel
   time and travel time variance with x never negative (equal sub-reaches with `x = 1/2 - N*(1/2 - x)` where that is not
   negative, otherwise linear reservoirs of unequal travel times, 0.724 and 0.276 of k at `x = 0.2`), and a river too
-  short for it
-  is routed in subcycles, shorter routing steps of its own. Without `dt_routing` it routes at the largest divisor of
-  `dt_runoff` at which the coefficients of every river can be made non-negative, `Network.largest_valid_dt`, which for
-  `x <= 1/3` is `dt_runoff`. It routes static and dynamic parameters with every forcing, and its state files hold one
-  row per sub-reach.
+  short for it is routed in subcycles, shorter steps of its own. It routes
+  static and dynamic parameters with every forcing, and its state files hold one row per sub-reach.
 - `restrict_x_range=True`, the default, routes every river with an x from 0 to 0.45 rather than up to 0.5, for the
-  static parameters and the cunge regression alike, which bounds the sub-reaches and subcycles `force_validity` needs.
+  static parameters and the dynamic regression alike, which bounds the sub-reaches and subcycles `dt_routing: auto`
+  needs.
 - `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
-  their own, laid out as `force_validity` routes them, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
+  their own, laid out as `dt_routing: auto` routes them, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
   down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
   Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose Runoff classes share each
   river's runoff among its sub-reaches with `Runoff.distribute`.
-- Rivers with a negative coefficient at `dt_routing`, outside `2*k*x <= dt_routing <= 2*k*(1-x)`, are reported. The
+- Rivers with a negative coefficient in their own step, outside `2*k*x <= step <= 2*k*(1-x)`, are reported. The
   new `invalid_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
 - Negative discharge is written as routed. It was clamped to zero in the written discharge, which hid the rivers that
   produced it and broke the volume of their written discharge.
-- The discharge written for each output interval is the discharge at its end, after routing it: that of its last
-  routing step, and of the last subcycle of a river routed in subcycles. It was the mean of the discharges computed at
+- The discharge written for each output interval is the discharge at its end, after routing it: that of the last
+  subcycle of its last runoff step. It was the mean of the discharges computed at
   its routing steps. A `dt_discharge` longer than `dt_runoff` writes the discharge at the end of each `dt_discharge`
   rather than their mean.
 - A Network refuses a river with `muskingumK` not positive and finite, such as a river of zero length, which no step
@@ -81,8 +85,8 @@ file format.
 - The params file is renamed the network file, set with the `network_file` config in place of `params_file`: it
   describes the network the `Network` class is built from, not only its Muskingum parameters. Its columns are
   camelCase: `riverId`, `nextRiverId` (was `downstream_river_id`), `muskingumK` (was `k`), and `muskingumX` (was
-  `x`), with `cungeKCoefficient`, `cungeKExponent`, `cungeXCoefficient`, `cungeXExponent`, `cungeMinQ`, and `cungeMaxQ`
-  for the `cunge` parameters and
+  `x`), with `dynamicKCoefficient`, `dynamicKExponent`, `dynamicXCoefficient`, `dynamicXExponent`, `dynamicMinQ`, and `dynamicMaxQ`
+  for the `dynamic` parameters and
   `synthetic` and `parentRiverId` on a stabilized network.
 - The rivers of the network file must be in depth first search (DFS) order, where v2 required only upstream before
   downstream: the rivers upstream of each river are the rows immediately before it, so every river's upstream
@@ -93,7 +97,7 @@ file format.
   params file as a network file in DFS order with both columns, and the grid weights, qlateral files, and channel
   state files in the same order.
 - `Network` analyzes the validity of Muskingum coefficients with `validity_window`, `invalid_mask`, `sub_reaches`,
-  `subcycles`, `conditioning`, `largest_valid_dt`, and `check_validity`, and divides the rivers into the blocks
+  `subcycles`, `conditioning`, and `check_validity`, and divides the rivers into the blocks
   threads route with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a
   `Network` refuses a table whose `upstreamCount` does not describe its DFS order.
 - `river_route.tools` is removed. `subset_network_to_river` is in `river_route.network.streams`, with
@@ -152,8 +156,8 @@ file format.
 - `dt_total` shorter than a runoff file routes that portion, and one longer than the file raises instead of reading
   past the end of the array. Runoff is checked against the network file for its rivers, in order, before it is
   routed.
-- `dt_routing`, `dt_discharge`, and `dt_total` must be whole numbers of seconds, or 0 to derive them; a negative or
-  fractional value is refused when the `Configs` is built. Runoff whose time steps do not increase is refused.
+- `dt_discharge` and `dt_total` must be whole numbers of seconds, or 0 to derive them, and `dt_routing` must be
+  `'auto'` or a positive whole number of seconds; any other value is refused when the `Configs` is built. Runoff whose time steps do not increase is refused.
 
 **Outputs**
 

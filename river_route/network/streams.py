@@ -1,8 +1,7 @@
 """
-Functions of a network table in DFS order: the divisors of a time step, which Network.largest_valid_dt searches, the
-sub-watershed blocks threads route and how evenly they divide a network, and the subset of a network file, and of its
-grid weights, to one river and every river upstream of it. The blocks and the subset only read the contiguous run of
-rows that a river's riverIndex and upstreamCount give.
+Functions of a network table in DFS order: the sub-watershed blocks threads route and how evenly they divide a
+network, and the subset of a network file, and of its grid weights, to one river and every river upstream of it. The
+blocks and the subset only read the contiguous run of rows that a river's riverIndex and upstreamCount give.
 """
 
 from typing import TYPE_CHECKING
@@ -17,16 +16,10 @@ from ._numba_kernels import pack_blocks_into_jobs
 if TYPE_CHECKING:
     from .Network import Network
 
-__all__ = ['divisors_of', 'assign_blocks', 'analyze_partitioning', 'subset_network_to_river']
+__all__ = ['assign_blocks', 'analyze_partitioning', 'subset_network_to_river']
 
 # the caps on the rivers in a block assign_blocks tries, as fractions of an even share of the rivers per job
 _BLOCK_CAP_FRACTIONS: tuple[float, ...] = (0.125, 0.25, 0.375, 0.5, 0.65, 0.8, 1.0)
-
-
-def divisors_of(n: int) -> np.ndarray:
-    """All positive integer divisors of n, sorted ascending."""
-    small = [d for d in range(1, int(n**0.5) + 1) if n % d == 0]
-    return np.array(sorted(set(small + [n // d for d in small])), dtype=np.int64)
 
 
 def assign_blocks(

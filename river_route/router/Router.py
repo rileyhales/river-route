@@ -24,18 +24,20 @@ __all__ = ['Router', 'ROUTING_METHOD_FOR_PARAMETERS']
 logger = logging.getLogger(__name__)
 
 # the module of the routing method each choice of parameters is routed by; each routes one river with its own
-ROUTING_METHOD_FOR_PARAMETERS: dict[str, ModuleType] = {'static': static_muskingum, 'cunge': dynamic_muskingum}
+ROUTING_METHOD_FOR_PARAMETERS: dict[str, ModuleType] = {'static': static_muskingum, 'dynamic': dynamic_muskingum}
+# the share of a file's discharge memory added for the files after it. Memory is paged in only where it is written, so
+# it costs nothing until a longer file, such as a leap year after a common one, routes into it
+DISCHARGE_MEMORY_HEADROOM = 0.125
 
 
 class Router:
     """
     Muskingum style river routing allowing
     - parameters: static coefficients from constant k and x (muskingum), or dynamic coefficients rebuilt every
-      routing step from the k and x a dynamic method gives at each river's discharge (variable parameter muskingum),
-      such as Muskingum-Cunge
+      runoff step from the k and x regression equations give at each river's discharge (variable parameter muskingum)
     - forcing: channel-only or runoff on grids/meshes or already aggregated to catchments
-    - validity: force_validity routes rivers in the sub-reaches or subcycles that make every coefficient non-negative
-      at dt_routing
+    - validity: dt_routing auto routes rivers in the sub-reaches or subcycles that make every coefficient non-negative
+      in each river's own step
     - transformation: the uniform runoff transformation (e.g. runoff transform method)
     """
 
@@ -45,18 +47,17 @@ class Router:
 
     # what the routing method the parameters config chooses prepared for the current time steps
     coefficients: Coefficients  # per river
-    compute_plan: ComputePlan  # each river's sub-reaches and subcycles, all one unless force_validity
+    compute_plan: ComputePlan  # each river's sub-reaches and the subcycles it takes in each runoff step
 
     # State variables
-    channel_state: FloatArray  # one value per river, or with force_validity one per sub-reach
+    channel_state: FloatArray  # one value per river, or with dt_routing auto one per sub-reach
 
     # Time options, in seconds
-    dt_routing: int  # routing step, an integer divisor of dt_runoff
-    dt_runoff: int  # time between runoff steps, read from each runoff file, an integer divisor of dt_discharge
+    dt_routing: int | None  # every river's step when given, a divisor of dt_runoff; None for auto
+    dt_runoff: int  # time between runoff steps, read from each runoff file, when rivers hand discharge downstream
     dt_discharge: int  # time between the routed discharges written, an integer divisor of dt_total
     dt_total: int  # how long to simulate
     num_runoff_steps: int
-    num_routing_steps_per_runoff: int
     num_runoff_steps_per_discharge: int
 
     # methods overridable via dependency injection
@@ -100,17 +101,17 @@ class Router:
         missing = [column for column in ('riverId', 'Q') if column not in state.columns]
         if missing:
             raise ValueError(f'channel_state_init_file {state_file} is missing the column(s) {", ".join(missing)}')
-        # force_validity starts from one value per sub-reach, whose count is checked once the compute plan is known
+        # dt_routing auto starts from one value per sub-reach, whose count is checked once the compute plan is known
         check_channel_state_rivers(
-            state['riverId'].to_numpy(), self.network.river_ids, self.configs.force_validity, state_file
+            state['riverId'].to_numpy(), self.network.river_ids, self.configs.dt_routing == 'auto', state_file
         )
         self.channel_state = state['Q'].to_numpy(dtype=np.float32)
         return
 
     def _check_channel_state(self) -> None:
         """
-        Require channel_state to have one value per routed reach: one per river, or with force_validity one per
-        sub-reach. Without an initial state file force_validity starts from zero in every sub-reach. Any other state
+        Require channel_state to have one value per routed reach: one per river, or with dt_routing auto one per
+        sub-reach. Without an initial state file dt_routing auto starts from zero in every sub-reach. Any other state
         that does not match the compute plan raises, whether it was read from a state file or carried from the previous
         runoff file; its values are never changed to fit.
         """
@@ -121,10 +122,10 @@ class Router:
             self.channel_state = np.zeros(n_reaches, dtype=np.float32)  # a zero state is zero in any compute plan
             return
         raise ValueError(
-            f'the channel state has {self.channel_state.shape[0]} values, but force_validity routes {n_reaches} '
-            f'sub-reaches at dt_routing={self.dt_routing} s. A channel_state_init_file must have one row per sub-reach '
-            f'in the order a final state file is written, and the sub-reaches cannot change between the runoff files '
-            f'of one sequential run: set dt_routing to route every file at the same step.'
+            f'the channel state has {self.channel_state.shape[0]} values, but dt_routing auto routes {n_reaches} '
+            f'sub-reaches at a runoff step of {self.dt_runoff} s. A channel_state_init_file must have one row per '
+            f'sub-reach in the order a final state file is written, and the sub-reaches cannot change between the '
+            f'runoff files of one sequential run, which they do when the files have different time steps.'
         )
 
     def _write_final_state(self) -> None:
@@ -141,10 +142,10 @@ class Router:
     ################################################
 
     def _set_channel_time_options(self) -> None:
-        self.dt_routing = self.configs.dt_routing
+        self.dt_routing = None if self.configs.dt_routing == 'auto' else self.configs.dt_routing
         self.dt_total = self.configs.dt_total
-        self.dt_discharge = self.configs.dt_discharge or self.dt_routing
-        self.dt_runoff = self.dt_discharge  # Assigned to pass time validation. It is never used in channel routing
+        self.dt_discharge = self.configs.dt_discharge or self.dt_routing or 0  # validate_routing requires one of them
+        self.dt_runoff = self.dt_discharge  # with no runoff, rivers hand their discharge downstream every dt_discharge
         self._validate_time_options()
         return
 
@@ -167,17 +168,7 @@ class Router:
             )
         self.dt_discharge = self.configs.dt_discharge or self.dt_runoff
         self.dt_total = self.configs.dt_total or self.dt_runoff * dates.shape[0]
-        if self.configs.dt_routing:
-            self.dt_routing = self.configs.dt_routing
-        elif self.configs.force_validity:
-            self.dt_routing = self.network.largest_valid_dt(self.dt_runoff)
-            logger.info(
-                f'dt_routing was not provided; using {self.dt_routing} s, the largest divisor at which every '
-                f'coefficient can be made non-negative'
-            )
-        else:
-            logger.warning('dt_routing was not provided or is Null/False, defaulting to dt_runoff')
-            self.dt_routing = self.dt_runoff
+        self.dt_routing = None if self.configs.dt_routing == 'auto' else self.configs.dt_routing
         self._validate_time_options()
         return
 
@@ -189,7 +180,7 @@ class Router:
             raise ValueError('dt_total must be >= dt_discharge')
         if self.dt_discharge < self.dt_runoff:
             raise ValueError('dt_discharge must be >= dt_runoff')
-        if self.dt_runoff < self.dt_routing:
+        if self.dt_routing is not None and self.dt_runoff < self.dt_routing:
             raise ValueError('dt_runoff must be >= dt_routing')
         # check that time options are evenly divisible
         if self.dt_total % self.dt_runoff != 0:
@@ -198,29 +189,25 @@ class Router:
             raise ValueError('dt_total must be an integer multiple of dt_discharge')
         if self.dt_discharge % self.dt_runoff != 0:
             raise ValueError('dt_discharge must be an integer multiple of dt_runoff')
-        if self.dt_runoff % self.dt_routing != 0:
+        if self.dt_routing is not None and self.dt_runoff % self.dt_routing != 0:
             raise ValueError('dt_runoff must be an integer multiple of dt_routing')
 
         # Now that we know time parameters are valid, set time-derived parameters for computation cycles
         self.num_runoff_steps = int(self.dt_total / self.dt_runoff)
         self.num_runoff_steps_per_discharge = int(self.dt_discharge / self.dt_runoff)  # to resample/reshape results
-        self.num_routing_steps_per_runoff = int(self.dt_runoff / self.dt_routing)
         return
 
     def _prepare_routing_method(self) -> None:
-        """Plan each river's computation and build its coefficients for the current dt_routing and dt_runoff."""
+        """Plan each river's computation and build its coefficients for the current dt_runoff and dt_routing."""
         logger.debug('Preparing the routing method')
         method = ROUTING_METHOD_FOR_PARAMETERS[self.configs.parameters]
         self.compute_plan, self.coefficients = method.prepare_routing(
-            self.network, self.configs, self.dt_routing, self.dt_runoff
+            self.network, self.configs, self.dt_runoff, self.dt_routing
         )
-        sub_reach_starts, subcycles = self.compute_plan
-        if self.configs.force_validity:
-            logger.info(
-                f'force_validity: {self.network.size} rivers routed as {int(sub_reach_starts[-1])} sub-reaches at '
-                f'dt_routing={self.dt_routing} s, and {int(np.count_nonzero(subcycles > 1))} rivers routed in '
-                f'subcycles'
-            )
+        logger.info(
+            f'{self.network.size} rivers routed as {int(self.compute_plan.sub_reach_starts[-1])} sub-reaches, each '
+            f'handing its discharge downstream every {self.dt_runoff} s'
+        )
         self._check_channel_state()
         return
 
@@ -312,7 +299,7 @@ class Router:
         if self.configs.progress_bar:
             file_iter = tqdm(file_iter, total=total_files, desc='Files Routed')
 
-        prepared_for_time_steps: tuple[int, int] | None = None  # (dt_routing, dt_runoff) of the routing parameters
+        prepared_for_time_steps: tuple[int | None, int] | None = None  # (dt_routing, dt_runoff) of the parameters
         member_state_sum: Float64Array | None = None  # the sum of the final states of the ensemble members
         discharge_memory = np.empty(0, dtype=np.float32)  # every file's routed discharge, grown only for a longer file
         for dates, runoff, runoff_file, discharge_file in file_iter:
@@ -338,7 +325,7 @@ class Router:
             # into a new array, which the operating system would page in again
             n_values = self.network.original_river_ids.shape[0] * self.num_runoff_steps
             if discharge_memory.shape[0] < n_values:
-                discharge_memory = self._new_discharge_buffer().reshape(-1)
+                discharge_memory = np.zeros(int(n_values * (1 + DISCHARGE_MEMORY_HEADROOM)), dtype=np.float32)
             routed_discharge = discharge_memory[:n_values].reshape(-1, self.num_runoff_steps)
             self._route_region(channel_state, routed_discharge, runoff, thread_pool, threads)
             if self.configs.runoff_processing_mode == 'sequential':
@@ -374,7 +361,6 @@ class Router:
             self.network,
             self.coefficients,
             self.compute_plan,
-            self.num_routing_steps_per_runoff,
             channel_state,
             discharge_array,
             forcing,

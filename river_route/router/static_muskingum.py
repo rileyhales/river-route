@@ -11,7 +11,7 @@ import numba
 import numpy as np
 from numba.extending import overload
 
-from ..types import FloatArray, RiverForcing
+from ..types import Float64Array, FloatArray, IntArray, RiverForcing
 from ._numba_kernels import ComputePlan, add_forcing_of_four_steps, add_forcing_terms, is_argument_type, route_river
 from ._simd import (
     FourLanes,
@@ -35,113 +35,82 @@ __all__ = ['StaticCoefficients', 'prepare_routing']
 
 
 class StaticCoefficients(NamedTuple):
-    """The Muskingum coefficients of each sub-reach, one per river that is not split, fixed for the whole run."""
+    """
+    The Muskingum coefficients of each sub-reach, one per river that is not split, fixed for the whole run. Those of a
+    river of one reach are of a whole runoff step, its subcycles combined into one step.
+    """
 
     c1: FloatArray  # (sub-reaches,)
     c2: FloatArray  # (sub-reaches,)
     c3: FloatArray  # (sub-reaches,)
-    c4: FloatArray  # (sub-reaches,) (c1 + c2) * share of k / dt_runoff, the coefficient of a runoff volume (m³)
+    c4: FloatArray  # (sub-reaches,) the coefficient of the river's runoff volume (m³) of a runoff step
 
 
 def prepare_routing(
-    network: Network, configs: Configs, dt_routing: int, dt_runoff: int
+    network: Network, configs: Configs, dt_runoff: int, dt_routing: int | None
 ) -> tuple[ComputePlan, StaticCoefficients]:
     """
-    Each river's compute plan and the coefficients of each sub-reach at dt_routing. With force_validity a river too
-    long for dt_routing is split into the sub-reaches of Network.sub_reach_k_and_x, each taking its share of the
-    river's runoff, and a river too short for it takes subcycles of dt_routing / subcycles.
+    Each river's compute plan and the coefficients of each of its sub-reaches. Every river hands its discharge
+    downstream at the end of each runoff step and takes subcycles of its own within it. With dt_routing auto (None), a
+    river too long for the runoff step is split into the sub-reaches of Network.sub_reach_k_and_x, each taking its
+    share of the river's runoff, and a river too short for it takes the fewest subcycles that keep its coefficients
+    non-negative. With dt_routing given, every river is routed whole in subcycles of exactly dt_routing, and a river
+    with a negative coefficient at it is reported.
+
+    The subcycles of a river of one reach are combined into one step by _combine_subcycles, which gives the discharge
+    of taking them one at a time, so only a river split into sub-reaches takes its subcycles one by one.
 
     Raises:
         ValueError: if the coefficients do not sum to 1, or invalid_coefficients is raise and a coefficient is negative
     """
-    sub_reaches = np.ones(network.size, dtype=np.int64)
-    subcycles = np.ones(network.size, dtype=np.int64)
-    if configs.force_validity:
-        sub_reaches, subcycles, _ = network.conditioning(dt_routing)
+    if dt_routing:
+        sub_reaches = np.ones(network.size, dtype=np.int64)
+        subcycles = np.full(network.size, dt_runoff // dt_routing, dtype=np.int64)
+    else:
+        sub_reaches, subcycles, _ = network.conditioning(dt_runoff)
+    network.check_validity(dt_runoff, action=configs.invalid_coefficients, sub_reaches=sub_reaches, subcycles=subcycles)
     k_reach, x_reach = network.sub_reach_k_and_x(sub_reaches)
     share = k_reach / np.repeat(network.k.astype(np.float64), sub_reaches)  # of the river's k, and of its runoff
-    k = k_reach.astype(np.float32)
-    x = x_reach.astype(np.float32)
-    dt = np.repeat(dt_routing / subcycles, sub_reaches).astype(np.float32)  # each sub-reach's own routing step
-    dt_div_k = dt / k
-    two_x = 2 * x
-    denominator = dt_div_k + (2 * (1 - x))
-    c1 = (dt_div_k - two_x) / denominator
-    c2 = (dt_div_k + two_x) / denominator
-    c3 = ((2 * (1 - x)) - dt_div_k) / denominator
-    c4 = ((c1 + c2) * share / dt_runoff).astype(np.float32)
-    network.check_validity(
-        dt_routing, action=configs.invalid_coefficients, sub_reaches=sub_reaches, subcycles=subcycles
-    )
+    dt_div_k = np.repeat(dt_runoff / subcycles, sub_reaches) / k_reach  # each sub-reach's own step over its k
+    denominator = dt_div_k + 2 * (1 - x_reach)
+    c1 = (dt_div_k - 2 * x_reach) / denominator
+    c2 = (dt_div_k + 2 * x_reach) / denominator
+    c3 = (2 * (1 - x_reach) - dt_div_k) / denominator
+    c4 = (c1 + c2) * share / dt_runoff
+    one_reach = sub_reaches == 1
+    c1, c2, c3, c4 = _combine_subcycles(c1, c2, c3, c4, np.repeat(np.where(one_reach, subcycles, 1), sub_reaches))
     if not np.allclose(c1 + c2 + c3, 1):
         raise ValueError('Muskingum coefficients do not sum to 1, check k and x of the network file and dt_routing')
-    return ComputePlan.from_counts(sub_reaches, subcycles), StaticCoefficients(c1, c2, c3, c4)
+    coefficients = StaticCoefficients(
+        c1.astype(np.float32), c2.astype(np.float32), c3.astype(np.float32), c4.astype(np.float32)
+    )
+    return ComputePlan.from_counts(sub_reaches, np.where(one_reach, 1, subcycles)), coefficients
 
 
-@numba.njit(cache=True, nogil=True, fastmath={'contract'})
-def _write_upstream_terms(c1: np.float32, c2: np.float32, inflow: FloatArray, known_terms: FloatArray) -> None:
-    """known_terms[t] = c1 I_{t+1} + c2 I_t at each routing step t, where inflow[0] is I before the first step."""
-    for routing_step in range(inflow.shape[0] - 1):
-        known_terms[routing_step] = c1 * inflow[routing_step + 1] + c2 * inflow[routing_step]
-
-
-@numba.njit(cache=True, nogil=True)
-def _write_interpolated_upstream_terms(
-    c1: np.float32, c2: np.float32, inflow: FloatArray, subcycles: int, known_terms: FloatArray
-) -> None:
-    """known_terms[s] = c1 I_{s+1} + c2 I_s at each subcycle s, with I interpolated linearly between routing steps."""
-    # Compiled without fastmath contract: with it, whether these multiply-adds were fused differed between freshly
-    # compiled code and the same code loaded from the numba cache, which changed the last bit of the discharge.
-    inverse_subcycles = np.float32(1.0 / subcycles)
-    for routing_step in range(inflow.shape[0] - 1):
-        start = inflow[routing_step]
-        rise = (inflow[routing_step + 1] - start) * inverse_subcycles
-        before = start
-        for subcycle in range(subcycles):
-            after = start + rise * np.float32(subcycle + 1)
-            known_terms[routing_step * subcycles + subcycle] = c1 * after + c2 * before
-            before = after
-
-
-@numba.njit(cache=True, nogil=True, fastmath={'contract'})
-def _solve_outflow_recurrence(outflow: np.float32, c3: np.float32, known_terms: FloatArray, steps: int) -> np.float32:
-    """Replace known_terms[t] with Q_{t+1} = c3 Q_t + known_terms[t] for the first steps, from Q_0 = outflow, and
-    return the last Q."""
-    # Eight steps at a time: within a group the partial sums of c3 powers times the known terms do not depend on Q, so
-    # they overlap with the group before, and only Q_(t+8) = c3^8 Q_t + partial_7 waits on it. The serial chain is one
-    # multiply-add per eight steps instead of one per step.
-    c3_2 = c3 * c3  # c3_n is c3 to the power n
-    c3_3 = c3_2 * c3
-    c3_4 = c3_2 * c3_2
-    c3_5 = c3_4 * c3
-    c3_6 = c3_4 * c3_2
-    c3_7 = c3_4 * c3_3
-    c3_8 = c3_4 * c3_4
-    step = 0
-    while step + 8 <= steps:
-        term_0 = known_terms[step]
-        partial_1 = c3 * term_0 + known_terms[step + 1]
-        partial_2 = c3 * partial_1 + known_terms[step + 2]
-        partial_3 = c3 * partial_2 + known_terms[step + 3]
-        partial_4 = c3 * partial_3 + known_terms[step + 4]
-        partial_5 = c3 * partial_4 + known_terms[step + 5]
-        partial_6 = c3 * partial_5 + known_terms[step + 6]
-        partial_7 = c3 * partial_6 + known_terms[step + 7]
-        known_terms[step] = c3 * outflow + term_0
-        known_terms[step + 1] = c3_2 * outflow + partial_1
-        known_terms[step + 2] = c3_3 * outflow + partial_2
-        known_terms[step + 3] = c3_4 * outflow + partial_3
-        known_terms[step + 4] = c3_5 * outflow + partial_4
-        known_terms[step + 5] = c3_6 * outflow + partial_5
-        known_terms[step + 6] = c3_7 * outflow + partial_6
-        outflow = c3_8 * outflow + partial_7
-        known_terms[step + 7] = outflow
-        step += 8
-    while step < steps:
-        outflow = c3 * outflow + known_terms[step]
-        known_terms[step] = outflow
-        step += 1
-    return outflow
+def _combine_subcycles(
+    c1: Float64Array, c2: Float64Array, c3: Float64Array, c4: Float64Array, subcycles: IntArray
+) -> tuple[Float64Array, Float64Array, Float64Array, Float64Array]:
+    """
+    The coefficients of one step that is s subcycles of a reach, its inflow rising linearly from I_t to I_{t+1} across
+    them and its runoff spread evenly over them. Subcycle j of s ends at the fraction j/s of the step, with
+    Q_j = c3 Q_(j-1) + c1 I(j/s) + c2 I((j-1)/s) + c4 V, so Q_s = c3^s Q_0 plus the terms of each subcycle j times
+    c3^(s-j), whose inflows split between I_t and I_{t+1}: Q_(t+1) = c3' Q_t + c1' I_{t+1} + c2' I_t + c4' V with
+    c3' = c3^s. Like each subcycle's, c1' + c2' + c3' is 1, and none is negative where none of the subcycle's is.
+    """
+    combined_c1 = np.zeros_like(c1)
+    combined_c2 = np.zeros_like(c2)
+    combined_c4 = np.zeros_like(c4)
+    weight = np.ones_like(c3)  # c3^(s - j) of subcycle j, from the last subcycle back to the first
+    for subcycles_after in range(int(subcycles.max())):
+        subcycle = subcycles - subcycles_after  # j, from 1
+        taken = subcycle >= 1
+        end = subcycle / subcycles  # the fraction of the step at the end of subcycle j
+        start = (subcycle - 1) / subcycles
+        combined_c1 += np.where(taken, weight * (c1 * end + c2 * start), 0.0)
+        combined_c2 += np.where(taken, weight * (c1 * (1 - end) + c2 * (1 - start)), 0.0)
+        combined_c4 += np.where(taken, weight * c4, 0.0)
+        weight = np.where(taken, weight * c3, weight)
+    return combined_c1, combined_c2, weight, combined_c4
 
 
 @numba.njit(cache=True, nogil=True)
@@ -181,7 +150,7 @@ def _route_eight_steps(
     c4: np.float32,
     river_forcing: RiverForcing | None,
     upstream_inflow: FloatArray,
-    downstream_inflow: FloatArray,
+    downstream_inflow: FloatArray | None,
     outflow_at_steps: FloatArray,
     first_step: int,
     first_lanes: int,
@@ -222,10 +191,11 @@ def _route_eight_steps(
     )
     first_outflow = multiply_add(powers_1_to_4, before, first_sums)
     second_outflow = multiply_add(powers_5_to_8, before, second_sums)
-    first_downstream = add(load_up_to_four(downstream_inflow, first_step + 1, first_lanes), first_outflow)
-    second_downstream = add(load_up_to_four(downstream_inflow, second_step + 1, second_lanes), second_outflow)
-    store_up_to_four(downstream_inflow, first_step + 1, first_downstream, first_lanes)
-    store_up_to_four(downstream_inflow, second_step + 1, second_downstream, second_lanes)
+    if downstream_inflow is not None:  # numba compiles the sub-reaches that hand their outflow on without this
+        first_downstream = add(load_up_to_four(downstream_inflow, first_step + 1, first_lanes), first_outflow)
+        second_downstream = add(load_up_to_four(downstream_inflow, second_step + 1, second_lanes), second_outflow)
+        store_up_to_four(downstream_inflow, first_step + 1, first_downstream, first_lanes)
+        store_up_to_four(downstream_inflow, second_step + 1, second_downstream, second_lanes)
     store_up_to_four(outflow_at_steps, first_step, first_outflow, first_lanes)
     store_up_to_four(outflow_at_steps, second_step, second_outflow, second_lanes)
     return last_lane_in_every_lane(second_outflow)
@@ -240,15 +210,15 @@ def _route_river_eight_steps_at_a_time(
     river_forcing: RiverForcing | None,
     outflow: np.float32,
     upstream_inflow: FloatArray,
-    downstream_inflow: FloatArray,
+    downstream_inflow: FloatArray | None,
     outflow_at_steps: FloatArray,
 ) -> np.float32:
     """
-    Q_{t+1} = c1 I_{t+1} + c2 I_t + c3 Q_t + c4 V_t at each routing step t from Q_0 = outflow, with a routing step per
-    runoff step, in one loop over eight steps at a time held in two vectors of four. The partial sums of the recurrence
-    over each vector from Q = 0 do not depend on Q, so only Q_(t+i) = c3^i Q_t + partial_i waits on the steps before:
-    one vector multiply-add per eight steps. Each Q_{t+1} is added into downstream_inflow[t + 1] and written into
-    outflow_at_steps[t], and the last is returned.
+    Q_{t+1} = c1 I_{t+1} + c2 I_t + c3 Q_t + c4 V_t at each step t from Q_0 = outflow, in one loop over eight steps at a
+    time held in two vectors of four. The partial sums of the recurrence over each vector from Q = 0 do not depend on Q,
+    so only Q_(t+i) = c3^i Q_t + partial_i waits on the steps before: one vector multiply-add per eight steps. Each
+    Q_{t+1} is added into downstream_inflow[t + 1], unless it is None, and written into outflow_at_steps[t], and the
+    last is returned.
 
     jsrr's C kernel routes this way, written with WebAssembly SIMD. On the Amazon the same loop here routed 1.55 times
     faster than taking each river through the upstream terms, runoff, recurrence, downstream inflow, and discharge in
@@ -292,6 +262,26 @@ def _route_river_eight_steps_at_a_time(
     return outflow_at_steps[steps - 1] if steps > 0 else outflow
 
 
+@numba.njit(cache=True, nogil=True)
+def _write_inflow_at_subcycles(inflow: FloatArray, subcycles: int, inflow_at_subcycles: FloatArray) -> None:
+    """
+    The inflow at the end of each subcycle, from the inflow before the first runoff step and at the end of each,
+    interpolated linearly across the subcycles of each runoff step: a weighted mean of the inflow at the start and end
+    of the step, which never leaves the range between them however it rounds.
+    """
+    # Compiled without fastmath contract: with it, whether these multiply-adds were fused differed between freshly
+    # compiled code and the same code loaded from the numba cache, which changed the last bit of the discharge.
+    one = np.float32(1.0)
+    inverse_subcycles = one / np.float32(subcycles)
+    inflow_at_subcycles[0] = inflow[0]
+    for runoff_step in range(inflow.shape[0] - 1):
+        for subcycle in range(1, subcycles + 1):
+            after = np.float32(subcycle) * inverse_subcycles
+            inflow_at_subcycles[runoff_step * subcycles + subcycle] = (one - after) * inflow[runoff_step] + after * (
+                inflow[runoff_step + 1]
+            )
+
+
 @numba.njit(cache=True, nogil=True, fastmath={'contract'}, inline='always')
 def _route_river_whole(
     state_index: int,
@@ -304,105 +294,117 @@ def _route_river_whole(
     upstream_inflow: FloatArray,
     downstream_inflow: FloatArray,
     discharge_at_runoff_steps: FloatArray,
-    runoff_terms: FloatArray,
-    outflow_at_steps: FloatArray,
 ) -> None:
     """
-    Q_{t+1} = c1 I_{t+1} + c2 I_t + c3 Q_t + c4 V_t at each routing step t, the river routed as one reach. With a
-    routing step per runoff step its runoff is read as it is routed and each Q is written straight into
-    discharge_at_runoff_steps. With m routing steps per runoff step, c4 V_t is first spread over runoff_terms, which are
-    then routed, and the Q at the end of each runoff step is written.
+    Q_{t+1} = c1 I_{t+1} + c2 I_t + c3 Q_t + c4 V_t at each runoff step t, a reach in one step of each runoff step, its
+    runoff read as it is routed and each Q written straight into discharge_at_runoff_steps.
     """
-    routing_steps = upstream_inflow.shape[0] - 1  # upstream_inflow[0] is I before the first routing step
-    runoff_steps = discharge_at_runoff_steps.shape[0]
-    routing_steps_per_runoff_step = routing_steps // runoff_steps
     outflow = channel_state[state_index]
     downstream_inflow[0] += outflow
-    if routing_steps_per_runoff_step == 1:
-        channel_state[state_index] = _route_river_eight_steps_at_a_time(
-            c1, c2, c3, c4, river_forcing, outflow, upstream_inflow, downstream_inflow, discharge_at_runoff_steps
-        )
-        return
-    runoff_terms[:] = 0.0
-    if river_forcing is not None:  # numba compiles channel routing without this
-        add_forcing_terms(river_forcing, c4, runoff_steps, routing_steps_per_runoff_step, runoff_terms)
     channel_state[state_index] = _route_river_eight_steps_at_a_time(
-        c1, c2, c3, np.float32(1.0), runoff_terms, outflow, upstream_inflow, downstream_inflow, outflow_at_steps
+        c1, c2, c3, c4, river_forcing, outflow, upstream_inflow, downstream_inflow, discharge_at_runoff_steps
     )
-    _write_discharge_at_runoff_steps(outflow_at_steps, routing_steps_per_runoff_step, discharge_at_runoff_steps)
+
+
+@numba.njit(cache=True, nogil=True, fastmath={'contract'}, inline='always')
+def _route_sub_reaches_in_series(
+    first_sub_reach: int,
+    stop_sub_reach: int,
+    coefficients: StaticCoefficients,
+    river_forcing: RiverForcing | None,
+    channel_state: FloatArray,
+    inflow: FloatArray,
+    scratch: FloatArray,
+    steps: int,
+) -> FloatArray:
+    """
+    Route the sub-reaches from first_sub_reach up to stop_sub_reach in series over steps steps, each taking the outflow
+    of the one before as its inflow, and return the outflow row of the last: its Q before the first step and at the end
+    of each. Two scratch rows take turns, since a sub-reach reads its inflow row while it writes its outflow row.
+    """
+    for sub_reach in range(first_sub_reach, stop_sub_reach):
+        outflow = scratch[2 + (sub_reach - first_sub_reach) % 2, : steps + 1]
+        outflow[0] = channel_state[sub_reach]
+        channel_state[sub_reach] = _route_river_eight_steps_at_a_time(
+            coefficients.c1[sub_reach],
+            coefficients.c2[sub_reach],
+            coefficients.c3[sub_reach],
+            coefficients.c4[sub_reach],
+            river_forcing,
+            outflow[0],
+            inflow,
+            None,
+            outflow[1:],
+        )
+        inflow = outflow
+    return inflow
 
 
 @numba.njit(cache=True, nogil=True, fastmath={'contract'}, inline='always')
 def _route_river_in_sub_reaches(
     first_sub_reach: int,
     sub_reaches: int,
+    subcycles: int,
     coefficients: StaticCoefficients,
     river_forcing: RiverForcing | None,
     channel_state: FloatArray,
     upstream_inflow: FloatArray,
     downstream_inflow: FloatArray,
     discharge_at_runoff_steps: FloatArray,
-    known_terms: FloatArray,
-    sub_reach_inflow: FloatArray,
+    scratch: FloatArray,
 ) -> None:
-    """Route a river too long for the routing step (c1 < 0) as sub-reaches in series, each routed whole."""
-    routing_steps = upstream_inflow.shape[0] - 1
+    """
+    Route a river too long for its step as sub-reaches in series, each in the subcycles of the river. With one a runoff
+    step, each sub-reach reads the river's runoff as it is routed and the last is routed like a reach of one step. With
+    more, the river's inflow is first interpolated across its subcycles and its runoff spread over them, and its Q at
+    the end of each runoff step is taken from those of its subcycles.
+    """
     runoff_steps = discharge_at_runoff_steps.shape[0]
-    routing_steps_per_runoff_step = routing_steps // runoff_steps
     last_sub_reach = first_sub_reach + sub_reaches - 1
-    outflow_before_first_step = channel_state[last_sub_reach]  # the river's outflow is its last sub-reach's
-    inflow = upstream_inflow
-    for sub_reach in range(first_sub_reach, last_sub_reach + 1):
-        _write_upstream_terms(coefficients.c1[sub_reach], coefficients.c2[sub_reach], inflow, known_terms)
-        if river_forcing is not None:  # c4 gives each sub-reach its share of the river's runoff
-            add_forcing_terms(
-                river_forcing, coefficients.c4[sub_reach], runoff_steps, routing_steps_per_runoff_step, known_terms
-            )
-        sub_reach_outflow_before_first_step = channel_state[sub_reach]
-        channel_state[sub_reach] = _solve_outflow_recurrence(
-            sub_reach_outflow_before_first_step, coefficients.c3[sub_reach], known_terms, routing_steps
+    if subcycles == 1:
+        inflow = _route_sub_reaches_in_series(
+            first_sub_reach,
+            last_sub_reach,
+            coefficients,
+            river_forcing,
+            channel_state,
+            upstream_inflow,
+            scratch,
+            runoff_steps,
         )
-        if sub_reach < last_sub_reach:  # this sub-reach's outflow is the next one's inflow
-            sub_reach_inflow[0] = sub_reach_outflow_before_first_step
-            for routing_step in range(routing_steps):
-                sub_reach_inflow[routing_step + 1] = known_terms[routing_step]
-            inflow = sub_reach_inflow
-    outflow = known_terms  # the last sub-reach's Q at each routing step
-    _add_outflow_to_downstream_inflow(outflow_before_first_step, outflow, downstream_inflow)
-    _write_discharge_at_runoff_steps(outflow, routing_steps_per_runoff_step, discharge_at_runoff_steps)
-
-
-@numba.njit(cache=True, nogil=True, fastmath={'contract'}, inline='always')
-def _route_river_in_subcycles(
-    state_index: int,
-    subcycles: int,
-    c1: np.float32,
-    c2: np.float32,
-    c3: np.float32,
-    c4: np.float32,
-    river_forcing: RiverForcing | None,
-    channel_state: FloatArray,
-    upstream_inflow: FloatArray,
-    downstream_inflow: FloatArray,
-    discharge_at_runoff_steps: FloatArray,
-    known_terms: FloatArray,
-) -> None:
-    """Route a river too short for the routing step (c3 < 0) in equal subcycles of its own per routing step."""
-    routing_steps = upstream_inflow.shape[0] - 1
-    runoff_steps = discharge_at_runoff_steps.shape[0]
-    river_steps = routing_steps * subcycles
-    river_steps_per_runoff_step = (routing_steps // runoff_steps) * subcycles
-    _write_interpolated_upstream_terms(c1, c2, upstream_inflow, subcycles, known_terms)
-    if river_forcing is not None:
-        add_forcing_terms(river_forcing, c4, runoff_steps, river_steps_per_runoff_step, known_terms)
-    outflow_before_first_step = channel_state[state_index]
-    channel_state[state_index] = _solve_outflow_recurrence(outflow_before_first_step, c3, known_terms, river_steps)
-    outflow = known_terms  # the recurrence replaced each subcycle's known terms with its Q
-    # the downstream river reads Q at the routing steps, the last subcycle of each
-    downstream_inflow[0] += outflow_before_first_step
-    for routing_step in range(routing_steps):
-        downstream_inflow[routing_step + 1] += outflow[(routing_step + 1) * subcycles - 1]
-    _write_discharge_at_runoff_steps(outflow, river_steps_per_runoff_step, discharge_at_runoff_steps)
+        _route_river_whole(
+            last_sub_reach,
+            coefficients.c1[last_sub_reach],
+            coefficients.c2[last_sub_reach],
+            coefficients.c3[last_sub_reach],
+            coefficients.c4[last_sub_reach],
+            river_forcing,
+            channel_state,
+            inflow,
+            downstream_inflow,
+            discharge_at_runoff_steps,
+        )
+        return
+    steps = runoff_steps * subcycles
+    inflow_at_subcycles = scratch[0, : steps + 1]
+    _write_inflow_at_subcycles(upstream_inflow, subcycles, inflow_at_subcycles)
+    runoff_at_subcycles = scratch[1, :steps]  # each subcycle's runoff volume, that of its runoff step
+    runoff_at_subcycles[:] = 0.0
+    if river_forcing is not None:  # numba compiles channel routing without this
+        add_forcing_terms(river_forcing, np.float32(1.0), runoff_steps, subcycles, runoff_at_subcycles)
+    outflow = _route_sub_reaches_in_series(
+        first_sub_reach,
+        last_sub_reach + 1,
+        coefficients,
+        runoff_at_subcycles,
+        channel_state,
+        inflow_at_subcycles,
+        scratch,
+        steps,
+    )
+    for runoff_step in range(runoff_steps + 1):
+        downstream_inflow[runoff_step] += outflow[runoff_step * subcycles]
+    _write_discharge_at_runoff_steps(outflow[1:], subcycles, discharge_at_runoff_steps)
 
 
 def _route_river_with_static_coefficients(
@@ -416,59 +418,34 @@ def _route_river_with_static_coefficients(
     discharge_at_runoff_steps: FloatArray,
     scratch: FloatArray,
 ) -> None:
-    """Route the river at river_index whole, split into sub-reaches where c1 < 0, or in subcycles where c3 < 0."""
-    known_terms = scratch[0]
-    sub_reach_inflow = scratch[1, : upstream_inflow.shape[0]]  # a river split in sub-reaches has no subcycles
-    routing_steps = upstream_inflow.shape[0] - 1
+    """Route the river at river_index as one reach, or as sub-reaches in series where it is too long for its step."""
     first_sub_reach = compute_plan.sub_reach_starts[river_index]
     sub_reaches = compute_plan.sub_reach_starts[river_index + 1] - first_sub_reach
-    subcycles = compute_plan.subcycles[river_index]
-    c1 = coefficients.c1[first_sub_reach]  # a river routed whole or in subcycles is its one sub-reach
-    c2 = coefficients.c2[first_sub_reach]
-    c3 = coefficients.c3[first_sub_reach]
-    c4 = coefficients.c4[first_sub_reach]
     if sub_reaches > 1:
         _route_river_in_sub_reaches(
             first_sub_reach,
             sub_reaches,
+            compute_plan.subcycles[river_index],
             coefficients,
             river_forcing,
             channel_state,
             upstream_inflow,
             downstream_inflow,
             discharge_at_runoff_steps,
-            known_terms,
-            sub_reach_inflow,
-        )
-    elif subcycles > 1:
-        _route_river_in_subcycles(
-            first_sub_reach,
-            subcycles,
-            c1,
-            c2,
-            c3,
-            c4,
-            river_forcing,
-            channel_state,
-            upstream_inflow,
-            downstream_inflow,
-            discharge_at_runoff_steps,
-            known_terms,
+            scratch,
         )
     else:
         _route_river_whole(
             first_sub_reach,
-            c1,
-            c2,
-            c3,
-            c4,
+            coefficients.c1[first_sub_reach],
+            coefficients.c2[first_sub_reach],
+            coefficients.c3[first_sub_reach],
+            coefficients.c4[first_sub_reach],
             river_forcing,
             channel_state,
             upstream_inflow,
             downstream_inflow,
             discharge_at_runoff_steps,
-            scratch[0, :routing_steps],
-            scratch[1, :routing_steps],
         )
 
 
@@ -485,7 +462,7 @@ def _overload_route_river_for_static_coefficients(
     scratch: FloatArray,
 ):
     """
-    The static routine is itself the implementation numba compiles into route_job, and numba inlines its three
+    The static routine is itself the implementation numba compiles into route_job, and numba inlines its two
     routines into it. A call to a separately compiled function increments and decrements the reference count of every
     array it is passed, two atomic operations per array per river: a lambda calling the routine measured 1% slower, and
     calls to the three routines, 16 atomic operations per river, 2.6% slower on the Columbia.

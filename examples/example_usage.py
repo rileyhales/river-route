@@ -9,13 +9,10 @@ import river_route as rr
 if __name__ == '__main__':
     # Amazon: 6020006540, Caribbean: 7020065090
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--bucket-root', default=Path.home() / 'river-forecast-system-v3')
     parser.add_argument('--bucket-root', default=Path.home() / 'data' / 'rfsv3')
     parser.add_argument('--region', default='6020006540')
-    parser.add_argument('--threads', type=int, default=8)
+    parser.add_argument('--threads', type=int, default=1)
     args = parser.parse_args()
-
-    dt_routing = 3600  # all times in seconds, 1 hour
 
     # find the routing files for the region
     routing_root = Path(args.bucket_root) / 'routing'
@@ -31,12 +28,13 @@ if __name__ == '__main__':
     conf = rr.Configs(
         network_file=network_file,
         # primary modeling choices
-        parameters='static',
-        forcing='grid',
-        transform='uniform',
-        force_validity=True,
-        restrict_x_range=False,
-        dt_routing=dt_routing,
+        parameters='static',   # 'static' or 'dynamic'
+        forcing='grid',        # 'channel', or how the forcing is provided, see docs
+        transform='uniform',   # 'uniform', pending update will permit 'unit-hydrograph'
+        dt_routing='auto',     # 'auto', or a positive, integer number of seconds
+        # Calculation quality control options
+        restrict_x_range=True,
+        invalid_coefficients='warn',
         # model state files
         channel_state_init_file=None,
         channel_state_final_file=None,
@@ -51,8 +49,7 @@ if __name__ == '__main__':
         var_t='valid_time',
         # logging and validation options
         progress_bar=True,
-        log_level='ERROR',
-        invalid_coefficients='ignore',
+        log_level='PROGRESS',
     )
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()

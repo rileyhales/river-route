@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 if TYPE_CHECKING:
     from .forcings import CatchmentRunoffVolumes, GridCellRunoff
     from .forcings.bases import RiverGridCells
-    from .router.dynamic_muskingum import Cunge, DynamicCoefficients
+    from .router.dynamic_muskingum import DynamicCoefficients, Regression
     from .router.Router import Router
     from .router.static_muskingum import StaticCoefficients
 
@@ -46,8 +46,8 @@ type RunoffGenerator = Generator[tuple[DatetimeArray, CatchmentRunoffVolumes | G
 type Forcing = CatchmentRunoffVolumes | GridCellRunoff | None
 # one river's forcing, as forcing_of_river reads it: its row of catchment runoff volumes, or its grid cells
 type RiverForcing = FloatArray | RiverGridCells
-# the parameters of a dynamic method, which give each river's k and x at its discharge in every routing step
-type DynamicParameters = Cunge
+# the parameters of the dynamic coefficients, which give each river's k and x at its discharge in every runoff step
+type DynamicParameters = Regression
 # the coefficients route_job is compiled for, chosen by the parameters config
 type Coefficients = StaticCoefficients | DynamicCoefficients
 # the runoff transform route_job is compiled for, chosen by the transform config: None is the uniform transform, and

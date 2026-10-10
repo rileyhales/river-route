@@ -28,12 +28,12 @@ NETWORK_DTYPES = {
     'nextRiverId': np.int64,
     'muskingumK': np.float32,
     'muskingumX': np.float32,
-    'cungeKCoefficient': np.float32,
-    'cungeKExponent': np.float32,
-    'cungeXCoefficient': np.float32,
-    'cungeXExponent': np.float32,
-    'cungeMinQ': np.float32,
-    'cungeMaxQ': np.float32,
+    'dynamicKCoefficient': np.float32,
+    'dynamicKExponent': np.float32,
+    'dynamicXCoefficient': np.float32,
+    'dynamicXExponent': np.float32,
+    'dynamicMinQ': np.float32,
+    'dynamicMaxQ': np.float32,
     'riverIndex': np.int32,
     'upstreamCount': np.int32,
     'synthetic': bool,
@@ -41,11 +41,18 @@ NETWORK_DTYPES = {
 }
 # the columns every network file has: its topology, its Muskingum parameters, and its DFS order
 REQUIRED_COLUMNS = ('riverId', 'nextRiverId', 'muskingumK', 'muskingumX', 'riverIndex', 'upstreamCount')
-# the columns each dynamic method's parameters are built from, in the order of the fields of its NamedTuple. static
-# builds its coefficients from muskingumK and muskingumX
+# the columns the dynamic parameters are built from, in the order of the fields of their NamedTuple. static builds its
+# coefficients from muskingumK and muskingumX
 COLUMNS_FOR_PARAMETERS = {
     'static': (),
-    'cunge': ('cungeKCoefficient', 'cungeKExponent', 'cungeXCoefficient', 'cungeXExponent', 'cungeMinQ', 'cungeMaxQ'),
+    'dynamic': (
+        'dynamicKCoefficient',
+        'dynamicKExponent',
+        'dynamicXCoefficient',
+        'dynamicXExponent',
+        'dynamicMinQ',
+        'dynamicMaxQ',
+    ),
 }
 
 
@@ -318,8 +325,8 @@ class Network:
     def sub_reaches(self, dt: float) -> tuple[IntArray, np.ndarray]:
         """
         The sub-reaches of each river at ``dt``: the fewest sub-reaches, laid out by ``sub_reach_k_and_x``, whose
-        coefficients are all non-negative at ``dt``, which is what ``Configs(force_validity=True)`` routes for rivers
-        too long for dt. An equal sub-reach of travel time ``k/N`` has a non-negative c1 when
+        coefficients are all non-negative at ``dt``, which is what ``Configs(dt_routing='auto')`` routes for rivers
+        too long for the runoff step. An equal sub-reach of travel time ``k/N`` has a non-negative c1 when
         ``k/N <= dt + (1-2x)*k``, and a sub-reach whose x is 0 has one at any step, so the count is
         ``ceil(k / (dt + (1-2x)*k))``: 2 for every river too long at ``x = 0.2``, and never more than
         ``ceil(1/(1-2x))``. It is the same layout ``stabilize`` uses, so a per-reach state from one lines up with the
@@ -346,9 +353,9 @@ class Network:
         """
         The subcycles of each river at ``dt``: the fewest equal steps a river is routed in within each step of ``dt``,
         overriding dt with the shorter routing step ``dt / subcycles`` of its own, which is what
-        ``Configs(force_validity=True)`` does for rivers too short for dt. The count is ``ceil(dt/(2*k*(1-x)))``:
-        the smallest that brings the river's own step under the upper bound ``2*k*(1-x)``. A river that is not too
-        short takes 1.
+        ``Configs(dt_routing='auto')`` does for rivers too short for the runoff step. The count is
+        ``ceil(dt/(2*k*(1-x)))``: the smallest that brings the river's own step under the upper bound ``2*k*(1-x)``.
+        A river that is not too short takes 1.
 
         Its own step can also fall under the lower bound ``2*k*x``, when the window is narrower than one whole count of
         subcycles; such a river keeps one step and is reported as unresolvable. For ``x <= 1/3`` the window always
@@ -368,7 +375,7 @@ class Network:
 
     def conditioning(self, dt: float) -> tuple[IntArray, IntArray, np.ndarray]:
         """
-        How ``Configs(force_validity=True)`` makes every coefficient of each river non-negative at ``dt``: a
+        How ``Configs(dt_routing='auto')`` makes every coefficient of each river non-negative at ``dt``: a
         river too long for dt is split into ``sub_reaches`` sub-reaches laid out by ``sub_reach_k_and_x``, and a river
         too short for it is routed in ``subcycles`` equal steps of its own. No river needs both, since for
         ``x <= 0.5`` a river cannot be too long and too short at once.
@@ -381,23 +388,6 @@ class Network:
         too_long, too_short = self.invalid_mask(dt)
         resolvable = np.where(too_short, subcycles_resolvable, sub_reaches_resolvable)
         return np.where(too_long, sub_reaches, 1), np.where(too_short, subcycles, 1), resolvable
-
-    def largest_valid_dt(self, period: int) -> int:
-        """
-        The largest routing time step that divides ``period`` evenly and at which ``conditioning`` can make every
-        coefficient of every river non-negative. The fewest sub-reaches a river needs, ``ceil(k / (dt + (1-2x)*k))``,
-        only shrinks as dt grows, so the largest such dt also gives the fewest reaches and the fewest steps. Rivers too
-        short for dt take subcycles of their own, so they do not pull the whole network down to the dt of its shortest
-        river. For ``x <= 1/3`` every river is resolvable at any dt, so this returns ``period`` itself.
-        """
-        period = int(period)
-        if period <= 0:
-            raise ValueError(f'period must be a positive integer, got {period}')
-        for dt in streams.divisors_of(period)[::-1]:
-            _, _, resolvable = self.conditioning(float(dt))
-            if resolvable.all():
-                return int(dt)
-        return 1
 
     def check_validity(
         self,
@@ -428,13 +418,13 @@ class Network:
         if n_long == 0 and n_short == 0:
             return
         message = (
-            f'{n_long + n_short} of {self.size} rivers have a negative Muskingum coefficient at dt_routing={dt} s '
-            f'({n_long} are too long for it, with c1 < 0, and {n_short} too short, with c3 < 0), so their routing is '
-            f'not valid. Every coefficient is non-negative when 2*k*x <= dt_routing <= 2*k*(1-x). Outside that window '
-            f'routing is stable and conserves mass, but discharge can dip below zero ahead of a rise or alternate and '
-            f'go negative, and it is written as routed. Use Network.invalid_mask to find these rivers, route with '
-            f'force_validity=True to route rivers too long in sub-reaches and rivers too short in subcycles, or set '
-            f"invalid_coefficients to 'ignore' to silence this."
+            f'{n_long + n_short} of {self.size} rivers have a negative Muskingum coefficient in their step of each '
+            f'{dt} s ({n_long} are too long for it, with c1 < 0, and {n_short} too short, with c3 < 0), so their '
+            f'routing is not valid. Every coefficient is non-negative when 2*k*x <= step <= 2*k*(1-x). Outside that '
+            f'window routing is stable and conserves mass, but discharge can dip below zero ahead of a rise or '
+            f'alternate and go negative, and it is written as routed. Use Network.invalid_mask to find these rivers, '
+            f"route with dt_routing='auto' to split rivers too long into sub-reaches and give rivers too short the "
+            f"subcycles they need, or set invalid_coefficients to 'ignore' to silence this."
         )
         if action == 'raise':
             raise ValueError(message)
@@ -450,7 +440,7 @@ class Network:
         stabilized once: to stabilize it at another dt, build a new Network from the original network file.
 
         The sub-reaches are those of ``sub_reaches``, laid out by ``sub_reach_k_and_x``, which is what
-        ``Configs(force_validity=True)`` routes inside the kernel, so they keep each river's mean travel time k and its
+        ``Configs(dt_routing='auto')`` routes inside the kernel, so they keep each river's mean travel time k and its
         travel time variance ``k**2 * (1 - 2x)``. A river they cannot make non-negative is kept whole. Rivers left
         with a negative coefficient are not reported here: ``invalid_mask`` finds them, and routing reports them as
         ``invalid_coefficients`` says.
@@ -508,10 +498,13 @@ class Network:
         next_river_ids[~synthetic] = np.where(down >= 0, river_ids[first_sub_reach][np.clip(down, 0, n_rivers - 1)], -1)
         df['nextRiverId'] = next_river_ids
         # the split travel times are fractions, so they take the table's float dtype even where k was integers. The
-        # Muskingum-Cunge k of each sub-reach is its share of the river's, and the 1/2 - x that keeps the river's
-        # variance at every discharge is the river's divided by the sum of the squared shares.
-        cunge_scales = (('cungeKCoefficient', share), ('cungeXCoefficient', np.repeat(1 / squared_shares, sub_reaches)))
-        for column, scale in cunge_scales:
+        # dynamic k of each sub-reach is its share of the river's, and the 1/2 - x that keeps the river's variance at
+        # every discharge is the river's divided by the sum of the squared shares.
+        dynamic_scales = (
+            ('dynamicKCoefficient', share),
+            ('dynamicXCoefficient', np.repeat(1 / squared_shares, sub_reaches)),
+        )
+        for column, scale in dynamic_scales:
             if column in df.columns:
                 df[column] = (df[column].to_numpy(dtype=np.float64) * scale).astype(NETWORK_DTYPES[column])
         df['muskingumK'] = k_reach.astype(NETWORK_DTYPES['muskingumK'])

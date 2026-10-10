@@ -1,7 +1,8 @@
 """
-Routes a region river by river. Three configs decide how a river is routed, and each is the type of an argument numba
-compiles route_job for: ``forcing`` (None for channel routing), ``parameters`` (the coefficients), and
-``force_validity`` (the ComputePlan of each river's sub-reaches and subcycles).
+Routes a region river by river. Rivers hand their discharge downstream at the end of every runoff step, and each river
+computes in a plan of its own, the ComputePlan of its sub-reaches and of the subcycles it takes in each runoff step. Two
+configs decide how a river is routed, and each is the type of an argument numba compiles route_job for: ``forcing``
+(None for channel routing) and ``parameters`` (the coefficients).
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -50,14 +51,14 @@ SCRATCH_ROWS = 8
 
 
 class ComputePlan(NamedTuple):
-    """How each river is computed: split into sub-reaches in series, and in subcycles of the routing step."""
+    """How each river is computed: split into sub-reaches in series, and in subcycles of each runoff step."""
 
     sub_reach_starts: Int32Array  # (n + 1,) channel_state index of each river's first sub-reach, then the total
-    subcycles: Int32Array  # (n,) steps each river takes per routing step, the most it takes with dynamic coefficients
+    subcycles: Int32Array  # (n,) steps each river takes per runoff step, the most it takes with dynamic coefficients
 
     @classmethod
     def from_counts(cls, sub_reaches: IntArray, subcycles: IntArray) -> ComputePlan:
-        """The plan of rivers split into ``sub_reaches`` sub-reaches that take ``subcycles`` steps per routing step."""
+        """The plan of rivers split into ``sub_reaches`` sub-reaches that take ``subcycles`` steps per runoff step."""
         sub_reach_starts = np.zeros(sub_reaches.shape[0] + 1, dtype=np.int32)
         sub_reach_starts[1:] = np.cumsum(sub_reaches)
         return cls(sub_reach_starts, subcycles.astype(np.int32))
@@ -75,7 +76,7 @@ class Job(NamedTuple):
     block_outlet: Int32Array  # (n_job_blocks,)
     block_number: Int32Array  # (n_job_blocks,)
     boundary_target: Int32Array  # (n_blocks,) river each boundary row drains into, -1 at a basin outlet, or empty
-    boundary: FloatArray  # (n_blocks, routing_steps + 1)
+    boundary: FloatArray  # (n_blocks, runoff_steps + 1)
     discharge_row: Int32Array  # (n,) row of discharge_array of each river, -1 for a synthetic river, or empty for none
 
 
@@ -112,8 +113,8 @@ def add_forcing_of_four_steps(
     river_forcing: RiverForcing, c4: np.float32, first_step: int, steps: int, terms: FourLanes
 ) -> FourLanes:
     """
-    terms plus c4 V_t in each lane, for the up to four runoff steps t from first_step, a lane each, when each runoff
-    step is one routing step. Lanes past the last step of the series are left as they are.
+    terms plus c4 V_t in each lane, for the up to four runoff steps t from first_step, a lane each. Lanes past the last
+    step of the series are left as they are.
     """
     raise NotImplementedError('stages run only inside kernels, where numba compiles them from their overloads')
 
@@ -130,9 +131,9 @@ def route_river(
     scratch: FloatArray,
 ) -> None:
     """
-    Route the river at river_index over every routing step: add its Q at each step into downstream_inflow, write its
-    Q at the end of each runoff step into discharge_at_runoff_steps, and leave its last Q in channel_state. scratch is
-    (SCRATCH_ROWS, routing steps times the most subcycles + 1) rows the routing method works in.
+    Route the river at river_index over every runoff step: add its Q at the end of each into downstream_inflow, write
+    it into discharge_at_runoff_steps, and leave its last Q in channel_state. scratch is (SCRATCH_ROWS, runoff steps
+    times the most subcycles + 1) rows the routing method works in.
     """
     raise NotImplementedError('stages run only inside kernels, where numba compiles them from their overloads')
 
@@ -232,13 +233,13 @@ def count_peak_live_inflow_rows(
 
 @numba.njit(cache=True, nogil=True)
 def allocate_inflow_row_pool(
-    river_span: int, n_rows: int, routing_steps: int
+    river_span: int, n_rows: int, runoff_steps: int
 ) -> tuple[FloatArray, IntArray, IntArray, IntArray]:
     """
     The inflow rows, the row each river holds (-1 for none), and the stack of free rows with its count. Two rows follow
     the pool: the zeros a headwater reads as its inflow, and the row basin outlets add their series into.
     """
-    inflow_rows = np.empty((n_rows + 2, routing_steps + 1), dtype=np.float32)
+    inflow_rows = np.empty((n_rows + 2, runoff_steps + 1), dtype=np.float32)
     inflow_rows[n_rows, :] = 0.0
     inflow_row_of_river = np.full(river_span, -1, dtype=np.int64)
     free_inflow_rows = np.arange(n_rows)
@@ -291,7 +292,6 @@ def route_job(
     channel_state: FloatArray,
     discharge_array: FloatArray,
     downstream_indices: Int32Array,
-    routing_steps_per_runoff_step: int,
     coefficients: Coefficients,
     compute_plan: ComputePlan,
     forcing: Forcing,
@@ -303,17 +303,16 @@ def route_job(
     discharge at the end of each runoff step is written into its own row of the C-order (river, time) discharge_array.
     """
     runoff_steps = discharge_array.shape[1]
-    routing_steps = runoff_steps * routing_steps_per_runoff_step
     block_starts, block_stops, block_outlet, block_number, boundary_target, boundary, discharge_row = job
     n_rows = count_peak_live_inflow_rows(downstream_indices, block_starts, block_stops, block_outlet, boundary_target)
     first_river, river_span = first_river_and_span_of_job(block_starts, block_stops)
     inflow_rows, inflow_row_of_river, free_inflow_rows, free_inflow_row_count = allocate_inflow_row_pool(
-        river_span, n_rows, routing_steps
+        river_span, n_rows, runoff_steps
     )
     boundaries_in_target_order = sort_boundaries_by_target_river(boundary_target)
     next_boundary = 0
     transform_scratch = np.empty(0 if transform is None else runoff_steps, dtype=np.float32)
-    scratch = np.empty((SCRATCH_ROWS, routing_steps * compute_plan.subcycles.max() + 1), dtype=np.float32)
+    scratch = np.empty((SCRATCH_ROWS, runoff_steps * compute_plan.subcycles.max() + 1), dtype=np.float32)
     has_synthetic_rivers = discharge_row.shape[0] > 0
     synthetic_river_discharge = np.empty(runoff_steps if has_synthetic_rivers else 0, dtype=discharge_array.dtype)
 
@@ -370,7 +369,6 @@ def route_region(
     network: Network,
     coefficients: Coefficients,
     compute_plan: ComputePlan,
-    routing_steps_per_runoff_step: int,
     channel_state: FloatArray,
     discharge_array: FloatArray,
     forcing: Forcing,
@@ -388,9 +386,8 @@ def route_region(
         network, coefficients, compute_plan, channel_state, discharge_array, forcing, job_blocks
     )
     downstream_indices = network.downstream_indices
-    routing_steps = discharge_array.shape[1] * routing_steps_per_runoff_step
-    # a boundary row holds a block outlet's Q before the first routing step and at every step, like an inflow row
-    boundary = np.zeros((max(boundary_target.shape[0], 1), routing_steps + 1), dtype=np.float32)
+    # a boundary row holds a block outlet's Q before the first runoff step and at the end of each, like an inflow row
+    boundary = np.zeros((max(boundary_target.shape[0], 1), discharge_array.shape[1] + 1), dtype=np.float32)
     synthetic = network.synthetic
     discharge_row = (
         _EMPTY_INT32 if synthetic is None else np.where(synthetic, -1, np.cumsum(~synthetic) - 1).astype(np.int32)
@@ -402,7 +399,6 @@ def route_region(
             channel_state,
             discharge_array,
             downstream_indices,
-            routing_steps_per_runoff_step,
             coefficients,
             compute_plan,
             forcing,

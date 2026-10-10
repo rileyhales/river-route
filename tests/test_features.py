@@ -25,7 +25,7 @@ from reference_solution import GRID_NAMES, WILLAMETTE, Basin, assert_same, route
 import river_route as rr
 from river_route import metrics
 from river_route.network import streams
-from river_route.router import writers
+from river_route.router import static_muskingum, writers
 
 DT = 3600
 ROOT = Path(__file__).parent.parent
@@ -85,7 +85,17 @@ REFUSED_CONFIGS = {
     'time steps are whole seconds': (
         lambda basin, d: {'dt_routing': DT / 7},
         ValueError,
-        'dt_routing must be a whole number of seconds',
+        "dt_routing must be 'auto' or a positive whole number of seconds",
+    ),
+    'a routing step is auto or positive': (
+        lambda basin, d: {'dt_routing': 0},
+        ValueError,
+        "dt_routing must be 'auto' or a positive whole number of seconds",
+    ),
+    'channel routing needs a step to exchange discharge at': (
+        lambda basin, d: {'forcing': 'channel', 'runoff_files': [], 'channel_state_init_file': d, 'dt_total': 86400},
+        ValueError,
+        'dt_discharge, or dt_routing in seconds, is required',
     ),
     'time steps are not negative': (
         lambda basin, d: {'dt_total': -DT},
@@ -238,14 +248,14 @@ def test_deep_validate_finds_broken_network_files(breaks, message, willamette: B
         rr.Configs(network_file=tmp_path / 'network.parquet').deep_validate()
 
 
-def test_deep_validate_checks_a_state_against_force_validity(willamette: Basin, tmp_path: Path) -> None:
+def test_deep_validate_checks_a_state_against_dt_routing(willamette: Basin, tmp_path: Path) -> None:
     final_state = tmp_path / 'final_state.parquet'
     options = {'network_file': willamette.network_file, 'channel_state_final_file': final_state}
-    route(tmp_path, willamette.months[:1], force_validity=True, **options)
+    route(tmp_path, willamette.months[:1], **options)
     sub_reach_state = {'network_file': willamette.network_file, 'channel_state_init_file': final_state}
-    rr.Configs(**sub_reach_state, force_validity=True).deep_validate()  # one row per sub-reach
+    rr.Configs(**sub_reach_state).deep_validate()  # one row per sub-reach
     with pytest.raises(ValueError, match='rivers, the network has'):
-        rr.Configs(**sub_reach_state, force_validity=False).deep_validate()
+        rr.Configs(**sub_reach_state, dt_routing=DT).deep_validate()
     pd.read_parquet(final_state, columns=['Q']).to_parquet(tmp_path / 'no_ids.parquet')
     with pytest.raises(ValueError, match='missing riverId'):
         rr.Configs(**(sub_reach_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
@@ -300,9 +310,22 @@ def test_conditioning_makes_every_river_valid(dt: int, package: Path, manifest: 
     assert not too_long.any() and not too_short.any()
 
 
-def test_the_largest_valid_dt_divides_the_runoff_step(willamette: Basin) -> None:
-    dt = willamette.network.largest_valid_dt(DT)
-    assert DT % dt == 0 and willamette.network.conditioning(dt)[2].all()
+def test_a_given_dt_routing_routes_every_river_whole_at_it(willamette: Basin) -> None:
+    """
+    With dt_routing auto, rivers too long for the runoff step are split into sub-reaches and rivers too short for it
+    take the fewest subcycles that keep their coefficients valid. A dt_routing that is given is the step of every
+    river, routed whole: rivers too long or too short for it are reported rather than split or given a shorter step.
+    """
+    network = willamette.network
+    sub_reaches, subcycles, _ = network.conditioning(DT)
+    assert sub_reaches.max() > 1 and subcycles.max() > 1, 'the basin needs no sub-reaches or subcycles at the step'
+    configs = rr.Configs(network_file=willamette.network_file, invalid_coefficients='raise')
+    static_muskingum.prepare_routing(network, configs, DT, None)
+    with pytest.raises(ValueError, match='too short'):
+        static_muskingum.prepare_routing(network, configs, DT, DT)
+    whole = rr.Configs(network_file=willamette.network_file, invalid_coefficients='ignore')
+    compute_plan, _ = static_muskingum.prepare_routing(network, whole, DT, DT)
+    assert compute_plan.sub_reach_starts[-1] == network.size, 'a given dt_routing split a river into sub-reaches'
 
 
 def test_write_stabilized_writes_only_its_output(willamette: Basin, tmp_path: Path) -> None:
@@ -315,7 +338,7 @@ def test_write_stabilized_writes_only_its_output(willamette: Basin, tmp_path: Pa
     np.testing.assert_array_equal(written['riverId'], stabilized.river_ids)
     np.testing.assert_array_equal(written['synthetic'], stabilized.synthetic)
     assert np.all(np.diff(written['riverIndex']) == 1), 'the added sub-reaches are numbered in with the rivers'
-    rr.Configs(network_file=tmp_path / 'stabilized.parquet', force_validity=True).deep_validate()
+    rr.Configs(network_file=tmp_path / 'stabilized.parquet').deep_validate()
     with pytest.raises(ValueError, match='needs a path'):
         rr.Network(pd.read_parquet(source)).write_stabilized(DT)
 
@@ -509,11 +532,11 @@ def test_grid_cell_runoff_checks_its_weight_table(willamette: Basin) -> None:
 
 
 def test_parameters_need_their_columns(willamette: Basin, tmp_path: Path) -> None:
-    cunge = {'network_file': willamette.network_file, 'parameters': 'cunge'}
-    with pytest.raises(ValueError, match='missing cungeKCoefficient column required by the cunge parameters'):
-        rr.Configs(**cunge).deep_validate()
-    with pytest.raises(ValueError, match='cungeMinQ, cungeMaxQ that the cunge parameters'):
-        route(tmp_path, willamette.months[:1], **cunge)
+    dynamic = {'network_file': willamette.network_file, 'parameters': 'dynamic'}
+    with pytest.raises(ValueError, match='missing dynamicKCoefficient column required by the dynamic parameters'):
+        rr.Configs(**dynamic).deep_validate()
+    with pytest.raises(ValueError, match='dynamicMinQ, dynamicMaxQ that the dynamic parameters'):
+        route(tmp_path, willamette.months[:1], **dynamic)
 
 
 @pytest.mark.parametrize('threads', [0, True, 2.0])
@@ -541,20 +564,16 @@ def test_runoff_must_come_in_uniform_time_steps(cut, message, willamette: Basin,
         route(tmp_path, [cut(*willamette.months[0])], network_file=willamette.network_file)
 
 
-def test_a_run_that_forces_validity_refuses_sub_reaches_that_change_between_files(
-    willamette: Basin, tmp_path: Path
-) -> None:
+def test_dt_routing_auto_refuses_sub_reaches_that_change_between_files(willamette: Basin, tmp_path: Path) -> None:
     (march_dates, march), (april_dates, april) = willamette.months[:2]
     n_steps = april.shape[1] // 3 * 3
     three_hourly = april[:, :n_steps].reshape(april.shape[0], -1, 3).sum(axis=2)
     network = willamette.network
-    hourly_reaches, three_hourly_reaches = (
-        network.conditioning(network.largest_valid_dt(dt))[0].sum() for dt in (DT, 3 * DT)
-    )
+    hourly_reaches, three_hourly_reaches = (network.conditioning(dt)[0].sum() for dt in (DT, 3 * DT))
     assert hourly_reaches != three_hourly_reaches, 'both time steps route the same sub-reaches'
     months = [(march_dates, march), (april_dates[:n_steps:3], three_hourly)]
     with pytest.raises(ValueError, match='sub-reaches'):
-        route(tmp_path, months, network_file=willamette.network_file, force_validity=True)
+        route(tmp_path, months, network_file=willamette.network_file)
 
 
 def test_null_device_outputs_are_routed_and_discarded(willamette: Basin, tmp_path: Path) -> None:
@@ -677,7 +696,7 @@ def test_the_command_line_routes_a_config_file(willamette: Basin, tmp_path: Path
     command = [sys.executable, '-m', 'river_route._cli', 'route', str(tmp_path / 'configs.json')]
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    expected = route(tmp_path, **willamette.gridded(months=1), force_validity=configs.force_validity).discharge[0]
+    expected = route(tmp_path, **willamette.gridded(months=1), dt_routing=configs.dt_routing).discharge[0]
     with xr.open_zarr(tmp_path / 'discharge.zarr') as written:
         assert_same(written['Q'].to_numpy(), expected)
 

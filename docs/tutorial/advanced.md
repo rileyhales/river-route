@@ -3,7 +3,7 @@
 ```mermaid
 graph TD
     A[Router] --> C[build Network from network_file<br/>topology, k and x]
-    C --> B[route method: validate config for parameters/forcing/force_validity]
+    C --> B[route method: validate config for parameters/forcing/dt_routing]
     B --> D[read initial state]
     D --> E{forcing}
 
@@ -39,7 +39,7 @@ the topology and the `k` and `x` vectors, and the routing method chosen by `para
 from them. The network divides its rivers into the blocks threads route the first time it routes with each thread
 count.
 `Router.route()` first validates the required config keys and runoff source for the selected `parameters`,
-`forcing`, `transform`, and `force_validity` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
+`forcing`, `transform`, and `dt_routing` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
 `Router` reads and partitions the network only once, and each `route()` starts again from `channel_state_init_file`.
 When `forcing` is `'channel'`, time parameters are read directly from the config and the channel alone is routed once
 over `dt_total`. Otherwise the router loops over the runoff input files (processed sequentially or as an ensemble),

@@ -41,10 +41,8 @@ def read_discharge(package: Path, files: list[str]) -> np.ndarray:
     return np.concatenate(series, axis=1)
 
 
-@pytest.mark.parametrize(('force_validity', 'dt_routing'), [(False, 3600), (False, 1800), (True, 3600)])
-def test_steady_state_is_a_fixed_point(
-    force_validity: bool, dt_routing: int, willamette: Basin, tmp_path: Path
-) -> None:
+@pytest.mark.parametrize('dt_routing', [3600, 1800, 'auto'])
+def test_steady_state_is_a_fixed_point(dt_routing: int | str, willamette: Basin, tmp_path: Path) -> None:
     """
     With runoff constant in time, a river's inflow plus its own runoff rate is a fixed point of its recurrence, because
     c1 + c2 + c3 = 1. Starting every river there, its discharge must stay there for every step.
@@ -54,9 +52,9 @@ def test_steady_state_is_a_fixed_point(
     rate = constant[:, 0].astype(np.float64) / DT
     steady = accumulate_downstream(rate, willamette.network.downstream_indices)
     state, river_ids = steady, willamette.network.river_ids
-    if force_validity:
+    if dt_routing == 'auto':
         # each sub-reach of a river carries its inflow plus the shares of its runoff of it and the sub-reaches above it
-        sub_reaches, _, _ = willamette.network.conditioning(dt_routing)
+        sub_reaches, _, _ = willamette.network.conditioning(DT)
         k_reach, _ = willamette.network.sub_reach_k_and_x(sub_reaches)
         share = k_reach / np.repeat(willamette.network.k.astype(np.float64), sub_reaches)
         first_sub_reach = np.concatenate(([0], np.cumsum(sub_reaches)[:-1]))
@@ -70,23 +68,22 @@ def test_steady_state_is_a_fixed_point(
         tmp_path,
         [(dates, constant)],
         network_file=willamette.network_file,
-        force_validity=force_validity,
         dt_routing=dt_routing,
         channel_state_init_file=tmp_path / 'steady.parquet',
     )
     assert_same(routed.discharge[0], np.repeat(steady[:, np.newaxis], constant.shape[1], axis=1))
 
 
-@pytest.mark.parametrize('force_validity', [False, True])
-def test_doubling_the_runoff_doubles_the_discharge(force_validity: bool, willamette: Basin, tmp_path: Path) -> None:
+@pytest.mark.parametrize('dt_routing', [DT, 'auto'])
+def test_doubling_the_runoff_doubles_the_discharge(dt_routing: int | str, willamette: Basin, tmp_path: Path) -> None:
     dates, volumes = willamette.months[0]
-    once = route(tmp_path, [(dates, volumes)], network_file=willamette.network_file, force_validity=force_validity)
-    twice = route(tmp_path, [(dates, 2 * volumes)], network_file=willamette.network_file, force_validity=force_validity)
+    once = route(tmp_path, [(dates, volumes)], network_file=willamette.network_file, dt_routing=dt_routing)
+    twice = route(tmp_path, [(dates, 2 * volumes)], network_file=willamette.network_file, dt_routing=dt_routing)
     assert_same(twice.discharge[0], 2 * once.discharge[0])
     assert_same(twice.final_state, 2 * once.final_state)
 
 
-@pytest.mark.parametrize('name', ['static_standard', 'static_unforced'])
+@pytest.mark.parametrize('name', ['static_standard', 'static_dt_routing'])
 def test_a_restart_continues_the_run_it_was_saved_from(
     name: str, package: Path, manifest: dict, tmp_path: Path
 ) -> None:
@@ -149,13 +146,13 @@ def test_headwaters_follow_the_muskingum_formula(dt_routing: int, willamette: Ba
     assert_same(routed.discharge[0][rivers], discharges[:, steps::steps])
 
 
-@pytest.mark.parametrize('force_validity', [True, False])
-def test_water_is_conserved(force_validity: bool, willamette: Basin, tmp_path: Path) -> None:
+@pytest.mark.parametrize('dt_routing', ['auto', DT])
+def test_water_is_conserved(dt_routing: int | str, willamette: Basin, tmp_path: Path) -> None:
     """Route two months of runoff, then two months of none so the basin drains: all the runoff must leave through the
     outlet."""
     wet = [(dates, np.maximum(volumes, 0)) for dates, volumes in willamette.months[:2]]
     dry = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months[2:]]
-    routed = route(tmp_path, wet + dry, network_file=willamette.network_file, force_validity=force_validity)
+    routed = route(tmp_path, wet + dry, network_file=willamette.network_file, dt_routing=dt_routing)
     volume_in = sum(volumes.sum(dtype=np.float64) for _, volumes in wet)
     volume_out = sum(discharge[outlet_of(willamette)].sum(dtype=np.float64) for discharge in routed.discharge) * DT
     assert abs(volume_out - volume_in) <= TOLERANCE * volume_in, f'{volume_out:.6g} m³ left of {volume_in:.6g} m³'
@@ -188,7 +185,7 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     months = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months]
     pulse = 1e6  # m³
     months[0][1][headwater, 0] = pulse
-    routed = route(tmp_path, months, network_file=willamette.network_file, force_validity=True)
+    routed = route(tmp_path, months, network_file=willamette.network_file)
     outflow = np.concatenate([discharge[outlet] for discharge in routed.discharge]).astype(np.float64)
     assert abs(outflow.sum() * DT - pulse) <= TOLERANCE * pulse
     ends = (np.arange(outflow.size) + 1) * DT
@@ -198,14 +195,14 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
     )
 
 
-@pytest.mark.parametrize(('force_validity', 'routed_reaches'), [(False, 2), (True, 3)])
+@pytest.mark.parametrize(('dt_routing', 'routed_reaches'), [(DT, 2), ('auto', 3)])
 def test_a_long_river_delays_and_spreads_a_pulse_by_its_own_moments(
-    force_validity: bool, routed_reaches: int, tmp_path: Path
+    dt_routing: int | str, routed_reaches: int, tmp_path: Path
 ) -> None:
     """
     Whatever the step, the response of a Muskingum reach to what flows in at its top has mean k and variance
     k^2 (1 - 2x), and reaches in series add their moments. A river of k = 20 h and x = 0.2 is too long for a step of
-    1 h, and force_validity routes it in two sub-reaches. Equal ones would need x = 1/2 - 2 (1/2 - 0.2) = -0.1 to keep
+    1 h, and dt_routing auto routes it in two sub-reaches. Equal ones would need x = 1/2 - 2 (1/2 - 0.2) = -0.1 to keep
     its variance, and Muskingum x is never negative, so they are linear reservoirs of 14.5 h and 5.5 h, whose squares
     sum to the river's 240 h^2. A pulse of runoff on a headwater flows into it, and the moments of the river's discharge
     exceed the headwater's by its own.
@@ -225,7 +222,7 @@ def test_a_long_river_delays_and_spreads_a_pulse_by_its_own_moments(
     dates = np.datetime64('2000-01-01T00:00:00', 's') + np.arange(1000) * np.timedelta64(DT, 's')
     volumes = np.zeros((2, dates.size), dtype=np.float32)
     volumes[0, 0] = 1e6
-    routed = route(tmp_path, [(dates, volumes)], network_file=tmp_path / 'chain.parquet', force_validity=force_validity)
+    routed = route(tmp_path, [(dates, volumes)], network_file=tmp_path / 'chain.parquet', dt_routing=dt_routing)
     assert routed.router.channel_state.shape[0] == routed_reaches
 
     def mean_and_variance(discharge: np.ndarray) -> tuple[float, float]:
@@ -255,21 +252,21 @@ def test_threaded_routing_is_repeatable(willamette: Basin, tmp_path: Path) -> No
     np.testing.assert_array_equal(first.final_state, second.final_state)
 
 
-@pytest.mark.parametrize('name', ['static_standard', 'static_unforced'])
+@pytest.mark.parametrize('name', ['static_standard', 'static_dt_routing'])
 def test_threaded_and_single_threaded_runs_agree(name: str, package: Path, manifest: dict) -> None:
     single, threaded = manifest['runs'][name], manifest['runs'][f'{name}_4_threads']
     assert_same(read_discharge(package, threaded['discharge']), read_discharge(package, single['discharge']))
 
 
-def test_split_networks_route_like_forced_validity(willamette: Basin, tmp_path: Path) -> None:
+def test_split_networks_route_like_dt_routing_auto(willamette: Basin, tmp_path: Path) -> None:
     """
-    A network stabilized by writing its sub-reaches as rows must route like force_validity=True, which routes them as
+    A network stabilized by writing its sub-reaches as rows must route like dt_routing auto, which routes them as
     sub-reaches inside the kernel. The written network does not route rivers too short for the routing step in
     subcycles, so only rivers with no such river upstream of them are compared.
     """
     split_file = rr.Network(willamette.network_file).write_stabilized(DT, tmp_path / 'split.parquet')
     split = route(tmp_path, **(willamette.gridded(months=2) | {'network_file': split_file}))
-    in_kernel = route(tmp_path, force_validity=True, **willamette.gridded(months=2))
+    in_kernel = route(tmp_path, **willamette.gridded(months=2))
     _, too_short = willamette.network.invalid_mask(DT)
     comparable = accumulate_downstream(too_short, willamette.network.downstream_indices) == 0
     assert comparable.sum() > willamette.network.size / 2
@@ -277,29 +274,29 @@ def test_split_networks_route_like_forced_validity(willamette: Basin, tmp_path: 
         assert_same(split_discharge[comparable], kernel_discharge[comparable])
 
 
-@pytest.mark.parametrize('force_validity', [False, True])
-def test_cunge_without_exponents_routes_like_static(force_validity: bool, willamette: Basin, tmp_path: Path) -> None:
+@pytest.mark.parametrize('dt_routing', [DT, 'auto'])
+def test_dynamic_without_exponents_routes_like_static(dt_routing: int | str, willamette: Basin, tmp_path: Path) -> None:
     """
-    With exponents of 0 a river's k = cungeKCoefficient * Q ** cungeKExponent and
-    x = 1/2 - cungeXCoefficient * Q ** cungeXExponent are its coefficients whatever it carries, so with
-    cungeKCoefficient = k and cungeXCoefficient = 1/2 - x the dynamic coefficients of every step are the static ones.
-    With force_validity the plan of each river is then the static one too: the same sub-reaches of the same shares, and
-    at every step the static river's subcycles.
+    With exponents of 0 a river's k = dynamicKCoefficient * Q ** dynamicKExponent and
+    x = 1/2 - dynamicXCoefficient * Q ** dynamicXExponent are its coefficients whatever it carries, so with
+    dynamicKCoefficient = k and dynamicXCoefficient = 1/2 - x the dynamic coefficients of every step are the static
+    ones. With dt_routing auto the plan of each river is then the static one too: the same sub-reaches of the same
+    shares, and at every step the static river's subcycles.
     """
     table = pd.read_parquet(willamette.network_file)
-    cunge = table.assign(
-        cungeKCoefficient=table['muskingumK'],
-        cungeKExponent=np.float32(0),
-        cungeXCoefficient=np.float32(0.5) - table['muskingumX'],
-        cungeXExponent=np.float32(0),
-        cungeMinQ=np.float32(1),
-        cungeMaxQ=np.float32(1),
+    dynamic = table.assign(
+        dynamicKCoefficient=table['muskingumK'],
+        dynamicKExponent=np.float32(0),
+        dynamicXCoefficient=np.float32(0.5) - table['muskingumX'],
+        dynamicXExponent=np.float32(0),
+        dynamicMinQ=np.float32(1),
+        dynamicMaxQ=np.float32(1),
     )
-    cunge.to_parquet(tmp_path / 'dynamic.parquet')
-    options = {'force_validity': force_validity}
+    dynamic.to_parquet(tmp_path / 'dynamic.parquet')
+    options = {'dt_routing': dt_routing}
     static = route(tmp_path, willamette.months[:1], network_file=willamette.network_file, **options)
     dynamic = route(
-        tmp_path, willamette.months[:1], network_file=tmp_path / 'dynamic.parquet', parameters='cunge', **options
+        tmp_path, willamette.months[:1], network_file=tmp_path / 'dynamic.parquet', parameters='dynamic', **options
     )
     np.testing.assert_array_equal(
         dynamic.router.compute_plan.sub_reach_starts, static.router.compute_plan.sub_reach_starts
@@ -308,36 +305,36 @@ def test_cunge_without_exponents_routes_like_static(force_validity: bool, willam
     assert_same(dynamic.final_state, static.final_state)
 
 
-def test_forced_validity_keeps_dynamic_discharge_from_going_negative(willamette: Basin, tmp_path: Path) -> None:
+def test_dt_routing_auto_keeps_dynamic_discharge_from_going_negative(willamette: Basin, tmp_path: Path) -> None:
     """
     Muskingum coefficients that are all non-negative route non-negative runoff into non-negative discharge. With
-    force_validity, rivers whose k and x change with discharge are split and subcycled so that theirs are at every
+    dt_routing auto, rivers whose k and x change with discharge are split and subcycled so that theirs are at every
     step, for laws whose k is each river's own at 10 m³/s and falls with discharge, and whose x rises with it.
     """
     table = pd.read_parquet(willamette.network_file)
     reference_q = 10.0
     table.assign(
-        cungeKCoefficient=(table['muskingumK'] * reference_q**0.3).astype(np.float32),
-        cungeKExponent=np.float32(-0.3),
-        cungeXCoefficient=np.float32(0.2 / reference_q**0.2),  # x = 0.3 at 10 m³/s
-        cungeXExponent=np.float32(-0.2),
-        cungeMinQ=np.float32(0.1),
-        cungeMaxQ=np.float32(10_000),
+        dynamicKCoefficient=(table['muskingumK'] * reference_q**0.3).astype(np.float32),
+        dynamicKExponent=np.float32(-0.3),
+        dynamicXCoefficient=np.float32(0.2 / reference_q**0.2),  # x = 0.3 at 10 m³/s
+        dynamicXExponent=np.float32(-0.2),
+        dynamicMinQ=np.float32(0.1),
+        dynamicMaxQ=np.float32(10_000),
     ).to_parquet(tmp_path / 'dynamic.parquet')
     assert all(np.all(volumes >= 0) for _, volumes in willamette.months[:1])
-    unforced, forced = (
+    fixed_step, auto = (
         route(
             tmp_path,
             willamette.months[:1],
             network_file=tmp_path / 'dynamic.parquet',
-            parameters='cunge',
-            force_validity=force_validity,
+            parameters='dynamic',
+            dt_routing=dt_routing,
         )
-        for force_validity in (False, True)
+        for dt_routing in (DT, 'auto')
     )
-    assert np.any(unforced.discharge[0] < 0), 'every river is valid unforced, so this checks nothing'
-    assert np.all(forced.discharge[0] >= 0)
-    assert np.all(forced.final_state >= 0)
+    assert np.any(fixed_step.discharge[0] < 0), 'every river is valid routed whole, so this checks nothing'
+    assert np.all(auto.discharge[0] >= 0)
+    assert np.all(auto.final_state >= 0)
 
 
 @pytest.mark.parametrize('restrict_x_range', [True, False])
@@ -345,33 +342,29 @@ def test_restrict_x_range_routes_no_x_above_its_limit(
     restrict_x_range: bool, willamette: Basin, tmp_path: Path
 ) -> None:
     """
-    With restrict_x_range, rivers of x = 0.49 are routed with x = 0.45 by static and cunge parameters alike, and
+    With restrict_x_range, rivers of x = 0.49 are routed with x = 0.45 by static and dynamic parameters alike, and
     without it with their own x.
     """
     table = pd.read_parquet(willamette.network_file).assign(muskingumX=np.float32(0.49))
     table.assign(
-        cungeKCoefficient=table['muskingumK'],
-        cungeKExponent=np.float32(0),
-        cungeXCoefficient=np.float32(0.01),  # 1/2 - 0.49
-        cungeXExponent=np.float32(0),
-        cungeMinQ=np.float32(1),
-        cungeMaxQ=np.float32(1),
+        dynamicKCoefficient=table['muskingumK'],
+        dynamicKExponent=np.float32(0),
+        dynamicXCoefficient=np.float32(0.01),  # 1/2 - 0.49
+        dynamicXExponent=np.float32(0),
+        dynamicMinQ=np.float32(1),
+        dynamicMaxQ=np.float32(1),
     ).to_parquet(tmp_path / 'x_of_049.parquet')
     routed_x = 0.45 if restrict_x_range else 0.49
     table.assign(muskingumX=np.float32(routed_x)).to_parquet(tmp_path / 'routed_x.parquet')
-    options = {
-        'network_file': tmp_path / 'x_of_049.parquet',
-        'force_validity': False,
-        'restrict_x_range': restrict_x_range,
-    }
+    options = {'network_file': tmp_path / 'x_of_049.parquet', 'dt_routing': DT, 'restrict_x_range': restrict_x_range}
     expected = route(
         tmp_path,
         willamette.months[:1],
         network_file=tmp_path / 'routed_x.parquet',
-        force_validity=False,
+        dt_routing=DT,
         restrict_x_range=False,
     )
-    for parameters in ('static', 'cunge'):
+    for parameters in ('static', 'dynamic'):
         routed = route(tmp_path, willamette.months[:1], parameters=parameters, **options)
         assert_same(routed.discharge[0], expected.discharge[0])
         np.testing.assert_array_equal(routed.router.network.x.max(), np.float32(routed_x))
