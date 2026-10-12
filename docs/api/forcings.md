@@ -30,7 +30,7 @@ import river_route as rr
 
 configs = rr.Configs.from_json('config.json')
 runoff = rr.GridRunoff.from_configs(configs)
-for dates, catchment_runoff, runoff_file in runoff.catchment_reader(configs.runoff_files):
+for dates, catchment_runoff, forcing_file in runoff.catchment_reader(configs.forcing_files):
     ...  # each file's catchment runoff volumes, a (river, time) array overwritten by the next file
 ```
 

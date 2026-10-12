@@ -7,20 +7,16 @@ gridded runoff classes, which read runoff depths at the grid cells of a weight t
 subclass names the weight table columns that locate a cell with ``cell_dimensions`` and may read its files its own way
 by overriding ``read_runoff``.
 
-A routing job takes each river through the stages without a body in router/_numba_kernels.py. Each form of runoff
-is a kind of forcing and implements three of them with numba overloads registered here, next to its NamedTuple:
+The forms of runoff routing reads:
 
-    forcing_of_river            the forcing of the river at river_index, from the runoff a file was read into
-    add_forcing_terms           adds c4 times that forcing's runoff volumes into the known terms of the river's steps
-    add_forcing_of_four_steps   adds c4 times the runoff volumes of four steps into the four lanes of a SIMD vector
+    CatchmentRunoffVolumes  (river, time) volumes, each row the runoff of one river's catchment.
+    GridCellRunoff          runoff depths at grid cells and the sparse weights of each river, read as each river is
+                            routed so no series of its runoff volumes is built.
 
-    CatchmentRunoffVolumes  (river, time) volumes whose row at river_index is that river's forcing. A series, a 1D
-                            array, is also the form of the forcing a transform gives.
-    GridCellRunoff          runoff depths at grid cells and the sparse weights of each river. A river's forcing is a
-                            RiverGridCells, its cells and weights, added into its known terms one cell at a time so no
-                            series of its runoff volumes is built.
+A new form of runoff needs a NamedTuple with ``check``, ``first_steps``, and ``cells_and_weights``.
 
-A new form of runoff needs a NamedTuple with ``check`` and ``first_steps``, and an overload of each stage for it.
+Both routing kernels of river_route/kernels read every form the same way, from ``cells_and_weights``: runoff at cells
+and each river's weights of them. Runoff aggregated to catchments is a cell per river weighted by one.
 """
 
 import logging
@@ -34,13 +30,10 @@ import numpy as np
 import pandas as pd
 import scipy.sparse
 import xarray as xr
-from numba.extending import overload
 
 from .._metadata import __version__
 from ..configs import Configs
-from ..router._numba_kernels import add_forcing_of_four_steps, add_forcing_terms, forcing_of_river, is_argument_type
-from ..router._simd import FourLanes, broadcast, load_up_to_four, multiply_add
-from ..types import DatetimeArray, FloatArray, IntArray, PathInput, PathList, RunoffGenerator
+from ..types import DatetimeArray, FloatArray, Int32Array, IntArray, PathInput, PathList, RunoffGenerator
 from . import _numba_kernels as kernels
 
 if TYPE_CHECKING:
@@ -100,64 +93,11 @@ class CatchmentRunoffVolumes(NamedTuple):
         """The runoff of the first n_steps steps, a view whose rows stay contiguous."""
         return CatchmentRunoffVolumes(self.runoff[:, :n_steps], self.river_ids)
 
-
-def _catchment_runoff_row(forcing: CatchmentRunoffVolumes, river_index: int) -> FloatArray:
-    """The row of catchment runoff volumes of the river at river_index, read in place."""
-    return forcing.runoff[river_index]
-
-
-@overload(forcing_of_river)
-def _overload_forcing_of_river_for_catchment_runoff(forcing: CatchmentRunoffVolumes, river_index: int):
-    if is_argument_type(forcing, CatchmentRunoffVolumes):
-        return _catchment_runoff_row
-
-
-def _add_runoff_series_terms(
-    river_forcing: FloatArray,
-    c4: np.float32,
-    runoff_steps: int,
-    river_steps_per_runoff_step: int,
-    known_terms: FloatArray,
-) -> None:
-    """Add c4 times the runoff volume of each runoff step to known_terms at each of the river's steps it spans."""
-    if river_steps_per_runoff_step == 1:
-        for runoff_step in range(runoff_steps):
-            known_terms[runoff_step] += c4 * np.float32(river_forcing[runoff_step])
-    else:
-        for runoff_step in range(runoff_steps):
-            term = c4 * np.float32(river_forcing[runoff_step])
-            first_step = runoff_step * river_steps_per_runoff_step
-            for step in range(first_step, first_step + river_steps_per_runoff_step):
-                known_terms[step] += term
-
-
-@overload(add_forcing_terms, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _overload_add_forcing_terms_for_runoff_series(
-    river_forcing: FloatArray,
-    c4: np.float32,
-    runoff_steps: int,
-    river_steps_per_runoff_step: int,
-    known_terms: FloatArray,
-):
-    """A series is the form of a CatchmentRunoffVolumes row and of any forcing a transform gives."""
-    if is_argument_type(river_forcing, np.ndarray):
-        return _add_runoff_series_terms
-
-
-def _add_runoff_series_of_four_steps(
-    river_forcing: FloatArray, c4: np.float32, first_step: int, steps: int, terms: FourLanes
-) -> FourLanes:
-    """terms plus c4 times the runoff volume of each of the up to four steps from first_step."""
-    return multiply_add(broadcast(c4), load_up_to_four(river_forcing, first_step, steps), terms)
-
-
-@overload(add_forcing_of_four_steps, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _overload_add_forcing_of_four_steps_for_runoff_series(
-    river_forcing: FloatArray, c4: np.float32, first_step: int, steps: int, terms: FourLanes
-):
-    """Not inlined by numba, like the overload for grid cells: LLVM inlines it into the routing loop."""
-    if is_argument_type(river_forcing, np.ndarray):
-        return _add_runoff_series_of_four_steps
+    def cells_and_weights(self) -> tuple[FloatArray, Int32Array, Int32Array, FloatArray]:
+        """The runoff as the routing kernels read it: a cell per river, its own volumes, each weighted by one."""
+        n_rivers = self.runoff.shape[0]
+        weight_starts = np.arange(n_rivers + 1, dtype=np.int32)
+        return self.runoff, weight_starts, weight_starts[:-1], np.ones(n_rivers, dtype=np.float32)
 
 
 class GridCellRunoff(NamedTuple):
@@ -192,107 +132,20 @@ class GridCellRunoff(NamedTuple):
         """Itself, since routing reads only the steps it routes."""
         return self
 
-
-class RiverGridCells(NamedTuple):
-    """
-    The grid cells of one river's catchment: the runoff of every cell, and the cell and weight of each of its own. The
-    runoff is one row, the series of each cell after the one before, so the depth of cell c at step t is
-    ``runoff_depths[c * steps_per_cell + t]`` and is read without making a view of the cell's row at every step.
-    """
-
-    runoff_depths: FloatArray  # (n_cells * steps_per_cell,) the rows of GridCellRunoff.runoff_by_cell one after another
-    steps_per_cell: int  # the length of each cell's series in runoff_depths
-    cell: IntArray  # (n_river_weights,) cell each of the river's weights applies to
-    weight: FloatArray  # (n_river_weights,) volume a unit of the cell's runoff depth gives the river
-
-
-def _grid_cells_of_river(forcing: GridCellRunoff, river_index: int) -> RiverGridCells:
-    """The grid cells and weights of the river at river_index, slices of the weight table."""
-    first_weight = forcing.indptr[river_index]
-    stop_weight = forcing.indptr[river_index + 1]
-    return RiverGridCells(
-        forcing.runoff_by_cell.reshape(-1),  # a view, since check requires the runoff to be C-contiguous
-        forcing.runoff_by_cell.shape[1],
-        forcing.cell[first_weight:stop_weight],
-        forcing.weight[first_weight:stop_weight],
-    )
-
-
-@overload(forcing_of_river)
-def _overload_forcing_of_river_for_grid_cell_runoff(forcing: GridCellRunoff, river_index: int):
-    if is_argument_type(forcing, GridCellRunoff):
-        return _grid_cells_of_river
-
-
-def _add_grid_cell_runoff_terms(
-    river_forcing: RiverGridCells,
-    c4: np.float32,
-    runoff_steps: int,
-    river_steps_per_runoff_step: int,
-    known_terms: FloatArray,
-) -> None:
-    """
-    Add c4 times the river's runoff volume to known_terms one grid cell at a time, each cell's runoff depths read
-    straight from its row, so no series of the river's runoff volumes is built first. The C kernel of jsrr, the browser
-    port of river-route, reads the cells this way, and doing the same routed the Columbia about 1.4 times faster than
-    aggregating the runoff of 64 rivers at a time into scratch rows and reading those as each river was routed.
-    """
-    for weight_number in range(river_forcing.cell.shape[0]):
-        first_depth = river_forcing.cell[weight_number] * river_forcing.steps_per_cell
-        runoff_depths = river_forcing.runoff_depths[first_depth : first_depth + runoff_steps]
-        cell_c4 = c4 * river_forcing.weight[weight_number]  # the weight turns a runoff depth into a volume (m³)
-        if river_steps_per_runoff_step == 1:
-            for runoff_step in range(runoff_steps):
-                known_terms[runoff_step] += cell_c4 * runoff_depths[runoff_step]
-        else:
-            for runoff_step in range(runoff_steps):
-                term = cell_c4 * runoff_depths[runoff_step]
-                first_step = runoff_step * river_steps_per_runoff_step
-                for step in range(first_step, first_step + river_steps_per_runoff_step):
-                    known_terms[step] += term
-
-
-@overload(add_forcing_terms, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _overload_add_forcing_terms_for_grid_cells(
-    river_forcing: RiverGridCells,
-    c4: np.float32,
-    runoff_steps: int,
-    river_steps_per_runoff_step: int,
-    known_terms: FloatArray,
-):
-    if is_argument_type(river_forcing, RiverGridCells):
-        return _add_grid_cell_runoff_terms
-
-
-def _add_grid_cell_runoff_of_four_steps(
-    river_forcing: RiverGridCells, c4: np.float32, first_step: int, steps: int, terms: FourLanes
-) -> FourLanes:
-    """terms plus c4 times the river's runoff volume of each of the up to four steps from first_step, cell by cell."""
-    forced_terms = terms
-    for weight_number in range(river_forcing.cell.shape[0]):
-        cell_c4 = c4 * river_forcing.weight[weight_number]  # the weight turns a runoff depth into a volume (m³)
-        first_depth = river_forcing.cell[weight_number] * river_forcing.steps_per_cell + first_step
-        depths = load_up_to_four(river_forcing.runoff_depths, first_depth, steps)
-        forced_terms = multiply_add(broadcast(cell_c4), depths, forced_terms)
-    return forced_terms
-
-
-@overload(add_forcing_of_four_steps, jit_options={'nogil': True, 'fastmath': {'contract'}})
-def _overload_add_forcing_of_four_steps_for_grid_cells(
-    river_forcing: RiverGridCells, c4: np.float32, first_step: int, steps: int, terms: FourLanes
-):
-    """
-    Not inlined by numba, whose inliner loses track of the variables of a loop, which it reports as an internal
-    pedantic check: LLVM inlines it into the routing loop, where the count of steps is known to be four.
-    """
-    if is_argument_type(river_forcing, RiverGridCells):
-        return _add_grid_cell_runoff_of_four_steps
+    def cells_and_weights(self) -> tuple[FloatArray, Int32Array, Int32Array, FloatArray]:
+        """The runoff as the routing kernels read it: the depths of the cells, and each river's weights of them."""
+        return (
+            self.runoff_by_cell,
+            self.indptr.astype(np.int32),
+            self.cell.astype(np.int32),
+            self.weight.astype(np.float32, copy=False),
+        )
 
 
 class Runoff(ABC):
     """
-    Base class for the sources of catchment runoff, the runoff volume of each catchment before the runoff transform
-    adds it to its river. Each subclass is built from a Configs with ``from_configs`` and provides a
+    Base class for the sources of catchment runoff, the runoff volume each catchment adds to its river in each step.
+    Each subclass is built from a Configs with ``from_configs`` and provides a
     ``generator`` that yields its runoff in the form routing reads, and every subclass writes catchment runoff to disk
     with ``to_netcdf`` in the one format ``CatchmentRunoff`` reads.
     """
@@ -303,7 +156,7 @@ class Runoff(ABC):
         """Build this Runoff from the options on a Configs, as a Router does."""
 
     @abstractmethod
-    def generator(self, runoff_files: PathList) -> RunoffGenerator:
+    def generator(self, forcing_files: PathList) -> RunoffGenerator:
         """
         Yield one (dates, runoff, source_file) tuple per input, where runoff is what routing reads: its
         CatchmentRunoffVolumes, or a GridCellRunoff whose grid cells routing reads as it routes. Each checks its arrays
@@ -331,7 +184,7 @@ class Runoff(ABC):
         as_volumes: bool,
     ) -> None:
         """
-        Write a catchment runoff array to a netCDF file that ``CatchmentRunoff`` reads, routed as ``runoff_files``
+        Write a catchment runoff array to a netCDF file that ``CatchmentRunoff`` reads, routed as ``forcing_files``
         with ``forcing`` catchment.
 
         Args:
@@ -420,8 +273,8 @@ class BaseGridRunoff(Runoff):
     Only ``grid_weights_file`` is required. Every option is named the same here as it is on ``Configs``, so
     ``from_configs`` reads each one off a ``Configs`` by its own name, which is how a ``Router`` builds one.
 
-    Reading and indexing the weight table is the same work for every runoff file, so it is done once when the
-    runoff is created and reused for all of them. Each runoff file is read at the grid cells the table touches.
+    Reading and indexing the weight table is the same work for every forcing file, so it is done once when the
+    runoff is created and reused for all of them. Each forcing file is read at the grid cells the table touches.
     Routing reads each river's cells directly as it routes the river, and ``aggregate`` sums them onto rivers as area
     weighted depths or volumes one river at a time, each river's series written straight into its row of a C-order
     (river, time) array.
@@ -429,7 +282,7 @@ class BaseGridRunoff(Runoff):
 
     grid_weights_file: PathInput  # weight table netCDF produced by the functions in ``river_route.forcings.weights``
     _: KW_ONLY
-    var_grid_runoff: str = 'ro'  # name of the runoff variable in the gridded runoff files
+    var_grid_runoff: str = 'ro'  # name of the runoff variable in the gridded forcing files
     var_t: str = 'time'  # name of the time coordinate variable
     # ``incremental`` runoff per step, or ``cumulative`` totals to difference
     grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
@@ -543,7 +396,7 @@ class BaseGridRunoff(Runoff):
         runoff still allocates its arrays on every call.
 
         Args:
-            runoff_data: path(s) to runoff files
+            runoff_data: path(s) to gridded forcing files
             thread_pool: optional thread pool to aggregate on, used as given and never shut down here
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
             as_volumes: volumes (m³) rather than depths (m); None follows the ``as_volumes`` option
@@ -561,10 +414,10 @@ class BaseGridRunoff(Runoff):
         return catchment_runoff, time_index
 
     def catchment_reader(
-        self, runoff_files: PathList, thread_pool: Executor | None = None, threads: int = 1
+        self, forcing_files: PathList, thread_pool: Executor | None = None, threads: int = 1
     ) -> Iterator[tuple[DatetimeArray, FloatArray, PathInput]]:
         """
-        Aggregate gridded runoff files into catchment runoff volumes, one file at a time, with the weight table this
+        Aggregate gridded forcing files into catchment runoff volumes, one file at a time, with the weight table this
         instance already holds. Routing does not use this: ``generator`` hands routing the grid cells to aggregate as
         it routes.
 
@@ -572,39 +425,39 @@ class BaseGridRunoff(Runoff):
         The yielded array is overwritten by the next file, so a consumer that needs to keep it must copy it.
 
         Args:
-            runoff_files: gridded runoff files to aggregate
+            forcing_files: gridded forcing files to aggregate
             thread_pool: optional thread pool to aggregate on, used as given and never shut down here
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
         Yields:
             tuple: (dates, catchment_runoff, source_file) per input file
         """
-        for runoff_file in runoff_files:
+        for forcing_file in forcing_files:
             catchment_runoff, dates = self.catchment_runoff(
-                runoff_file, thread_pool=thread_pool, threads=threads, as_volumes=True
+                forcing_file, thread_pool=thread_pool, threads=threads, as_volumes=True
             )
-            yield dates.astype('datetime64[s]'), catchment_runoff.astype(np.float32, copy=False), runoff_file
+            yield dates.astype('datetime64[s]'), catchment_runoff.astype(np.float32, copy=False), forcing_file
 
-    def generator(self, runoff_files: PathList) -> RunoffGenerator:
+    def generator(self, forcing_files: PathList) -> RunoffGenerator:
         """
-        Read gridded runoff files for routing, which reads each river's grid cells as it routes the river, so no
+        Read gridded forcing files for routing, which reads each river's grid cells as it routes the river, so no
         catchment runoff array is built. A file whose catchment runoff must be de-accumulated or clipped at zero needs
         each river's whole catchment runoff series first, so it is aggregated here and yielded as catchment runoff
         instead.
 
         Args:
-            runoff_files: gridded runoff files to read
+            forcing_files: gridded forcing files to read
 
         Yields:
             tuple: (dates, runoff, source_file) per input file, where runoff is a GridCellRunoff, or
                 CatchmentRunoffVolumes when the file was aggregated here
         """
-        for runoff_file in runoff_files:
-            runoff, time_index, conversion_factor = self.read_runoff(runoff_file)
+        for forcing_file in forcing_files:
+            runoff, time_index, conversion_factor = self.read_runoff(forcing_file)
             if self.cumulative or self.force_positive_runoff:
                 catchment_runoff = self.aggregate(runoff, conversion_factor, as_volumes=True)
                 aggregated = CatchmentRunoffVolumes(catchment_runoff.astype(np.float32, copy=False), self.river_ids)
-                yield time_index.astype('datetime64[s]'), aggregated, runoff_file
+                yield time_index.astype('datetime64[s]'), aggregated, forcing_file
                 continue
             volume_of_depth = self._weight(conversion_factor) * np.repeat(self.catchment_area, np.diff(self.indptr))
             forcing = GridCellRunoff(
@@ -615,17 +468,17 @@ class BaseGridRunoff(Runoff):
                 river_ids=self.river_ids,
             )
             del runoff
-            yield time_index.astype('datetime64[s]'), forcing, runoff_file
+            yield time_index.astype('datetime64[s]'), forcing, forcing_file
 
     def to_dataset(
         self, runoff_data: PathInput | list[PathInput], thread_pool: Executor | None = None, threads: int = 1
     ) -> xr.Dataset:
         """
-        Read and aggregate runoff into a catchment runoff dataset that can be saved and routed as ``runoff_files``
+        Read and aggregate runoff into a catchment runoff dataset that can be saved and routed as ``forcing_files``
         with ``forcing`` catchment.
 
         Args:
-            runoff_data: path(s) to runoff files
+            runoff_data: path(s) to gridded forcing files
             thread_pool: optional thread pool to aggregate on, used as given and never shut down here
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
 
@@ -649,11 +502,11 @@ class BaseGridRunoff(Runoff):
     ) -> None:
         """
         Precompute the catchment runoff of gridded runoff and write it to a netCDF file that is routed as
-        ``runoff_files`` with ``forcing`` catchment. Routing the grids directly aggregates inside the routing
+        ``forcing_files`` with ``forcing`` catchment. Routing the grids directly aggregates inside the routing
         kernel instead, which is faster than routing a precomputed file.
 
         Args:
-            runoff_data: path(s) to runoff files
+            runoff_data: path(s) to gridded forcing files
             path: netCDF file to write
             thread_pool: optional thread pool to aggregate on, used as given and never shut down here
             threads: number of river ranges to aggregate concurrently when ``thread_pool`` is given
@@ -666,7 +519,7 @@ class BaseGridRunoff(Runoff):
         Read runoff at the grid cells the weight table touches.
 
         Args:
-            runoff_data: path(s) to runoff files
+            runoff_data: path(s) to gridded forcing files
 
         Returns:
             tuple: (runoff as a C-order (time, n_cells) array, time values, factor converting the depth unit to meters)

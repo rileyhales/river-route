@@ -23,16 +23,10 @@ Required for all routing:
 
 Optional columns:
 
-| Column                | Data Type | Description                                                                                      |
-|-----------------------|-----------|--------------------------------------------------------------------------------------------------|
-| `dynamicKCoefficient` | float     | Required for `parameters: dynamic`: k = dynamicKCoefficient * Q ^ dynamicKExponent, in seconds   |
-| `dynamicKExponent`    | float     | Required for `parameters: dynamic`                                                               |
-| `dynamicXCoefficient` | float     | Required for `parameters: dynamic`: x = max(0, 1/2 - dynamicXCoefficient * Q ^ dynamicXExponent) |
-| `dynamicXExponent`    | float     | Required for `parameters: dynamic`                                                               |
-| `dynamicMinQ`         | float     | Required for `parameters: dynamic`: the least discharge k and x are evaluated at, in m³/s        |
-| `dynamicMaxQ`         | float     | Required for `parameters: dynamic`: the greatest discharge k and x are evaluated at, in m³/s     |
-| `synthetic`           | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach                               |
-| `parentRiverId`       | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from                   |
+| Column          | Data Type | Description                                                                    |
+|-----------------|-----------|--------------------------------------------------------------------------------|
+| `synthetic`     | boolean   | Written by `Network.write_stabilized`: True for an added sub-reach             |
+| `parentRiverId` | integer   | Written by `Network.write_stabilized`: the river each sub-reach was split from |
 
 A network file with `synthetic` rows routes with the `channel`, `grid`, and `ecmwf_grib` forcings. The `catchment`
 forcing refuses it, since a catchment runoff file has one row per river and none for the added sub-reaches.
@@ -64,9 +58,10 @@ These columns typically come from preprocessing and calibration workflows:
     `examples/migrate_v2_to_v3.py` sorts a v2 params file into DFS order, writes both columns, and reorders the
     files that follow it.
 
-## Catchment Runoff Files
+## Forcing Files
 
-You need a time series of per-catchment runoff to be routed. It is given as `runoff_files`, read in the form `forcing` names:
+You need a time series of per-catchment runoff to be routed. It is given as `forcing_files`, read in the form
+`forcing` names:
 
 1. `catchment`: files already aggregated to catchments
 2. `grid`: gridded runoff depths with x and y dimensions, aggregated with a weight table (`grid_weights_file`)
@@ -82,7 +77,7 @@ You need a time series of per-catchment runoff to be routed. It is given as `run
 ```json
 {
   "forcing": "catchment",
-  "runoff_files": [
+  "forcing_files": [
     "/path/to/catchment_runoff.nc"
   ]
 }
@@ -111,7 +106,7 @@ from their grids with `aggregate_to_file`.
 ```json
 {
   "forcing": "grid",
-  "runoff_files": [
+  "forcing_files": [
     "/path/to/grid1.nc",
     "/path/to/grid2.nc"
   ],
@@ -148,7 +143,7 @@ these names.
 ```json
 {
   "forcing": "ecmwf_grib",
-  "runoff_files": [
+  "forcing_files": [
     "/path/to/ro_20260927_00z_cf.grib"
   ],
   "grid_weights_file": "/path/to/gridweights_O1280.nc",
@@ -183,7 +178,7 @@ in the same order. `channel_state_final_file` is written in this format, so a fi
 | `riverId`  | integer | ID of the river, in the order of the network file      |
 | `Q`        | float   | Discharge of the river in m³/s at the end of the run   |
 
-With `dt_routing: auto`, the default, a state file has one row per sub-reach instead, each river's sub-reaches upstream to
+With `conditioning`, the default, a state file has one row per sub-reach instead, each river's sub-reaches upstream to
 downstream with its `riverId` repeated on each. Routing refuses a state file without `riverId` or whose rivers are
 not the rivers of the network file in order.
 

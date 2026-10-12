@@ -37,11 +37,6 @@ REFUSED_CONFIGS = {
         ValueError,
         'forcing must be one of',
     ),
-    'selectors take only their values': (
-        lambda basin, d: {'parameters': 'sideways'},
-        ValueError,
-        'parameters must be one of',
-    ),
     'catchment runoff takes no grid weights': (
         lambda basin, d: {'forcing': 'catchment'},
         ValueError,
@@ -52,18 +47,18 @@ REFUSED_CONFIGS = {
         ValueError,
         'grid_weights_file is required',
     ),
-    'one output per runoff file': (
-        lambda basin, d: {'runoff_files': basin.runoff_files[:2]},
+    'one output per forcing file': (
+        lambda basin, d: {'forcing_files': basin.forcing_files[:2]},
         ValueError,
         'must match number of input files',
     ),
     'outputs must be distinct': (
-        lambda basin, d: {'runoff_files': basin.runoff_files[:2], 'discharge_files': [d / 'q.zarr', d / 'q.zarr']},
+        lambda basin, d: {'forcing_files': basin.forcing_files[:2], 'discharge_files': [d / 'q.zarr', d / 'q.zarr']},
         ValueError,
         'duplicate paths',
     ),
     'channel routing needs an initial state': (
-        lambda basin, d: {'forcing': 'channel', 'runoff_files': [], 'dt_routing': DT, 'dt_total': 86400},
+        lambda basin, d: {'forcing': 'channel', 'forcing_files': [], 'dt_routing': DT, 'dt_total': 86400},
         ValueError,
         'channel_state_init_file is required',
     ),
@@ -78,7 +73,7 @@ REFUSED_CONFIGS = {
         'Directory not found',
     ),
     'outputs are all discarded or all written': (
-        lambda basin, d: {'runoff_files': basin.runoff_files[:2], 'discharge_files': [os.devnull, d / 'q.zarr']},
+        lambda basin, d: {'forcing_files': basin.forcing_files[:2], 'discharge_files': [os.devnull, d / 'q.zarr']},
         ValueError,
         'mixes the null device',
     ),
@@ -92,8 +87,13 @@ REFUSED_CONFIGS = {
         ValueError,
         "dt_routing must be 'auto' or a positive whole number of seconds",
     ),
+    'auto routing steps are conditioned': (
+        lambda basin, d: {'conditioning': False},
+        ValueError,
+        "dt_routing 'auto' requires conditioning",
+    ),
     'channel routing needs a step to exchange discharge at': (
-        lambda basin, d: {'forcing': 'channel', 'runoff_files': [], 'channel_state_init_file': d, 'dt_total': 86400},
+        lambda basin, d: {'forcing': 'channel', 'forcing_files': [], 'channel_state_init_file': d, 'dt_total': 86400},
         ValueError,
         'dt_discharge, or dt_routing in seconds, is required',
     ),
@@ -206,11 +206,11 @@ def test_configs_refuse_inconsistent_options(changes, error, message, willamette
 
 
 def test_discharge_dir_names_outputs_for_the_default_writer(tmp_path: Path) -> None:
-    configs = rr.Configs(discharge_dir=tmp_path, runoff_files=['runoff/2020.nc', 'runoff/2021.zarr'])
+    configs = rr.Configs(discharge_dir=tmp_path, forcing_files=['runoff/2020.nc', 'runoff/2021.zarr'])
     assert configs.discharge_files == [str(tmp_path / 'discharge_2020.zarr'), str(tmp_path / 'discharge_2021.zarr')]
     assert rr.Configs(discharge_dir=tmp_path).discharge_files == [str(tmp_path / 'discharge.zarr')]
     with pytest.raises(ValueError, match='same output file'):
-        rr.Configs(discharge_dir=tmp_path, runoff_files=['a/2020.nc', 'b/2020.zarr'])
+        rr.Configs(discharge_dir=tmp_path, forcing_files=['a/2020.nc', 'b/2020.zarr'])
 
 
 @pytest.mark.parametrize('outputs', ['files', 'null device'])
@@ -224,7 +224,7 @@ def test_configs_round_trip_through_json(outputs: str, willamette: Basin, tmp_pa
 
 
 def test_preparing_runoff_does_not_skip_routing_validation(willamette: Basin, tmp_path: Path) -> None:
-    two_outputs = [tmp_path / 'discharge_a.zarr', tmp_path / 'discharge_b.zarr']  # for one runoff file
+    two_outputs = [tmp_path / 'discharge_a.zarr', tmp_path / 'discharge_b.zarr']  # for one forcing file
     configs = rr.Configs(**(routing_options(willamette, tmp_path) | {'discharge_files': two_outputs}))
     rr.GridRunoff.from_configs(configs)  # validates the configs for preparing runoff, not for routing
     with pytest.raises(ValueError, match='must match number of input files'):
@@ -248,14 +248,14 @@ def test_deep_validate_finds_broken_network_files(breaks, message, willamette: B
         rr.Configs(network_file=tmp_path / 'network.parquet').deep_validate()
 
 
-def test_deep_validate_checks_a_state_against_dt_routing(willamette: Basin, tmp_path: Path) -> None:
+def test_deep_validate_checks_a_state_against_conditioning(willamette: Basin, tmp_path: Path) -> None:
     final_state = tmp_path / 'final_state.parquet'
     options = {'network_file': willamette.network_file, 'channel_state_final_file': final_state}
     route(tmp_path, willamette.months[:1], **options)
     sub_reach_state = {'network_file': willamette.network_file, 'channel_state_init_file': final_state}
     rr.Configs(**sub_reach_state).deep_validate()  # one row per sub-reach
     with pytest.raises(ValueError, match='rivers, the network has'):
-        rr.Configs(**sub_reach_state, dt_routing=DT).deep_validate()
+        rr.Configs(**sub_reach_state, dt_routing=DT, conditioning=False).deep_validate()
     pd.read_parquet(final_state, columns=['Q']).to_parquet(tmp_path / 'no_ids.parquet')
     with pytest.raises(ValueError, match='missing riverId'):
         rr.Configs(**(sub_reach_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
@@ -279,25 +279,24 @@ def test_networks_refuse_broken_tables(breaks, message, willamette: Basin) -> No
 @pytest.mark.parametrize('threads', [1, 4])
 def test_the_routing_blocks_route_every_river_once(threads: int, package: Path, manifest: dict) -> None:
     network = rr.Network(package / manifest['runs']['static_standard']['configs']['network_file'])
-    job_blocks, boundary_target = network.routing_blocks(threads)
+    job_blocks = network.routing_blocks(threads)
     *sub_watershed_jobs, main_stem = job_blocks
 
     def rivers_of(starts: np.ndarray, stops: np.ndarray) -> np.ndarray:
         return np.concatenate([np.arange(start, stop) for start, stop in zip(starts, stops, strict=True)])
 
-    rivers = np.concatenate([rivers_of(starts, stops) for starts, stops, _, _ in job_blocks])
+    rivers = np.concatenate([rivers_of(starts, stops) for starts, stops in job_blocks])
     np.testing.assert_array_equal(np.sort(rivers), np.arange(network.size))
     downstream = network.downstream_indices
     main_stem_rivers = rivers_of(main_stem[0], main_stem[1])
     for job in sub_watershed_jobs:
-        for start, stop, outlet, block_number in zip(*job, strict=True):
+        for start, stop in zip(*job, strict=True):
             members = np.arange(start, stop)
             leaving = members[(downstream[members] < start) | (downstream[members] >= stop)]
-            np.testing.assert_array_equal(leaving, [outlet])  # only a block's outlet drains out of it
+            np.testing.assert_array_equal(leaving, [stop - 1])  # only a block's outlet, its last river, drains out
             entering = np.flatnonzero((downstream >= start) & (downstream < stop))
             assert np.all((entering >= start) & (entering < stop)), 'a block holds every river upstream of it'
-            assert boundary_target[block_number] == downstream[outlet]
-            assert boundary_target[block_number] < 0 or boundary_target[block_number] in main_stem_rivers
+            assert downstream[stop - 1] < 0 or downstream[stop - 1] in main_stem_rivers
     assert (len(job_blocks) > 1) == (threads > 1)
 
 
@@ -310,22 +309,48 @@ def test_conditioning_makes_every_river_valid(dt: int, package: Path, manifest: 
     assert not too_long.any() and not too_short.any()
 
 
-def test_a_given_dt_routing_routes_every_river_whole_at_it(willamette: Basin) -> None:
+def test_a_given_dt_routing_without_conditioning_routes_every_river_whole_at_it(willamette: Basin) -> None:
     """
     With dt_routing auto, rivers too long for the runoff step are split into sub-reaches and rivers too short for it
-    take the fewest subcycles that keep their coefficients valid. A dt_routing that is given is the step of every
-    river, routed whole: rivers too long or too short for it are reported rather than split or given a shorter step.
+    take the fewest subcycles that keep their coefficients valid. A dt_routing that is given without conditioning is
+    the step of every river, routed whole: rivers too long or too short for it are reported rather than split or given
+    a shorter step.
     """
     network = willamette.network
     sub_reaches, subcycles, _ = network.conditioning(DT)
     assert sub_reaches.max() > 1 and subcycles.max() > 1, 'the basin needs no sub-reaches or subcycles at the step'
     configs = rr.Configs(network_file=willamette.network_file, invalid_coefficients='raise')
     static_muskingum.prepare_routing(network, configs, DT, None)
+    unconditioned = rr.Configs(
+        network_file=willamette.network_file, dt_routing=DT, conditioning=False, invalid_coefficients='raise'
+    )
     with pytest.raises(ValueError, match='too short'):
-        static_muskingum.prepare_routing(network, configs, DT, DT)
-    whole = rr.Configs(network_file=willamette.network_file, invalid_coefficients='ignore')
-    compute_plan, _ = static_muskingum.prepare_routing(network, whole, DT, DT)
-    assert compute_plan.sub_reach_starts[-1] == network.size, 'a given dt_routing split a river into sub-reaches'
+        static_muskingum.prepare_routing(network, unconditioned, DT, DT)
+    whole = rr.Configs(
+        network_file=willamette.network_file, dt_routing=DT, conditioning=False, invalid_coefficients='ignore'
+    )
+    coefficients = static_muskingum.prepare_routing(network, whole, DT, DT)
+    assert coefficients.sub_reach_starts[-1] == network.size, 'a given dt_routing split a river into sub-reaches'
+
+
+@pytest.mark.parametrize('dt_routing', [DT, DT // 4])
+def test_conditioning_at_a_given_dt_routing_makes_every_river_valid_at_it(dt_routing: int, willamette: Basin) -> None:
+    """
+    dt_routing auto gives each river its own valid step, the runoff step over the fewest subcycles that keep its
+    coefficients non-negative, and conditions it there, which leaves only rivers too long for the runoff step to split.
+    Conditioning at a given dt_routing splits the rivers too long for it and subcycles the rivers too short for it, so
+    at the runoff step it plans every river as auto does.
+    """
+    network = willamette.network
+    configs = rr.Configs(network_file=willamette.network_file, dt_routing=dt_routing, invalid_coefficients='raise')
+    coefficients = static_muskingum.prepare_routing(network, configs, DT, dt_routing)
+    np.testing.assert_array_equal(np.diff(coefficients.sub_reach_starts), network.conditioning(dt_routing)[0])
+    if dt_routing != DT:
+        return
+    auto = rr.Configs(network_file=willamette.network_file, invalid_coefficients='raise')
+    auto_coefficients = static_muskingum.prepare_routing(network, auto, DT, None)
+    for given, chosen in zip(coefficients, auto_coefficients, strict=True):
+        np.testing.assert_array_equal(given, chosen)
 
 
 def test_write_stabilized_writes_only_its_output(willamette: Basin, tmp_path: Path) -> None:
@@ -408,7 +433,7 @@ def test_networks_report_invalid_rivers(willamette: Basin) -> None:
 @pytest.fixture(scope='module')
 def march(willamette: Basin) -> tuple[np.ndarray, np.ndarray, float]:
     """The basin's March runoff depths at the grid cells, NaN free, with their times and unit conversion factor."""
-    cells, time_index, factor = grid(willamette).read_runoff(willamette.runoff_files[0])
+    cells, time_index, factor = grid(willamette).read_runoff(willamette.forcing_files[0])
     return np.nan_to_num(cells), time_index, factor
 
 
@@ -418,8 +443,8 @@ def grid(basin: Basin, **options) -> rr.GridRunoff:
 
 @pytest.mark.parametrize('unit', ['mm', 'kg m-2'])  # a kilogram of water on a square meter is a millimeter deep
 def test_depth_units_are_converted(unit: str, willamette: Basin) -> None:
-    meters, _ = grid(willamette).catchment_runoff(willamette.runoff_files[0])
-    millimeters, _ = grid(willamette, runoff_depth_unit=unit).catchment_runoff(willamette.runoff_files[0])
+    meters, _ = grid(willamette).catchment_runoff(willamette.forcing_files[0])
+    millimeters, _ = grid(willamette, runoff_depth_unit=unit).catchment_runoff(willamette.forcing_files[0])
     assert_same(millimeters, 0.001 * meters)
 
 
@@ -467,7 +492,7 @@ def test_depth_files_are_read_as_volumes(willamette: Basin, march, tmp_path: Pat
 
 def test_catchment_reader_volumes_are_written_as_volumes(willamette: Basin, tmp_path: Path) -> None:
     depth_grid = grid(willamette)
-    dates, volumes, _ = next(depth_grid.catchment_reader(willamette.runoff_files[:1]))
+    dates, volumes, _ = next(depth_grid.catchment_reader(willamette.forcing_files[:1]))
     areas = depth_grid.catchment_area
     rr.CatchmentRunoff.to_netcdf(tmp_path / 'volumes.nc', dates, volumes, depth_grid.river_ids, areas, as_volumes=True)
     ((_, read, _),) = rr.CatchmentRunoff().generator([tmp_path / 'volumes.nc'])
@@ -478,8 +503,8 @@ def test_reading_runoff_for_routing_leaves_depths_as_depths(willamette: Basin, m
     cells, _, factor = march
     depth_grid = grid(willamette)
     depths = depth_grid.aggregate(cells, factor)
-    next(depth_grid.generator(willamette.runoff_files[:1]))  # both read volumes, which routing uses
-    next(depth_grid.catchment_reader(willamette.runoff_files[:1]))
+    next(depth_grid.generator(willamette.forcing_files[:1]))  # both read volumes, which routing uses
+    next(depth_grid.catchment_reader(willamette.forcing_files[:1]))
     assert not depth_grid.as_volumes
     np.testing.assert_array_equal(depth_grid.aggregate(cells, factor), depths)
 
@@ -490,7 +515,7 @@ def test_catchment_runoff_in_another_river_order_is_refused(willamette: Basin, t
     reversed_file = tmp_path / 'reversed.nc'
     river_ids, areas = volume_grid.river_ids[::-1], volume_grid.catchment_area[::-1]
     rr.CatchmentRunoff.to_netcdf(reversed_file, dates, volumes[::-1], river_ids, areas, as_volumes=True)
-    changes = {'forcing': 'catchment', 'grid_weights_file': None, 'runoff_files': [reversed_file]}
+    changes = {'forcing': 'catchment', 'grid_weights_file': None, 'forcing_files': [reversed_file]}
     with pytest.raises(ValueError, match='in the same order'):
         route(tmp_path, **(willamette.gridded(months=1) | changes))
 
@@ -521,7 +546,7 @@ def test_catchment_runoff_volumes_check_their_layout(willamette: Basin) -> None:
 
 
 def test_grid_cell_runoff_checks_its_weight_table(willamette: Basin) -> None:
-    dates, cell_runoff, _ = next(grid(willamette, as_volumes=True).generator(willamette.runoff_files[:1]))
+    dates, cell_runoff, _ = next(grid(willamette, as_volumes=True).generator(willamette.forcing_files[:1]))
     river_ids = willamette.network.river_ids
     cell_runoff.check(river_ids, dates.size)
     with pytest.raises(ValueError, match='does not describe'):
@@ -529,14 +554,6 @@ def test_grid_cell_runoff_checks_its_weight_table(willamette: Basin) -> None:
     with pytest.raises(ValueError, match='in the same order'):
         cell_runoff.check(river_ids[::-1], dates.size)
     assert cell_runoff.first_steps(10) is cell_runoff
-
-
-def test_parameters_need_their_columns(willamette: Basin, tmp_path: Path) -> None:
-    dynamic = {'network_file': willamette.network_file, 'parameters': 'dynamic'}
-    with pytest.raises(ValueError, match='missing dynamicKCoefficient column required by the dynamic parameters'):
-        rr.Configs(**dynamic).deep_validate()
-    with pytest.raises(ValueError, match='dynamicMinQ, dynamicMaxQ that the dynamic parameters'):
-        route(tmp_path, willamette.months[:1], **dynamic)
 
 
 @pytest.mark.parametrize('threads', [0, True, 2.0])

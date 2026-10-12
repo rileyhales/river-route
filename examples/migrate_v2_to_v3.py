@@ -26,7 +26,7 @@ import xarray as xr
 import river_route as rr
 
 V2_UNIT_HYDROGRAPH_KEYS = ('uh_kernel_file', 'uh_state_init_file', 'uh_state_final_file')
-# v3 reads dt_runoff from the runoff files, and names the river id riverId and the discharge Q in every file
+# v3 reads dt_runoff from the forcing files, and names the river id riverId and the discharge Q in every file
 V2_KEYS_V3_DOES_NOT_TAKE = ('dt_runoff', 'var_river_id', 'var_discharge')
 V2_TO_V3_COLUMNS = {'river_id': 'riverId', 'downstream_river_id': 'nextRiverId', 'k': 'muskingumK', 'x': 'muskingumX'}
 
@@ -160,7 +160,7 @@ def convert_channel_state(state_path: str, v2_river_ids: np.ndarray, river_ids: 
 
 def convert_config(config_path: str, output_path: str) -> None:
     """
-    Write a v2 YAML or JSON config as a v3 JSON config. The forcing is the form of the runoff files the v2 config
+    Write a v2 YAML or JSON config as a v3 JSON config. The forcing is the form of the forcing files the v2 config
     routed, params_file becomes network_file, and the keys of V2_KEYS_V3_DOES_NOT_TAKE are dropped. Paths are copied
     unchanged, so point them at the converted files.
     Reading YAML needs pyyaml.
@@ -180,7 +180,7 @@ def convert_config(config_path: str, output_path: str) -> None:
     if qlateral_files and grid_runoff_files:
         raise ValueError(f'{config_path} sets both qlateral_files and grid_runoff_files')
     config['forcing'] = 'catchment' if qlateral_files else 'grid' if grid_runoff_files else 'channel'
-    config['runoff_files'] = qlateral_files or grid_runoff_files
+    config['forcing_files'] = qlateral_files or grid_runoff_files
     if 'params_file' in config:
         config['network_file'] = config.pop('params_file')
     for key in V2_KEYS_V3_DOES_NOT_TAKE:

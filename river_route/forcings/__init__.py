@@ -10,7 +10,7 @@ from .weights import (
     voronoi_diagram_from_regular_xy,
 )
 
-# the Runoff class that reads the runoff_files of each Configs forcing but channel, which routes no runoff
+# the Runoff class that reads the forcing_files of each Configs forcing but channel, which routes no runoff
 RUNOFF_CLASS_FOR_FORCING: dict[str, type[Runoff]] = {
     'catchment': CatchmentRunoff,
     'grid': GridRunoff,

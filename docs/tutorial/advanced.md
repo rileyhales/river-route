@@ -3,7 +3,7 @@
 ```mermaid
 graph TD
     A[Router] --> C[build Network from network_file<br/>topology, k and x]
-    C --> B[route method: validate config for parameters/forcing/dt_routing]
+    C --> B[route method: validate config for forcing/dt_routing]
     B --> D[read initial state]
     D --> E{forcing}
 
@@ -13,7 +13,7 @@ graph TD
     H --> I[generate date array]
     I --> J[write discharges]
 
-    E -->|runoff| K[loop: runoff input files generator]
+    E -->|runoff| K[loop: forcing files generator]
     K --> L[set time params from dates]
     L --> M[prepare catchment runoff]
     M --> N[set coefficients]
@@ -22,7 +22,7 @@ graph TD
     P -->|yes| Q[keep the discharge at the end of each discharge timestep]
     P -->|no| R[write discharges]
     Q --> R
-    R --> S{more runoff files?}
+    R --> S{more forcing files?}
     S -->|yes| K
     S -->|no| T{ensemble mode?}
     T -->|yes| U[mean of member states]
@@ -35,14 +35,13 @@ graph TD
 ```
 
 A `Router` builds its [`Network`](../api/network.md) from the network file when it is created. The network supplies
-the topology and the `k` and `x` vectors, and the routing method chosen by `parameters` builds its coefficients
-from them. The network divides its rivers into the blocks threads route the first time it routes with each thread
-count.
-`Router.route()` first validates the required config keys and runoff source for the selected `parameters`,
-`forcing`, `transform`, and `dt_routing` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
+the topology and the `k` and `x` vectors, from which the router builds the static Muskingum coefficients of each river.
+The network divides its rivers into the blocks threads route the first time it routes with each thread count.
+`Router.route()` first validates the required config keys and runoff source for the selected `forcing`, `dt_routing`,
+and `conditioning` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
 `Router` reads and partitions the network only once, and each `route()` starts again from `channel_state_init_file`.
 When `forcing` is `'channel'`, time parameters are read directly from the config and the channel alone is routed once
-over `dt_total`. Otherwise the router loops over the runoff input files (processed sequentially or as an ensemble),
+over `dt_total`. Otherwise the router loops over the forcing files (processed sequentially or as an ensemble),
 reading `dt_runoff` from each file's dates, routes each one, keeps the discharge at the end of each longer
 `dt_discharge` when one is set, and writes the result.
 
@@ -68,7 +67,7 @@ region = 'sample-region'
 
 network_file = os.path.join(root_dir, 'configs', region, 'network.parquet')
 
-runoff_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
+forcing_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
 
 outputs = os.path.join(root_dir, 'outputs', region)
 os.makedirs(outputs, exist_ok=True)
@@ -76,7 +75,7 @@ os.makedirs(outputs, exist_ok=True)
 configs = rr.Configs(
     forcing='catchment',
     network_file=network_file,
-    runoff_files=runoff_files,
+    forcing_files=forcing_files,
     discharge_dir=outputs,
 )
 m = rr.Router(configs).route()
@@ -122,7 +121,7 @@ routing, with 5 arguments and 2 keywords:
    whole series at a time and write it into that river's row, so this is the layout every writer is handed. The next
    file is routed into the same array, so a writer that keeps it after returning must keep a copy.
 4. `discharge_file`: path to the output file.
-5. `runoff_file`: path to the runoff input used to produce this output, or `''` for channel routing.
+5. `forcing_file`: path to the forcing file used to produce this output, or `''` for channel routing.
 6. `thread_pool`: the thread pool given to `Router.route`, or `None`, for a writer that writes concurrently.
 7. `threads`: the thread count given to `Router.route`.
 
@@ -135,7 +134,7 @@ import pandas as pd
 import river_route as rr
 
 
-def custom_write_discharges(router, dates, discharge_array, discharge_file, runoff_file, *, thread_pool, threads):
+def custom_write_discharges(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
     # discharge_array is (riverId, time), so transpose it for a frame indexed by time
     df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=router.network.original_river_ids)
     df.to_parquet(discharge_file)
@@ -158,8 +157,8 @@ import xarray as xr
 import river_route as rr
 
 
-def append_to_existing_file(router, dates, discharge_array, discharge_file, runoff_file, *, thread_pool, threads):
-    ensemble_number = os.path.basename(runoff_file).split('_')[1]
+def append_to_existing_file(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
+    ensemble_number = os.path.basename(forcing_file).split('_')[1]
     ds = xr.load_dataset(discharge_file)
     ds['Q'].loc[dict(ensemble=ensemble_number)] = discharge_array
     ds.to_netcdf(discharge_file)
@@ -180,7 +179,7 @@ import pandas as pd
 import river_route as rr
 
 
-def save_partial_results(router, dates, discharge_array, discharge_file, runoff_file, *, thread_pool, threads):
+def save_partial_results(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
     df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=router.network.original_river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
@@ -198,13 +197,13 @@ def save_partial_results(router, dates, discharge_array, discharge_file, runoff_
 
 ## Customizing Runoff Inputs
 
-Routing reads `runoff_files` with the Runoff class for the `forcing`: `CatchmentRunoff` for `catchment`, or
+Routing reads `forcing_files` with the Runoff class for the `forcing`: `CatchmentRunoff` for `catchment`, or
 `GridRunoff` for `grid`, which aggregates the grids to catchments with `grid_weights_file`, or `ECMWFGribReducedGrid`
 for `ecmwf_grib`. The `Router` builds the one its `forcing` names the first time it routes runoff, and reuses its
-weight table for every runoff file.
+weight table for every forcing file.
 
 Runoff in a format or a place this package does not read can be written to netCDF with `Runoff.to_netcdf` and
-routed as `runoff_files` with `forcing` catchment. The grid classes precompute that file from their grids with
+routed as `forcing_files` with `forcing` catchment. The grid classes precompute that file from their grids with
 `aggregate_to_file`, although routing the grids directly is faster: the aggregation then happens inside the routing
 kernel. Cumulative runoff, and runoff clipped with `force_positive_runoff`, are the exception: each river needs its
 whole series first, so those files are aggregated on one thread before they are routed.

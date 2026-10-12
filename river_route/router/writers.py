@@ -68,7 +68,7 @@ def netcdf_writer(
     dates: DatetimeArray,
     discharge_array: FloatArray,
     discharge_file: PathInput,
-    runoff_file: PathInput = '',
+    forcing_file: PathInput = '',
     *,
     thread_pool: Executor | None = None,
     threads: int = 1,
@@ -85,7 +85,7 @@ def netcdf_writer(
         dates: datetime array corresponding to the discharge columns
         discharge_array: routed discharge values, C-order with shape (river, time)
         discharge_file: path to write the discharge data to
-        runoff_file: path to the runoff file the discharge was routed from, or '' for channel routing
+        forcing_file: path to the forcing file the discharge was routed from, or '' for channel routing
         thread_pool: not used, since the whole array is written in one call
         threads: not used, since the whole array is written in one call
     """
@@ -94,7 +94,7 @@ def netcdf_writer(
     with nc.Dataset(str(discharge_file), mode='w', format='NETCDF4') as ds:
         ds.createDimension('riverId', size=n_rivers)
         ds.createDimension('time', size=n_steps)
-        ds.runoff_file = str(runoff_file)
+        ds.forcing_file = str(forcing_file)
         time_var = ds.createVariable('time', 'f8', ('time',))
         time_var.units = f'seconds since {pd.Timestamp(dates[0]).strftime("%Y-%m-%d %H:%M:%S")}'
         time_var[:] = (dates - dates[0]).astype('timedelta64[s]').astype(np.int64)
@@ -114,7 +114,7 @@ def zarr_writer(
     dates: DatetimeArray,
     discharge_array: FloatArray,
     discharge_file: PathInput,
-    runoff_file: PathInput = '',
+    forcing_file: PathInput = '',
     *,
     thread_pool: Executor | None = None,
     threads: int = 1,
@@ -128,7 +128,7 @@ def zarr_writer(
         dates: datetime array corresponding to the discharge columns
         discharge_array: routed discharge values, C-order with shape (river, time)
         discharge_file: path of the zarr store to write
-        runoff_file: path to the runoff file the discharge was routed from, or '' for channel routing
+        forcing_file: path to the forcing file the discharge was routed from, or '' for channel routing
         thread_pool: optional pool the chunks are rounded and written on, used as given and never shut down here
         threads: the concurrency of zarr's writes, and of the chunk writes when ``thread_pool`` is given
     """
@@ -136,7 +136,7 @@ def zarr_writer(
     n_rivers, n_steps = discharge_array.shape
     # zarr sizes its worker pool once per process, so the per-operation concurrency limit is what follows threads
     with zarr.config.set({'async.concurrency': threads}):
-        group = zarr.create_group(str(discharge_file), overwrite=True, attributes={'runoff_file': str(runoff_file)})
+        group = zarr.create_group(str(discharge_file), overwrite=True, attributes={'forcing_file': str(forcing_file)})
         discharge = group.create_array(
             'Q',
             shape=(n_rivers, n_steps),

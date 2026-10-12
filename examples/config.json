@@ -1,9 +1,7 @@
 {
-  "parameters": "static",
   "forcing": "channel",
-  "transform": "uniform",
   "network_file": "",
-  "runoff_files": [],
+  "forcing_files": [],
   "grid_weights_file": "",
   "grid_accumulation_type": "incremental",
   "runoff_processing_mode": "sequential",
@@ -17,6 +15,7 @@
   "var_y": "y",
   "var_t": "time",
   "dt_routing": "auto",
+  "conditioning": true,
   "dt_total": 0,
   "dt_discharge": 0,
   "start_datetime": "1970-01-01",

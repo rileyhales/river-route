@@ -1,6 +1,7 @@
 """
 Four float32 lanes in one SIMD register for the numba kernels: a numba type for them and the LLVM operations on it that
 numba has no way to write, such as moving values between lanes, which lets a recurrence be solved four steps at a time.
+simd.h names its operations the same.
 """
 
 from collections.abc import Callable
@@ -17,13 +18,14 @@ __all__ = [
     'add',
     'broadcast',
     'four_lanes',
+    'last_lane',
     'last_lane_in_every_lane',
-    'load_up_to_four',
+    'load_four',
     'multiply',
     'multiply_add',
     'shift_in_one_lane',
     'shift_in_two_lanes',
-    'store_up_to_four',
+    'store_four',
 ]
 
 LANE = ir.FloatType()
@@ -58,71 +60,36 @@ def _is_float32_row(values: types.Type) -> bool:
     return isinstance(values, types.Array) and values.ndim == 1 and values.dtype == types.float32
 
 
-def _pointer_to_lane(builder, data, index, lane_number: int):
-    """A pointer to values[index + lane_number], given the pointer to the row's first value."""
-    return builder.gep(data, [builder.add(index, ir.Constant(index.type, lane_number))])
-
-
 def _lane_mask(*lanes: int) -> ir.Constant:
     """The lanes a shuffle takes, numbered 0 to 3 in its first vector and 4 to 7 in its second."""
     return ir.Constant(ir.VectorType(LANE_NUMBER, 4), list(lanes))
 
 
 @intrinsic
-def load_up_to_four(typingctx, values, index, count):
-    """
-    values[index : index + count] in the first count lanes and 0 in the rest: four lanes in one load unless a series
-    ends, where each of its last values is loaded on its own. Called with a count of 4 that the compiler knows, the
-    choice between them is compiled away.
-    """
-    if not _is_float32_row(values) or not isinstance(index, types.Integer) or not isinstance(count, types.Integer):
+def load_four(typingctx, values, index):
+    """values[index] to values[index + 3] in one load, from anywhere in a row whose values are contiguous."""
+    if not _is_float32_row(values) or not isinstance(index, types.Integer):
         return None
 
     def codegen(context, builder, signature, args):
-        row, index, count = args
-        data = context.make_array(signature.args[0])(context, builder, row).data
-        lanes = cgutils.alloca_once_value(builder, ir.Constant(VECTOR, [0.0] * 4))
-        with builder.if_else(builder.icmp_signed('>=', count, ir.Constant(count.type, 4))) as (four, fewer):
-            with four:
-                pointer = builder.bitcast(builder.gep(data, [index]), VECTOR.as_pointer())
-                builder.store(builder.load(pointer, align=4), lanes)
-            with fewer:
-                for lane_number in range(3):
-                    with builder.if_then(builder.icmp_signed('>', count, ir.Constant(count.type, lane_number))):
-                        value = builder.load(_pointer_to_lane(builder, data, index, lane_number))
-                        lane = ir.Constant(LANE_NUMBER, lane_number)
-                        builder.store(builder.insert_element(builder.load(lanes), value, lane), lanes)
-        return builder.load(lanes)
+        data = context.make_array(signature.args[0])(context, builder, args[0]).data
+        return builder.load(builder.bitcast(builder.gep(data, [args[1]]), VECTOR.as_pointer()), align=4)
 
-    return four_lanes_type(values, index, count), codegen
+    return four_lanes_type(values, index), codegen
 
 
 @intrinsic
-def store_up_to_four(typingctx, values, index, vector, count):
-    """
-    Write the first count lanes into values[index : index + count]: four lanes in one store unless a series ends, where
-    each of its last values is stored on its own. Called with a count of 4 that the compiler knows, the choice between
-    them is compiled away.
-    """
+def store_four(typingctx, values, index, vector):
+    """Write the four lanes into values[index] to values[index + 3] in one store."""
     if not _is_float32_row(values) or not isinstance(index, types.Integer) or vector != four_lanes_type:
-        return None
-    if not isinstance(count, types.Integer):
         return None
 
     def codegen(context, builder, signature, args):
-        row, index, vector, count = args
-        data = context.make_array(signature.args[0])(context, builder, row).data
-        with builder.if_else(builder.icmp_signed('>=', count, ir.Constant(count.type, 4))) as (four, fewer):
-            with four:
-                builder.store(vector, builder.bitcast(builder.gep(data, [index]), VECTOR.as_pointer()), align=4)
-            with fewer:
-                for lane_number in range(3):
-                    with builder.if_then(builder.icmp_signed('>', count, ir.Constant(count.type, lane_number))):
-                        value = builder.extract_element(vector, ir.Constant(LANE_NUMBER, lane_number))
-                        builder.store(value, _pointer_to_lane(builder, data, index, lane_number))
+        data = context.make_array(signature.args[0])(context, builder, args[0]).data
+        builder.store(args[2], builder.bitcast(builder.gep(data, [args[1]]), VECTOR.as_pointer()), align=4)
         return context.get_dummy_value()
 
-    return types.none(values, index, vector, count), codegen
+    return types.none(values, index, vector), codegen
 
 
 @intrinsic
@@ -226,3 +193,15 @@ def last_lane_in_every_lane(typingctx, vector):
         return builder.shuffle_vector(args[0], args[0], _lane_mask(3, 3, 3, 3))
 
     return four_lanes_type(vector), codegen
+
+
+@intrinsic
+def last_lane(typingctx, vector):
+    """The float32 value of the last lane."""
+    if vector != four_lanes_type:
+        return None
+
+    def codegen(context, builder, signature, args):
+        return builder.extract_element(args[0], ir.Constant(LANE_NUMBER, 3))
+
+    return types.float32(vector), codegen

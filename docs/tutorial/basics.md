@@ -6,7 +6,7 @@
 - **`forcing: channel`**: pure channel routing with no runoff entering the rivers. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
 - **`forcing: catchment`**, **`grid`**, or **`ecmwf_grib`**: routes the runoff volumes or
-  depths of `runoff_files`, in that form, directly into river channel inlets at each timestep. This is the most
+  depths of `forcing_files`, in that form, directly into river channel inlets at each timestep. This is the most
   common starting point.
 
 This tutorial routes catchment runoff (`forcing: catchment`).
@@ -58,7 +58,7 @@ want.
 {
   "network_file": "/path/to/network.parquet",
   "forcing": "catchment",
-  "runoff_files": "/path/to/catchment_runoff.nc",
+  "forcing_files": "/path/to/catchment_runoff.nc",
   "discharge_dir": "/path/to/output/"
 }
 ```
@@ -79,7 +79,7 @@ import river_route as rr
 
 configs = rr.Configs(
     network_file='network.parquet',
-    runoff_files=['catchment_runoff.nc', ],
+    forcing_files=['catchment_runoff.nc', ],
     discharge_dir='./output/',
     forcing='catchment',
 )
@@ -98,7 +98,7 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 {
   "network_file": "network.parquet",
   "forcing": "catchment",
-  "runoff_files": "catchment_runoff.nc",
+  "forcing_files": "catchment_runoff.nc",
   "discharge_dir": "output/",
   "channel_state_init_file": "state.parquet",
   "channel_state_final_file": "new_state.parquet"
@@ -110,7 +110,7 @@ network file in the same order. A final state file is written this way, so it ca
 
 ## Reading the Output
 
-The routed discharge output is a zarr store with dimensions `riverId` and `time`, named for its runoff file:
+The routed discharge output is a zarr store with dimensions `riverId` and `time`, named for its forcing file:
 
 ```python
 import xarray as xr

@@ -47,18 +47,18 @@ import xarray as xr
 import river_route as rr
 
 
-def custom_output_writer(router, dates, discharge_array, discharge_file, runoff_file, *, thread_pool, threads):
+def custom_output_writer(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
     # router: the Router doing the routing, which provides router.network.original_river_ids and router.configs
     # dates: datetime array for the columns of the discharge array
     # discharge_array: routed flows, C-order with shape (riverId, time)
     # discharge_file: the path to the output file provided by your config file
-    # runoff_file: the path to the runoff file used to produce this output, if you need it
+    # forcing_file: the path to the forcing file used to produce this output, if you need it
 
     river_ids = router.network.original_river_ids  # the river of each row of discharge_array
     df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=river_ids)
 
-    # you probably want to include the member number in the output file name which could come from the discharge or runoff file
-    member_number = os.path.basename(runoff_file)
+    # you probably want to include the member number in the output file name which could come from the discharge or forcing file
+    member_number = os.path.basename(forcing_file)
 
     # a state file has the columns riverId and Q
     # option 1: for if you know the exact time step to use

@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import json
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,6 +28,17 @@ def main() -> None:
     subset.add_argument('--weights', type=str, default=None, help='Path to the full grid weights netCDF')
     subset.add_argument('--out-weights', type=str, default=None, help='Path to write the subset grid weights netCDF')
 
+    compile_ = subparsers.add_parser('compile', help='Compile the C routing kernel for this machine with LLVM')
+    compile_.add_argument(
+        '--llvm-bin', type=str, default=None, help="Folder of LLVM's clang (default: LLVM_BIN, or PATH)"
+    )
+    compile_.add_argument(
+        '--checks', action='store_true', help="Also require clang's every warning, clang-tidy, and its static analyzer"
+    )
+    compile_.add_argument(
+        '--wasm', type=str, default=None, metavar='FOLDER', help='Compile the WebAssembly modules into FOLDER instead'
+    )
+
     app = subparsers.add_parser('app', help='Open a window that sets up and runs routing')
     app.add_argument('--home', type=str, default=None, help='Folder every file dialog opens in (default: the current)')
     app.add_argument('--threads', type=int, default=1, help='Threads each run routes with, until changed (default: 1)')
@@ -48,6 +60,19 @@ def main() -> None:
         if (args.weights is None) != (args.out_weights is None):
             subset.error('--weights and --out-weights must be given together')
         subset_network_to_river(args.river, args.network, args.out_network, args.weights, args.out_weights)
+
+    if args.command == 'compile':
+        from .kernels.build import build as compile_kernel
+        from .kernels.build import build_wasm as compile_wasm
+
+        try:
+            if args.wasm is None:
+                print(f'Compiled the C routing kernel: {compile_kernel(args.llvm_bin, args.checks)}')
+            else:
+                modules = compile_wasm(args.wasm, args.llvm_bin, args.checks)
+                print(f'Compiled the C routing kernel to WebAssembly: {", ".join(str(path) for path in modules)}')
+        except (NotADirectoryError, FileNotFoundError, subprocess.CalledProcessError) as error:
+            compile_.error(str(error))
 
     if args.command == 'app':
         from .app import open_window  # imported here so that a python without tkinter still runs every other command

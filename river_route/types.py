@@ -8,10 +8,7 @@ from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     from .forcings import CatchmentRunoffVolumes, GridCellRunoff
-    from .forcings.bases import RiverGridCells
-    from .router.dynamic_muskingum import DynamicCoefficients, Regression
     from .router.Router import Router
-    from .router.static_muskingum import StaticCoefficients
 
 __all__ = [
     'PathInput',
@@ -24,10 +21,6 @@ __all__ = [
     'JobBlocks',
     'RunoffGenerator',
     'Forcing',
-    'RiverForcing',
-    'DynamicParameters',
-    'Coefficients',
-    'Transform',
     'WriteDischargesFn',
 ]
 
@@ -38,27 +31,19 @@ type Float64Array = NDArray[np.float64]
 type IntArray = NDArray[np.int64]
 type Int32Array = NDArray[np.int32]
 type DatetimeArray = NDArray[np.datetime64]
-# the blocks one job routes, as (block_starts, block_stops, block_outlet, block_number); see Network.routing_blocks
-type JobBlocks = tuple[Int32Array, Int32Array, Int32Array, Int32Array]
-# what Runoff.generator yields for each input: its dates, its runoff in the form routing reads, and the file
+# the blocks one job routes, as (block_starts, block_stops), each the rivers from a start up to a stop; see
+# Network.routing_blocks
+type JobBlocks = tuple[Int32Array, Int32Array]
+# what Runoff.generator yields for each forcing file: its dates, its runoff in the form routing reads, and the file
 type RunoffGenerator = Generator[tuple[DatetimeArray, CatchmentRunoffVolumes | GridCellRunoff, PathInput]]
-# the forcing route_job is compiled for, chosen by the forcing config: None is channel routing
+# the runoff the kernels route, chosen by the forcing config: None is channel routing
 type Forcing = CatchmentRunoffVolumes | GridCellRunoff | None
-# one river's forcing, as forcing_of_river reads it: its row of catchment runoff volumes, or its grid cells
-type RiverForcing = FloatArray | RiverGridCells
-# the parameters of the dynamic coefficients, which give each river's k and x at its discharge in every runoff step
-type DynamicParameters = Regression
-# the coefficients route_job is compiled for, chosen by the parameters config
-type Coefficients = StaticCoefficients | DynamicCoefficients
-# the runoff transform route_job is compiled for, chosen by the transform config: None is the uniform transform, and
-# any other will be a NamedTuple of its parameters
-type Transform = tuple | None
 
 
 class WriteDischargesFn(Protocol):
-    """A discharge writer. It is handed a C-order (river, time) array, the layout the kernels route in, and the thread
-    pool and thread count Router.route was given; see river_route.router.writers. The array is routed into again for
-    the next file, so a writer that keeps it past the call must copy it."""
+    """A discharge writer. It is handed a (river, time) array with each river's row contiguous, a view of the memory
+    the kernels route in, and the thread pool and thread count Router.route was given; see river_route.router.writers.
+    The memory is routed into again for the next file, so a writer that keeps the array past the call must copy it."""
 
     def __call__(
         self,
@@ -66,7 +51,7 @@ class WriteDischargesFn(Protocol):
         dates: DatetimeArray,
         discharge_array: FloatArray,
         discharge_file: PathInput,
-        runoff_file: PathInput = '',
+        forcing_file: PathInput = '',
         *,
         thread_pool: Executor | None = None,
         threads: int = 1,

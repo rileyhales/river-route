@@ -149,24 +149,24 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
             tuple: (runoff as a C-order (time, n_cells) array, validity times, factor converting the depth unit to
                 meters)
         """
-        runoff_files = [runoff_data] if isinstance(runoff_data, str | os.PathLike) else list(runoff_data)
+        forcing_files = [runoff_data] if isinstance(runoff_data, str | os.PathLike) else list(runoff_data)
         messages_per_file = []
-        for runoff_file in runoff_files:
-            with open(runoff_file, 'rb') as file:
+        for forcing_file in forcing_files:
+            with open(forcing_file, 'rb') as file:
                 messages_per_file.append(eccodes.codes_count_in_file(file))
         cell_index = self.cell_indexes['cell_index']
         runoff = np.empty((sum(messages_per_file), cell_index.shape[0]), dtype=np.float32)
         dates = np.empty(runoff.shape[0], dtype='datetime64[s]')
         units = set()
         n_steps = 0
-        for runoff_file, n_messages in zip(runoff_files, messages_per_file, strict=True):
-            with open(runoff_file, 'rb') as file:
+        for forcing_file, n_messages in zip(forcing_files, messages_per_file, strict=True):
+            with open(forcing_file, 'rb') as file:
                 for _ in range(n_messages):
                     handle = eccodes.codes_grib_new_from_file(file)
                     try:
                         if eccodes.codes_get(handle, 'shortName') != self.var_grid_runoff:
                             continue
-                        dates[n_steps] = self._read_message(handle, cell_index, runoff[n_steps], runoff_file)
+                        dates[n_steps] = self._read_message(handle, cell_index, runoff[n_steps], forcing_file)
                         units.add(eccodes.codes_get(handle, 'units'))
                         n_steps += 1
                     finally:
@@ -179,13 +179,13 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
         return runoff[:n_steps], dates[:n_steps], conversion_factor
 
     def _read_message(
-        self, handle: int, cell_index: IntArray, row: FloatArray, runoff_file: PathInput
+        self, handle: int, cell_index: IntArray, row: FloatArray, forcing_file: PathInput
     ) -> np.datetime64:
         """Write a message's runoff at the weight table's cells into row, missing values as NaN, and return its
         validity time."""
         values = eccodes.codes_get_array(handle, 'values', np.float32)
         if cell_index.size and cell_index.max() >= values.shape[0]:
-            raise ValueError(f'the weight table references cells beyond the {values.shape[0]} in {runoff_file}')
+            raise ValueError(f'the weight table references cells beyond the {values.shape[0]} in {forcing_file}')
         np.take(values, cell_index, out=row)
         if eccodes.codes_get(handle, 'bitmapPresent'):
             row[row == np.float32(eccodes.codes_get(handle, 'missingValue'))] = np.nan

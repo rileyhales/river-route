@@ -5,23 +5,28 @@ solvers that route each river's whole time series in turn, from upstream to down
 
 ## Describe your routing
 
-All routing runs through `rr.Router`. You describe the routing procedure with config selector keys,
-which together choose the kernel.
+All routing runs through `rr.Router`, which routes Muskingum with static coefficients: each river's k and x, from the
+`muskingumK` and `muskingumX` columns of the network file, are fixed for the whole run. You describe what is routed with
+the `forcing` selector.
 
-| Selector     | Options                                                                                                                                                                                                                                                                                                                                                                                                                            | Default     |
-|--------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
-| `parameters` | `'static'` builds constant Muskingum coefficients from columns `muskingumK`, `muskingumX`. `'dynamic'` recomputes k and x from discharge every runoff step with regression equations (variable parameter Muskingum), k = dynamicKCoefficient * Q ^ dynamicKExponent and x = max(0, 1/2 - dynamicXCoefficient * Q ^ dynamicXExponent), from the columns of those names, with Q held within columns `dynamicMinQ` and `dynamicMaxQ`. | `'static'`  |
-| `forcing`    | `'channel'` (channel routing only), or the form of the `runoff_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`.                                                                                                                                                                                                                                                                                          | `'channel'` |
-| `transform`  | `'uniform'`, the only option: each step's catchment runoff enters its river at a constant rate over the step.                                                                                                                                                                                                                                                                                                                      | `'uniform'` |
-| `dt_routing` | `'auto'` routes each river in the sub-reaches or subcycles that make its coefficients non-negative in its own step, the condition for valid Muskingum routing; a step in seconds routes every river whole in steps of exactly that length.                                                                                                                                                                                         | `'auto'`    |
+| Selector  | Options                                                                                                                                                                                                          | Default     |
+|-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
+| `forcing` | `'channel'` (channel routing only), or the form of the `forcing_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`. Each step's runoff enters its river at a constant rate over the step. | `'channel'` |
 
-Every combination of the selectors routes, and `dt_routing: auto` makes every coefficient of every river non-negative
-with static and dynamic parameters alike.
+Two compute options set how each river computes, in two jobs: `dt_routing` sets each river's step, and `conditioning`
+then makes every coefficient non-negative at it, the condition for valid Muskingum routing.
+
+| Compute option | Options                                                                                                                                                                                                       | Default  |
+|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
+| `dt_routing`   | `'auto'` gives each river its own valid step, the runoff step over the fewest subcycles that keep its coefficients non-negative; a step in seconds, a divisor of the runoff step, is the step of every river. | `'auto'` |
+| `conditioning` | `True` splits each river too long for its step into sub-reaches and routes each river too short for it in subcycles of its step; `False` routes every river whole at its step. `'auto'` requires it.          | `True`   |
+
+Every forcing routes, and `dt_routing: auto` makes every coefficient of every river non-negative.
 
 ```python
 import river_route as rr
 
-configs = rr.Configs.from_json("/path/to/config.json")  # sets parameters, forcing, and the other options
+configs = rr.Configs.from_json("/path/to/config.json")  # sets the forcing and the other options
 rr.Router(configs).route()
 ```
 
@@ -49,7 +54,7 @@ import river_route as rr
 configs = rr.Configs(
     network_file="/path/to/network.parquet",
     forcing="catchment",
-    runoff_files=["/path/to/catchment_runoff.nc"],
+    forcing_files=["/path/to/catchment_runoff.nc"],
     discharge_dir="/path/to/output/",
 )
 configs.to_json("/path/to/config.json")
@@ -63,7 +68,7 @@ rr.Router(configs).route()
 | `Configs` | Every option, frozen. Built once and given to the classes below.                                        |
 | `Network` | The river network: ids, topology, `k` and `x`, the concurrent partition, coefficient signs, sub-reaches, subcycles. |
 | `Router`  | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.            |
-| `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many runoff files.              |
+| `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many forcing files.             |
 
 `Router` takes only a `Configs`, and builds its `Network` and the `Runoff` class its `forcing` names from it.
 `Network` and `GridRunoff` take the options they need as ordinary arguments and each has a `from_configs` classmethod

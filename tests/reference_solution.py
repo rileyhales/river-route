@@ -11,11 +11,10 @@ definition, so rebuild it only when the routing is deliberately changed. Build i
 which routes the Columbia River, river 720207783 at its mouth and the 29,404 rivers upstream of it in the level 2
 basin covering Washington, Oregon, and southwestern Canada, through March to June 2000. It cuts the region's network
 file, network.parquet, down to that basin with ``streams.subset_network_to_river``, and its grid weights to the same
-rivers with the river id renamed from the region's river_id to riverId, copies the runoff files unmodified into
-``inputs/``,
-aggregates each runoff file into a catchment runoff file, routes every run of ``reference_runs`` into ``outputs/`` with
-the months in sequence, and writes ``manifest.json`` describing how each output was made. Discharge is written by the
-default zarr writer with every float32 mantissa bit kept, so nothing is rounded.
+rivers with the river id renamed from the region's river_id to riverId, copies the forcing files unmodified into
+``inputs/``, aggregates each forcing file into a catchment runoff file, routes every run of ``reference_runs`` into
+``outputs/`` with the months in sequence, and writes ``manifest.json`` describing how each output was made. Discharge is
+written by the default zarr writer with every float32 mantissa bit kept, so nothing is rounded.
 
 numba compiles for the machine it runs on, so a package built on one CPU architecture may differ in the last bit on
 another, where fused multiply-adds are formed differently. The manifest records the machine it was built on, and the
@@ -52,6 +51,7 @@ REGION_VAR_RIVER_ID = 'river_id'  # the river id of the region's grid weights, w
 INPUT_PATH_OPTIONS = ('network_file', 'grid_weights_file', 'channel_state_init_file')
 TOLERANCE = 10e-4  # answers that should be identical may differ by this share of each river's largest value
 WILLAMETTE = 720184033  # the Willamette River where it joins the Columbia at Portland: 1,390 rivers
+KERNEL = 'auto'  # the kernel route routes with unless told: conftest.py sets it from pytest's --kernel option
 
 
 @dataclass
@@ -60,8 +60,8 @@ class Basin:
 
     network_file: Path
     weights_file: Path
-    runoff_files: list[Path]  # the package's gridded runoff, one file per month
-    months: list[tuple[np.ndarray, np.ndarray]]  # (dates, (river, time) catchment runoff volumes) per runoff file
+    forcing_files: list[Path]  # the package's gridded runoff, one file per month
+    months: list[tuple[np.ndarray, np.ndarray]]  # (dates, (river, time) catchment runoff volumes) per forcing file
     network: rr.Network  # for reading the topology; build a fresh one for anything that changes it
 
     def gridded(self, months: int = 4) -> dict:
@@ -69,7 +69,7 @@ class Basin:
         return GRID_NAMES | {
             'network_file': self.network_file,
             'forcing': 'grid',
-            'runoff_files': self.runoff_files[:months],
+            'forcing_files': self.forcing_files[:months],
             'grid_weights_file': self.weights_file,
         }
 
@@ -96,10 +96,10 @@ def assert_same(actual: np.ndarray, desired: np.ndarray, tolerance: float = TOLE
 
 @dataclass
 class Routed:
-    """What the router handed its discharge writer for each runoff file, and the channel state it ended with."""
+    """What the router handed its discharge writer for each forcing file, and the channel state it ended with."""
 
     dates: list[np.ndarray]
-    discharge: list[np.ndarray]  # (river, time) per runoff file
+    discharge: list[np.ndarray]  # (river, time) per forcing file
     discharge_files: list[str]
     final_state: np.ndarray
     router: rr.Router
@@ -111,22 +111,24 @@ def route(
     *,
     threads: int = 1,
     writer=None,
+    kernel: str | None = None,
     **options,
 ) -> Routed:
     """
     Route and keep what the router hands its discharge writer. ``files`` are catchment runoff volumes shaped in
-    memory, one (dates, (river, time) volumes) pair per runoff file with rows in network file order, written to
+    memory, one (dates, (river, time) volumes) pair per forcing file with rows in network file order, written to
     catchment runoff files and routed as ``forcing`` catchment; without them ``options`` name the runoff to read. Any
-    file the run writes goes to ``directory``. ``writer`` also writes the discharge when given.
+    file the run writes goes to ``directory``. ``writer`` also writes the discharge when given. ``kernel`` is the
+    routing kernel, KERNEL unless given.
     """
     if files is not None:
         river_ids = pd.read_parquet(options['network_file'], columns=['riverId'])['riverId'].to_numpy()
         no_areas = np.full(river_ids.shape[0], np.nan)  # volumes are read without their catchment areas
-        runoff_files = [directory / f'catchment_runoff_{i}.nc' for i in range(len(files))]
-        for (dates, volumes), runoff_file in zip(files, runoff_files, strict=True):
-            rr.CatchmentRunoff.to_netcdf(runoff_file, dates, volumes, river_ids, no_areas, as_volumes=True)
-        options |= {'forcing': 'catchment', 'runoff_files': runoff_files}
-    n_outputs = len(options.get('runoff_files', [])) or 1
+        forcing_files = [directory / f'catchment_runoff_{i}.nc' for i in range(len(files))]
+        for (dates, volumes), forcing_file in zip(files, forcing_files, strict=True):
+            rr.CatchmentRunoff.to_netcdf(forcing_file, dates, volumes, river_ids, no_areas, as_volumes=True)
+        options |= {'forcing': 'catchment', 'forcing_files': forcing_files}
+    n_outputs = len(options.get('forcing_files', [])) or 1
     defaults = {
         'discharge_files': [directory / f'discharge_{i}.zarr' for i in range(n_outputs)],
         'invalid_coefficients': 'ignore',
@@ -136,18 +138,18 @@ def route(
     configs = rr.Configs(**(defaults | options))
     routed = Routed([], [], [], np.zeros(0), None)
 
-    def keep_discharge(router, dates, discharge_array, discharge_file, runoff_file='', *, thread_pool=None, threads=1):
+    def keep_discharge(router, dates, discharge_array, discharge_file, forcing_file='', *, thread_pool=None, threads=1):
         routed.dates.append(dates.copy())
         routed.discharge.append(discharge_array.copy())
         routed.discharge_files.append(Path(discharge_file).name)
         if writer is not None:
             writer(
-                router, dates, discharge_array, discharge_file, runoff_file, thread_pool=thread_pool, threads=threads
+                router, dates, discharge_array, discharge_file, forcing_file, thread_pool=thread_pool, threads=threads
             )
 
     routed.router = rr.Router(configs).set_discharge_writer(keep_discharge)
     with ThreadPoolExecutor(threads) if threads > 1 else contextlib.nullcontext() as pool:
-        routed.router.route(thread_pool=pool, threads=threads)
+        routed.router.route(thread_pool=pool, threads=threads, kernel=kernel or KERNEL)
     routed.final_state = np.asarray(routed.router.channel_state).copy()
     return routed
 
@@ -158,9 +160,9 @@ def reference_runs(network_file: str, weights: str, runoff: list[str], catchment
     since later runs read the catchment runoff files and the standard run's final state.
     """
     common = {'network_file': network_file, 'invalid_coefficients': 'ignore'}  # each river takes its fewest steps
-    grid = common | GRID_NAMES | {'forcing': 'grid', 'runoff_files': runoff, 'grid_weights_file': weights}
-    fixed_step = grid | {'dt_routing': 3600}  # every river routed whole in steps of the hourly runoff
-    catchment = common | {'forcing': 'catchment', 'runoff_files': catchment_runoff}
+    grid = common | GRID_NAMES | {'forcing': 'grid', 'forcing_files': runoff, 'grid_weights_file': weights}
+    fixed_step = grid | {'dt_routing': 3600, 'conditioning': False}  # every river whole in steps of the hourly runoff
+    catchment = common | {'forcing': 'catchment', 'forcing_files': catchment_runoff}
     channel = common | {
         'forcing': 'channel',
         'channel_state_init_file': 'outputs/static_standard/final_state.parquet',
@@ -178,13 +180,18 @@ def reference_runs(network_file: str, weights: str, runoff: list[str], catchment
     }
 
 
-def route_run(package: Path, run: dict, discharge_files: list[Path], final_state_file: Path, writer) -> None:
-    """Route one run from the package's files, writing its discharge with ``writer`` and its final state to a file."""
+def route_run(
+    package: Path, run: dict, discharge_files: list[Path], final_state_file: Path, writer, kernel: str = 'auto'
+) -> None:
+    """
+    Route one run from the package's files with ``kernel``, writing its discharge with ``writer`` and its final state to
+    a file.
+    """
     options = {
         key: str(package / value) if key in INPUT_PATH_OPTIONS else value for key, value in run['configs'].items()
     }
-    if 'runoff_files' in options:
-        options['runoff_files'] = [str(package / path) for path in options['runoff_files']]
+    if 'forcing_files' in options:
+        options['forcing_files'] = [str(package / path) for path in options['forcing_files']]
     configs = rr.Configs(
         **options,
         discharge_files=discharge_files,
@@ -195,15 +202,15 @@ def route_run(package: Path, run: dict, discharge_files: list[Path], final_state
     router = rr.Router(configs).set_discharge_writer(writer)
     threads = run['threads']
     with ThreadPoolExecutor(threads) if threads > 1 else contextlib.nullcontext() as pool:
-        router.route(thread_pool=pool, threads=threads)
+        router.route(thread_pool=pool, threads=threads, kernel=kernel)
 
 
-def write_catchment_runoff(package: Path, catchment_runoff: dict, runoff_file: str, path: Path) -> None:
-    """Aggregate one of the package's gridded runoff files into a catchment runoff file with ``aggregate_to_file``."""
+def write_catchment_runoff(package: Path, catchment_runoff: dict, forcing_file: str, path: Path) -> None:
+    """Aggregate one of the package's gridded forcing files into a catchment runoff file with ``aggregate_to_file``."""
     runoff = rr.GridRunoff(
         package / catchment_runoff['grid_weights_file'], as_volumes=catchment_runoff['as_volumes'], **GRID_NAMES
     )
-    runoff.aggregate_to_file(package / runoff_file, path)
+    runoff.aggregate_to_file(package / forcing_file, path)
 
 
 def build(region_dir: Path, outlet_river_id: int | None, runoff: list[Path], package: Path) -> None:
@@ -231,17 +238,17 @@ def build(region_dir: Path, outlet_river_id: int | None, runoff: list[Path], pac
     catchment_runoff = {
         'grid_weights_file': weights,
         'as_volumes': True,
-        'runoff_files': runoff_copies,
+        'forcing_files': runoff_copies,
         'files': [f'outputs/catchment_runoff_{Path(path).stem}.nc' for path in runoff_copies],
     }
-    for runoff_file, path in zip(catchment_runoff['runoff_files'], catchment_runoff['files'], strict=True):
-        write_catchment_runoff(package, catchment_runoff, runoff_file, package / path)
+    for forcing_file, path in zip(catchment_runoff['forcing_files'], catchment_runoff['files'], strict=True):
+        write_catchment_runoff(package, catchment_runoff, forcing_file, package / path)
 
     writers.ZARR_KEEPBITS = 23  # every float32 mantissa bit, so zarr_writer writes the discharge unrounded
     runs = reference_runs(network_file, weights, runoff_copies, catchment_runoff['files'])
     for name, run in runs.items():
         (package / 'outputs' / name).mkdir()
-        months = [Path(path).stem for path in run['configs'].get('runoff_files', [])]
+        months = [Path(path).stem for path in run['configs'].get('forcing_files', [])]
         run['discharge'] = [f'outputs/{name}/discharge_{month}.zarr' for month in months] or [
             f'outputs/{name}/discharge.zarr'
         ]
@@ -284,7 +291,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Build the reference solution the test suite reproduces.')
     parser.add_argument('--region-dir', type=Path, required=True, help='folder with network.parquet and grid weights')
     parser.add_argument('--outlet-river-id', type=int, help='cut the region to this river and its upstreams')
-    parser.add_argument('--runoff', type=Path, nargs='+', required=True, help='gridded runoff files, routed in order')
+    parser.add_argument('--runoff', type=Path, nargs='+', required=True, help='gridded forcing files, routed in order')
     parser.add_argument('--package', type=Path, default=PACKAGE, help='where to write the reference solution')
     args = parser.parse_args()
     runoff = [path.expanduser() for path in args.runoff]

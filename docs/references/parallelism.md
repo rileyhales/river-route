@@ -62,8 +62,8 @@ are known. This means the core solve cannot be split across threads or cores in 
 way.
 
 However, the routing kernels have been made about as minimal as possible: each river's whole time series is routed
-once, upstream rivers before downstream ones, with sparse connectivity instead of matrices, and JIT compiled numba
-code. In my experience, this is preferable to
+once, upstream rivers before downstream ones, with sparse connectivity instead of matrices, in C compiled for your
+machine or in its numba twin (see [The routing kernels](#the-routing-kernels)). In my experience, this is preferable to
 multiprocessing methods even though it uses an inherently sequential forward substitution algorithm. This approach is
 the best method in my experience using it on a wide range of scales up to global computations of hourly resolution
 discharge on millions of rivers and producing a 5 trillion data point simulation. It has the advantages that it:
@@ -75,18 +75,33 @@ discharge on millions of rivers and producing a 5 trillion data point simulation
 
 What you control is how much work you ask that kernel to do.
 
-1. **Choose the simplest routing procedure your problem needs.** `parameters: static` computes Muskingum
-   coefficients once and reuses them for every file with the same time steps. `parameters: dynamic` rebuilds
-   them inside the kernel on every runoff step. Only pay for dynamic coefficients when the application needs them.
-   See the [config file reference](config-files.md#routing-procedure-selectors).
-2. **Leave `dt_routing` at `'auto'`.** Each river then takes the sub-reaches and the fewest steps of each runoff step
-   that keep its coefficients valid. A `dt_routing` that is given is the step of every river, so halving it doubles
-   the work of every river that takes its steps one by one. See
+1. **Leave `dt_routing` at `'auto'`.** Each river then takes the fewest steps of each runoff step that keep its
+   coefficients valid, and conditioning the sub-reaches. A `dt_routing` that is given is the step of every river, so
+   halving it doubles the work of every river that takes its steps one by one. See
    [Time Variables](time-options.md).
-3. **Only produce the output you will use.** A coarser `dt_discharge` writes fewer of the discharges routed, and
+2. **Only produce the output you will use.** A coarser `dt_discharge` writes fewer of the discharges routed, and
    a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
    `zarr_writer` is built to write as fast as possible when you need everything.
-4. **Route what matters.** Rivers that do not contribute to the results you need do not have to be in the network.
+3. **Route what matters.** Rivers that do not contribute to the results you need do not have to be in the network.
+
+## The routing kernels
+
+`river-route` has one routing kernel written twice, routine for routine: the C of `routing.c` and `checks.c` in
+`river_route/kernels/c`, which `rr compile` compiles on your machine with the clang of LLVM, and its numba twin,
+`numba_kernel.py` in `river_route/kernels`, which needs nothing compiled ahead. The same C is what a browser loads as WebAssembly. `Router.route(kernel='auto')`, the default,
+routes with the C once it is built and with numba until then; `kernel='c'` or `kernel='numba'` chooses one. Both route
+every river of a job eight steps at a time in vectors of four steps, give the same answers, and are tested against
+each other and the reference solution.
+
+On the Columbia, 29,405 rivers routed with `dt_routing: auto` for the 2,928 hours of March to
+June 2000, the kernels alone took, on an Apple M3 Max:
+
+| Kernel | 1 thread | 4 threads | 8 threads |
+|--------|----------|-----------|-----------|
+| C      | 0.038 s  | 0.011 s   | 0.008 s   |
+| numba  | 0.055 s  | 0.023 s   | 0.012 s   |
+
+Build the C kernel where you route the most; numba is the fallback everywhere else.
 
 ## Options for parallelism
 
@@ -141,7 +156,7 @@ from multiprocessing import Pool
 import river_route as rr
 
 network_file = 'network.parquet'
-runoff_files = ['catchment_runoff_member_1.nc',
+forcing_files = ['catchment_runoff_member_1.nc',
                 'catchment_runoff_member_2.nc', ]
 output_files = ['discharges_member_1.zarr',
                 'discharges_member_2.zarr', ]
@@ -151,7 +166,7 @@ def route(input_file: str, output_file: str) -> None:
     configs = rr.Configs(
         forcing='catchment',
         network_file=network_file,
-        runoff_files=[input_file, ],
+        forcing_files=[input_file, ],
         discharge_files=[output_file, ],
     )
     rr.Router(configs).route()
@@ -159,7 +174,7 @@ def route(input_file: str, output_file: str) -> None:
 
 if __name__ == '__main__':
     with Pool() as pool:
-        pool.starmap(route, zip(runoff_files, output_files))
+        pool.starmap(route, zip(forcing_files, output_files))
 ```
 
 **Conclusion**: This is the best way to speed up ensemble simulations. 

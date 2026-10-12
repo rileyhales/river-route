@@ -443,7 +443,7 @@ solved values $x_1, \ldots, x_{i-1}$, so the system is solved sequentially from 
 row to the last. `river-route` does not store the matrix $L$ at all, and it does not solve it one time step at a
 time. Once every river upstream of a river is routed, the whole right-hand side of that river is known at every step,
 so v3 solves the system one river at a time: each river's whole time series is routed before the next river, in
-topological order, and pushed onto its single downstream river through a `downstream_indices` vector.
+topological order, each river reading the discharge of the rivers draining directly into it.
 
 ```
 for j = 1, 2, ..., n:
@@ -454,30 +454,31 @@ for j = 1, 2, ..., n:
 
 *Listing 1: Conceptual column-oriented forward substitution pseudocode for a generic unit lower triangular system (not river-route's storage layout).*
 
-In the v3 kernels (`route_job` in `river_route/router/_numba_kernels.py` and the `route_river` routing methods next
-to it) there is no matrix. A river's inflow row already holds the summed discharge of its upstream rivers at every
-routing step when the river is reached, so its whole series is the recurrence
-$Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}$ with every $I$ known, and once it is solved the
-series is added into the inflow row of the river downstream:
+In the routing kernels (`routing.c` in `river_route/kernels/c`, and its numba twin `numba_kernel.py`) there is no
+matrix. Every river's discharge is a row: its value at the start, then at the end of each step. Rivers are routed in
+topological order, so when a river is reached the rows of the rivers draining directly into it, its inflow rivers, are
+complete, and its inflow at every step is their sum. Its whole series is then the recurrence
+$Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, V_t$ with every $I$ known, written into its own row, which the
+river downstream reads in turn:
 
 ```python
 for i in range(n_rivers):                        # topological order: upstream before downstream
-    inflow = inflow_rows[i]                      # summed discharge of the rivers upstream of i, at every step
-    series[0] = q[i]
+    discharge[i, 0] = q[i]
     for t in range(n_steps):
-        q[i] = c1[i] * inflow[t + 1] + c2[i] * inflow[t] + c3[i] * q[i] + c4[i] * runoff_rate[i, t]
-        series[t + 1] = q[i]
-    if downstream_indices[i] >= 0:               # outlets have no downstream (-1)
-        inflow_rows[downstream_indices[i]] += series
+        inflow_after = sum(discharge[j, t + 1] for j in inflow_rivers[i])   # the rivers draining into i
+        inflow_before = sum(discharge[j, t] for j in inflow_rivers[i])
+        q[i] = c1[i] * inflow_after + c2[i] * inflow_before + c3[i] * q[i] + c4[i] * runoff_volume[i, t]
+        discharge[i, t + 1] = q[i]
 ```
 
-*Listing 2: River-at-a-time forward substitution over downstream indices, the order in which `route_job` routes.*
+*Listing 2: River-at-a-time forward substitution, each river reading the rows of its inflow rivers, the order in which
+the routing kernels route. They solve the recurrence eight steps at a time, as two vectors of four steps.*
 
 - **Time:** $O((n + m)\, T)$ where $n$ is the number of river segments, $m$ is the number of edges
   (upstream-downstream connections), and $T$ is the number of routing steps. For tree-structured river networks,
   $m = n - 1$.
-- **Space:** No matrix is stored. Only the inflow rows of the rivers that some but not all of their upstream rivers
-  have been routed into are held at once.
+- **Space:** No matrix is stored, and nothing beyond the discharge that is written: each river reads its inflow from
+  the rows of the rivers upstream of it, which were written just before it.
 
 This is optimal — every edge is visited exactly once per routing step.
 

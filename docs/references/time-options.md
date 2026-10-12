@@ -2,11 +2,12 @@
 
 Routing simulations have four different time steps, all given in seconds.
 
-- `dt_runoff`: Interval between runoff inputs. It is not a config: it is read from the time steps of each runoff file.
+- `dt_runoff`: Interval between runoff inputs. It is not a config: it is read from the time steps of each forcing file.
   Every river hands its discharge to the river downstream at the end of each runoff step, and records it there.
 - `dt_routing`: `'auto'`, the default, or the step in seconds every river computes in, `dt` in the Muskingum
-  equation, a divisor of `dt_runoff`. With `'auto'` each river is split into the fewest sub-reaches, and computes in
-  the fewest steps of each runoff step, that keep its coefficients valid.
+  equation, a divisor of `dt_runoff`. With `'auto'` each river computes in its own valid step, the fewest steps of
+  each runoff step that keep its coefficients valid, and `conditioning`, which `'auto'` requires, splits the rivers
+  too long for the runoff step into sub-reaches.
 - `dt_discharge`: Interval between the discharges written to disk. Must be greater than or equal to `dt_runoff`.
   Each value written is the discharge at the end of its interval, after routing it, labeled with the time the interval
   begins. Nothing is averaged, and it does not change the routing: it only chooses which of the discharges recorded at
@@ -19,18 +20,22 @@ Routing simulations have four different time steps, all given in seconds.
 
 Rivers are routed one at a time, upstream to downstream, each river's whole series before the next, so every river
 computes in a plan of its own. Each runoff step of a river is taken in subcycles, steps of its own, with its upstream
-inflow interpolated linearly across them and its runoff spread evenly over them:
+inflow interpolated linearly across them and its runoff spread evenly over them. Each river's plan is settled in two
+jobs: `dt_routing` sets its step, and `conditioning` makes every coefficient non-negative at it.
 
-- With `dt_routing: auto`, the default, a river too long for the runoff step is split into the fewest sub-reaches in
-  series that keep its coefficients non-negative, and a river too short for it takes the fewest subcycles that do.
-- With `dt_routing` given in seconds, every river is routed whole in `dt_runoff / dt_routing` subcycles of exactly
-  `dt_routing`. No river is split or given a shorter step, so a river too long or too short for it keeps a negative
-  coefficient and is reported, as `invalid_coefficients` says. Setting `dt_routing` to `dt_runoff` routes each river
-  whole in one step of each runoff step.
+- With `dt_routing: auto`, the default, each river's step is its own: the runoff step over the fewest subcycles that
+  keep its coefficients non-negative. Conditioning, which `'auto'` requires, then splits a river too long for the
+  runoff step into the fewest sub-reaches in series that keep its coefficients non-negative.
+- With `dt_routing` given in seconds, every river's step is exactly `dt_routing`, `dt_runoff / dt_routing` subcycles
+  of each runoff step. With conditioning, a river too long for it is split into sub-reaches, and a river too short for
+  it takes the fewest subcycles of `dt_routing` that keep its coefficients non-negative. Without it, no river is split
+  or given a shorter step, so a river too long or too short for it keeps a negative coefficient and is reported, as
+  `invalid_coefficients` says. Setting `dt_routing` to `dt_runoff` with conditioning routes as `'auto'` does, and
+  without it routes each river whole in one step of each runoff step.
 
-With static coefficients, the subcycles of a river of one reach are combined into one step of coefficients that give
-the discharge of taking them one at a time, so they cost one step. Only a river split into sub-reaches takes its
-subcycles one by one.
+The subcycles of each sub-reach are combined into one step of coefficients that give the
+discharge of taking them one at a time, so they cost one step, and the sub-reaches of a river hand their discharge to
+each other at the end of each runoff step, as rivers do.
 
 The following rules apply:
 
@@ -39,7 +44,7 @@ The following rules apply:
 2. `dt_discharge` must be an integer multiple of `dt_runoff` because discharge is written at the end of runoff intervals.
 3. By default `dt_total` is `dt_runoff` multiplied by the runoff record length. If you set it explicitly, it must be an integer
    multiple of `dt_runoff` (and of `dt_discharge`). Recession routing is not available.
-4. Every step of a runoff file must be as long as its first, which is its `dt_runoff`. Runoff is never resampled, so a
+4. Every step of a forcing file must be as long as its first, which is its `dt_runoff`. Runoff is never resampled, so a
    file with irregular time steps is refused, and so is a file with a single time step, which has no step to read,
    or with dates that do not increase.
 
@@ -49,11 +54,11 @@ The following rules apply:
   no runoff, rivers hand their discharge downstream every `dt_discharge`, which defaults to `dt_routing` when it is
   given in seconds.
 - Routing with forcing (e.g. `forcing: catchment`):
-    - `dt_runoff` is the time step of each runoff file.
+    - `dt_runoff` is the time step of each forcing file.
     - `dt_discharge` defaults to `dt_runoff`.
     - `dt_total` defaults to `dt_runoff * number_of_timesteps`.
-    - `dt_routing` is `'auto'`, so each river takes the sub-reaches and the fewest steps of each runoff step that keep
-      it valid.
+    - `dt_routing` is `'auto'` and `conditioning` is `True`, so each river takes the fewest steps of each runoff step
+      and the sub-reaches that keep it valid.
 
 ## Required Relationships
 
@@ -78,8 +83,9 @@ dt_discharge % dt_routing == 0 (when given)
 
 ## Practical Notes
 
-1. Leave `dt_routing` at `'auto'` unless every river must take the same step, which gives up the sub-reaches and
-   subcycles that keep each river valid. A step shorter than a river's travel time does not route it more accurately:
+1. Leave `dt_routing` at `'auto'` unless every river must take the same step. A step in seconds keeps every river
+   valid only with `conditioning`, which splits the rivers too long for it and subcycles the rivers too short for it.
+   A step shorter than a river's travel time does not route it more accurately:
    it does not change how much the river delays or spreads a flood wave, and it puts more rivers below the lower bound
    `2*k*x`.
 2. If you need a different runoff timestep, resample runoff before routing.

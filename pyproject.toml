@@ -88,7 +88,6 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 markers = [
     "slow: checks that take a minute or more, such as compiling every kernel from an empty numba cache",
-    "wasm: checks of the WebAssembly kernel in wasm/, which need node and the llvm that wasm/build.js names",
 ]
 
 [tool.hatch.version]

@@ -11,20 +11,54 @@ import pandas as pd
 import xarray as xr
 
 from ..types import Int32Array, IntArray, JobBlocks, PathInput
-from ._numba_kernels import pack_blocks_into_jobs
+from ._numba_kernels import depth_first_search_order, pack_blocks_into_jobs
 
 if TYPE_CHECKING:
     from .Network import Network
 
-__all__ = ['assign_blocks', 'analyze_partitioning', 'subset_network_to_river']
+__all__ = ['assign_depth_first_search_order', 'assign_blocks', 'analyze_partitioning', 'subset_network_to_river']
 
 # the caps on the rivers in a block assign_blocks tries, as fractions of an even share of the rivers per job
 _BLOCK_CAP_FRACTIONS: tuple[float, ...] = (0.125, 0.25, 0.375, 0.5, 0.65, 0.8, 1.0)
 
 
-def assign_blocks(
-    upstream_counts: IntArray, downstream_indices: Int32Array, threads: int
-) -> tuple[tuple[JobBlocks, ...], Int32Array]:
+def assign_depth_first_search_order(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Assigns a Depth First Search (DFS) order and upstream count to a DataFrame representing a river network: the rows
+    reordered so that every river follows the rivers upstream of it, and the riverIndex and upstreamCount columns that
+    describe that order. Rivers draining into the same river, and basin outlets, keep their relative order, so a table
+    already in DFS order keeps its order. The DataFrame given is not changed.
+
+    Args:
+        df: the network table, with a riverId column and a nextRiverId column that is -1 at a basin outlet
+
+    Returns:
+        pd.DataFrame: a copy of the table in DFS order, its riverIndex numbering the rows from 0
+
+    Raises:
+        ValueError: if a column is missing, a riverId repeats, a nextRiverId is not a riverId, or rivers drain in a cycle
+    """
+    missing = [column for column in ('riverId', 'nextRiverId') if column not in df.columns]
+    if missing:
+        raise ValueError(f'the network table is missing the column(s) {", ".join(missing)}')
+    river_index = pd.Index(df['riverId'].to_numpy())
+    if not river_index.is_unique:
+        raise ValueError('the network table has duplicate riverId values')
+    next_river_ids = df['nextRiverId'].to_numpy()
+    downstream_indices = river_index.get_indexer(next_river_ids)  # -1 for an id that is not in the riverId column
+    unknown = (downstream_indices < 0) & (next_river_ids != -1)
+    if unknown.any():
+        raise ValueError(f'nextRiverId {next_river_ids[unknown][0]} is not in the riverId column')
+    order, upstream_counts = depth_first_search_order(downstream_indices)
+    if order.shape[0] != df.shape[0]:
+        raise ValueError(f'{df.shape[0] - order.shape[0]:,} rivers drain into a cycle rather than a basin outlet')
+    ordered = df.iloc[order].reset_index(drop=True)
+    ordered['riverIndex'] = np.arange(ordered.shape[0], dtype=np.int32)
+    ordered['upstreamCount'] = upstream_counts.astype(np.int32)
+    return ordered
+
+
+def assign_blocks(upstream_counts: IntArray, downstream_indices: Int32Array, threads: int) -> tuple[JobBlocks, ...]:
     """
     Divide a region in DFS order into sub-watershed blocks, pack the blocks into ``threads`` jobs that route
     concurrently, and leave every other river to the main stem, the last job, which routes after them.
@@ -46,10 +80,9 @@ def assign_blocks(
         threads: number of jobs to pack the blocks into
 
     Returns:
-        tuple: (job_blocks, boundary_target). Each entry of job_blocks is (block_starts, block_stops, block_outlet,
-            block_number) for one job, with its blocks in index order. The last entry is the main stem, whose blocks
-            are the runs of rows between the sub-watershed blocks and have no outlet (-1). The outlet of block b drains
-            into boundary_target[b], -1 at a basin outlet.
+        tuple: the (block_starts, block_stops) of each job, its blocks in index order, each the rows from a start up to
+            a stop. The last is the main stem, whose blocks are the runs of rows between the sub-watershed blocks. A
+            block's outlet is its last row, the one river of the block that drains out of it.
     """
     n_rivers = upstream_counts.shape[0]
     watershed_sizes = upstream_counts.astype(np.int64) + 1
@@ -70,17 +103,14 @@ def assign_blocks(
     block_stops = (block_outlets + 1).astype(np.int32)
     job_blocks: list[JobBlocks] = []
     for job in range(threads):
-        block_numbers = np.flatnonzero(job_of_block == job).astype(np.int32)
+        block_numbers = np.flatnonzero(job_of_block == job)
         if block_numbers.shape[0]:
-            job_blocks.append(
-                (block_starts[block_numbers], block_stops[block_numbers], block_outlets[block_numbers], block_numbers)
-            )
+            job_blocks.append((block_starts[block_numbers], block_stops[block_numbers]))
     stem_starts = np.concatenate(([0], block_stops)).astype(np.int32)
     stem_stops = np.concatenate((block_starts, [n_rivers])).astype(np.int32)
     in_main_stem = stem_stops > stem_starts
-    no_outlets = np.full(np.count_nonzero(in_main_stem), -1, dtype=np.int32)
-    job_blocks.append((stem_starts[in_main_stem], stem_stops[in_main_stem], no_outlets, np.zeros_like(no_outlets)))
-    return tuple(job_blocks), downstream_indices[block_outlets].astype(np.int32)
+    job_blocks.append((stem_starts[in_main_stem], stem_stops[in_main_stem]))
+    return tuple(job_blocks)
 
 
 def analyze_partitioning(network: Network, threads: int = 4) -> dict:
@@ -99,9 +129,9 @@ def analyze_partitioning(network: Network, threads: int = 4) -> dict:
     Returns:
         dict: the summary statistics
     """
-    *sub_watershed_jobs, main_stem_job = network.routing_blocks(threads)[0]
-    block_sizes = [int(size) for starts, stops, _, _ in sub_watershed_jobs for size in stops - starts]
-    span = max((int(np.sum(stops - starts)) for starts, stops, _, _ in sub_watershed_jobs), default=0)
+    *sub_watershed_jobs, main_stem_job = network.routing_blocks(threads)
+    block_sizes = [int(size) for starts, stops in sub_watershed_jobs for size in stops - starts]
+    span = max((int(np.sum(stops - starts)) for starts, stops in sub_watershed_jobs), default=0)
     main_stem = int(np.sum(main_stem_job[1] - main_stem_job[0]))
     n_rivers = network.size
 

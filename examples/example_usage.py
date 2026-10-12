@@ -20,7 +20,7 @@ if __name__ == '__main__':
     grid_weights_file = routing_root / f'region={args.region}' / f'gridweights_ERA5_{args.region}.nc'
     # find the runoff forcing files
     era5_root = Path(args.bucket_root) / 'forcings' / 'era5'
-    runoff_files = sorted(era5_root.glob('194[0-9].zarr'))
+    forcing_files = sorted(era5_root.glob('194[0-9].zarr'))
     # provide an output directory
     discharge_dir = Path(os.devnull)  # devnull will pass validation and results will be discarded
 
@@ -28,11 +28,10 @@ if __name__ == '__main__':
     conf = rr.Configs(
         network_file=network_file,
         # primary modeling choices
-        parameters='static',   # 'static' or 'dynamic'
         forcing='grid',        # 'channel', or how the forcing is provided, see docs
-        transform='uniform',   # 'uniform', pending update will permit 'unit-hydrograph'
+        # compute options
         dt_routing='auto',     # 'auto', or a positive, integer number of seconds
-        # Calculation quality control options
+        conditioning=True,     # sub-reaches and subcycles for rivers invalid at their step; 'auto' requires it
         restrict_x_range=True,
         invalid_coefficients='warn',
         # model state files
@@ -40,8 +39,8 @@ if __name__ == '__main__':
         channel_state_final_file=None,
         # where to place the results
         discharge_dir=discharge_dir,
-        # the runoff forcing data and how to read it
-        runoff_files=runoff_files,
+        # the forcing files and how to read them
+        forcing_files=forcing_files,
         grid_weights_file=grid_weights_file,
         var_grid_runoff='ro',
         var_x='longitude',

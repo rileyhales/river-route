@@ -1,7 +1,7 @@
 # Router
 
-All routing is performed by the `Router` class. The routing procedure is described by the `parameters`,
-`forcing`, `transform`, and `dt_routing` configuration keys, from which the Router chooses the numerical kernel.
+All routing is performed by the `Router` class, Muskingum with static coefficients. What it routes is described by
+the `forcing` configuration key, and how each river computes by the compute options `dt_routing` and `conditioning`.
 
 A `Router` takes a `Configs` and nothing else: `Router(configs)`. It owns one simulation: the coefficients, the time
 options, the channel state, and the routing loop. The network it routes over belongs to [`Network`](network.md) and
