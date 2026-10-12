@@ -10,7 +10,7 @@ if __name__ == '__main__':
     # Amazon: 6020006540, Caribbean: 7020065090
     parser = argparse.ArgumentParser()
     parser.add_argument('--bucket-root', default=Path.home() / 'data' / 'rfsv3')
-    parser.add_argument('--region', default='6020006540')
+    parser.add_argument('--region', default='7020065090')
     parser.add_argument('--threads', type=int, default=1)
     args = parser.parse_args()
 
@@ -24,20 +24,19 @@ if __name__ == '__main__':
     # provide an output directory
     discharge_dir = Path(os.devnull)  # devnull will pass validation and results will be discarded
 
-    # ── 1. Configs: every option, frozen, in one object ──────────────────────
     conf = rr.Configs(
         network_file=network_file,
         # primary modeling choices
         forcing='grid',        # 'channel', or how the forcing is provided, see docs
         # compute options
         dt_routing='auto',     # 'auto', or a positive, integer number of seconds
-        conditioning=True,     # sub-reaches and subcycles for rivers invalid at their step; 'auto' requires it
-        restrict_x_range=True,
-        invalid_coefficients='warn',
+        use_subreaches=True,   # split rivers too long for their step into sub-reaches; 'auto' requires it
+        use_subcycles=True,    # route rivers too short for their step in subcycles; 'auto' requires it
+        invalid_coefficients='raise',
         # model state files
         channel_state_init_file=None,
         channel_state_final_file=None,
-        # where to place the results
+        # outputs save location
         discharge_dir=discharge_dir,
         # the forcing files and how to read them
         forcing_files=forcing_files,
@@ -53,4 +52,4 @@ if __name__ == '__main__':
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()
     with pool_context as pool:
-        rr.Router(conf).route(thread_pool=pool, threads=args.threads)
+        rr.Router(conf).route(thread_pool=pool, threads=args.threads, kernel='numba')

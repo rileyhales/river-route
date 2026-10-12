@@ -18,10 +18,7 @@ graph TD
     L --> M[prepare catchment runoff]
     M --> N[set coefficients]
     N --> O[route with catchment runoff]
-    O --> P{dt_discharge > dt_runoff?}
-    P -->|yes| Q[keep the discharge at the end of each discharge timestep]
-    P -->|no| R[write discharges]
-    Q --> R
+    O --> R[write discharges]
     R --> S{more forcing files?}
     S -->|yes| K
     S -->|no| T{ensemble mode?}
@@ -38,12 +35,12 @@ A `Router` builds its [`Network`](../api/network.md) from the network file when 
 the topology and the `k` and `x` vectors, from which the router builds the static Muskingum coefficients of each river.
 The network divides its rivers into the blocks threads route the first time it routes with each thread count.
 `Router.route()` first validates the required config keys and runoff source for the selected `forcing`, `dt_routing`,
-and `conditioning` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
+`use_subreaches`, and `use_subcycles` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
 `Router` reads and partitions the network only once, and each `route()` starts again from `channel_state_init_file`.
 When `forcing` is `'channel'`, time parameters are read directly from the config and the channel alone is routed once
 over `dt_total`. Otherwise the router loops over the forcing files (processed sequentially or as an ensemble),
-reading `dt_runoff` from each file's dates, routes each one, keeps the discharge at the end of each longer
-`dt_discharge` when one is set, and writes the result.
+reading `dt_runoff` from each file's dates, routes every step of each one, and writes the discharge at the end of
+each step.
 
 ## Finding Inputs and Config Files at Runtime
 

@@ -10,7 +10,7 @@ The kernel is primarily developed in Python with Numba but a duplicate C kernel 
 which may speed up performance. The compile CLI command expects LLVM on the machine to build and pass the checks.
 
 The C code is also used to publish a WebAssembly version of the kernel with the most minimal harness to NPM, also named `river-route`. To use the web
-version, use the primarily bot generated companion repo river-route-web
+version, use the primarily bot generated companion repo [river-route-web](https://github.com/rileyhales/river-route-web)
 
 ## Router Options
 
@@ -20,14 +20,18 @@ All routing runs through `Router`, with or without a forcing. The `forcing` sele
 |-----------|--------------------------------------------------------|
 | `forcing` | `channel` (default) `catchment`, `grid`, `ecmwf_grib`. |
 
-Compute options set the step each river computes in, and whether it is conditioned to keep its coefficients valid:
+Compute options set the step each river computes in, and whether it is split or subcycled to keep its coefficients valid:
 
-| Key            | Options                                                                                          |
-|----------------|--------------------------------------------------------------------------------------------------|
-| `dt_routing`   | `auto` (default), each river's own valid step, or a positive integer for every river             |
-| `conditioning` | `true` (default): sub-reaches and subcycles for rivers invalid at their step; `auto` requires it |
+| Key              | Options                                                                                    |
+|------------------|--------------------------------------------------------------------------------------------|
+| `dt_routing`     | `auto` (default), each river's own valid step, or a positive integer for every river       |
+| `use_subreaches` | `true` (default): split rivers too long for their step into sub-reaches; `auto` requires it |
+| `use_subcycles`  | `true` (default): route rivers too short for their step in subcycles; `auto` requires it   |
 
-Every forcing routes, and `dt_routing: auto` makes every coefficient of every river non-negative.
+Some rivers cannot 
+
+Every forcing routes, and `dt_routing: auto` with `use_subreaches` makes every coefficient of every river
+non-negative.
 
 ## Installation
 

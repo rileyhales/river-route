@@ -12,7 +12,8 @@ file format.
 - One class, `rr.Router`, routes every forcing in place of the `Muskingum`, `RapidMuskingum`, and
   `UnitMuskingum` classes, with static Muskingum coefficients built from `muskingumK` and `muskingumX`. What it routes
   is chosen by the `forcing` config (`channel`, `catchment`, `grid`, or `ecmwf_grib`), and how each river computes by
-  the compute options `dt_routing` (`'auto'` or a step in seconds) and `conditioning` (`True` or `False`).
+  the compute options `dt_routing` (`'auto'` or a step in seconds), `use_subreaches`, and `use_subcycles` (`True`
+  or `False`).
 - Rivers are routed one at a time from upstream to downstream, each river's whole time series before the next river,
   by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
   A river routed whole with static coefficients is routed in one loop over eight steps at a time, held in two SIMD
@@ -22,32 +23,31 @@ file format.
 - Every river hands its discharge downstream, and records it, at the end of each runoff step, and computes within it
   in a plan of its own, settled in two jobs. `dt_routing` sets each river's step: `'auto'`, the default, gives each
   river its own valid step, the runoff step over the fewest subcycles that keep its coefficients non-negative, and a
-  step in seconds, a divisor of the runoff step, is the step of every river. `conditioning`, on by default and
-  required by `'auto'`, then makes every coefficient non-negative at that step. Without it every river is routed whole
-  at its step, and a river with a negative coefficient at it is reported. The subcycles of each sub-reach are combined
+  step in seconds, a divisor of the runoff step, is the step of every river. `use_subreaches` and `use_subcycles`, on
+  by default, then make every coefficient non-negative at that step, and `'auto'` requires both. Without
+  them every river is routed whole at its step, and a river with a negative coefficient at it is reported. The subcycles of each sub-reach are combined
   into one step of coefficients that give the discharge of taking them one at a time, so they cost one step. `Network.largest_valid_dt` is gone, since no step is searched for.
-- `conditioning`, the default, routes each river with non-negative coefficients in its own step, the condition
-  for valid Muskingum routing, where it can: a river too long for its step is split into sub-reaches, the fewest
+- `use_subreaches` and `use_subcycles`, the defaults, route each river with non-negative coefficients in its own
+  step, the condition for valid Muskingum routing, where they can: with `use_subreaches` a river too long for its
+  step is split into sub-reaches, the fewest
   sub-reaches in series inside the kernel, laid out by `Network.sub_reach_k_and_x` to keep the river's mean travel
   time and travel time variance with x never negative (equal sub-reaches with `x = 1/2 - N*(1/2 - x)` where that is not
-  negative, otherwise linear reservoirs of unequal travel times, 0.724 and 0.276 of k at `x = 0.2`), and a river too
-  short for it is routed in subcycles, shorter steps of its own. It routes at any step, with every forcing, and its
-  state files hold one row per sub-reach.
-- `restrict_x_range=True`, the default, routes every river with an x from 0 to 0.45 rather than up to 0.5, which
-  bounds the sub-reaches and subcycles conditioning needs.
+  negative, otherwise linear reservoirs of unequal travel times, 0.724 and 0.276 of k at `x = 0.2`), and with
+  `use_subcycles` a river too short for it is routed in subcycles, shorter steps of its own. They route at any step,
+  with every forcing, and with `use_subreaches` state files hold one row per sub-reach.
 - `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
-  their own, laid out as conditioning routes them, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
+  their own, laid out as `use_subreaches` routes them, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
   down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
   Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose Runoff classes share each
   river's runoff among its sub-reaches with `Runoff.distribute`.
-- Rivers with a negative coefficient in their own step, outside `2*k*x <= step <= 2*k*(1-x)`, are reported. The
-  new `invalid_coefficients` config chooses `warn` (the default), `raise`, or `ignore`.
+- Rivers with a negative coefficient in their own step, outside `2*k*x <= step <= 2*k*(1-x)`, are reported as
+  errors. The new `invalid_coefficients` config chooses `raise` (the default), which refuses to route them, `log`,
+  which logs the error at the error level and routes on, or `ignore`.
 - Negative discharge is written as routed. It was clamped to zero in the written discharge, which hid the rivers that
   produced it and broke the volume of their written discharge.
 - The discharge written for each output interval is the discharge at its end, after routing it: that of the last
   subcycle of its last runoff step. It was the mean of the discharges computed at
-  its routing steps. A `dt_discharge` longer than `dt_runoff` writes the discharge at the end of each `dt_discharge`
-  rather than their mean.
+  its routing steps. Channel routing writes the discharge at the end of each `dt_discharge` rather than their mean.
 - A Network refuses a river with `muskingumK` not positive and finite, such as a river of zero length, which no step
   can route and which is resolved in the topology before routing; a river with `muskingumX` above 0.5, at which the
   scheme amplifies its inflow; and a river that drains into itself. `muskingumX` may be negative.
@@ -84,8 +84,9 @@ file format.
   params file as a network file in DFS order with both columns, and the grid weights, qlateral files, and channel
   state files in the same order.
 - `Network` analyzes the validity of Muskingum coefficients with `validity_window`, `invalid_mask`, `sub_reaches`,
-  `subcycles`, `conditioning`, and `check_validity`, and divides the rivers into the blocks
-  threads route with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a
+  `subcycles`, `conditioning`, and `check_validity`, refuses with `check_routable`, before any runoff is read, a
+  network the kernels cannot route, such as a river split into more than 256 sub-reaches, and divides the rivers
+  into the blocks threads route with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a
   `Network` refuses a table whose `upstreamCount` does not describe its DFS order.
 - `river_route.tools` is removed. `subset_network_to_river` is in `river_route.network.streams`, with
   `assign_blocks` and `analyze_partitioning`, which partition networks, and cuts a basin as the rows its outlet's
@@ -140,11 +141,11 @@ file format.
 - Outputs named from `discharge_dir` are `discharge_<input name>.zarr`, taking the extension of the store the
   default writer writes instead of the extension of the forcing file. Input files with duplicate names are rejected
   rather than overwriting each other's output. `discharge_dir=os.devnull` routes and discards the discharge.
-- `dt_total` shorter than a forcing file routes that portion, and one longer than the file raises instead of reading
-  past the end of the array. Runoff is checked against the network file for its rivers, in order, before it is
-  routed.
-- `dt_discharge` and `dt_total` must be whole numbers of seconds, or 0 to derive them, and `dt_routing` must be
-  `'auto'` or a positive whole number of seconds; any other value, and `dt_routing: auto` without `conditioning`, is
+- `dt_discharge` and `dt_total` configure channel routing only. Routing with forcing routes every step of each forcing
+  file and writes the discharge at the end of each, and refuses either option when it is set. Runoff is checked
+  against the network file for its rivers, in order, before it is routed.
+- `dt_discharge` and `dt_total` must be whole numbers of seconds, or 0 to leave them unset, and `dt_routing` must be
+  `'auto'` or a positive whole number of seconds; any other value, and `dt_routing: auto` without `use_subreaches` and `use_subcycles`, is
   refused when the `Configs` is built. Runoff whose time steps do not increase is refused.
 
 **Outputs**

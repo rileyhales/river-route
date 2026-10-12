@@ -76,11 +76,13 @@ discharge on millions of rivers and producing a 5 trillion data point simulation
 What you control is how much work you ask that kernel to do.
 
 1. **Leave `dt_routing` at `'auto'`.** Each river then takes the fewest steps of each runoff step that keep its
-   coefficients valid, and conditioning the sub-reaches. A `dt_routing` that is given is the step of every river, so
+   coefficients valid, and `use_subreaches` the fewest sub-reaches. Each sub-reach costs the work of a river, and a
+   river with an x near 0.5 needs many; see [How x sets the work of a river](algorithm.md#how-x-sets-the-work-of-a-river).
+   A `dt_routing` that is given is the step of every river, so
    halving it doubles the work of every river that takes its steps one by one. See
    [Time Variables](time-options.md).
-2. **Only produce the output you will use.** A coarser `dt_discharge` writes fewer of the discharges routed, and
-   a [custom writer](../tutorial/advanced.md#customizing-outputs) can save only the rivers you need. The premade
+2. **Only produce the output you will use.** A [custom writer](../tutorial/advanced.md#customizing-outputs) can save
+   only the rivers and time steps you need. The premade
    `zarr_writer` is built to write as fast as possible when you need everything.
 3. **Route what matters.** Rivers that do not contribute to the results you need do not have to be in the network.
 

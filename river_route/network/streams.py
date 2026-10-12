@@ -36,7 +36,8 @@ def assign_depth_first_search_order(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: a copy of the table in DFS order, its riverIndex numbering the rows from 0
 
     Raises:
-        ValueError: if a column is missing, a riverId repeats, a nextRiverId is not a riverId, or rivers drain in a cycle
+        ValueError: if a column is missing, a riverId repeats, a nextRiverId is not a riverId, or rivers drain in a
+            cycle
     """
     missing = [column for column in ('riverId', 'nextRiverId') if column not in df.columns]
     if missing:

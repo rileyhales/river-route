@@ -1,9 +1,7 @@
-"""A window that sets up Configs, queues them, routes each with rr route in a child process, and shows its output."""
+"""The window: the Config page's form and preview, and the Run Queue page's jobs and the log of each."""
 
-import ctypes
 import dataclasses
 import functools
-import glob
 import itertools
 import json
 import os
@@ -16,56 +14,16 @@ import time
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import filedialog, font, ttk
-from typing import Any, Literal, get_args, get_origin, get_type_hints
+from tkinter import filedialog, ttk
+from typing import Any, Literal
 
-from .configs import Configs, is_dev_null
+from ..configs import Configs, is_dev_null
+from .form import describe_fields, form_values, python_of, shown_path, threads_from, typed_path
+from .theme import CODE_COLORS, PALETTE, apply_theme
 
 __all__ = ['open_window']
 
-RUNOFF_FORCINGS = ('catchment', 'grid', 'ecmwf_grib')
-GRID_FORCINGS = ('grid', 'ecmwf_grib')
-FORCING_GROUP = 'forcing options'  # the group of the forcing's own options, whose Python comment names the forcing
-FORM_GROUPS = (  # each group's comment and fields, as the Configs of examples/example_usage.py has them
-    (None, ('network_file',)),
-    ('primary modeling choices', ('forcing',)),
-    (
-        'Compute Options',
-        ('dt_routing', 'conditioning', 'restrict_x_range', 'invalid_coefficients', 'dt_discharge', 'dt_total'),
-    ),
-    (
-        FORCING_GROUP,
-        (
-            'start_datetime',
-            'forcing_files',
-            'grid_weights_file',
-            'var_grid_runoff',
-            'var_x',
-            'var_y',
-            'var_t',
-            'grid_accumulation_type',
-            'runoff_processing_mode',
-            'force_positive_runoff',
-        ),
-    ),
-    ('model state files', ('channel_state_init_file', 'channel_state_final_file')),
-    ('where to place the results', ('discharge_dir', 'discharge_to_devnull')),
-    ('logging and validation options', ('progress_bar', 'log_level')),
-)
-FORCINGS_OF_FIELD = {  # the fields only some forcings read; the form shows every other field for every forcing
-    'start_datetime': ('channel',),
-    'forcing_files': RUNOFF_FORCINGS,
-    'grid_weights_file': GRID_FORCINGS,
-    'var_grid_runoff': ('grid',),
-    'var_x': ('grid',),
-    'var_y': ('grid',),
-    'var_t': ('grid',),
-    'grid_accumulation_type': GRID_FORCINGS,
-    'runoff_processing_mode': RUNOFF_FORCINGS,
-    'force_positive_runoff': GRID_FORCINGS,
-}
-# forcing_files is text in the form, read by forcing_paths, and blank time steps are calculated from the inputs
-FORM_DEFAULTS = {'forcing_files': '', 'discharge_to_devnull': False, 'dt_discharge': '', 'dt_total': ''}
+APPLICATION_NAME = 'River Route'
 PICKERS: dict[str, Callable[..., str]] = {  # the native dialog that picks each kind of path field
     'file': filedialog.askopenfilename,
     'save': filedialog.asksaveasfilename,
@@ -73,71 +31,12 @@ PICKERS: dict[str, Callable[..., str]] = {  # the native dialog that picks each 
     'pattern': filedialog.askdirectory,
 }
 CONFIG_FILE_TYPES = [('JSON', '*.json')]
-PALETTE = {  # river-route-app's dark theme, from its src/style/global.css, with its color-mix() blends worked out
-    'deepest': '#080d1d',  # the window
-    'surface': '#101730',  # fields, and the bar across the top
-    'elevated': '#151f3d',  # buttons, and the job chosen
-    'hover': '#1d2a52',  # a button under the pointer
-    'card': '#333b52',  # the form: surface with 18% white
-    'section': '#242e4b',  # a group's heading: elevated with 8% white
-    'border': '#2a3b6d',
-    'border_light': '#3a4f8c',  # scrollbars
-    'text': '#e4e9ff',
-    'text_secondary': '#b6c2ea',
-    'muted': '#8291bf',
-    'white': '#ffffff',  # the text of the colored buttons
-    'accent': '#7f8cff',
-    'accent_active': '#8390ff',  # the accent under the pointer, 3% brighter
-    'accent_border': '#444c8f',  # the accent with 35% black
-    'accent_disabled': '#464f92',  # the accent at 52% opacity
-    'success': '#4ac08e',
-    'error': '#f27487',
-    'error_active': '#fe7a8e',  # the error color under the pointer, 5% brighter
-    'warning': '#f2bb63',
-    'code': '#070b17',  # the preview and the log
-    'code_text': '#dbe5ff',
-    'code_border': '#334155',  # the preview's header: its border, the format chosen, and Copy
-    'code_format': '#64748b',  # a format not chosen
-    'code_format_chosen': '#e2e8f0',
-    'copy_text': '#cbd5e1',
-    'line_number': '#475569',
-    'log_text': '#cbd5e1',
-    'log_level': '#94a3b8',
-    'log_warning': '#fbbf24',
-    'log_error': '#fb7185',
-}
-FONT_FAMILIES = {  # river-route-app's open source fonts, each before the standard family Tk falls back on everywhere
-    'main': ('Manrope', 'Helvetica'),
-    'mono': ('JetBrains Mono', 'Courier'),
-}
-FONTS: dict[str, tuple[str, int, Literal['normal', 'bold']]] = {  # each font's family, size, and weight:
-    'TkDefaultFont': ('main', 14, 'normal'),  # river-route-app's sizes in pixels, as Tk's points
-    'TkTextFont': ('main', 14, 'normal'),
-    'TkMenuFont': ('main', 14, 'normal'),
-    'TkHeadingFont': ('main', 12, 'bold'),
-    'TkFixedFont': ('mono', 13, 'normal'),
-    'title': ('main', 18, 'bold'),
-    'section': ('main', 12, 'bold'),
-    'label': ('main', 13, 'bold'),
-    'button': ('main', 14, 'bold'),
-    'line_number': ('mono', 12, 'normal'),
-}
 LOG_COLORS = {  # the color of each log line that starts with the key
     'PROGRESS': 'log_level',
     'WARNING': 'log_warning',
     'ERROR': 'log_error',
     'CRITICAL': 'log_error',
     'Traceback': 'log_error',
-}
-CODE_COLORS = {  # the colors of the parts of the preview's Python or JSON
-    'comment': '#60709f',
-    'key': '#93c5fd',
-    'string': '#bca6ff',
-    'keyword': '#8ec3ff',
-    'number': '#6fd8ff',
-    'method': '#93c5fd',
-    'type': '#fde68a',
-    'punctuation': '#94a3b8',
 }
 CODE_TOKENS = re.compile(  # the parts of the preview's Python or JSON that CODE_COLORS colors
     r'(?P<comment>#.*)|(?P<key>"[^"\n]*"(?=\s*:))|(?P<string>\'[^\'\n]*\'|"[^"\n]*")'
@@ -156,182 +55,9 @@ STATUS_COLORS = {'pending': 'muted', 'running': 'warning', 'complete': 'success'
 FINISHED = ('complete', 'failed', 'stopped')
 LOGO = Path(__file__).with_name('logo.svg')
 NETWORK_FILE_NAME = 'network.parquet'  # the network file the window selects when the home directory holds one
-APPLICATION_NAME = 'River Route'  # the name macOS shows for the app, as in the Dock when the pointer is over it
-CORE_SERVICES = '/System/Library/Frameworks/CoreServices.framework/CoreServices'
-CORE_FOUNDATION = '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
-FOUNDATION = '/System/Library/Frameworks/Foundation.framework/Foundation'
-OBJECTIVE_C_RUNTIME = '/usr/lib/libobjc.A.dylib'
-CF_STRING_ENCODING_UTF8 = 0x08000100
-LS_DEFAULT_SESSION = -2  # LaunchServices' kLSDefaultSessionID, the session of this process
 LINE_ENDINGS = re.compile(rb'(\r|\n)')
 POLL_MILLISECONDS = 100  # how often the window shows what the run has printed
 WHEEL_PIXELS = 40  # how far the form scrolls for each notch of a mouse wheel, as far as ttk's scrollable widgets do
-
-
-def describe_fields() -> list[dict[str, Any]]:
-    """
-    Each field of the form in order: its name, the comment of its group (None for the first), the forcings it is shown
-    for (every one when None), its kind, its choices, its default, and what the file dialog picks for it. The
-    groups follow the Configs of examples/example_usage.py, and a field the example leaves out follows the fields of the
-    group it belongs with. Choices and defaults are read from the Configs annotations, so they never go stale.
-    """
-    hints = get_type_hints(Configs)
-    defaults = {f.name: f.default for f in dataclasses.fields(Configs) if f.init} | FORM_DEFAULTS
-    described = []
-    for group, names in FORM_GROUPS:
-        for name in names:
-            hint, default = hints.get(name), defaults[name]
-            literal = get_origin(hint) is Literal
-            described.append(
-                {
-                    'name': name,
-                    'group': group,
-                    'forcings': FORCINGS_OF_FIELD.get(name),
-                    'kind': 'choice' if literal else 'bool' if isinstance(default, bool) else 'text',
-                    'choices': list(get_args(hint)) if literal else None,
-                    'default': '' if default is None else default,
-                    'pick': pick_of(name),
-                }
-            )
-    return described
-
-
-def pick_of(name: str) -> str | None:
-    """
-    What the file dialog picks for a field, read from the path fields of Configs: an output directory is a folder, an
-    output file is a name in a folder, a list of files is a folder of them, as a glob pattern, and any other path is an
-    existing file. None for a field that is not a path.
-    """
-    if name in Configs._OUTPUT_DIRS:
-        return 'folder'
-    if name in Configs._OUTPUT_FILES:
-        return 'save'
-    if name in Configs._LIST_PATH_FIELDS:
-        return 'pattern'
-    return 'file' if name in Configs._SINGLE_PATH_FIELDS else None
-
-
-def shown_path(path: str, home: str, many: bool) -> str:
-    """
-    A path as its field shows it: relative to ``home`` when it is inside it, and as it is otherwise, or when it is
-    blank. With ``many``, ``path`` is paths separated by os.pathsep, as forcing_files holds them, each shown so.
-    """
-    items = path.split(os.pathsep) if many else [path]
-    shown = (
-        os.path.relpath(item, home) if os.path.isabs(item) and Path(item).is_relative_to(home) else item
-        for item in items
-    )
-    return os.pathsep.join(shown)
-
-
-def typed_path(text: str, home: str, many: bool) -> str:
-    """
-    The absolute path of a field's text: relative to ``home``, absolute, or starting with ~, and blank for blank text.
-    With ``many``, ``text`` is paths separated by os.pathsep, each read so.
-    """
-    items = text.split(os.pathsep) if many else [text]
-    typed = (
-        os.path.normpath(os.path.join(home, os.path.expanduser(item.strip()))) if item.strip() else '' for item in items
-    )
-    return os.pathsep.join(typed)
-
-
-def forcing_paths(text: str) -> list[str]:
-    """
-    The forcing files of the form's forcing_files: paths or glob patterns separated by os.pathsep, each pattern standing
-    for the files it matches in sorted order.
-
-    Raises:
-        ValueError: if a pattern matches no file
-    """
-    paths: list[str] = []
-    for item in text.split(os.pathsep):
-        pattern = os.path.expanduser(item.strip())
-        matches = sorted(glob.glob(pattern)) if any(character in pattern for character in '*?[') else [pattern]
-        if not matches:
-            raise ValueError(f'forcing_files pattern {pattern} matches no file')
-        paths.extend(path for path in matches if path)
-    return paths
-
-
-def form_values(form: dict[str, Any]) -> dict[str, Any]:
-    """
-    The Configs options of the form's values. An empty field keeps its default, a leading ~ in a path is the home
-    directory, forcing_files is read by forcing_paths, and discharge_to_devnull discards the discharge.
-
-    Raises:
-        ValueError: if a whole number of seconds is not one, or a forcing_files pattern matches no file
-    """
-    hints = get_type_hints(Configs)
-    values = {
-        name: os.path.expanduser(value) if name in Configs._SINGLE_PATH_FIELDS else value
-        for name, value in form.items()
-        if value != ''
-    }
-    if 'forcing_files' in values:
-        values['forcing_files'] = forcing_paths(values['forcing_files'])
-    if values.pop('discharge_to_devnull', False):
-        values['discharge_dir'] = os.devnull
-    for name, value in values.items():
-        if hints.get(name) is int or (name == 'dt_routing' and value != 'auto'):
-            values[name] = int(value)
-    return values
-
-
-def threads_from(text: str) -> int:
-    """
-    The threads ``text`` names, a whole number, 1 or more.
-
-    Raises:
-        ValueError: if it names anything else
-    """
-    if not (text.strip().isdigit() and int(text) >= 1):
-        raise ValueError(f'threads must be a whole number, 1 or more, not {text!r}')
-    return int(text)
-
-
-def python_of(options: dict[str, Any], threads: int) -> str:
-    """
-    The Python that routes ``options`` on ``threads`` threads as examples/example_usage.py does: under an
-    ``if __name__ == '__main__':`` block, a Configs of the options of each group of FORM_GROUPS under its comment, the
-    comment of FORCING_GROUP followed by the forcing chosen, then any others, routed by a Router on a ThreadPoolExecutor
-    when threads is more than 1, else on no pool.
-    """
-    grouped = [(comment, [name for name in names if name in options]) for comment, names in FORM_GROUPS]
-    named = {name for _, names in grouped for name in names}
-    grouped.append((None, [name for name in options if name not in named]))
-    arguments = []
-    for comment, names in grouped:
-        if names and comment == FORCING_GROUP:
-            arguments.append(f'        # {comment} - {options["forcing"]}')
-        elif names and comment is not None:
-            arguments.append(f'        # {comment}')
-        arguments.extend(line for name in names for line in argument_lines(name, options[name]))
-    lines = [
-        'import contextlib',
-        'from concurrent.futures import ThreadPoolExecutor',
-        '',
-        'import river_route as rr',
-        '',
-        "if __name__ == '__main__':",
-        f'    threads = {threads}',
-        '',
-        '    conf = rr.Configs(',
-        *arguments,
-        '    )',
-        '',
-        '    pool_context = ThreadPoolExecutor(threads) if threads > 1 else contextlib.nullcontext()',
-        '    with pool_context as pool:',
-        '        rr.Router(conf).route(thread_pool=pool, threads=threads)',
-    ]
-    return '\n'.join(lines) + '\n'
-
-
-def argument_lines(name: str, value: Any) -> list[str]:
-    """The lines of a keyword argument of Configs: one, or one for each item of a list of more than one."""
-    if isinstance(value, list) and len(value) > 1:
-        return [f'        {name}=[', *(f'            {item!r},' for item in value), '        ],']
-    return [f'        {name}={value!r},']
 
 
 def read_output(process: subprocess.Popen[bytes], output: queue.Queue[tuple[str, str]]) -> None:
@@ -351,168 +77,6 @@ def read_output(process: subprocess.Popen[bytes], output: queue.Queue[tuple[str,
     if unfinished:
         output.put(('replace' if replaces else 'line', unfinished.decode(errors='replace')))
     output.put(('end', str(process.wait())))
-
-
-def apply_theme(root: tk.Tk) -> dict[str, font.Font]:
-    """
-    Style every widget as river-route-app styles its page, on ttk's clam theme, whose colors can be set on every
-    platform: in PALETTE's colors, and in the fonts of FONTS, each in the first family of FONT_FAMILIES this machine
-    has, or else in the standard family Tk falls back on. Returns the fonts made, which the window keeps, since a font
-    is deleted once nothing refers to it.
-    """
-    installed = set(font.families(root))
-    families = {
-        kind: next((name for name in names if name in installed), names[-1]) for kind, names in FONT_FAMILIES.items()
-    }
-    fonts: dict[str, font.Font] = {}
-    for name, (kind, size, weight) in FONTS.items():
-        if name.startswith('Tk'):
-            font.nametofont(name).configure(family=families[kind], size=size, weight=weight)
-        else:
-            fonts[name] = font.Font(root, family=families[kind], size=size, weight=weight)
-    p = PALETTE
-    style = ttk.Style(root)
-    style.theme_use('clam')
-    style.configure(
-        '.',
-        background=p['deepest'],
-        foreground=p['text'],
-        bordercolor=p['border'],
-        troughcolor=p['deepest'],
-        fieldbackground=p['surface'],
-        lightcolor=p['surface'],
-        darkcolor=p['surface'],
-        insertcolor=p['text'],
-        selectbackground=p['accent'],
-        selectforeground=p['white'],
-        arrowcolor=p['muted'],
-        focuscolor=p['accent'],
-    )
-    style.configure('TLabel', foreground=p['text_secondary'])
-    style.configure('TSeparator', background=p['border'])
-    style_fields(style, root)
-    style_buttons(style, fonts)
-    style_panes(style, fonts)
-    root.configure(background=p['deepest'])
-    return fonts
-
-
-def style_fields(style: ttk.Style, root: tk.Tk) -> None:
-    """Color the fields, text, menus, and checkboxes, with the accent around the one typed in, and the scrollbars."""
-    p = PALETTE
-    focused = [('focus', p['accent'])]
-    style.configure('TEntry', padding=(10, 7), foreground=p['text'])
-    style.map(
-        'TEntry',
-        fieldbackground=[('disabled', p['deepest'])],
-        foreground=[('disabled', p['muted'])],
-        bordercolor=focused,
-        lightcolor=focused,
-    )
-    style.configure('TCombobox', padding=(10, 7), foreground=p['text'], background=p['surface'], arrowsize=14)
-    style.map(
-        'TCombobox',
-        fieldbackground=[('readonly', p['surface'])],
-        foreground=[('readonly', p['text'])],
-        selectbackground=[('readonly', p['surface'])],
-        selectforeground=[('readonly', p['text'])],
-        background=[('active', p['surface'])],
-        arrowcolor=[('active', p['accent'])],
-        bordercolor=focused,
-        lightcolor=focused,
-    )
-    for option, color in (('background', 'surface'), ('foreground', 'text'), ('selectBackground', 'accent')):
-        root.option_add(f'*TCombobox*Listbox.{option}', p[color])  # the menu a combobox drops down
-    root.option_add('*TCombobox*Listbox.selectForeground', p['white'])
-    root.option_add('*TCombobox*Listbox.font', 'TkTextFont')
-    style.configure('TSpinbox', padding=(10, 7), foreground=p['text'], background=p['surface'], arrowsize=12)
-    style.map('TSpinbox', arrowcolor=[('active', p['accent'])], bordercolor=focused, lightcolor=focused)
-    for name, background in (('TCheckbutton', 'deepest'), ('Card.TCheckbutton', 'card')):
-        style.configure(
-            name,
-            focusthickness=0,
-            background=p[background],
-            indicatorbackground=p['surface'],
-            indicatorforeground=p['white'],
-            upperbordercolor=p['border'],
-            lowerbordercolor=p['border'],
-        )
-        style.map(name, background=[('active', p[background])], indicatorbackground=[('selected', p['accent'])])
-    for orient, sticky in (('Vertical', 'ns'), ('Horizontal', 'ew')):  # thin and without arrows, as a browser draws
-        name, thumb = f'{orient}.TScrollbar', f'{orient}.Scrollbar.thumb'
-        style.layout(
-            name, [(f'{orient}.Scrollbar.trough', {'sticky': sticky, 'children': [(thumb, {'sticky': 'nswe'})]})]
-        )
-        style.configure(name, arrowsize=8, gripcount=0, background=p['border_light'], bordercolor=p['deepest'])
-        style.configure(name, troughcolor=p['deepest'], lightcolor=p['border_light'], darkcolor=p['border_light'])
-        style.map(name, background=[('active', p['muted'])])
-
-
-def style_buttons(style: ttk.Style, fonts: dict[str, font.Font]) -> None:
-    """
-    Color the buttons: a plain one raised off the window, Accent.TButton for a page's action, Danger.TButton for Stop,
-    and the buttons that choose a page or the preview's format, the one chosen marked, and Copy.
-    """
-    p = PALETTE
-    for name, background, foreground, border, active, disabled in (
-        ('TButton', 'elevated', 'text', 'border', 'hover', 'elevated'),
-        ('Accent.TButton', 'accent', 'white', 'accent_border', 'accent_active', 'accent_disabled'),
-        ('Danger.TButton', 'error', 'white', 'error', 'error_active', 'elevated'),
-    ):
-        style.configure(name, padding=(14, 7), focusthickness=0, font=fonts['button'], bordercolor=p[border])
-        style.configure(name, background=p[background], foreground=p[foreground], lightcolor=p[background])
-        style.configure(name, darkcolor=p[background])
-        states = [('disabled', p[disabled]), ('active', p[active])]
-        style.map(name, background=states, lightcolor=states, darkcolor=states)
-        style.map(name, foreground=[('disabled', p['muted'])], bordercolor=[('disabled', p['border'])])
-    for name, background, foreground, typeface in (
-        ('Page.TButton', 'surface', 'text_secondary', fonts['label']),
-        ('CurrentPage.TButton', 'accent', 'white', fonts['label']),
-        ('Format.TButton', 'code', 'code_format', fonts['button']),
-        ('CurrentFormat.TButton', 'code_border', 'code_format_chosen', fonts['button']),
-        ('Copy.TButton', 'code_border', 'copy_text', 'TkDefaultFont'),
-    ):
-        color = p[background]  # its background and its borders, which keep their color under the pointer
-        style.configure(name, padding=(14, 6), focusthickness=0, font=typeface, foreground=p[foreground])
-        style.configure(name, background=color, bordercolor=color, lightcolor=color, darkcolor=color)
-        unchanged = [('active', color)]
-        style.map(name, background=unchanged, bordercolor=unchanged, lightcolor=unchanged, darkcolor=unchanged)
-        style.map(name, foreground=[('active', p['text'])])
-
-
-def style_panes(style: ttk.Style, fonts: dict[str, font.Font]) -> None:
-    """Color the bar across the top, the form's card, the preview's header, and the queue."""
-    p = PALETTE
-    style.configure('Bar.TFrame', background=p['surface'])
-    style.configure('Bar.TLabel', background=p['surface'], foreground=p['text_secondary'])
-    style.configure('Title.TLabel', background=p['surface'], foreground=p['text'], font=fonts['title'])
-    style.configure('Card.TFrame', background=p['card'])
-    style.configure('Card.TLabel', background=p['card'], foreground=p['text'], font=fonts['label'])
-    style.configure('Field.TLabel', foreground=p['text'], font=fonts['label'])  # a field's name off the card
-    style.configure('Code.TFrame', background=p['code'])
-    style.configure('Code.TSeparator', background=p['code_border'])
-    style.configure(
-        'Treeview',
-        rowheight=40,
-        background=p['deepest'],
-        fieldbackground=p['deepest'],
-        foreground=p['text'],
-        bordercolor=p['deepest'],
-        lightcolor=p['deepest'],
-        darkcolor=p['deepest'],
-    )
-    style.map('Treeview', background=[('selected', p['elevated'])])
-    style.configure(
-        'Treeview.Heading',
-        padding=(12, 8),
-        font=fonts['section'],
-        background=p['deepest'],
-        foreground=p['muted'],
-        bordercolor=p['border'],
-        lightcolor=p['deepest'],
-        darkcolor=p['deepest'],
-    )
-    style.map('Treeview.Heading', background=[('active', p['deepest'])])
 
 
 @dataclasses.dataclass
@@ -594,13 +158,6 @@ class RouteWindow:
             root.bind_all('<TouchpadScroll>', self._scroll_by_touchpad)
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(POLL_MILLISECONDS, self.show_output)
-        root.after_idle(self._name_application)  # once Tk has registered the window with the operating system
-
-    def _name_application(self) -> None:
-        if not name_application():
-            print(
-                f'WARNING - macOS did not take the name {APPLICATION_NAME}, so it shows python instead', file=sys.stderr
-            )
 
     def _select_network_file_in(self, home: str) -> None:
         """
@@ -971,7 +528,7 @@ class RouteWindow:
         options |= {'discharge_to_devnull': discarding, 'forcing_files': os.pathsep.join(options['forcing_files'])}
         options['discharge_dir'] = None if discarding else options['discharge_dir']
         for name, variable in self.variables.items():
-            value = None if name in Configs._TIME_STEPS and options[name] == 0 else options[name]  # 0 is calculated
+            value = None if name in Configs._TIME_STEPS and options[name] == 0 else options[name]  # 0 is unset
             if isinstance(variable, tk.BooleanVar):
                 variable.set(bool(value))
             else:
@@ -1243,71 +800,6 @@ class RouteWindow:
         self.root.destroy()
 
 
-def name_bundle() -> bool:
-    """
-    Set CFBundleName, in this process's bundle information, to APPLICATION_NAME, which names the application menu of the
-    macOS menu bar and its About, Hide, and Quit items, which Tk builds from it as it starts, so it is set before Tk
-    starts. A process outside an app bundle holds that information in a mutable dictionary, set through the Objective-C
-    runtime by ctypes; a python inside one, whose dictionary is fixed, keeps its own name. Returns whether it was set,
-    and True anywhere but macOS, where there is no such name to set.
-    """
-    if sys.platform != 'darwin':
-        return True
-    try:
-        ctypes.cdll.LoadLibrary(FOUNDATION)  # defines NSBundle and NSString
-        runtime = ctypes.cdll.LoadLibrary(OBJECTIVE_C_RUNTIME)
-        runtime.objc_getClass.restype, runtime.objc_getClass.argtypes = ctypes.c_void_p, [ctypes.c_char_p]
-        runtime.sel_registerName.restype, runtime.sel_registerName.argtypes = ctypes.c_void_p, [ctypes.c_char_p]
-        message = ctypes.c_void_p, ctypes.c_void_p  # each message's receiver and selector, then its arguments
-        send = ctypes.CFUNCTYPE(ctypes.c_void_p, *message)(('objc_msgSend', runtime))
-        send_text = ctypes.CFUNCTYPE(ctypes.c_void_p, *message, ctypes.c_char_p)(('objc_msgSend', runtime))
-        ask = ctypes.CFUNCTYPE(ctypes.c_bool, *message, ctypes.c_void_p)(('objc_msgSend', runtime))
-        send_pair = ctypes.CFUNCTYPE(None, *message, ctypes.c_void_p, ctypes.c_void_p)(('objc_msgSend', runtime))
-        selector = runtime.sel_registerName
-
-        def string(text: str) -> int:  # a retained NSString, so that no autorelease pool is needed
-            allocated = send(runtime.objc_getClass(b'NSString'), selector(b'alloc'))
-            return send_text(allocated, selector(b'initWithUTF8String:'), text.encode())
-
-        information = send(
-            send(runtime.objc_getClass(b'NSBundle'), selector(b'mainBundle')), selector(b'infoDictionary')
-        )
-        set_object = selector(b'setObject:forKey:')
-        if not ask(information, selector(b'respondsToSelector:'), set_object):  # fixed, inside an app bundle
-            return False
-        send_pair(information, set_object, string(APPLICATION_NAME), string('CFBundleName'))
-        return True
-    except OSError, AttributeError:  # a macOS without the runtime calls
-        return False
-
-
-def name_application() -> bool:
-    """
-    Register this process with macOS as APPLICATION_NAME, the name the Dock shows when the pointer is over it, rather
-    than python, the name of the executable that macOS gives a process outside an app bundle. Only LaunchServices'
-    private _LSSetApplicationInformationItem renames a process, the call Chromium names its processes with, so it is
-    made through ctypes, once Tk has registered the window. Returns whether macOS took the name, and True anywhere else,
-    where there is no such name to set.
-    """
-    if sys.platform != 'darwin':
-        return True
-    try:
-        services = ctypes.cdll.LoadLibrary(CORE_SERVICES)
-        create_string = ctypes.cdll.LoadLibrary(CORE_FOUNDATION).CFStringCreateWithCString
-        create_string.restype = ctypes.c_void_p
-        create_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
-        current_application = services._LSGetCurrentApplicationASN
-        current_application.restype = ctypes.c_void_p
-        set_information = services._LSSetApplicationInformationItem
-        set_information.restype = ctypes.c_int32
-        set_information.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-        name = create_string(None, APPLICATION_NAME.encode(), CF_STRING_ENCODING_UTF8)
-        display_name_key = ctypes.c_void_p.in_dll(services, '_kLSDisplayNameKey')
-        return set_information(LS_DEFAULT_SESSION, current_application(), display_name_key, name, None) == 0
-    except OSError, AttributeError, ValueError:  # a macOS without the private call, which the window reports
-        return False
-
-
 def open_window(home: str | None = None, threads: int = 1) -> None:
     """
     Open the window, its file dialogs opening in ``home``, or in the working directory when it is None, its runs
@@ -1321,7 +813,6 @@ def open_window(home: str | None = None, threads: int = 1) -> None:
     if not os.path.isdir(home):
         raise NotADirectoryError(f'home directory not found: {home}')
     threads_from(str(threads))
-    name_bundle()  # before Tk starts, which names the menu bar's application menu from it
     root = tk.Tk()
     RouteWindow(root, home, threads)
     root.mainloop()

@@ -71,7 +71,8 @@ def test_steady_state_is_a_fixed_point(
         [(dates, constant)],
         network_file=willamette.network_file,
         dt_routing=dt_routing,
-        conditioning=conditioning,
+        use_subreaches=conditioning,
+        use_subcycles=conditioning,
         channel_state_init_file=tmp_path / 'steady.parquet',
     )
     assert_same(routed.discharge[0], np.repeat(steady[:, np.newaxis], constant.shape[1], axis=1))
@@ -82,7 +83,12 @@ def test_doubling_the_runoff_doubles_the_discharge(
     dt_routing: int | str, conditioning: bool, willamette: Basin, tmp_path: Path
 ) -> None:
     dates, volumes = willamette.months[0]
-    options = {'network_file': willamette.network_file, 'dt_routing': dt_routing, 'conditioning': conditioning}
+    options = {
+        'network_file': willamette.network_file,
+        'dt_routing': dt_routing,
+        'use_subreaches': conditioning,
+        'use_subcycles': conditioning,
+    }
     once = route(tmp_path, [(dates, volumes)], **options)
     twice = route(tmp_path, [(dates, 2 * volumes)], **options)
     assert_same(twice.discharge[0], 2 * once.discharge[0])
@@ -158,7 +164,12 @@ def test_water_is_conserved(dt_routing: int | str, conditioning: bool, willamett
     outlet."""
     wet = [(dates, np.maximum(volumes, 0)) for dates, volumes in willamette.months[:2]]
     dry = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months[2:]]
-    options = {'network_file': willamette.network_file, 'dt_routing': dt_routing, 'conditioning': conditioning}
+    options = {
+        'network_file': willamette.network_file,
+        'dt_routing': dt_routing,
+        'use_subreaches': conditioning,
+        'use_subcycles': conditioning,
+    }
     routed = route(tmp_path, wet + dry, **options)
     volume_in = sum(volumes.sum(dtype=np.float64) for _, volumes in wet)
     volume_out = sum(discharge[outlet_of(willamette)].sum(dtype=np.float64) for discharge in routed.discharge) * DT
@@ -231,7 +242,12 @@ def test_a_long_river_delays_and_spreads_a_pulse_by_its_own_moments(
     dates = np.datetime64('2000-01-01T00:00:00', 's') + np.arange(1000) * np.timedelta64(DT, 's')
     volumes = np.zeros((2, dates.size), dtype=np.float32)
     volumes[0, 0] = 1e6
-    options = {'network_file': tmp_path / 'chain.parquet', 'dt_routing': dt_routing, 'conditioning': conditioning}
+    options = {
+        'network_file': tmp_path / 'chain.parquet',
+        'dt_routing': dt_routing,
+        'use_subreaches': conditioning,
+        'use_subcycles': conditioning,
+    }
     routed = route(tmp_path, [(dates, volumes)], **options)
     assert routed.router.channel_state.shape[0] == routed_reaches
 
@@ -284,41 +300,12 @@ def test_split_networks_route_like_dt_routing_auto(willamette: Basin, tmp_path: 
         assert_same(split_discharge[comparable], kernel_discharge[comparable])
 
 
-@pytest.mark.parametrize('restrict_x_range', [True, False])
-def test_restrict_x_range_routes_no_x_above_its_limit(
-    restrict_x_range: bool, willamette: Basin, tmp_path: Path
-) -> None:
-    """With restrict_x_range, rivers of x = 0.49 are routed with x = 0.45, and without it with their own x."""
+def test_rivers_are_routed_with_the_x_given(willamette: Basin, tmp_path: Path) -> None:
+    """Rivers of x = 0.49, near the 0.5 limit, are routed with exactly that x."""
     table = pd.read_parquet(willamette.network_file).assign(muskingumX=np.float32(0.49))
     table.to_parquet(tmp_path / 'x_of_049.parquet')
-    routed_x = 0.45 if restrict_x_range else 0.49
-    table.assign(muskingumX=np.float32(routed_x)).to_parquet(tmp_path / 'routed_x.parquet')
-    whole = {'dt_routing': DT, 'conditioning': False}
-    expected = route(
-        tmp_path, willamette.months[:1], network_file=tmp_path / 'routed_x.parquet', restrict_x_range=False, **whole
-    )
-    routed = route(
-        tmp_path,
-        willamette.months[:1],
-        network_file=tmp_path / 'x_of_049.parquet',
-        restrict_x_range=restrict_x_range,
-        **whole,
-    )
-    assert_same(routed.discharge[0], expected.discharge[0])
-    np.testing.assert_array_equal(routed.router.network.x.max(), np.float32(routed_x))
-
-
-def test_daily_output_is_the_discharge_at_the_end_of_each_day(willamette: Basin, tmp_path: Path) -> None:
-    hourly = route(tmp_path, willamette.months[:1], network_file=willamette.network_file)
-    daily = route(tmp_path, willamette.months[:1], network_file=willamette.network_file, dt_discharge=86400)
-    assert_same(daily.discharge[0], hourly.discharge[0][:, 23::24])
-    np.testing.assert_array_equal(daily.dates[0], hourly.dates[0][::24])
-
-
-def test_dt_total_routes_the_first_steps(willamette: Basin, tmp_path: Path) -> None:
-    full = route(tmp_path, willamette.months[:1], network_file=willamette.network_file)
-    first_days = route(tmp_path, willamette.months[:1], network_file=willamette.network_file, dt_total=10 * 86400)
-    assert_same(first_days.discharge[0], full.discharge[0][:, : 10 * 24])
+    routed = route(tmp_path, willamette.months[:1], network_file=tmp_path / 'x_of_049.parquet')
+    np.testing.assert_array_equal(routed.router.network.x, np.float32(0.49))
 
 
 def test_ensemble_members_start_from_the_same_state(willamette: Basin, tmp_path: Path) -> None:

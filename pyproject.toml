@@ -70,7 +70,7 @@ rr = "river_route._cli:main"
 line-length = 120
 
 [tool.ruff.format]
-exclude = ["benchmarks/*"]
+exclude = ["benchmarks/*", "examples/example_usage.py"]
 skip-magic-trailing-comma = true
 quote-style = "single"
 

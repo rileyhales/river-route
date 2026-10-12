@@ -13,7 +13,7 @@ The forms of runoff routing reads:
     GridCellRunoff          runoff depths at grid cells and the sparse weights of each river, read as each river is
                             routed so no series of its runoff volumes is built.
 
-A new form of runoff needs a NamedTuple with ``check``, ``first_steps``, and ``cells_and_weights``.
+A new form of runoff needs a NamedTuple with ``check`` and ``cells_and_weights``.
 
 Both routing kernels of river_route/kernels read every form the same way, from ``cells_and_weights``: runoff at cells
 and each river's weights of them. Runoff aggregated to catchments is a cell per river weighted by one.
@@ -89,10 +89,6 @@ class CatchmentRunoffVolumes(NamedTuple):
             )
         _check_river_order(self.river_ids, river_ids)
 
-    def first_steps(self, n_steps: int) -> CatchmentRunoffVolumes:
-        """The runoff of the first n_steps steps, a view whose rows stay contiguous."""
-        return CatchmentRunoffVolumes(self.runoff[:, :n_steps], self.river_ids)
-
     def cells_and_weights(self) -> tuple[FloatArray, Int32Array, Int32Array, FloatArray]:
         """The runoff as the routing kernels read it: a cell per river, its own volumes, each weighted by one."""
         n_rivers = self.runoff.shape[0]
@@ -128,10 +124,6 @@ class GridCellRunoff(NamedTuple):
             raise ValueError(f'the weight table references cells beyond the {self.runoff_by_cell.shape[0]} read')
         _check_river_order(self.river_ids, river_ids)
 
-    def first_steps(self, n_steps: int) -> GridCellRunoff:
-        """Itself, since routing reads only the steps it routes."""
-        return self
-
     def cells_and_weights(self) -> tuple[FloatArray, Int32Array, Int32Array, FloatArray]:
         """The runoff as the routing kernels read it: the depths of the cells, and each river's weights of them."""
         return (
@@ -160,7 +152,7 @@ class Runoff(ABC):
         """
         Yield one (dates, runoff, source_file) tuple per input, where runoff is what routing reads: its
         CatchmentRunoffVolumes, or a GridCellRunoff whose grid cells routing reads as it routes. Each checks its arrays
-        with ``check`` and gives the runoff of its first steps with ``first_steps``.
+        with ``check``.
         """
 
     def distribute(self, network: Network) -> None:

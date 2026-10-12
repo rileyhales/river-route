@@ -33,7 +33,7 @@ def check_channel_state_rivers(
 ) -> None:
     """
     Raise ValueError unless the riverId column of a channel state file lists the rivers of the network in network
-    order: one row per river, or with ``per_sub_reach``, as the final state of a run with conditioning is written, a
+    order: one row per river, or with ``per_sub_reach``, as the final state of a run with use_subreaches is written, a
     run of rows per river, one per sub-reach. The number of sub-reaches depends on the routing step and is checked
     when routing.
     """
@@ -95,9 +95,9 @@ class Configs:
     # Compute options
     # 'auto' gives each river its own step, the fewest subcycles of the runoff step that keep its coefficients valid
     dt_routing: int | Literal['auto'] = 'auto'  # or every river's step in seconds, a divisor of the runoff step
-    conditioning: bool = True  # sub-reaches and subcycles for rivers still invalid at their step; auto requires it
-    restrict_x_range: bool = True  # route x from 0 to 0.45 rather than 0.5, which bounds conditioning's steps
-    invalid_coefficients: Literal['warn', 'raise', 'ignore'] = 'warn'  # action when a coefficient is negative at dt
+    use_subreaches: bool = True  # split rivers too long for their step into sub-reaches; auto requires it
+    use_subcycles: bool = True  # route rivers too short for their step in subcycles of it; auto requires it
+    invalid_coefficients: Literal['log', 'raise', 'ignore'] = 'raise'  # action when a coefficient is negative at dt
 
     # Network and routing descriptor
     network_file: PathInput | None = None
@@ -125,8 +125,9 @@ class Configs:
     var_t: str = 'time'
 
     # Time options
-    dt_discharge: int = 0  # Interval in seconds between discharge outputs, >= the time step of the forcing files
-    dt_total: int = 0  # Length in seconds of the simulation, >= dt_discharge
+    # channel routing only: forced routing routes and writes every time step of each forcing file
+    dt_discharge: int = 0  # Interval in seconds between discharge outputs, dt_routing when 0
+    dt_total: int = 0  # Length in seconds of the simulation, an integer multiple of dt_discharge
     start_datetime: str = '1970-01-01'
 
     # Misc behavior that users may want to override
@@ -147,7 +148,7 @@ class Configs:
     _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
     # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
     _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
-    # the time steps given in whole seconds, where 0 derives the step from the other options and the forcing files
+    # the time steps of channel routing given in whole seconds, where 0 leaves the step unset
     _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_discharge', 'dt_total')
 
     # Populated at module level below
@@ -163,12 +164,15 @@ class Configs:
         for name in self._TIME_STEPS:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < 0:
-                raise ValueError(f'{name} must be a whole number of seconds, or 0 to derive it, got {value!r}')
+                raise ValueError(f'{name} must be a whole number of seconds, or 0 to leave it unset, got {value!r}')
         step: object = self.dt_routing  # a dataclass does not enforce its annotations
         if step != 'auto' and (isinstance(step, bool) or not isinstance(step, numbers.Integral) or step <= 0):
             raise ValueError(f"dt_routing must be 'auto' or a positive whole number of seconds, got {step!r}")
-        if step == 'auto' and not self.conditioning:
-            raise ValueError("dt_routing 'auto' requires conditioning; give dt_routing in seconds to route without it")
+        if step == 'auto' and not (self.use_subreaches and self.use_subcycles):
+            raise ValueError(
+                "dt_routing 'auto' requires use_subreaches and use_subcycles; give dt_routing in seconds to turn "
+                'either off'
+            )
         # turn off progress bar if logging was turned off but progress was left at default on
         object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
         self._coerce_path_list_fields()
@@ -341,6 +345,9 @@ class Configs:
                 raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
             if not self.forcing_files:
                 raise ValueError(f'forcing_files is required with forcing {self.forcing}')
+            for key in self._TIME_STEPS:
+                if getattr(self, key):
+                    raise ValueError(f'{key} is only used with forcing channel; each forcing file is routed whole')
             if self.forcing == 'catchment' and self.grid_weights_file:
                 raise ValueError('grid_weights_file is not used with forcing catchment')
             if self.forcing != 'catchment' and not self.grid_weights_file:
@@ -375,7 +382,7 @@ class Configs:
         Validate the contents of the network file, the grid weight table, and the initial channel state, whichever are
         set, and their consistency with each other: the network file columns, types, and value ranges and that it is
         topologically sorted, that the grid weight table matches the network file and its proportions sum to 1 per
-        river, and that the initial channel state has one row per river, or with conditioning one per sub-reach.
+        river, and that the initial channel state has one row per river, or with use_subreaches one per sub-reach.
         The forcing files are not read.
 
         Nothing calls this for you. It reads every input file, which is the same work routing is about to do, so
@@ -462,7 +469,7 @@ class Configs:
     def _deep_validate_channel_state_init_file(self, state_file: PathInput, network_df: pd.DataFrame | None) -> None:
         # initial channel state should be parquet with an integer riverId column and a column named Q, non-null,
         # numeric, and non-negative. riverId lists the rivers of the network file in the same order, one row per
-        # river, or with conditioning one row per sub-reach, whose count is checked when routing.
+        # river, or with use_subreaches one row per sub-reach, whose count is checked when routing.
         try:
             state_df = pd.read_parquet(state_file)
         except Exception as e:
@@ -481,7 +488,7 @@ class Configs:
         if network_df is None:
             return
         check_channel_state_rivers(
-            state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.conditioning, state_file
+            state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.use_subreaches, state_file
         )
         return
 

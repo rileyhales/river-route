@@ -53,7 +53,6 @@ MAX_WEIGHTS_PER_RIVER = 65536
 ZERO = np.float32(0.0)
 
 
-
 @numba.njit(cache=True, nogil=True, fastmath={'contract'}, boundscheck=False)
 def check_job(
     network,

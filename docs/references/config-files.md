@@ -4,7 +4,7 @@
 JSON file with `Configs.from_json`.
 All routing runs through `Router`, which routes Muskingum with static coefficients: each river's k and x are fixed for
 the whole run. The procedure it runs is set by the `forcing` selector and the compute options (`dt_routing`,
-`conditioning`), and the required config keys depend on which selections you make.
+`use_subreaches`, `use_subcycles`), and the required config keys depend on which selections you make.
 
 `Router` takes only a `Configs`. `Network` and the Runoff classes take the options they need as ordinary arguments
 and each has a `from_configs` classmethod that reads those same values off a `Configs`, which is how `Router` builds
@@ -22,29 +22,30 @@ Each river's coefficients are built from the `muskingumK` and `muskingumX` colum
 
 ### Compute options
 
-`dt_routing` and `conditioning` settle how each river computes, in two jobs: the first sets each river's step, and the
-second makes every coefficient of each river non-negative at it, the condition for valid routing.
+`dt_routing`, `use_subreaches`, and `use_subcycles` settle how each river computes, in two jobs: the first sets each
+river's step, and the other two make every coefficient of each river non-negative at it, the condition for valid
+routing.
 
 - `dt_routing` - the step each river computes in. `'auto'` (the default) gives each river its own valid step: the
   runoff step over the fewest subcycles, equal steps of its own, that keep its coefficients non-negative. A step in
   seconds, a divisor of the runoff step, is instead the step of every river. Setting it to the runoff step routes each
   river in one step of each runoff step.
-- `conditioning` - `True` (the default) splits each river too long for its step into the fewest sub-reaches in series
-  whose coefficients are all non-negative, which keep the river's mean travel time and its diffusion, and routes each
-  river too short for its step in subcycles of it, the fewest whose coefficients are. `False` routes every river whole
-  at its step: no river is split or given a shorter step, and a river with a negative coefficient at it is reported.
-  `dt_routing: 'auto'` requires it, since a river too long for the runoff step has no valid step of its own until it is
-  split. It multiplies the routing work by the average number of sub-reaches per river, while the subcycles of each
-  sub-reach are combined into one step. A river routed in subcycles interpolates its
-  upstream inflow linearly within each runoff step; see the [time options](time-options.md#how-each-river-computes).
+- `use_subreaches` - `True` (the default) splits each river too long for its step into the fewest sub-reaches in
+  series whose coefficients are all non-negative, which keep the river's mean travel time and its diffusion. `False`
+  routes such a river whole at its step, and reports its negative coefficient; `dt_routing: 'auto'` requires it.
+  Sub-reaches multiply the routing work
+  by the average number of sub-reaches per river, and a river with an x near 0.5 can need very many; see
+  [the work of sub-reaches](algorithm.md#how-x-sets-the-work-of-a-river) for why, and for holding x lower.
   The state files then hold one value per sub-reach, each river's sub-reaches upstream to downstream, in the order a
   final state file is written, with each row's `riverId` repeated for every sub-reach of its river. A state file with
   one value per river is refused, and so is a run whose sub-reaches change between its forcing files of different time
   steps.
-- `restrict_x_range` - `True` (the default) routes every river with an x from 0 to 0.45, lowering any larger x to
-  0.45. Every coefficient of a river is
-  non-negative only when its step is within `(1 - 2x) * k` of its travel time, so an x near 0.5 needs many
-  sub-reaches and subcycles to find one; 0.45 holds them to a few. `False` routes x up to 0.5 as given.
+- `use_subcycles` - `True` (the default) routes each river too short for its step in subcycles of it, the fewest whose
+  coefficients are all non-negative. A river routed in subcycles interpolates its upstream inflow linearly within
+  each runoff step; see the [time options](time-options.md#how-each-river-computes). The subcycles of each
+  sub-reach are combined into one step, so they add no routing work. `False` routes such a river whole at its step,
+  and reports its negative coefficient. `dt_routing: 'auto'` requires it, since `'auto'` gives each river its own
+  step as subcycles of the runoff step.
 
 ## Minimum Required Inputs
 
@@ -73,9 +74,9 @@ Beyond the always-required keys above, additional keys are required depending on
 - `grid_weights_file` when `forcing` is `grid` or `ecmwf_grib`. It must not be set for
   `catchment`.
 
-  Time keys for forced procedures (`dt_total`, `dt_discharge`) are resolved from the inputs where
-  possible, and the runoff time step is always read from the forcing files; see the
-  [time options](time-options.md). `start_datetime` is only read by channel routing, which has no input dates to copy.
+  Every step of each forcing file is routed and written, and the runoff time step is read from the forcing files, so
+  `dt_total` and `dt_discharge` must not be set; see the [time options](time-options.md). `start_datetime` is only
+  read by channel routing, which has no input dates to copy.
 
 Every network file has the columns `riverId`, `nextRiverId`, `muskingumK`, `muskingumX`, `riverIndex`, and
 `upstreamCount`; see the [File Schemas reference](io-file-schema.md#network-file).
@@ -97,10 +98,11 @@ The following table lists where each remaining key applies.
 | `grid_weights_file`        | Aggregates grids to catchments   | `forcing` a grid                                       |
 | **time**                   |                                  |                                                        |
 | `start_datetime`           | Channel routing start date       | optional, `forcing: channel` only                      |
-| `dt_total`                 | Total simulation duration        | `forcing: channel` (else [time docs](time-options.md)) |
-| `dt_discharge`             | Output timestep                  | optional - [time docs](time-options.md)                |
+| `dt_total`                 | Channel simulation duration      | `forcing: channel`, refused otherwise                  |
+| `dt_discharge`             | Channel output timestep          | `forcing: channel` without `dt_routing` in seconds     |
 | `dt_routing`               | `'auto'`, or every river's step  | optional - [time docs](time-options.md)                |
-| `conditioning`             | Make every coefficient valid     | optional, required by `dt_routing: auto`               |
+| `use_subreaches`           | Split rivers too long            | optional, required by `dt_routing: auto`               |
+| `use_subcycles`            | Subcycle rivers too short        | optional, required by `dt_routing: auto`               |
 
 ## Optional configs with defaults
 
@@ -111,8 +113,8 @@ uses fixed names, such as `riverId` for the river id.
 |--------------------------|----------------------------------------------------------|-----------------------------------------------|
 | `forcing`                | Channel routing, or the form of the forcing files        | `'channel'`                                   |
 | `dt_routing`             | `'auto'` each river's own valid step, or seconds         | `'auto'`                                      |
-| `conditioning`           | Sub-reaches and subcycles for rivers invalid at the step | `True`                                        |
-| `restrict_x_range`       | Route x from 0 to 0.45 rather than up to 0.5             | `True`                                        |
+| `use_subreaches`         | Sub-reaches for rivers too long for their step           | `True`                                        |
+| `use_subcycles`          | Subcycles for rivers too short for their step            | `True`                                        |
 | `log`                    | Enable or disable logging                                | `True`                                        |
 | `progress_bar`           | Show tqdm progress bar                                   | `True`                                        |
 | `log_level`              | Logger level, defaults to between INFO and WARNING       | `'PROGRESS'`                                  |
@@ -127,7 +129,7 @@ uses fixed names, such as `riverId` for the river id.
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file      | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero                 | `False`                                       |
 | `as_volumes`             | `GridRunoff` prepares volumes instead of depths          | `False`                                       |
-| `invalid_coefficients`   | `'warn'`, `'raise'`, or `'ignore'` negative coefficients | `'warn'`                                      |
+| `invalid_coefficients`   | `'raise'`, `'log'`, or `'ignore'` negative coefficients  | `'raise'`                                     |
 
 ## Validation
 
@@ -150,11 +152,14 @@ step. Every coefficient is non-negative, and the routing valid, when `2*k*x <= s
 that window routing is still stable and still conserves mass, but the river's discharge can dip below zero ahead of a rise (`c1 < 0`, a river
 too long for the step) or alternate from step to step and go negative (`c3 < 0`, a river too short for it). Negative
 discharge is written as routed, never clamped, so the written discharge conserves mass and shows the river that
-produced it. The default `'warn'` issues a warning saying how many rivers are affected; `'raise'` refuses to route;
-`'ignore'` is silent. Routing checks the coefficients with `Network.check_validity` before it starts.
+produced it. A negative coefficient is an error in the routing of its river, so the default `'raise'` refuses to
+route, saying how many rivers are affected; `'log'` logs that error and routes on; `'ignore'` routes on silently.
+Routing checks
+the coefficients with `Network.check_validity` before it starts, and `Network.check_routable` refuses, before any
+runoff is read, a network the kernels cannot route, such as one with a river split into more than 256 sub-reaches.
 
 Use `Network.invalid_mask(dt)` to inspect a network before routing it. `dt_routing: auto` gives each river the
-`Network.subcycles(dt_runoff)` steps of its own that it needs, and conditioning routes each river too long for its
+`Network.subcycles(dt_runoff)` steps of its own that it needs, and `use_subreaches` routes each river too long for its
 step in `Network.sub_reaches(dt)` sub-reaches inside the kernel, laid out by
 `Network.sub_reach_k_and_x`, which keep the river's mean travel time and its travel time variance `k**2 * (1 - 2x)`:
 equal sub-reaches with `x = 1/2 - N*(1/2 - x)` wherever that is not negative, and otherwise, since Muskingum x is

@@ -1,6 +1,6 @@
 """
-Muskingum routing with static coefficients: k, x, and the step are fixed for the whole run for each river, and
-conditioning routes every river validly by splitting it into sub-reaches or taking its step in subcycles. This module
+Muskingum routing with static coefficients: k, x, and the step are fixed for the whole run for each river, and every
+river is routed validly by splitting it into sub-reaches or taking its step in subcycles. This module
 settles each river's sub-reaches and the coefficients of each, in float64, and either kernel of river_route.kernels
 routes them.
 """
@@ -39,8 +39,9 @@ def prepare_routing(network: Network, configs: Configs, dt_runoff: int, dt_routi
     with dt_routing auto (None), its own valid step, the runoff step over the fewest subcycles that keep its
     coefficients non-negative, and with dt_routing given, exactly dt_routing. The second, conditioning, splits a river
     too long for its step into the sub-reaches of Network.sub_reach_k_and_x, each taking its share of the river's
-    runoff, and routes a river too short for it in subcycles of its step. Without conditioning every river is routed
-    whole at its step, and a river with a negative coefficient at it is reported.
+    runoff, with use_subreaches, and routes a river too short for it in subcycles of its step, with use_subcycles.
+    Without them a river is routed whole at its step, and a river with a negative coefficient at it is reported.
+    Network.check_routable refuses sub-reaches the kernels cannot route before any coefficient is built.
 
     The subcycles of each sub-reach are combined into one step by _combine_subcycles, which gives the discharge of
     taking them one at a time, so every sub-reach takes one step per runoff step and hands its discharge to the next at
@@ -54,9 +55,13 @@ def prepare_routing(network: Network, configs: Configs, dt_runoff: int, dt_routi
     else:
         subcycles, _ = network.subcycles(dt_runoff)
     sub_reaches = np.ones(network.size, dtype=np.int64)
-    if configs.conditioning:
-        sub_reaches, conditioning_subcycles, _ = network.conditioning(dt_runoff / subcycles)
-        subcycles = subcycles * conditioning_subcycles
+    if configs.use_subreaches or configs.use_subcycles:
+        conditioning_sub_reaches, conditioning_subcycles, _ = network.conditioning(dt_runoff / subcycles)
+        if configs.use_subreaches:
+            sub_reaches = conditioning_sub_reaches
+        if configs.use_subcycles:
+            subcycles = subcycles * conditioning_subcycles
+    network.check_routable(sub_reaches)
     network.check_validity(dt_runoff, action=configs.invalid_coefficients, sub_reaches=sub_reaches, subcycles=subcycles)
     k_reach, x_reach = network.sub_reach_k_and_x(sub_reaches)
     share = k_reach / np.repeat(network.k.astype(np.float64), sub_reaches)  # of the river's k, and of its runoff

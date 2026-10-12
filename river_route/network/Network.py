@@ -1,4 +1,4 @@
-import warnings
+import logging
 from pathlib import Path
 from typing import Literal, Self
 
@@ -6,14 +6,13 @@ import numpy as np
 import pandas as pd
 
 from ..configs.Configs import Configs
+from ..kernels.numba_kernel import MAX_INFLOW_RIVERS_PER_RIVER, MAX_RIVERS, MAX_SUB_REACHES, MAX_SUB_REACHES_PER_RIVER
 from ..types import Float64Array, FloatArray, Int32Array, IntArray, JobBlocks, PathInput
 from . import streams
 
-__all__ = ['Network', 'NETWORK_DTYPES', 'REQUIRED_COLUMNS', 'RESTRICTED_LARGEST_X']
+__all__ = ['Network', 'NETWORK_DTYPES', 'REQUIRED_COLUMNS']
 
-# the largest x routed with Configs(restrict_x_range=True). Every coefficient of a river is non-negative only when its
-# step is within (1 - 2x) k of its travel time, so an x near 1/2 needs many sub-reaches and subcycles to find one.
-RESTRICTED_LARGEST_X = 0.45
+logger = logging.getLogger(__name__)
 
 # the dtype of every column a network table may have, enforced whenever one is written or stabilized
 NETWORK_DTYPES = {
@@ -119,16 +118,10 @@ class Network:
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
-        """
-        Build a Network from the network_file of a Configs object, with every x held at RESTRICTED_LARGEST_X or less
-        when ``configs.restrict_x_range``.
-        """
+        """Build a Network from the network_file of a Configs object, its k and x routed exactly as given."""
         if not isinstance(configs, Configs):
             raise TypeError(f'from_configs takes an rr.Configs, got {type(configs).__name__}')
-        network = cls(configs.network_file)
-        if configs.restrict_x_range:
-            network._df['muskingumX'] = np.minimum(network.x, np.float32(RESTRICTED_LARGEST_X))
-        return network
+        return cls(configs.network_file)
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}(n_rivers={self.size:,}, network_file={self.network_file!r})'
@@ -141,24 +134,27 @@ class Network:
         # exactly one row, so duplicates are refused first.
         river_index = pd.Index(self.river_ids)
         if not river_index.is_unique:
-            raise ValueError(f'Network has duplicate riverId values')
+            raise ValueError('Network has duplicate riverId values')
         has_downstream = self.next_river_ids != -1
         upstream_idx = np.flatnonzero(has_downstream)
-        downstream_idx = river_index.get_indexer(self.next_river_ids[has_downstream])
+        next_ids = self.next_river_ids[has_downstream]
+        downstream_idx = river_index.get_indexer(next_ids)
 
-        if (downstream_idx < 0).any():
-            raise ValueError(f'nextRiverId contains riverIds not found in riverId, use -1 instead')
-        if (downstream_idx == upstream_idx).any():
-            raise ValueError('Found rivers that drains into themselves (riverId == nextRiverId) which is not allowed')
+        unknown = downstream_idx < 0
+        if unknown.any():
+            raise ValueError(f'nextRiverId {next_ids[unknown][0]} is not in the riverId column')
+        drains_into_itself = downstream_idx == upstream_idx
+        if drains_into_itself.any():
+            raise ValueError(f'riverId {next_ids[drains_into_itself][0]} drains into itself')
         if np.any(downstream_idx < upstream_idx):
-            raise ValueError(f'Network must be topologically sorted')
+            raise ValueError('Network must be topologically sorted')
 
         upstream_counts = self.upstream_counts
         counted = np.bincount(downstream_idx, weights=upstream_counts[upstream_idx] + 1, minlength=n)
         if not np.array_equal(upstream_counts, counted):
-            raise ValueError(f'upstreamCount must count every river upstream of each river')
+            raise ValueError('upstreamCount must count every river upstream of each river')
         if np.any(upstream_idx - upstream_counts[upstream_idx] < downstream_idx - upstream_counts[downstream_idx]):
-            raise ValueError(f'Network is not in DFS order: the rivers upstream of a river must be the rows before it')
+            raise ValueError('Network is not in DFS order: the rivers upstream of a river must be the rows before it')
 
         # 1D array giving the index of the downstream river in the parameter arrays, -1 if none downstream
         self.downstream_indices = np.full(n, -1, dtype=np.int32)
@@ -273,10 +269,10 @@ class Network:
     def sub_reaches(self, dt: float | Float64Array) -> tuple[IntArray, np.ndarray]:
         """
         The sub-reaches of each river at ``dt``, one step for every river or one per river: the fewest sub-reaches,
-        laid out by ``sub_reach_k_and_x``, whose coefficients are all non-negative at ``dt``, which is what conditioning
-        routes for rivers too long for their step. An equal sub-reach of travel time ``k/N`` has a non-negative c1 when
-        ``k/N <= dt + (1-2x)*k``, and a sub-reach whose x is 0 has one at any step, so the count is
-        ``ceil(k / (dt + (1-2x)*k))``: 2 for every river too long at ``x = 0.2``, and never more than
+        laid out by ``sub_reach_k_and_x``, whose coefficients are all non-negative at ``dt``, which is what
+        use_subreaches routes for rivers too long for their step. An equal sub-reach of travel time ``k/N`` has a
+        non-negative c1 when ``k/N <= dt + (1-2x)*k``, and a sub-reach whose x is 0 has one at any step, so the count
+        is ``ceil(k / (dt + (1-2x)*k))``: 2 for every river too long at ``x = 0.2``, and never more than
         ``ceil(1/(1-2x))``. It is the same layout ``stabilize`` uses, so a per-reach state from one lines up with the
         other.
 
@@ -302,7 +298,7 @@ class Network:
         The subcycles of each river at ``dt``, one step for every river or one per river: the fewest equal steps a river
         is routed in within each step of ``dt``, overriding dt with the shorter routing step ``dt / subcycles`` of its
         own. ``Configs(dt_routing='auto')`` identifies each river's own valid step with them, ``dt_runoff /
-        subcycles``, and conditioning gives them to rivers too short for a dt_routing in seconds. The count is
+        subcycles``, and use_subcycles gives them to rivers too short for a dt_routing in seconds. The count is
         ``ceil(dt/(2*k*(1-x)))``: the smallest that brings the river's own step under the upper bound ``2*k*(1-x)``.
         A river that is not too short takes 1.
 
@@ -324,11 +320,12 @@ class Network:
 
     def conditioning(self, dt: float | Float64Array) -> tuple[IntArray, IntArray, np.ndarray]:
         """
-        How ``Configs(conditioning=True)`` makes every coefficient of each river non-negative at ``dt``, one step for
-        every river or one per river: a river too long for dt is split into ``sub_reaches`` sub-reaches laid out by
-        ``sub_reach_k_and_x``, and a river too short for it is routed in ``subcycles`` equal steps of its own. No river
-        needs both, since for ``x <= 0.5`` a river cannot be too long and too short at once. dt_routing auto conditions
-        each river at the step it identifies with ``subcycles``, so only rivers too long for it are left to split.
+        How ``Configs(use_subreaches=True, use_subcycles=True)`` makes every coefficient of each river non-negative at
+        ``dt``, one step for every river or one per river: a river too long for dt is split into ``sub_reaches``
+        sub-reaches laid out by ``sub_reach_k_and_x``, and a river too short for it is routed in ``subcycles`` equal
+        steps of its own. No river needs both, since for ``x <= 0.5`` a river cannot be too long and too short at once.
+        dt_routing auto conditions each river at the step it identifies with ``subcycles``, so only rivers too long for
+        it are left to split.
 
         Returns:
             tuple: (sub_reaches, subcycles, resolvable). ``resolvable`` is True where every coefficient is non-negative.
@@ -339,10 +336,49 @@ class Network:
         resolvable = np.where(too_short, subcycles_resolvable, sub_reaches_resolvable)
         return np.where(too_long, sub_reaches, 1), np.where(too_short, subcycles, 1), resolvable
 
+    def check_routable(self, sub_reaches: IntArray) -> None:
+        """
+        Raise ValueError unless the routing kernels can route this network as ``sub_reaches`` sub-reaches per river, as
+        from ``conditioning``: no more rivers, sub-reaches, sub-reaches of one river, or inflow rivers of one river than
+        river_route/kernels/c/checks.c allows. Routing checks it before any runoff is read, so a network the kernels
+        would refuse is refused while it is prepared, with the river that breaks the limit named. A river with an x
+        near 1/2 is split into the most sub-reaches; see the routing algorithm docs for holding x lower.
+
+        Args:
+            sub_reaches: the sub-reaches of each river, 1 for a river that is not split
+        """
+        if sub_reaches.shape != (self.size,) or np.any(sub_reaches < 1):
+            raise ValueError(f'sub_reaches must be 1 or more for each of the {self.size} rivers')
+        if self.size > MAX_RIVERS:
+            raise ValueError(f'the network has {self.size} rivers, more than the {MAX_RIVERS} the kernels route')
+        n_sub_reaches = int(sub_reaches.sum())
+        if n_sub_reaches > MAX_SUB_REACHES:
+            raise ValueError(
+                f'the network is routed as {n_sub_reaches} sub-reaches, more than the {MAX_SUB_REACHES} the kernels '
+                f'route'
+            )
+        too_many = np.flatnonzero(sub_reaches > MAX_SUB_REACHES_PER_RIVER)
+        if too_many.size:
+            river = int(too_many[np.argmax(sub_reaches[too_many])])
+            raise ValueError(
+                f'{too_many.size} rivers need more sub-reaches than the {MAX_SUB_REACHES_PER_RIVER} the kernels route '
+                f'one river as. riverId {self.river_ids[river]} needs the most, {sub_reaches[river]}, with k = '
+                f'{self.k[river]} s and x = {self.x[river]}. A river with x near 0.5 needs the most: hold x lower in '
+                f'the network file, or route with dt_routing in seconds and use_subreaches False.'
+            )
+        inflow_rivers = np.bincount(self.downstream_indices[self.downstream_indices >= 0], minlength=self.size)
+        if inflow_rivers.max(initial=0) > MAX_INFLOW_RIVERS_PER_RIVER:
+            river = int(np.argmax(inflow_rivers))
+            raise ValueError(
+                f'riverId {self.river_ids[river]} has {inflow_rivers[river]} inflow rivers, more than the '
+                f'{MAX_INFLOW_RIVERS_PER_RIVER} the kernels route one river with'
+            )
+        return
+
     def check_validity(
         self,
         dt: float,
-        action: Literal['warn', 'raise', 'ignore'] = 'warn',
+        action: Literal['log', 'raise', 'ignore'] = 'raise',
         sub_reaches: IntArray | None = None,
         subcycles: IntArray | None = None,
     ) -> None:
@@ -357,10 +393,13 @@ class Network:
 
         Args:
             dt: the routing time step to check against
-            action: ``warn`` issues a warning, ``raise`` raises ValueError, ``ignore`` does nothing
+            action: ``raise`` raises ValueError, since the routing of those rivers is not valid, ``log`` logs it at
+                the error level and routes on, ``ignore`` does nothing
             sub_reaches: optional sub-reaches per river, as from ``conditioning``
             subcycles: optional steps of its own per routing step for each river, as from ``conditioning``
         """
+        if action not in ('log', 'raise', 'ignore'):
+            raise ValueError(f"action must be 'log', 'raise', or 'ignore', got {action!r}")
         if action == 'ignore':
             return
         too_long, too_short = self.invalid_mask(dt, sub_reaches, subcycles)
@@ -373,12 +412,13 @@ class Network:
             f'routing is not valid. Every coefficient is non-negative when 2*k*x <= step <= 2*k*(1-x). Outside that '
             f'window routing is stable and conserves mass, but discharge can dip below zero ahead of a rise or '
             f'alternate and go negative, and it is written as routed. Use Network.invalid_mask to find these rivers, '
-            f'route with conditioning to split rivers too long into sub-reaches and give rivers too short the '
-            f"subcycles they need, or set invalid_coefficients to 'ignore' to silence this."
+            f'route with use_subreaches to split rivers too long into sub-reaches and use_subcycles to give rivers '
+            f"too short the subcycles they need. invalid_coefficients 'raise' refuses to route them, 'log' routes "
+            f"them and logs this error, and 'ignore' routes them silently."
         )
         if action == 'raise':
             raise ValueError(message)
-        warnings.warn(message, stacklevel=2)
+        logger.error(message)
         return
 
     def stabilize(self, dt: float, *, weights: list | None = None) -> Self:
@@ -389,7 +429,7 @@ class Network:
         counting down from -1,000,000. Deleting the synthetic rows gives back the original row order. A network is
         stabilized once: to stabilize it at another dt, build a new Network from the original network file.
 
-        The sub-reaches are those of ``sub_reaches``, laid out by ``sub_reach_k_and_x``, which is what conditioning
+        The sub-reaches are those of ``sub_reaches``, laid out by ``sub_reach_k_and_x``, which is what use_subreaches
         routes inside the kernel, so they keep each river's mean travel time k and its travel time variance
         ``k**2 * (1 - 2x)``. A river they cannot make non-negative is kept whole. Rivers left with a negative
         coefficient are not reported here: ``invalid_mask`` finds them, and routing reports them as

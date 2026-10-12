@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ..types import FloatArray, Forcing, Int32Array
 from . import numba_kernel
 from .build import LIBRARY
-from ..types import FloatArray, Forcing, Int32Array
 
 if TYPE_CHECKING:
     from ..network.Network import Network
@@ -91,14 +91,14 @@ def _library() -> ctypes.CDLL:
 
 
 def route(
-        kernel: str,
-        network: KernelNetwork,
-        depth: FloatArray,
-        n_steps: int,
-        block_starts: Int32Array,
-        block_stops: Int32Array,
-        channel_state: FloatArray,
-        discharge: FloatArray,
+    kernel: str,
+    network: KernelNetwork,
+    depth: FloatArray,
+    n_steps: int,
+    block_starts: Int32Array,
+    block_stops: Int32Array,
+    channel_state: FloatArray,
+    discharge: FloatArray,
 ) -> None:
     """
     Route the rivers of the blocks, each the rivers from a start up to a stop in routing order, over the first n_steps
@@ -129,13 +129,13 @@ def route(
 
 
 def _route_with_c(
-        network: KernelNetwork,
-        depth: FloatArray,
-        n_steps: int,
-        block_starts: Int32Array,
-        block_stops: Int32Array,
-        channel_state: FloatArray,
-        discharge: FloatArray,
+    network: KernelNetwork,
+    depth: FloatArray,
+    n_steps: int,
+    block_starts: Int32Array,
+    block_stops: Int32Array,
+    channel_state: FloatArray,
+    discharge: FloatArray,
 ) -> tuple[int, str]:
     """The problem rr_route_rivers returned, and its description."""
     block_starts = np.ascontiguousarray(block_starts, dtype=np.int32)
@@ -160,7 +160,7 @@ def _route_with_c(
 
 
 def kernel_arrays(
-        network: Network, coefficients: Coefficients, forcing: Forcing, n_steps: int
+    network: Network, coefficients: Coefficients, forcing: Forcing, n_steps: int
 ) -> tuple[KernelNetwork, FloatArray]:
     """
     The arrays both kernels route one forcing file, or the channel alone, with: the network's sub-reaches with their
@@ -193,14 +193,14 @@ def kernel_arrays(
 
 
 def route_region(
-        kernel: str,
-        network: Network,
-        coefficients: Coefficients,
-        channel_state: FloatArray,
-        discharge: FloatArray,
-        forcing: Forcing,
-        thread_pool: Executor | None,
-        threads: int,
+    kernel: str,
+    network: Network,
+    coefficients: Coefficients,
+    channel_state: FloatArray,
+    discharge: FloatArray,
+    forcing: Forcing,
+    thread_pool: Executor | None,
+    threads: int,
 ) -> None:
     """
     Route one forcing file, or the channel alone, over every river of the network: every job of sub-watershed blocks,

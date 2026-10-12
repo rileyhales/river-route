@@ -7,6 +7,7 @@ thing deliberately broken.
 
 import importlib
 import json
+import logging
 import os
 import pkgutil
 import shutil
@@ -87,10 +88,15 @@ REFUSED_CONFIGS = {
         ValueError,
         "dt_routing must be 'auto' or a positive whole number of seconds",
     ),
-    'auto routing steps are conditioned': (
-        lambda basin, d: {'conditioning': False},
+    'auto routing steps take subcycles': (
+        lambda basin, d: {'use_subcycles': False},
         ValueError,
-        "dt_routing 'auto' requires conditioning",
+        "dt_routing 'auto' requires use_subreaches and use_subcycles",
+    ),
+    'auto routing steps take sub-reaches': (
+        lambda basin, d: {'use_subreaches': False},
+        ValueError,
+        "dt_routing 'auto' requires use_subreaches and use_subcycles",
     ),
     'channel routing needs a step to exchange discharge at': (
         lambda basin, d: {'forcing': 'channel', 'forcing_files': [], 'channel_state_init_file': d, 'dt_total': 86400},
@@ -101,6 +107,16 @@ REFUSED_CONFIGS = {
         lambda basin, d: {'dt_total': -DT},
         ValueError,
         'dt_total must be a whole number of seconds',
+    ),
+    'forced routing writes every runoff step': (
+        lambda basin, d: {'dt_discharge': 86400},
+        ValueError,
+        'dt_discharge is only used with forcing channel',
+    ),
+    'forced routing routes every runoff step': (
+        lambda basin, d: {'dt_total': 86400},
+        ValueError,
+        'dt_total is only used with forcing channel',
     ),
 }
 
@@ -248,14 +264,14 @@ def test_deep_validate_finds_broken_network_files(breaks, message, willamette: B
         rr.Configs(network_file=tmp_path / 'network.parquet').deep_validate()
 
 
-def test_deep_validate_checks_a_state_against_conditioning(willamette: Basin, tmp_path: Path) -> None:
+def test_deep_validate_checks_a_state_against_use_subreaches(willamette: Basin, tmp_path: Path) -> None:
     final_state = tmp_path / 'final_state.parquet'
     options = {'network_file': willamette.network_file, 'channel_state_final_file': final_state}
     route(tmp_path, willamette.months[:1], **options)
     sub_reach_state = {'network_file': willamette.network_file, 'channel_state_init_file': final_state}
     rr.Configs(**sub_reach_state).deep_validate()  # one row per sub-reach
     with pytest.raises(ValueError, match='rivers, the network has'):
-        rr.Configs(**sub_reach_state, dt_routing=DT, conditioning=False).deep_validate()
+        rr.Configs(**sub_reach_state, dt_routing=DT, use_subreaches=False).deep_validate()
     pd.read_parquet(final_state, columns=['Q']).to_parquet(tmp_path / 'no_ids.parquet')
     with pytest.raises(ValueError, match='missing riverId'):
         rr.Configs(**(sub_reach_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
@@ -322,12 +338,20 @@ def test_a_given_dt_routing_without_conditioning_routes_every_river_whole_at_it(
     configs = rr.Configs(network_file=willamette.network_file, invalid_coefficients='raise')
     static_muskingum.prepare_routing(network, configs, DT, None)
     unconditioned = rr.Configs(
-        network_file=willamette.network_file, dt_routing=DT, conditioning=False, invalid_coefficients='raise'
+        network_file=willamette.network_file,
+        dt_routing=DT,
+        use_subreaches=False,
+        use_subcycles=False,
+        invalid_coefficients='raise',
     )
     with pytest.raises(ValueError, match='too short'):
         static_muskingum.prepare_routing(network, unconditioned, DT, DT)
     whole = rr.Configs(
-        network_file=willamette.network_file, dt_routing=DT, conditioning=False, invalid_coefficients='ignore'
+        network_file=willamette.network_file,
+        dt_routing=DT,
+        use_subreaches=False,
+        use_subcycles=False,
+        invalid_coefficients='ignore',
     )
     coefficients = static_muskingum.prepare_routing(network, whole, DT, DT)
     assert coefficients.sub_reach_starts[-1] == network.size, 'a given dt_routing split a river into sub-reaches'
@@ -421,13 +445,48 @@ def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
     np.testing.assert_array_equal(network.next_river_ids[0::2], network.river_ids[1::2])
 
 
-def test_networks_report_invalid_rivers(willamette: Basin) -> None:
+def test_networks_report_invalid_rivers(willamette: Basin, caplog: pytest.LogCaptureFixture) -> None:
+    """Negative coefficients are errors: 'raise' refuses them, and 'log' logs them at the error level."""
     network = rr.Network(willamette.network_file)
     assert f'n_rivers={network.size:,}' in repr(network)
-    with pytest.warns(UserWarning, match='negative Muskingum coefficient'):
-        network.check_validity(DT, action='warn')
+    package_logger = logging.getLogger('river_route')  # which does not propagate to caplog's handler on the root
+    package_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.ERROR, logger='river_route'):
+            network.check_validity(DT, action='log')
+    finally:
+        package_logger.removeHandler(caplog.handler)
+    reported = [record.levelno for record in caplog.records if 'negative Muskingum coefficient' in record.getMessage()]
+    assert reported == [logging.ERROR]
     with pytest.raises(ValueError, match='negative Muskingum coefficient'):
         network.check_validity(DT, action='raise')
+    with pytest.raises(ValueError, match="action must be 'log', 'raise', or 'ignore'"):
+        network.check_validity(DT, action='warn')
+
+
+def test_networks_refuse_more_sub_reaches_than_the_kernels_route() -> None:
+    """
+    A river of x = 0.499 and k of 30 days, routed hourly, needs ceil(720 / (1 + 0.002 * 720)) = 296 sub-reaches, more
+    than the 256 the kernels route one river as. Held at x = 0.45 it needs ceil(720 / (1 + 0.1 * 720)) = 10.
+    """
+    table = pd.DataFrame(
+        {
+            'riverId': [1],
+            'nextRiverId': [-1],
+            'muskingumK': np.float32([720 * DT]),
+            'muskingumX': np.float32([0.499]),
+            'riverIndex': np.int32([0]),
+            'upstreamCount': np.int32([0]),
+        }
+    )
+    network = rr.Network(table)
+    sub_reaches = network.conditioning(DT)[0]
+    np.testing.assert_array_equal(sub_reaches, [296])
+    with pytest.raises(ValueError, match='more sub-reaches than the 256 the kernels route one river as'):
+        network.check_routable(sub_reaches)
+    held = rr.Network(table.assign(muskingumX=np.float32(0.45)))
+    np.testing.assert_array_equal(held.conditioning(DT)[0], [10])
+    held.check_routable(held.conditioning(DT)[0])
 
 
 @pytest.fixture(scope='module')
@@ -540,9 +599,6 @@ def test_catchment_runoff_volumes_check_their_layout(willamette: Basin) -> None:
         runoff.check(river_ids[::-1], dates.size)
     with pytest.raises(ValueError, match='row contiguous'):
         rr.forcings.CatchmentRunoffVolumes(np.asfortranarray(volumes), river_ids).check(river_ids, dates.size)
-    first = runoff.first_steps(4)
-    assert first.runoff.shape == (river_ids.shape[0], 4) and first.runoff.strides[1] == first.runoff.itemsize
-    assert first.river_ids is river_ids
 
 
 def test_grid_cell_runoff_checks_its_weight_table(willamette: Basin) -> None:
@@ -553,7 +609,6 @@ def test_grid_cell_runoff_checks_its_weight_table(willamette: Basin) -> None:
         cell_runoff.check(river_ids[:-1], dates.size)
     with pytest.raises(ValueError, match='in the same order'):
         cell_runoff.check(river_ids[::-1], dates.size)
-    assert cell_runoff.first_steps(10) is cell_runoff
 
 
 @pytest.mark.parametrize('threads', [0, True, 2.0])

@@ -13,15 +13,18 @@ the `forcing` selector.
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
 | `forcing` | `'channel'` (channel routing only), or the form of the `forcing_files` routed into the rivers: `'catchment'`, `'grid'`, or `'ecmwf_grib'`. Each step's runoff enters its river at a constant rate over the step. | `'channel'` |
 
-Two compute options set how each river computes, in two jobs: `dt_routing` sets each river's step, and `conditioning`
-then makes every coefficient non-negative at it, the condition for valid Muskingum routing.
+Three compute options set how each river computes, in two jobs: `dt_routing` sets each river's step, and
+`use_subreaches` and `use_subcycles` then make every coefficient non-negative at it, the condition for valid
+Muskingum routing.
 
-| Compute option | Options                                                                                                                                                                                                       | Default  |
-|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
-| `dt_routing`   | `'auto'` gives each river its own valid step, the runoff step over the fewest subcycles that keep its coefficients non-negative; a step in seconds, a divisor of the runoff step, is the step of every river. | `'auto'` |
-| `conditioning` | `True` splits each river too long for its step into sub-reaches and routes each river too short for it in subcycles of its step; `False` routes every river whole at its step. `'auto'` requires it.          | `True`   |
+| Compute option   | Options                                                                                                                                                                                                       | Default  |
+|------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
+| `dt_routing`     | `'auto'` gives each river its own valid step, the runoff step over the fewest subcycles that keep its coefficients non-negative; a step in seconds, a divisor of the runoff step, is the step of every river. | `'auto'` |
+| `use_subreaches` | `True` splits each river too long for its step into sub-reaches; `False` routes it whole at its step. `'auto'` requires it.                                                                                   | `True`   |
+| `use_subcycles`  | `True` routes each river too short for its step in subcycles of it; `False` routes it whole at its step. `'auto'` requires it.                                                                                | `True`   |
 
-Every forcing routes, and `dt_routing: auto` makes every coefficient of every river non-negative.
+Every forcing routes, and `dt_routing: auto` with `use_subreaches` makes every coefficient of every river
+non-negative.
 
 ```python
 import river_route as rr

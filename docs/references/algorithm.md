@@ -1,8 +1,9 @@
 # Routing Algorithm
 
-[Math Derivations](math.md) derives the equation every river is routed with. This page shows the arrays the routing
-kernels read and write, how each is laid out in memory, and how a kernel finds a river's values in them. The names are
-those of `river_route/kernels/c/routing.h`, which the numba kernel, `numba_kernel.py`, shares.
+[Math Derivations](math.md) derives the equation every river is routed with. This page shows how much work the x of
+each river asks of the routing kernels, the arrays they read and write, how each is laid out in memory, and how a
+kernel finds a river's values in them. The names are those of `river_route/kernels/c/routing.h`, which the numba
+kernel, `numba_kernel.py`, shares.
 
 ---
 
@@ -23,6 +24,114 @@ for block in range(n_blocks):                                     # in routing o
 A river's first sub-reach takes its inflow from the discharge rows of the river's inflow rivers. Every sub-reach after
 it takes its inflow from the river's own row, where the sub-reach before it left its discharge, and writes its own
 discharge over that row, so the row ends with the discharge of the river's last sub-reach.
+
+## How x sets the work of a river
+
+The kernel routes each sub-reach of a river over every step, so a river split into $N$ sub-reaches takes $N$ times the
+work of a river routed whole. Subcycles take no more work, since a river's subcycles are combined into one step of
+coefficients before routing. The work of a network in each step is its count of sub-reaches, and with
+`use_subreaches` that count is set by the x of each river.
+
+### The sub-reaches a river needs
+
+Every coefficient of a river is non-negative when its step is inside the window of
+[Signs of the coefficients](math.md#signs-of-the-coefficients):
+
+$$
+2kx \le \Delta t \le 2k(1-x)
+$$
+
+A river too long for its step, $\Delta t < 2kx$, is split into $N$ equal sub-reaches of travel time $k/N$, each with
+$x_N = 1/2 - N(1/2 - x)$, which keep the river's mean travel time $k$ and its travel time variance $k^2(1-2x)$. With
+$2 (k/N) x_N = k/N - (1-2x)k$ and $2 (k/N)(1 - x_N) = k/N + (1-2x)k$, the window of each sub-reach is
+
+$$
+\frac{k}{N} - (1-2x)k \le \Delta t \le \frac{k}{N} + (1-2x)k
+$$
+
+It is centered on the travel time of the sub-reach, $k/N$, and is $(1-2x)k$ wide on either side, the diffusion of the
+river. The fewest sub-reaches whose lower bound is under the step are
+
+$$
+N = \left\lceil \frac{k}{\Delta t + (1-2x)k} \right\rceil
+$$
+
+and since $\Delta t > 0$, the fraction is always less than $k / ((1-2x)k)$, so
+
+$$
+N \le \left\lceil \frac{1}{1-2x} \right\rceil
+$$
+
+for every river, whatever its travel time and whatever the step. That bound is what x costs: 3 at $x = 0.3$, 10 at
+$x = 0.45$, 50 at $x = 0.49$, and 500 at $x = 0.499$. At $x = 1/2$ there is no bound. The window closes to the single
+step $\Delta t = k/N$, so the river needs $\lceil k/\Delta t \rceil$ sub-reaches, each exactly one step long, and their
+count grows with the river's travel time alone. Such a river can be made valid only when its $k$ is exactly a whole
+multiple of $\Delta t$, so most rivers at $x = 1/2$ are kept whole and reported.
+
+### An example
+
+The sub-reaches of rivers routed at an hourly step, $\Delta t$ = 1 h, and the spread of each river's response, the
+standard deviation of its travel time over its mean, $\sigma / k = \sqrt{1-2x}$:
+
+| $x$   | Most any river needs | $k$ = 1 day | $k$ = 10 days | $\sigma / k$ |
+|-------|----------------------|-------------|---------------|--------------|
+| 0.3   | 3                    | 3           | 3             | 0.63         |
+| 0.4   | 5                    | 5           | 5             | 0.45         |
+| 0.45  | 10                   | 8           | 10            | 0.32         |
+| 0.48  | 25                   | 13          | 23            | 0.20         |
+| 0.49  | 50                   | 17          | 42            | 0.14         |
+| 0.495 | 100                  | 20          | 71            | 0.10         |
+| 0.499 | 500                  | 23          | 163           | 0.04         |
+| 0.5   | no bound             | 24          | 240           | 0            |
+
+The river of 10 days at $x = 0.45$ needs
+
+$$
+N = \left\lceil \frac{240}{1 + 0.1 \cdot 240} \right\rceil = \left\lceil \frac{240}{25} \right\rceil = \lceil 9.6 \rceil = 10
+$$
+
+and at $x = 0.499$ it needs
+
+$$
+N = \left\lceil \frac{240}{1 + 0.002 \cdot 240} \right\rceil = \left\lceil \frac{240}{1.48} \right\rceil = \lceil 162.2 \rceil = 163
+$$
+
+so it is routed 163 times over every step instead of 10. A river of 30 days at $x = 0.499$ needs
+$\lceil 720 / 2.44 \rceil = 296$, more than the 256 sub-reaches the kernels route one river as, and
+`Network.check_routable` refuses the network before any runoff is read.
+
+### What holding x at 0.45 changes
+
+A river's response to its upstream inflow has mean $k$ and variance $k^2(1-2x)$ at any step, so x sets how much it
+attenuates a flood wave: from a linear reservoir at $x = 0$, whose response spreads with a standard deviation of $k$,
+to translation without attenuation at $x = 1/2$. In Muskingum-Cunge terms, a river of length $\Delta x$ and wave
+celerity $c$ represents a diffusion of $(1/2 - x)\, c\, \Delta x$. The rivers that need the most sub-reaches are those
+near $x = 1/2$, which attenuate least, so holding x at 0.45 changes their routing little:
+
+- It adds a variance of at most $0.1 k^2$ to any river, a standard deviation of at most $0.32 k$, and a diffusion of at
+  most $0.05\, c\, \Delta x$.
+- Along rivers in series, travel times add and so do variances, so along a path of $n$ rivers of equal $k$ the
+  standard deviation it adds is at most $0.32 / \sqrt{n}$ of the path's travel time: 6% along 25 rivers.
+- It holds every river to 10 sub-reaches or fewer, so a network takes at most 10 times the work of routing every river
+  whole, and no river reaches the kernels' limit of 256.
+
+### Holding x lower
+
+`river-route` routes every river with the x of its network file, exactly as it is given. A modeler who would rather
+bound the work may choose to hold x at 0.45 in the network file before routing:
+
+```python
+import numpy as np
+import pandas as pd
+
+network = pd.read_parquet('network.parquet')
+network['muskingumX'] = np.minimum(network['muskingumX'], np.float32(0.45))
+network.to_parquet('network_x_at_most_045.parquet')
+```
+
+Routing with `dt_routing` in seconds and `use_subreaches: false` instead routes every river too long for its step
+whole, with no added work, and with `invalid_coefficients: 'log'`, since the negative $c_1$ of each is an error
+that the default, `'raise'`, refuses to route.
 
 ## The arrays of a call
 
@@ -142,5 +251,4 @@ numpy keeps an array's strides in bytes, so dividing by the size of a value, 4 b
 values. A slice keeps the strides of the array it is cut from: `depth[:, 64:128]` is 64 steps of every row, and its
 `cell_stride` is still the length of a whole row. The Router routes each forcing file into the rows of
 `memory.reshape(network.size, num_runoff_steps + 1)`, so its `river_stride` is the steps routed plus one, and its
-depth rows hold every step of the forcing file, so its `cell_stride` is the file's count of steps even when `dt_total`
-routes fewer.
+depth rows hold every step of the forcing file, so its `cell_stride` is the file's count of steps.

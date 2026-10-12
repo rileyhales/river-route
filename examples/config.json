@@ -15,7 +15,8 @@
   "var_y": "y",
   "var_t": "time",
   "dt_routing": "auto",
-  "conditioning": true,
+  "use_subreaches": true,
+  "use_subcycles": true,
   "dt_total": 0,
   "dt_discharge": 0,
   "start_datetime": "1970-01-01",
@@ -26,5 +27,5 @@
   "log_level": "PROGRESS",
   "log_stream": "stdout",
   "log_format": "%(levelname)s - %(asctime)s - %(message)s",
-  "invalid_coefficients": "warn"
+  "invalid_coefficients": "raise"
 }

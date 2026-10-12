@@ -76,7 +76,9 @@ conf2 = rr.Configs(
     forcing_files=['/path/to/catchment_runoff.nc'],
     discharge_dir='/path/to/outputs/',
     dt_routing=900,
-    conditioning=False,  # route every river whole at dt_routing, as v2 did
+    use_subreaches=False,  # route every river whole at dt_routing, as v2 did
+    use_subcycles=False,
+    invalid_coefficients='log',  # route the rivers with a negative coefficient rather than refuse them
 )
 
 rr.Router(conf1).route()
@@ -96,22 +98,29 @@ file into it. The following config keys have been renamed, removed, or added.
 | `uh_state_init_file`  | _(removed)_                               |
 | `uh_state_final_file` | _(removed)_                               |
 | `dt_runoff`           | _(removed)_, read from the forcing files  |
+| `dt_discharge`        | `dt_discharge` with `forcing: channel`    |
+| `dt_total`            | `dt_total` with `forcing: channel`        |
 | `var_river_id`        | _(removed)_, every file uses `riverId`    |
 | `var_discharge`       | _(removed)_, discharge is always `Q`      |
 
 `dt_routing` keeps its name, but its default is now `'auto'`, which routes in sub-reaches or subcycles the rivers v2
-routed whole with a negative coefficient. Give it the runoff step in seconds with `conditioning: false` to route every
-river whole, as v2 did.
+routed whole with a negative coefficient. Give it the runoff step in seconds with `use_subreaches: false` and
+`use_subcycles: false` to route every river whole, as v2 did, and `invalid_coefficients: 'log'` to route the rivers
+with a negative coefficient at that step rather than refuse them, logging each run's count of them as an error.
+
+`dt_discharge` and `dt_total` configure channel routing only. Routing with forcing routes every step of each forcing
+file and writes the discharge at the end of each, so remove them from configs that route runoff: trim the forcing
+files to route part of them, and save fewer time steps with a custom discharge writer.
 
 New keys, each with a default that matches v2 except `forcing`, which must be set to route runoff, and
-`conditioning`, which v2 did not do:
+`use_subreaches` and `use_subcycles`, which v2 did not do:
 
 | Key                     | Default     | Description                                                                                                                                      |
 |-------------------------|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
 | `forcing`               | `'channel'` | `'channel'`, or the form of `forcing_files`: `'catchment'`, `'grid'`, `'ecmwf_grib'`                                                             |
-| `conditioning`          | `True`      | Sub-reaches and subcycles for rivers with a negative coefficient at their step; `False` routes every river whole; `dt_routing: auto` requires it |
-| `restrict_x_range`      | `True`      | Route x from 0 to 0.45, lowering any larger x, which bounds the sub-reaches and subcycles conditioning needs                                     |
-| `invalid_coefficients`  | `'warn'`    | `'warn'`, `'raise'`, or `'ignore'` rivers with a negative coefficient in their own step                                                          |
+| `use_subreaches`        | `True`      | Sub-reaches for rivers too long for their step; `False` routes them whole; `dt_routing: auto` requires it                                        |
+| `use_subcycles`         | `True`      | Subcycles for rivers too short for their step; `False` routes them whole; `dt_routing: auto` requires it                                         |
+| `invalid_coefficients`  | `'raise'`   | `'raise'` refuses, `'log'` logs an error for, or `'ignore'` routes silently rivers with a negative coefficient in their own step                 |
 | `runoff_depth_unit`     | `None`      | Unit of gridded runoff depths; `None` reads the file attributes                                                                                  |
 | `force_positive_runoff` | `false`     | Clip negative runoff depths to zero                                                                                                              |
 | `as_volumes`            | `false`     | Prepare catchment runoff as volumes (m³) instead of depths (m)                                                                                   |

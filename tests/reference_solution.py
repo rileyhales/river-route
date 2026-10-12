@@ -161,7 +161,8 @@ def reference_runs(network_file: str, weights: str, runoff: list[str], catchment
     """
     common = {'network_file': network_file, 'invalid_coefficients': 'ignore'}  # each river takes its fewest steps
     grid = common | GRID_NAMES | {'forcing': 'grid', 'forcing_files': runoff, 'grid_weights_file': weights}
-    fixed_step = grid | {'dt_routing': 3600, 'conditioning': False}  # every river whole in steps of the hourly runoff
+    # every river whole in steps of the hourly runoff
+    fixed_step = grid | {'dt_routing': 3600, 'use_subreaches': False, 'use_subcycles': False}
     catchment = common | {'forcing': 'catchment', 'forcing_files': catchment_runoff}
     channel = common | {
         'forcing': 'channel',

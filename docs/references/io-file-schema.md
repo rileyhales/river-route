@@ -178,7 +178,7 @@ in the same order. `channel_state_final_file` is written in this format, so a fi
 | `riverId`  | integer | ID of the river, in the order of the network file      |
 | `Q`        | float   | Discharge of the river in m³/s at the end of the run   |
 
-With `conditioning`, the default, a state file has one row per sub-reach instead, each river's sub-reaches upstream to
+With `use_subreaches`, the default, a state file has one row per sub-reach instead, each river's sub-reaches upstream to
 downstream with its `riverId` repeated on each. Routing refuses a state file without `riverId` or whose rivers are
 not the rivers of the network file in order.
 
