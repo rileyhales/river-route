@@ -3,47 +3,49 @@
 `river-route` routes catchment-scale runoff through a vector river network. All routing runs through the
 `Router` class, and the kind of routing it performs is chosen with the `forcing` config selector:
 
-- **`forcing: channel`**: pure channel routing with no lateral inflows. Routes an existing discharge state
+- **`forcing: channel`**: pure channel routing with no runoff entering the rivers. Routes an existing discharge state
   forward in time using only Muskingum channel equations. Requires an explicit initial state.
 - **`forcing: catchment`**, **`grid`**, or **`ecmwf_grib`**: routes the runoff volumes or
-  depths of `runoff_files`, in that form, directly into river channel inlets at each timestep. This is the most
+  depths of `forcing_files`, in that form, directly into river channel inlets at each timestep. This is the most
   common starting point.
 
 This tutorial routes catchment runoff (`forcing: catchment`).
 
 ## Vocabulary
 
-- **VPU** (Vector Processing Unit): a named group of catchments and channels forming a complete routing domain.
+- **Region**: a named group of catchments and channels forming a complete routing domain.
 - **Catchment**: a subunit of a watershed. Water enters at one upstream location and exits at exactly one outlet.
-- **Depth first search (DFS) order**: rivers sorted so that each river comes after every river upstream of it,
-  and the rivers upstream of a river are the rows immediately before it. Every river's upstream watershed is then
-  one contiguous range of rows ending at that river. A hard requirement of `river-route`: the routing params file
-  must be in DFS order. Sorting upstream before downstream (topological order) is not enough.
+- **Depth first search (DFS) order**: rivers sorted so that each river comes after every river upstream of it and
+  the rivers upstream of a river are the rows immediately before it, so every river's upstream watershed is one
+  contiguous range of rows ending at that river. The network file must be in DFS order.
 
 ## Required Files
 
 Three files are needed for a routing run:
 
-1. **Routing parameters** (`params.parquet`) — river network topology and Muskingum coefficients.
-2. **Lateral inflow** (`catchment_runoff.nc`) — per-catchment runoff time series.
+1. **Network file** (`network.parquet`) — river network topology and Muskingum parameters.
+2. **Catchment runoff** (`catchment_runoff.nc`) — per-catchment runoff time series.
 3. **Routed discharge** (`discharge.zarr`) — output path where results will be written.
 
 See the [File Schemas reference](../references/io-file-schema.md) for field names and formats.
 
-## Routing Parameters
+## Network File
 
-The routing parameters parquet must contain at minimum these columns:
+The network file must contain at minimum these columns:
 
 | Column          | Description                                                                |
 |-----------------|----------------------------------------------------------------------------|
-| `river_id`      | Unique integer ID for each river segment                                   |
-| `next_river_id` | ID of the downstream segment (`-1` or `<0` at outlets)                     |
-| `k`             | Muskingum K — travel time (seconds); typically channel length / wave speed |
-| `x`             | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
+| `riverId`       | Unique integer ID for each river segment                                   |
+| `nextRiverId`   | ID of the downstream segment (`-1` at outlets)                             |
+| `muskingumK`    | Muskingum K — travel time (seconds); typically channel length / wave speed |
+| `muskingumX`    | Muskingum X — attenuation factor (0 ≤ x ≤ 0.5)                             |
+| `riverIndex`    | Position of the river in DFS order                                         |
+| `upstreamCount` | Number of rivers upstream of the river, not counting itself                |
 
-Rows must be in **DFS order**: every river's upstream rivers are the rows immediately before it. Every file with
-one entry per river, such as the catchment runoff and channel state files, lists the rivers in this same order. See
-the [File Schemas reference](../references/io-file-schema.md#routing-parameters) for how to check a table.
+Rows must be in **DFS order**, which `riverIndex` numbers: a river's upstream watershed is the rows from its
+`riverIndex` minus its `upstreamCount` to its `riverIndex`. Every file with one entry per river, such as the catchment
+runoff and channel state files, lists the rivers in this same order, and routing refuses one that does not. See the
+[File Schemas reference](../references/io-file-schema.md#network-file) for how to check a table.
 
 ## Config File
 
@@ -54,9 +56,9 @@ want.
 
 ```json
 {
-  "params_file": "/path/to/params.parquet",
+  "network_file": "/path/to/network.parquet",
   "forcing": "catchment",
-  "runoff_files": "/path/to/catchment_runoff.nc",
+  "forcing_files": "/path/to/catchment_runoff.nc",
   "discharge_dir": "/path/to/output/"
 }
 ```
@@ -76,8 +78,8 @@ Or build the configs directly without a config file:
 import river_route as rr
 
 configs = rr.Configs(
-    params_file='params.parquet',
-    runoff_files=['catchment_runoff.nc', ],
+    network_file='network.parquet',
+    forcing_files=['catchment_runoff.nc', ],
     discharge_dir='./output/',
     forcing='catchment',
 )
@@ -94,28 +96,28 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 
 ```json
 {
-  "params_file": "params.parquet",
+  "network_file": "network.parquet",
   "forcing": "catchment",
-  "runoff_files": "catchment_runoff.nc",
+  "forcing_files": "catchment_runoff.nc",
   "discharge_dir": "output/",
   "channel_state_init_file": "state.parquet",
   "channel_state_final_file": "new_state.parquet"
 }
 ```
 
-The state file is a parquet with a single column `Q` and one row per river segment, in the same order
-as the routing params.
+The state file is a parquet with the columns `riverId` and `Q` and one row per river, listing the rivers of the
+network file in the same order. A final state file is written this way, so it can start the next run.
 
 ## Reading the Output
 
-The routed discharge output is a zarr store with dimensions `river_id` and `time`:
+The routed discharge output is a zarr store with dimensions `riverId` and `time`, named for its forcing file:
 
 ```python
 import xarray as xr
 
 river_of_interest = 123456789
-ds = xr.open_zarr('discharge.zarr')
-series = ds['Q'].sel(river_id=river_of_interest).to_pandas()
+ds = xr.open_zarr('output/discharge_catchment_runoff.zarr')
+series = ds['Q'].sel(riverId=river_of_interest).to_pandas()
 
 # Save to CSV
 series.to_csv('hydrograph.csv')

@@ -32,7 +32,7 @@ The following config keys have been renamed or removed.
 | `final_state_file`        | `channel_state_final_file` |
 | `input_type`              | `runoff_processing_mode`   |
 | `catchment_volumes_files` | `qlateral_files`           |
-| `runoff_type`             | `grid_accumulation_type`   |
+| `runoff_type`             | `accumulation_type`   |
 | `runoff_depths_files`     | `grid_runoff_files`        |
 | `weight_table_file`       | `grid_weights_file`        |
 | `var_catchment_volume`    | _(removed)_                |

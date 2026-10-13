@@ -19,39 +19,7 @@ Some key insights applying linear algebra and graph theory to river networks and
    diagonal; $c_1 A$ contributes entries only below.
 6. Unit lower triangular systems are best solved with forward substitution.
 
-## Muskingum Routing
-
-The Muskingum equation relates the outflow $Q_{t+1}$ to the inflow at the next step $I_{t+1}$, inflow at the current step $I_{t}$,
-and the current discharge $Q_t$. Equivalent forms also use the notations $Q_{t}$ and $Q_{t-1}$. For a primer on the
-derivation of the Muskingum equation as a relationship of storage, inflow, and outflow, try the HEC-HMS manual pages on the
-[Muskingum Model](https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model) and the
-[Muskingum-Cunge Model](https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model).
-
-$$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t
-$$
-
-Where the coefficients $c_1$, $c_2$, $c_3$ are given by:
-
-$$
-c_1 = \frac{\Delta t / k - 2x}{\Delta t / k + 2(1-x)}
-\qquad
-c_2 = \frac{\Delta t / k + 2x}{\Delta t / k + 2(1-x)}
-\qquad
-c_3 = \frac{2(1-x) - \Delta t / k}{\Delta t / k + 2(1-x)}
-$$
-
-Note that:
-
-- Mass is conserved.
-- $c_1 + c_2 + c_3 = 1$
-- The $k$ parameters can be shown to be the flood wave travel time along the channel in seconds
-- The $x$ parameter is a dimensionless "attenuation" factor between 0 (max attenuation) and 0.5 (no attenuation).
-- Every time step depends on the step before. The solution must be found sequentially rather than parallelized across time steps.
-
-## Matrix Formulation
-
-### Topological sorting and network adjacency
+## River Network Ordering
 
 Rivers are often described as "networks" or "systems". When being modeled, river networks have a few properties that are useful
 to take advantage of for mathematically more efficient algorithms.
@@ -66,6 +34,13 @@ the earlier it should appear in the sorted list. A useful tool for conceptualizi
 The Strahler order assigns the number 1 to the most upstream, or headwater, segments. When two segments of the same order merge, the
 downstream segment is assigned an order 1 higher. If two different order merge, the downstream segment is assigned the higher of the
 two inlet orders. Streams that are a headwater area have no upstream segments.
+
+Some river datasets will have multiple segments in a row which have the same river order. In those cases, you could sort rivers of
+the same order by increasing cumulative drainage area or another attribute that increases as you go downstream. There are multiple
+valid ways to sort rivers which are all topologically sorted. It is not unique. The only requirement is that upstream segments
+appear before downstream segments in the sorted list.
+
+### Breadth First Search (BFS)
 
 <div style="text-align: center;">
 
@@ -91,10 +66,212 @@ the list depend on no rivers and rivers further down the list depend on a greate
 River 5's inflow depends on what is discharged from rivers 1 and 2. A river's discharge cannot be computed until all of upstream
 contributors are known.
 
-Some river datasets will have multiple segments in a row which have the same river order. In those cases, you could sort rivers of
-the same order by increasing cumulative drainage area or another attribute that increases as you go downstream. There are multiple
-valid ways to sort rivers which are all topologically sorted. It is not unique. The only requirement is that upstream segments
-appear before downstream segments in the sorted list.
+### Depth first search (DFS) order
+
+A depth first search finds a topological order. It starts at each outlet and walks upstream, adding a river to the
+order only after every river upstream of it has been added. Its order also places the rivers
+upstream of each river in the rows immediately before it, so every river's whole upstream watershed is one contiguous
+range of rows ending at that river. `river-route` requires this order (see the
+[network file](io-file-schema.md#network-file) requirements).
+
+<div style="text-align: center;">
+
+```mermaid
+---
+config:
+  themeVariables:
+    fontSize: 12px
+---
+graph TD
+    S0@{ shape: sm-circ } -->|" idx: 0<br>count: 0 "| S2@{ shape: sm-circ }
+    S1@{ shape: sm-circ } -->|" idx: 1<br>count: 0 "| S2
+    S3@{ shape: sm-circ } -->|" idx: 3<br>count: 0 "| S5@{ shape: sm-circ }
+    S4@{ shape: sm-circ } -->|" idx: 4<br>count: 0 "| S5
+    S2 -->|" idx: 2<br>count: 2 "| S6@{ shape: sm-circ }
+    S5 -->|" idx: 5<br>count: 2 "| S6
+    S6 -->|" idx: 6<br>count: 6 "| S8@{ shape: sm-circ }
+    S7@{ shape: sm-circ } -->|" idx: 7<br>count: 0 "| S8
+    S9@{ shape: sm-circ } -->|" idx: 9<br>count: 0 "| S12@{ shape: sm-circ }
+    S10@{ shape: sm-circ } -->|" idx: 10<br>count: 0 "| S12
+    S11@{ shape: sm-circ } -->|" idx: 11<br>count: 0 "| S12
+    S8 -->|" idx: 8<br>count: 8 "| S13@{ shape: sm-circ }
+    S12 -->|" idx: 12<br>count: 3 "| S13
+    S13 -->|" idx: 13<br>count: 13 "| OUTLET@{ shape: sm-circ }
+    linkStyle default stroke-width:3px
+```
+
+<figcaption><em>Figure 2: A river network in DFS order, each river labeled with its <code>riverIndex</code> and <code>upstreamCount</code>.</em></figcaption>
+</div>
+
+A river's watershed is the rows from its `riverIndex` minus its `upstreamCount` to its `riverIndex`. In Figure 2,
+river 5's watershed is rivers 3 through 5, river 6's is rivers 0 through 6, river 12's is rivers 9 through 12, and river
+13's, at the outlet, is all 14 rivers.
+
+Figure 1 is numbered in a topological order that is not a DFS order: rivers 3 and 4 fall between river 5 and its
+upstream rivers 1 and 2. A depth first search from the outlet orders the same network 1, 2, 5, 3, 4, 6, 7, 8, 9.
+`examples/migrate_v2_to_v3.py` sorts a network into DFS order.
+
+## Muskingum Routing
+
+The Muskingum routing method uses a conservation of mass approach to route flow through a river segment. It relates
+the discharge at the current time step $Q_{t}$ to the discharge at the previous time step $Q_{t-1}$ and the inflow at 
+both the current and previous time steps $I_{t}$ and $I_{t-1}$. This is also equivalently described and written as 
+the discharge the next step relative to the discharge at the current step, $Q_{t+1}$ and $Q_{t}$.
+
+### Inventory Equation
+
+The average inflow during an interval minus the average discharge during an interval is equal to the change in storage during that interval:
+
+$$
+\overline{I} - \overline{Q} = \frac{\Delta S}{\Delta t} \tag{1}
+$$
+
+$\overline{I}$ is the average inflow from the upstream channel, not from overland or lateral flows.
+
+$\overline{Q}$ is the average discharge during the interval.
+
+$\Delta S$ is the change in storage during the interval.
+
+$\Delta t$ is the duration of the interval which is later parameterized as the time step of the routing.
+
+Rewriting $\overline{I}$ and $\overline{Q}$ as the average between the start and end of the interval gives the form:
+
+$$
+\frac{I_t + I_{t+1}}{2} - \frac{Q_t + Q_{t+1}}{2} = \frac{S_{t+1} - S_t}{\Delta t} \tag{2}
+$$
+
+!!! note "What the routed discharge is"
+    `river-route` writes $Q_{t+1}$ at the end of each output interval, the discharge after routing the interval, and
+    averages nothing: for an output interval of $m$ steps it writes $Q_m$. A shorter $\Delta t$ is not more
+    accurate (see [Signs of the coefficients](#signs-of-the-coefficients)).
+
+### Storage Equation
+
+<div style="text-align: center;">
+<div class="storage-figure">
+<table class="storage-table">
+<tr><th></th><th scope="col">High <i>x</i> (<i>x</i> = 0.4)</th><th scope="col">Low <i>x</i> (<i>x</i> = 0.1)</th></tr>
+<tr><th scope="row"><i>Q</i> &gt; <i>I</i></th>
+<td>
+--8<-- "docs/static/images/storage-falling-high-x.svg"
+</td>
+<td>
+--8<-- "docs/static/images/storage-falling-low-x.svg"
+</td>
+</tr>
+<tr><th scope="row"><i>I</i> &gt; <i>Q</i></th>
+<td>
+--8<-- "docs/static/images/storage-rising-high-x.svg"
+</td>
+<td>
+--8<-- "docs/static/images/storage-rising-low-x.svg"
+</td>
+</tr>
+</table>
+</div>
+<figcaption><em>Figure 3: Prism and wedge storage in a river segment for a high and a low x, with the same inflow and discharge in every panel. Water flows from left to right. The dashed line is the water surface of steady flow, which bounds the prism storage, and the solid line is the water surface of the flood. When discharge exceeds inflow, as a flood falls, the wedge is water missing from the prism. When inflow exceeds discharge, as a flood rises, the wedge is water held above the prism. Both wedges grow with x.</em></figcaption>
+</div>
+
+If we say that the travel time of the flood wave through the segment is $k$ and weight the difference between the
+inflow and the discharge by $x$, the water stored in the segment can be split into two parts, prism storage and wedge
+storage:
+
+$$
+S_t = k\, Q_t + k\, x\, (I_t - Q_t) \tag{3}
+$$
+
+$S_t$ is the volume of water stored in the segment at time $t$.
+
+$k$ is the travel time of the flood wave through the segment, in seconds.
+
+$x$ is a dimensionless weight between 0 and 0.5.
+
+$I_t$ and $Q_t$ are the inflow and the discharge at time $t$.
+
+The first term, $k\, Q_t$, is the prism storage. It is the water the segment holds when the flow is steady, with the
+same flow entering and leaving. The water surface is then parallel to the channel bed, so the water fills a long prism
+shape. A discharge in cubic meters per second multiplied by a time in seconds is a volume in cubic meters, so the prism
+storage is the volume of water that leaves the segment during one travel time.
+
+The second term, $k\, x\, (I_t - Q_t)$, is the wedge storage. It is the water gained or lost on top of the prism when
+the flow changes. When a flood wave arrives, the upstream end of the segment rises before the downstream end, so the
+water surface tilts and holds an extra wedge of water on top of the prism. Inflow is greater than discharge, so
+$I_t - Q_t$ is positive and the wedge adds to the storage. After the peak passes, the upstream end falls first.
+Discharge is greater than inflow, so $I_t - Q_t$ is negative and the wedge takes away from the storage. The weight $x$
+sets how large the wedge is for a given difference between inflow and discharge, as Figure 3 shows.
+
+Multiplying out the wedge term and collecting the two $Q_t$ terms, $k\, Q_t - k\, x\, Q_t = k\, (1 - x)\, Q_t$,
+simplifies Equation 3 to
+
+$$
+S_t = k\, \bigl[x\, I_t + (1 - x)\, Q_t\bigr] \tag{4}
+$$
+
+Equation 4 says that the storage is the travel time multiplied by a weighted average of the inflow and the discharge.
+The weights $x$ and $1 - x$ add to 1, so $x\, I_t + (1 - x)\, Q_t$ is a flow between the inflow and the discharge. The
+value of $x$ decides how much each one counts:
+
+- When $x = 0$, the storage depends only on the discharge, $S_t = k\, Q_t$, like a lake or reservoir whose level and
+  outflow rise and fall together. There is no wedge storage, and the flood wave attenuates the most: its peak is
+  lowered and spread out over a longer time as it moves downstream.
+- When $x = 0.5$, the inflow and the discharge count equally, $S_t = k\, (I_t + Q_t) / 2$. The flood wave does not
+  attenuate. It reaches the downstream end with the same shape, only $k$ seconds later.
+- Natural rivers usually fall between these two, with $x$ from 0 to 0.3.
+- Values above 0.5 would make a flood wave grow as it moves downstream, which a river channel does not do.
+
+Substituting Equation 4 at the start and end of the time step into Equation 2 gives
+
+$$
+\begin{aligned}
+&\frac{I_t + I_{t+1}}{2} - \frac{Q_t + Q_{t+1}}{2} = \\
+&\qquad \frac{k}{\Delta t} \bigl[x\, (I_{t+1} - I_t) + (1 - x)\, (Q_{t+1} - Q_t)\bigr]
+\end{aligned} \tag{5}
+$$
+
+Multiplying both sides by $2 \Delta t / k$ and collecting the unknown outflow $Q_{t+1}$ on the left side gives
+
+$$
+\begin{aligned}
+\Bigl(\frac{\Delta t}{k} + 2(1 - x)\Bigr)\, Q_{t+1}
+&= \Bigl(\frac{\Delta t}{k} - 2x\Bigr)\, I_{t+1} + \Bigl(\frac{\Delta t}{k} + 2x\Bigr)\, I_t \\
+&\quad + \Bigl(2(1 - x) - \frac{\Delta t}{k}\Bigr)\, Q_t
+\end{aligned} \tag{6}
+$$
+
+Dividing both sides by $\Delta t / k + 2(1 - x)$ gives the Muskingum routing equation:
+
+$$
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t \tag{7}
+$$
+
+where the coefficients $c_1$, $c_2$, $c_3$ are given by:
+
+$$
+c_1 = \frac{\Delta t / k - 2x}{\Delta t / k + 2(1-x)}
+\qquad
+c_2 = \frac{\Delta t / k + 2x}{\Delta t / k + 2(1-x)}
+\qquad
+c_3 = \frac{2(1-x) - \Delta t / k}{\Delta t / k + 2(1-x)} \tag{8}
+$$
+
+Note that:
+
+- Mass is conserved.
+- $c_1 + c_2 + c_3 = 1$
+- Every time step depends on the step before. The solution must be found sequentially rather than parallelized across time steps.
+
+The Muskingum Cunge equation adds the term $c_4$ to weight adding a lateral inflow term $Q_l$ to
+each segment. In the RAPID assumption, lateral flow is the runoff volume divided by the runoff
+time step, meaning all runoff enters the channel and exits the basin in the interval it is generated.
+No overland flow time or attenuation occurs.
+
+$$
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t} \tag{9}
+$$
+
+where $c_4 = c_1 + c_2$.
+
+## Derivation of Matrix Muskingum
 
 ### Adjacency matrix
 
@@ -131,9 +308,9 @@ $$
 Because the rivers are listed in a topological order, $A$ is strictly lower triangular and the diagonal is zero. $A$ is extremely sparse so computationally
 it's more efficient to store it in a sparse format and do math only on the non-zero elements.
 
-## Derivation of Matrix Muskingum
+### Matrix Muskingum
 
-Using the Adjacency matrix and the definition that $I_t$ is the sum of upstream discharges, we can replace all $I$ with $A\, Q$.
+Using the adjacency matrix and the definition that $I_t$ is the sum of upstream discharges, we can replace all $I$ with $A\, Q$.
 
 Muskingum equation:
 
@@ -159,6 +336,12 @@ $$
 \bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
 $$
 
+With the lateral inflow term of Muskingum Cunge:
+
+$$
+\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t + c_4\, Q_{l,t}
+$$
+
 Notes:
 
 - The LHS is the same for every time step (only depends on $A$ and $c_1$).
@@ -166,28 +349,7 @@ Notes:
 - $c_2$ and $c_3$ can be expressed as 1D vectors of length $n_\text{segments}$ for vector multiplication.
 - $c_1$ is an $NxN$ diagonal matrix so it can be subtracted from $I$ after multiplication with A.
 
-### Muskingum Cunge Routing
-
-The Muskingum Cunge equation adds the term $c_4$ to weight adding a lateral inflow term $Q_l$ to
-each segment. In the RAPID assumption, lateral flow is the runoff volume divided by the runoff
-time step, meaning all runoff enters the channel and exits the basin in the interval it is generated.
-No overland flow time or attenuation occurs.
-
-$$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t}
-$$
-
-where $c_4 = c_1 + c_2$. In matrix form:
-
-$$
-\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t + c_4\, Q_{l,t}
-$$
-
 ## Unit Hydrograph Lateral Inflow (Planned)
-
-!!! warning
-    The unit-hydrograph lateral inflow routing procedure described in this section is **planned** and not yet implemented
-    in v3. There is no router for it. The math is documented here to describe the intended future method.
 
 ### Derivation
 
@@ -266,8 +428,8 @@ That convolution helper is not part of the current release and is not wired into
 
 ## Forward Substitution Algorithm
 
-Because of the careful preparation of the routing matrices, the linear system can be solved for directly with a single forward substitution 
-pass without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency gain in terms of the 
+Because of the careful preparation of the routing matrices, the linear system can be solved for directly by forward substitution, 
+one river at a time from upstream to downstream, without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency gain in terms of the 
 complexity of the algorithm as well as how efficiently it can be implemented and compiled in code.
 
 For a unit lower triangular system $L\, x = b$ of size $n$:
@@ -278,10 +440,10 @@ $$
 
 Because $L_{ii} = 1$, no division is needed. Each unknown $x_i$ depends only on previously
 solved values $x_1, \ldots, x_{i-1}$, so the system is solved sequentially from the first
-row to the last. Specifically, `river-route` does not store the matrix $L$ at all. It uses a
-push-based forward substitution over a single `downstream_indices` vector. Each river is
-visited once in topological order; once a river's discharge is known, its contribution is pushed
-forward onto the right-hand side of its single downstream river using pre-gathered coefficients.
+row to the last. `river-route` does not store the matrix $L$ at all, and it does not solve it one time step at a
+time. Once every river upstream of a river is routed, the whole right-hand side of that river is known at every step,
+so v3 solves the system one river at a time: each river's whole time series is routed before the next river, in
+topological order, each river reading the discharge of the rivers draining directly into it.
 
 ```
 for j = 1, 2, ..., n:
@@ -292,75 +454,140 @@ for j = 1, 2, ..., n:
 
 *Listing 1: Conceptual column-oriented forward substitution pseudocode for a generic unit lower triangular system (not river-route's storage layout).*
 
-In the actual v3 kernels (`river_route/router/_numba_kernels.py`, e.g. `static_channel`), there is no
-matrix and no CSC arrays. Each river's right-hand side is first seeded with its own $c_3\, Q_t$ term (plus
-any lateral forcing). The kernel then visits the rivers in topological order, and once a river's new
-discharge is known it pushes that contribution forward onto its single downstream river using the
-pre-gathered `downstream_c1` / `downstream_c2` coefficients (built in `Router.py`). Conceptually, one routing step is:
+In the routing kernels (`routing.c` in `river_route/kernels/c`, and its numba twin `numba_kernel.py`) there is no
+matrix. Every river's discharge is a row: its value at the start, then at the end of each step. Rivers are routed in
+topological order, so when a river is reached the rows of the rivers draining directly into it, its inflow rivers, are
+complete, and its inflow at every step is their sum. Its whole series is then the recurrence
+$Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, V_t$ with every $I$ known, written into its own row, which the
+river downstream reads in turn:
 
 ```python
-for i in range(n_rivers):              # topological order: upstream before downstream
-    q_old = q_t[i]
-    q_new = rhs[i]                      # rhs[i] already holds c3*q_old + upstream/lateral contributions
-    q_t[i] = q_new
-    downstream_idx = downstream_indices[i]
-    if downstream_idx >= 0:             # outlets have no downstream (-1)
-        rhs[downstream_idx] += downstream_c2[i] * q_old + downstream_c1[i] * q_new
+for i in range(n_rivers):                        # topological order: upstream before downstream
+    discharge[i, 0] = q[i]
+    for t in range(n_steps):
+        inflow_after = sum(discharge[j, t + 1] for j in inflow_rivers[i])   # the rivers draining into i
+        inflow_before = sum(discharge[j, t] for j in inflow_rivers[i])
+        q[i] = c1[i] * inflow_after + c2[i] * inflow_before + c3[i] * q[i] + c4[i] * runoff_volume[i, t]
+        discharge[i, t + 1] = q[i]
 ```
 
-*Listing 2: Push-based forward substitution over downstream indices for one routing step, matching `static_channel` in `_numba_kernels.py`.*
+*Listing 2: River-at-a-time forward substitution, each river reading the rows of its inflow rivers, the order in which
+the routing kernels route. They solve the recurrence eight steps at a time, as two vectors of four steps.*
 
-- **Time:** $O(n + m)$ where $n$ is the number of river segments and $m$ is the number of edges
-  (upstream-downstream connections). For tree-structured river networks, $m = n - 1$.
-- **Space:** Only the sparse matrix entries are stored. No fill-in occurs because no
-  factorization is performed.
+- **Time:** $O((n + m)\, T)$ where $n$ is the number of river segments, $m$ is the number of edges
+  (upstream-downstream connections), and $T$ is the number of routing steps. For tree-structured river networks,
+  $m = n - 1$.
+- **Space:** No matrix is stored, and nothing beyond the discharge that is written: each river reads its inflow from
+  the rows of the rivers upstream of it, which were written just before it.
 
-This is optimal — every edge is visited exactly once per time step.
+This is optimal — every edge is visited exactly once per routing step.
 
-## Numerical stability relationship between c1, c2, dt, k, x
+## Signs of the coefficients
 
-Because the Muskingum equation is a valid solution to a partial differential equation, the equation will conserve mass and route water correctly
-regardless of the choice of dt, k, and x. However, the choice of those parameters can cause physically impossible results causing either 1) negative
-discharge or 2) oscillation from negative to positive discharge. These conditions happen when either $c_1$ or $c_2$ is negative. The coefficients
-are all fractions with the same denominator which will always be positive for positive $dt$ and $k$. We can create inequalities describing when the
-numerators are positive comparing dt (a subjective choice) to k and x (physically derived parameters):
+### Relationship between dt, k, x
+
+The coefficients sum to one, so the Muskingum equation conserves mass for any $\Delta t$, $k$, and $x$, and for $x \le 1/2$
+it is stable at every $\Delta t$: it never amplifies the inflow of a river. What the choice of $\Delta t$ relative to $k$
+and $x$ can break is the sign of the coefficients. A negative coefficient makes a negative response to a positive
+inflow: discharge that dips below zero ahead of a rise, or that alternates from step to step and goes negative. The
+coefficients share a denominator, positive for positive $\Delta t$ and $k$, so each is non-negative when its
+numerator is:
 
 $$
 \begin{aligned}
-c_1 > 0 &\iff \Delta t > 2kx \\
-c_2 > 0 &\iff \Delta t > -2kx \\
-c_3 > 0 &\iff \Delta t < 2k(1-x)
+c_1 \ge 0 &\iff \Delta t \ge 2kx \\
+c_2 \ge 0 &\iff \Delta t \ge -2kx \\
+c_3 \ge 0 &\iff \Delta t \le 2k(1-x)
 \end{aligned}
 $$
 
-Note that $c_2$ is always positive because $dt$, $k$, and $x$ are all positive.
-The remaining 2 inequalities can be combined to fine the range of valid $dt$ values:
+Muskingum $x$ is never negative, and for $x \ge 0$, $c_2$ is always positive, so every coefficient is non-negative
+in the window:
 
 $$
-2kx < \Delta t < 2k(1-x)
+\begin{gathered}
+2kx \le \Delta t \le 2k(1-x) \\
+x = 0 \implies 0 \le \Delta t \le 2k \\
+x = 0.5 \implies k \le \Delta t \le k \implies \Delta t = k
+\end{gathered}
 $$
 
 There are several noteworthy insights from these equations:
 
-- The width of the valid range is $2k(1-x) - 2kx = 2k(1-2x)$ which is positive for $x < 0.5$.
-- The lower bound of valid $dt$ values is 0 when $x = 0$ meaning maximum attenuation such as at a reservoir.
-- The upper bound of valid $dt$ values approaches 0 as $x$ approaches 0.5 meaning no attenuation.
-- The width of the valid range approaches 0 as $x$ approaches 0.5 meaning no attenuation.
-- The width of the valid range approaches $2k$ as $x$ approaches 0 meaning maximum attenuation such as at a reservoir.
+- When there is no attenuation ($x = 0.5$), the only $\Delta t$ in the window is $k$.
+- When there is maximum attenuation ($x = 0$), the window is from 0 to $2k$.
+- The window spans a factor of $(1-x)/x$ in $k$, 4 at $x = 0.2$, so a network whose travel times span more than that
+  has no step at which every river is inside it.
+- Whatever $\Delta t$ is, the response of a river to its upstream inflow has mean $k$ and variance $k^2(1-2x)$. The
+  step does not change how much a river delays or spreads a flood wave, so a shorter step is not a more accurate one.
 
-In the case of the river-route solver implementation which allows a single $dt$ for all rivers, numerical stability is easier when:
+### When k >>> dt
 
-- There is more attenuation (smaller x) making the valid range wider, approaching $2k$.
-- Rivers are longer (larger k) and reaches are subdivided to accommodate $dt$.
+A river too long for the step, $\Delta t < 2kx$, has $c_1 < 0$: its discharge dips ahead of a sharp rise. The dip is
+the behavior of the Muskingum model itself, which the step only resolves. Under real runoff it is small, and routing
+the river whole is usually best. To remove it, the river can be split into $N$ **_"sub-reaches"_** in series, whose
+travel times are the shares $w_i$ of $k$. Whatever their $x$, they keep the river's mean travel time $k$, and if they
+all take
+
+$$
+x_N = \frac{1}{2} - \frac{1/2 - x}{\sum_i w_i^2},
+$$
+
+they also keep its variance $k^2(1-2x)$, since $\sum_i (w_i k)^2 (1 - 2x_N) = k^2(1-2x)$. Sub-reaches that kept the
+river's own $x$ would divide its variance by $N$ and route a different, less diffusive river. Equal shares give
+$x_N = 1/2 - N(1/2 - x)$, the $x$ Muskingum-Cunge gives a reach $N$ times shorter, and `river-route` splits a river
+equally wherever that is not negative. Muskingum $x$ is never negative, so where it would be, as for $N \ge 2$ and
+$x < 1/4$, the sub-reaches take $x_N = 0$, linear reservoirs with $c_1$ positive at any step, and unequal shares: the
+first $N - 1$ take equal shares larger than the last's, the shares whose squares sum to $1 - 2x$. Two sub-reaches of a
+river at $x = 0.2$ take 0.724 and 0.276 of its $k$, which keeps its variance and makes the coefficients of every river
+too long at $x = 0.2$ non-negative. In general the fewest is $N = \lceil k / (\Delta t + (1-2x)k) \rceil$, and
+each sub-reach takes its share of the river's runoff.
+
+Equal sub-reaches can themselves be too short for the step, the shortest with $c_3 < 0$, which happens only for
+$x > 3/8$. With subcycles as well, the sub-reaches may then differ in travel time and each take subcycles of its own,
+$m_i$ steps of $\Delta t / m_i$. Each takes
+
+$$
+x_i = \frac{1}{2} - \left(\frac{1}{2} - x\right) \frac{k}{k_i},
+$$
+
+so that $k_i^2(1 - 2x_i) = (1-2x)\,k\,k_i$, and the variances of any travel times that sum to $k$ sum to
+$k^2(1-2x)$. Every sub-reach keeps the river's diffusion, and its window, $|\Delta t / m_i - k_i| \le (1-2x)k$, is as
+wide as that of the river's equal sub-reaches. [The sub-reaches a river needs](algorithm.md#the-sub-reaches-a-river-needs)
+gives how the fewest are found.
+
+### When dt >>> k
+
+A river too short for the step, $\Delta t > 2k(1-x)$, has $c_3 < 0$: its discharge alternates from step to step,
+amplifies its own runoff by up to $\Delta t / (2k(1-x))$ at the period of two steps, and goes negative under real
+runoff. Many delineated networks place confluences within a few pixels of each other, making short rivers between
+them, and lake outlets are often short too. Such a river is real, and `river-route` routes it in
+**_"subcycles"_**, $m = \lceil \Delta t / (2k(1-x)) \rceil$ steps of its own within each runoff step, with its upstream
+inflow interpolated linearly. This changes nothing about the river. With static coefficients the $m$ subcycles of a river
+of one reach are combined into one step of coefficients that give the same discharge, so they cost one step.
+
+The alternatives change the river. Raising $k$ to $\Delta t / (2(1-x))$ adds travel time. Deleting the river and
+joining the rivers upstream of it to the river downstream of it removes its travel time, its storage, and its
+discharge, and moves peaks. Neither is needed to route the network. A river of zero length is the exception: it has no
+travel time or storage, its coefficients are undefined at every step, and it is an artifact of delineation, such as a
+junction of three streams written as two junctions joined by a link of zero length. `river-route` refuses it, and it
+is resolved before routing by joining the rivers upstream of it to the river downstream of it, which is exact.
+
+### Negative discharge
+
+`river-route` writes negative discharge as routed. Clamping it to zero would hide the river that produced it, keep
+the positive half of an alternation, and either gain the clamped water, if the clamped series flowed downstream, or
+report discharge that no longer adds up to the routed volume. A river with negative discharge is a river outside the
+window, which sub-reaches or subcycles treat.
 
 ## References
 
 - HEC-HMS Users Manual introduction to Muskingum Model
-  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model]
+  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model>
 - HEC-HMS Users Manual introduction to Muskingum Cunge Model
-  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model]
+  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model>
 - HEC-HMS Users Manual introduction to Unit Hydrographs
-  (https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts)[https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts]
+  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts>
 - David, C. H. (2011) River Network Routing on the NHDPlus Dataset *Journal of Hydrometeorology* [doi:10.1175/2011JHM1345.1](https://doi.org/10.1175/2011JHM1345.1)
 - NRCS (2010). *National Engineering Handbook*, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture.
 - Wikipedia: [Triangular matrix — Forward substitution](https://en.wikipedia.org/wiki/Triangular_matrix#Forward_substitution).

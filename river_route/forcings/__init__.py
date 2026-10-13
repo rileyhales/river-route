@@ -1,9 +1,8 @@
-from .bases import BaseGridRunoff, CatchmentRunoffVolumes, GridCellRunoff, Runoff
-from .CatchmentRunoff import CatchmentRunoff
-from .ECMWFGribReducedGrid import ECMWFGribReducedGrid
+from .bases import BaseGridRunoffForcing, CatchmentRunoffVolumes, GridCellRunoff, RunoffForcing
+from .CatchmentRunoff import CatchmentRunoffForcing
+from .ECMWFGribReducedGrid import ECMWFGribReducedGrid, ReducedGaussianGrid
 from .GridRunoff import GridRunoff
 from .weights import (
-    ReducedGaussianGrid,
     cell_xy_from_regular_grid,
     compute_voronoi_catchment_intersects,
     grid_weights,
@@ -11,9 +10,9 @@ from .weights import (
     voronoi_diagram_from_regular_xy,
 )
 
-# the Runoff class that reads the runoff_files of each Configs forcing but channel, which routes no runoff
-RUNOFF_CLASS_FOR_FORCING: dict[str, type[Runoff]] = {
-    'catchment': CatchmentRunoff,
+# the RunoffForcing class that reads the forcing_files of each Configs forcing but channel, which routes no runoff
+RUNOFF_CLASS_FOR_FORCING: dict[str, type[RunoffForcing]] = {
+    'catchment': CatchmentRunoffForcing,
     'grid': GridRunoff,
     'ecmwf_grib': ECMWFGribReducedGrid,
 }
@@ -22,9 +21,9 @@ __all__ = [
     'RUNOFF_CLASS_FOR_FORCING',
     'CatchmentRunoffVolumes',
     'GridCellRunoff',
-    'Runoff',
-    'BaseGridRunoff',
-    'CatchmentRunoff',
+    'RunoffForcing',
+    'BaseGridRunoffForcing',
+    'CatchmentRunoffForcing',
     'GridRunoff',
     'ECMWFGribReducedGrid',
     'cell_xy_from_regular_grid',

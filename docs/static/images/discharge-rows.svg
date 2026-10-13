@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 528 264" width="528" role="img" aria-label="Discharge of three rivers over four steps, each row starting with the discharge at the start" font-size="13" fill="currentColor">
+<text x="78" y="18" text-anchor="end" font-size="11" fill-opacity="0.7">t</text>
+<text x="102" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="134" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="166" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="198" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">3</text>
+<text x="230" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">4</text>
+<text x="78" y="45" text-anchor="end">river 0</text>
+<rect x="86" y="26" width="32" height="28" fill="#1e88e5" fill-opacity="0.6" stroke="currentColor" stroke-width="1"/>
+<text x="102" y="45" text-anchor="middle">0</text>
+<rect x="118" y="26" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="134" y="45" text-anchor="middle">1</text>
+<rect x="182" y="26" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="198" y="45" text-anchor="middle">3</text>
+<rect x="214" y="26" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="230" y="45" text-anchor="middle">4</text>
+<rect x="150" y="26" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="2.5"/>
+<text x="166" y="45" text-anchor="middle">2</text>
+<text x="78" y="73" text-anchor="end">river 1</text>
+<rect x="86" y="54" width="32" height="28" fill="#fb8c00" fill-opacity="0.6" stroke="currentColor" stroke-width="1"/>
+<text x="102" y="73" text-anchor="middle">0</text>
+<rect x="118" y="54" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="134" y="73" text-anchor="middle">1</text>
+<rect x="182" y="54" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="198" y="73" text-anchor="middle">3</text>
+<rect x="214" y="54" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="230" y="73" text-anchor="middle">4</text>
+<rect x="150" y="54" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="2.5"/>
+<text x="166" y="73" text-anchor="middle">2</text>
+<text x="78" y="101" text-anchor="end">river 2</text>
+<rect x="86" y="82" width="32" height="28" fill="#43a047" fill-opacity="0.6" stroke="currentColor" stroke-width="1"/>
+<text x="102" y="101" text-anchor="middle">0</text>
+<rect x="118" y="82" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="134" y="101" text-anchor="middle">1</text>
+<rect x="182" y="82" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="198" y="101" text-anchor="middle">3</text>
+<rect x="214" y="82" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="230" y="101" text-anchor="middle">4</text>
+<rect x="150" y="82" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="2.5"/>
+<text x="166" y="101" text-anchor="middle">2</text>
+<rect x="24" y="176" width="32" height="28" fill="#1e88e5" fill-opacity="0.6" stroke="currentColor" stroke-width="1"/>
+<text x="40" y="195" text-anchor="middle">0</text>
+<rect x="56" y="176" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="72" y="195" text-anchor="middle">1</text>
+<rect x="120" y="176" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="136" y="195" text-anchor="middle">3</text>
+<rect x="152" y="176" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="168" y="195" text-anchor="middle">4</text>
+<rect x="184" y="176" width="32" height="28" fill="#fb8c00" fill-opacity="0.6" stroke="currentColor" stroke-width="1"/>
+<text x="200" y="195" text-anchor="middle">0</text>
+<rect x="216" y="176" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="232" y="195" text-anchor="middle">1</text>
+<rect x="280" y="176" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="296" y="195" text-anchor="middle">3</text>
+<rect x="312" y="176" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="328" y="195" text-anchor="middle">4</text>
+<rect x="344" y="176" width="32" height="28" fill="#43a047" fill-opacity="0.6" stroke="currentColor" stroke-width="1"/>
+<text x="360" y="195" text-anchor="middle">0</text>
+<rect x="376" y="176" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="392" y="195" text-anchor="middle">1</text>
+<rect x="440" y="176" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="456" y="195" text-anchor="middle">3</text>
+<rect x="472" y="176" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="1"/>
+<text x="488" y="195" text-anchor="middle">4</text>
+<rect x="88" y="176" width="32" height="28" fill="#1e88e5" fill-opacity="0.2" stroke="currentColor" stroke-width="2.5"/>
+<text x="104" y="195" text-anchor="middle">2</text>
+<rect x="248" y="176" width="32" height="28" fill="#fb8c00" fill-opacity="0.2" stroke="currentColor" stroke-width="2.5"/>
+<text x="264" y="195" text-anchor="middle">2</text>
+<rect x="408" y="176" width="32" height="28" fill="#43a047" fill-opacity="0.2" stroke="currentColor" stroke-width="2.5"/>
+<text x="424" y="195" text-anchor="middle">2</text>
+<path d="M104 175 C104 128, 264 128, 264 167" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<polygon points="264,175 259.5,166 268.5,166"/>
+<text x="184" y="134" text-anchor="middle" style="font-family: var(--md-code-font-family, monospace)">+ river_stride = 5</text>
+<text x="40" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="72" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="104" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="136" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">3</text>
+<text x="168" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">4</text>
+<text x="200" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">5</text>
+<text x="232" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">6</text>
+<text x="264" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">7</text>
+<text x="296" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">8</text>
+<text x="328" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">9</text>
+<text x="360" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">10</text>
+<text x="392" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">11</text>
+<text x="424" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">12</text>
+<text x="456" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">13</text>
+<text x="488" y="218" text-anchor="middle" font-size="11" fill-opacity="0.7">14</text>
+<path d="M27 226 V232 H181 V226 M104 232 V237" fill="none" stroke="currentColor"/>
+<text x="104" y="252" text-anchor="middle">river 0</text>
+<path d="M187 226 V232 H341 V226 M264 232 V237" fill="none" stroke="currentColor"/>
+<text x="264" y="252" text-anchor="middle">river 1</text>
+<path d="M347 226 V232 H501 V226 M424 232 V237" fill="none" stroke="currentColor"/>
+<text x="424" y="252" text-anchor="middle">river 2</text>
+</svg>

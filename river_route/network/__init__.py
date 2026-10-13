@@ -1,4 +1,4 @@
-from . import streams
-from .Network import Network
+from . import splitting, streams
+from .Network import Layout, Network
 
-__all__ = ['Network', 'streams']
+__all__ = ['Layout', 'Network', 'splitting', 'streams']

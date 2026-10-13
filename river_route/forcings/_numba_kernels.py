@@ -1,14 +1,10 @@
 import numba
 
-__all__ = ['aggregate_river', 'aggregate_to_rivers', 'cells_by_time']
-
-# The aggregation kernel covers a continuous range of rivers, which could be the whole network, so that code does not
-# change between the single-threaded and multithreaded cases. Disjoint ranges can run concurrently because each
-# writes only its own output columns, provided each is given its own scratch block.
+__all__ = ['aggregate_grid_cells_of_river', 'aggregate_grid_cells_to_rivers', 'cells_by_time']
 
 
 @numba.njit(cache=True, nogil=True)
-def aggregate_river(
+def aggregate_grid_cells_of_river(
     runoff_by_cell,  # Array (n_cells, n_steps) of runoff depths, each cell's time series contiguous
     indptr,  # Array (n_rivers + 1,) of sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
     cell,  # Array (n_weights,) of the row of runoff_by_cell each weight applies to
@@ -21,9 +17,8 @@ def aggregate_river(
     row,  # Array (n_steps,) to write the river's series into; its length sets how many steps are aggregated
 ):
     """
-    Area weighted sum of one river's cells, with every per-value conversion applied in the same pass:
-    de-accumulation, clipping, and the per-river scale. Each weight adds a contiguous cell series,
-    which the compiler vectorizes.
+    Area weighted sum of one river's cells, then every per-value conversion on the same row: de-accumulation,
+    clipping, and the per-river scale. Each weight adds a contiguous cell series, which the compiler vectorizes.
     """
     n_steps = row.shape[0]
     for t in range(n_steps):
@@ -48,14 +43,14 @@ def aggregate_river(
 
 
 @numba.njit(cache=True, nogil=True)
-def aggregate_to_rivers(
+def aggregate_grid_cells_to_rivers(
     *,
     runoff_by_cell,  # Array (n_cells, n_steps) of runoff depths, each cell's time series contiguous
     indptr,  # Array (n_rivers + 1,) of sparse row pointers, the weights of river r are indptr[r]:indptr[r + 1]
     cell,  # Array (n_weights,) of the row of runoff_by_cell each weight applies to
     weight,  # Array (n_weights,) of area proportions, already multiplied by the depth unit conversion factor
     scale,  # Array (n_rivers,) of per-river multipliers (catchment area for volumes); EMPTY to skip scaling
-    zero,  # scalar zero in the dtype of scratch
+    zero,  # scalar zero in the dtype of out
     cumulative,  # bool, de-accumulate each river's series from cumulative to incremental
     force_positive,  # bool, clip negative values to zero
     r_start,  # first river index this call aggregates
@@ -63,11 +58,16 @@ def aggregate_to_rivers(
     out,  # Array (n_rivers, n_steps) C-order catchment runoff to write rows r_start:r_stop into
 ):
     """
-    Aggregate every river in r_start:r_stop with aggregate_river straight into its own row of the C-order
-    (river, time) output. Each river's series is contiguous, so nothing is transposed.
+    Aggregate the grid cell runoff of the rivers in r_start:r_stop with aggregate_grid_cells_of_river, each straight
+    into its row of the C-order (river, time) output.
+
+    The range could be the whole network, so the code does not change between the single-threaded and multithreaded
+    cases. Disjoint ranges can run concurrently because each writes only its own rows of the output.
     """
     for r in range(r_start, r_stop):
-        aggregate_river(runoff_by_cell, indptr, cell, weight, scale, zero, cumulative, force_positive, r, out[r])
+        aggregate_grid_cells_of_river(
+            runoff_by_cell, indptr, cell, weight, scale, zero, cumulative, force_positive, r, out[r]
+        )
     return
 
 
