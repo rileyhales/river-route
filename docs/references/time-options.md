@@ -33,6 +33,10 @@ jobs: `dt_routing` sets its step, and `use_subreaches` and `use_subcycles` make 
   keeps a negative coefficient and is reported, as `invalid_coefficients` says. Setting `dt_routing` to `dt_runoff`
   with both routes as `'auto'` does, and without them routes each river whole in one step of each runoff step.
 
+With both, a river that neither equal sub-reaches nor subcycles make valid alone, which only a river with x above 1/3
+can be, is split into sub-reaches of unequal travel times that each take subcycles of their own; see
+[sub-reaches that take subcycles of their own](algorithm.md#sub-reaches-that-take-subcycles-of-their-own).
+
 The subcycles of each sub-reach are combined into one step of coefficients that give the
 discharge of taking them one at a time, so they cost one step, and the sub-reaches of a river hand their discharge to
 each other at the end of each runoff step, as rivers do.

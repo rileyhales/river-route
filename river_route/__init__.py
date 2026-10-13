@@ -1,7 +1,7 @@
 from . import forcings, kernels, metrics, network, router
 from ._metadata import __author__, __url__, __version__
 from .configs import Configs
-from .forcings import CatchmentRunoff, ECMWFGribReducedGrid, GridRunoff
+from .forcings import CatchmentRunoffForcing, ECMWFGribReducedGrid, GridRunoff
 from .network import Network
 from .router import Router
 
@@ -13,7 +13,7 @@ __all__ = [
     # routing
     'Router',
     # forcings: the runoff classes that read and prepare forcing_files
-    'CatchmentRunoff',
+    'CatchmentRunoffForcing',
     'GridRunoff',
     'ECMWFGribReducedGrid',
     # modules

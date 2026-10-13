@@ -6,14 +6,14 @@ All routing runs through `Router`, which routes Muskingum with static coefficien
 the whole run. The procedure it runs is set by the `forcing` selector and the compute options (`dt_routing`,
 `use_subreaches`, `use_subcycles`), and the required config keys depend on which selections you make.
 
-`Router` takes only a `Configs`. `Network` and the Runoff classes take the options they need as ordinary arguments
+`Router` takes only a `Configs`. `Network` and the RunoffForcing classes take the options they need as ordinary arguments
 and each has a `from_configs` classmethod that reads those same values off a `Configs`, which is how `Router` builds
 them. `examples/config.json` below lists every option.
 
 ### Routing procedure selector
 
 - `forcing` - `'channel'` (channel routing only, no inflows), or the form of the `forcing_files` whose runoff enters
-  the rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoff`),
+  the rivers in addition to routing: `'catchment'` (already aggregated to catchments, read by `CatchmentRunoffForcing`),
   `'grid'` (a grid with x and y dimensions, read by `GridRunoff`), or `'ecmwf_grib'` (ECMWF GRIB
   files on a reduced gaussian grid, read by `ECMWFGribReducedGrid`). A single value. Default `'channel'`. Each step's
   catchment runoff enters its river at a constant rate over the step.
@@ -31,7 +31,9 @@ routing.
   seconds, a divisor of the runoff step, is instead the step of every river. Setting it to the runoff step routes each
   river in one step of each runoff step.
 - `use_subreaches` - `True` (the default) splits each river too long for its step into the fewest sub-reaches in
-  series whose coefficients are all non-negative, which keep the river's mean travel time and its diffusion. `False`
+  series whose coefficients are all non-negative, which keep the river's mean travel time and its diffusion. With
+  `use_subcycles` too, a river that no count of equal sub-reaches makes valid is split into the fewest sub-reaches of
+  unequal travel times that each take subcycles of their own. `False`
   routes such a river whole at its step, and reports its negative coefficient; `dt_routing: 'auto'` requires it.
   Sub-reaches multiply the routing work
   by the average number of sub-reaches per river, and a river with an x near 0.5 can need very many; see
@@ -87,22 +89,23 @@ The following table lists where each remaining key applies.
 |----------------------------|----------------------------------|--------------------------------------------------------|
 | **core**                   |                                  |                                                        |
 | `network_file`             | Network file parquet.            | always                                                 |
+| **compute**                |                                  |                                                        |
+| `dt_routing`               | `'auto'`, or every river's step  | optional - [time docs](time-options.md)                |
+| `use_subreaches`           | Split rivers too long            | optional, required by `dt_routing: auto`               |
+| `use_subcycles`            | Subcycle rivers too short        | optional, required by `dt_routing: auto`               |
 | **state**                  |                                  |                                                        |
 | `channel_state_init_file`  | Path to initial channel state    | `forcing: channel` (else optional, default 0)          |
 | `channel_state_final_file` | Path to save final channel state | optional                                               |
 | **output**                 |                                  |                                                        |
 | `discharge_dir`            | Directory for output  files      | _Option 1_                                             |
 | `discharge_files`          | Explicit output paths            | _Option 2_                                             |
+| **time**                   |                                  |                                                        |
+| `start_datetime`           | Channel routing start date       | optional, `forcing: channel` only                      |
+| `dt_discharge`             | Channel output timestep          | `forcing: channel` without `dt_routing` in seconds     |
+| `dt_total`                 | Channel simulation duration      | `forcing: channel`, refused otherwise                  |
 | **input data**             |                                  |                                                        |
 | `forcing_files`            | Runoff read as the `forcing`     | `forcing` not `channel`                                |
 | `grid_weights_file`        | Aggregates grids to catchments   | `forcing` a grid                                       |
-| **time**                   |                                  |                                                        |
-| `start_datetime`           | Channel routing start date       | optional, `forcing: channel` only                      |
-| `dt_total`                 | Channel simulation duration      | `forcing: channel`, refused otherwise                  |
-| `dt_discharge`             | Channel output timestep          | `forcing: channel` without `dt_routing` in seconds     |
-| `dt_routing`               | `'auto'`, or every river's step  | optional - [time docs](time-options.md)                |
-| `use_subreaches`           | Split rivers too long            | optional, required by `dt_routing: auto`               |
-| `use_subcycles`            | Subcycle rivers too short        | optional, required by `dt_routing: auto`               |
 
 ## Optional configs with defaults
 
@@ -115,21 +118,21 @@ uses fixed names, such as `riverId` for the river id.
 | `dt_routing`             | `'auto'` each river's own valid step, or seconds         | `'auto'`                                      |
 | `use_subreaches`         | Sub-reaches for rivers too long for their step           | `True`                                        |
 | `use_subcycles`          | Subcycles for rivers too short for their step            | `True`                                        |
-| `log`                    | Enable or disable logging                                | `True`                                        |
-| `progress_bar`           | Show tqdm progress bar                                   | `True`                                        |
-| `log_level`              | Logger level, defaults to between INFO and WARNING       | `'PROGRESS'`                                  |
-| `log_stream`             | `'stdout'` or a file path                                | `'stdout'`                                    |
-| `log_format`             | Python logging format string                             | `'%(levelname)s - %(asctime)s - %(message)s'` |
-| `var_grid_runoff`        | Runoff variable name in grid `forcing_files`             | `'ro'`                                        |
+| `invalid_coefficients`   | `'raise'`, `'log'`, or `'ignore'` negative coefficients  | `'raise'`                                     |
+| `var_runoff`             | Runoff variable name in grid `forcing_files`             | `'ro'`                                        |
 | `var_x`                  | X-dimension name in `grid` forcing files                 | `'x'`                                         |
 | `var_y`                  | Y-dimension name in `grid` forcing files                 | `'y'`                                         |
 | `var_t`                  | Time dimension name in depth grids                       | `'time'`                                      |
-| `grid_accumulation_type` | Is runoff grid `'incremental'` or `'cumulative'`         | `'incremental'`                               |
+| `accumulation_type`      | Is runoff grid `'incremental'` or `'cumulative'`         | `'incremental'`                               |
 | `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs         | `'sequential'`                                |
-| `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file      | `None`                                        |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero                 | `False`                                       |
+| `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file      | `None`                                        |
 | `as_volumes`             | `GridRunoff` prepares volumes instead of depths          | `False`                                       |
-| `invalid_coefficients`   | `'raise'`, `'log'`, or `'ignore'` negative coefficients  | `'raise'`                                     |
+| `progress_bar`           | Show tqdm progress bar                                   | `True`                                        |
+| `log_level`              | Logger level, defaults to between INFO and WARNING       | `'PROGRESS'`                                  |
+| `log`                    | Enable or disable logging                                | `True`                                        |
+| `log_stream`             | `'stdout'` or a file path                                | `'stdout'`                                    |
+| `log_format`             | Python logging format string                             | `'%(levelname)s - %(asctime)s - %(message)s'` |
 
 ## Validation
 
@@ -160,15 +163,18 @@ runoff is read, a network the kernels cannot route, such as one with a river spl
 
 Use `Network.invalid_mask(dt)` to inspect a network before routing it. `dt_routing: auto` gives each river the
 `Network.subcycles(dt_runoff)` steps of its own that it needs, and `use_subreaches` routes each river too long for its
-step in `Network.sub_reaches(dt)` sub-reaches inside the kernel, laid out by
-`Network.sub_reach_k_and_x`, which keep the river's mean travel time and its travel time variance `k**2 * (1 - 2x)`:
+step in `Network.sub_reaches(dt)` sub-reaches inside the kernel, which keep the river's mean travel time and its
+travel time variance `k**2 * (1 - 2x)`:
 equal sub-reaches with `x = 1/2 - N*(1/2 - x)` wherever that is not negative, and otherwise, since Muskingum x is
 never negative, sub-reaches with x = 0 whose unequal travel times keep the variance. At `x = 0.2` two sub-reaches of
 0.724 and 0.276 of k make every river too long for any step non-negative. Each sub-reach takes its share of the
 river's runoff. Each river too short for a step given in seconds, which sub-reaches cannot fix, is routed in
-`Network.subcycles(dt)` steps of its own. `Network.conditioning(dt)` gives both. `Network.stabilize(dt)` instead rewrites the
-network in place with those sub-reaches as rows of their own, for the rivers sub-reaches can fix, and
-`Network.write_stabilized(dt)` saves that network as a network table. Such a network routes with the `channel`,
+`Network.subcycles(dt)` steps of its own. With both, a river neither makes valid, which only a river with x above 1/3
+can be, is split into the fewest sub-reaches of unequal travel times that each take subcycles of their own and keep
+the river's diffusion. `Network.conditioning(dt)` gives the `Layout` of every river: its sub-reaches, and the travel
+time, x, and subcycles of each. `Network.stabilize(dt)` instead rewrites the network in place with those sub-reaches as
+rows of their own, which route validly with `use_subcycles`, and `Network.write_stabilized(dt)` saves that network as a
+network table. Such a network routes with the `channel`,
 `grid`, and `ecmwf_grib` forcings, whose runoff is shared among the sub-reaches of each river; `catchment` forcing
 refuses it, since a catchment runoff file has one row per river.
 

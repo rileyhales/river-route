@@ -14,6 +14,26 @@ partitioned once no matter how many simulations run over it.
       show_source: false
       show_root_full_path: false
 
+::: river_route.network.Network.Layout
+    handler: python
+    options:
+      members_order: source
+      show_root_heading: true
+      show_source: false
+      show_root_full_path: false
+
+## Splitting
+
+The search for the fewest sub-reaches of unequal travel times, each in subcycles of its own, that
+`Network.conditioning` splits a river into where equal sub-reaches and subcycles cannot make it valid alone.
+
+::: river_route.network.splitting
+    handler: python
+    options:
+      members_order: source
+      show_root_heading: true
+      show_source: false
+
 ## Streams
 
 The functions a `Network` partitions its rivers with, the analysis of how evenly a partition divides a network,

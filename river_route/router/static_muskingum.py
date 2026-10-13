@@ -1,6 +1,6 @@
 """
 Muskingum routing with static coefficients: k, x, and the step are fixed for the whole run for each river, and every
-river is routed validly by splitting it into sub-reaches or taking its step in subcycles. This module
+river is routed validly by splitting it into sub-reaches, taking its step in subcycles, or both. This module
 settles each river's sub-reaches and the coefficients of each, in float64, and either kernel of river_route.kernels
 routes them.
 """
@@ -35,13 +35,14 @@ class Coefficients(NamedTuple):
 def prepare_routing(network: Network, configs: Configs, dt_runoff: int, dt_routing: int | None) -> Coefficients:
     """
     Each river's sub-reaches and the coefficients of each. Every river hands its discharge downstream at the end of
-    each runoff step and takes subcycles of its own within it, settled in two jobs. The first sets each river's step:
-    with dt_routing auto (None), its own valid step, the runoff step over the fewest subcycles that keep its
-    coefficients non-negative, and with dt_routing given, exactly dt_routing. The second, conditioning, splits a river
-    too long for its step into the sub-reaches of Network.sub_reach_k_and_x, each taking its share of the river's
-    runoff, with use_subreaches, and routes a river too short for it in subcycles of its step, with use_subcycles.
-    Without them a river is routed whole at its step, and a river with a negative coefficient at it is reported.
-    Network.check_routable refuses sub-reaches the kernels cannot route before any coefficient is built.
+    each runoff step and computes within it as Network.conditioning lays it out at its step: dt_routing when given,
+    and with dt_routing auto (None) the runoff step, at which a river too short for it takes the fewest subcycles that
+    keep its coefficients non-negative, its own valid step. With use_subreaches a river too long for its step is split
+    into sub-reaches, each taking its share of the river's runoff, with use_subcycles a river too short for it is
+    routed in subcycles of it, and with both a river neither makes valid alone is split into sub-reaches that each take
+    subcycles of their own. Without them a river is routed whole at its step, and a river with a negative coefficient
+    at it is reported. Network.check_routable refuses sub-reaches the kernels cannot route before any coefficient is
+    built.
 
     The subcycles of each sub-reach are combined into one step by _combine_subcycles, which gives the discharge of
     taking them one at a time, so every sub-reach takes one step per runoff step and hands its discharge to the next at
@@ -50,32 +51,23 @@ def prepare_routing(network: Network, configs: Configs, dt_runoff: int, dt_routi
     Raises:
         ValueError: if the coefficients do not sum to 1, or invalid_coefficients is raise and a coefficient is negative
     """
-    if dt_routing:
-        subcycles = np.full(network.size, dt_runoff // dt_routing, dtype=np.int64)
-    else:
-        subcycles, _ = network.subcycles(dt_runoff)
-    sub_reaches = np.ones(network.size, dtype=np.int64)
-    if configs.use_subreaches or configs.use_subcycles:
-        conditioning_sub_reaches, conditioning_subcycles, _ = network.conditioning(dt_runoff / subcycles)
-        if configs.use_subreaches:
-            sub_reaches = conditioning_sub_reaches
-        if configs.use_subcycles:
-            subcycles = subcycles * conditioning_subcycles
-    network.check_routable(sub_reaches)
-    network.check_validity(dt_runoff, action=configs.invalid_coefficients, sub_reaches=sub_reaches, subcycles=subcycles)
-    k_reach, x_reach = network.sub_reach_k_and_x(sub_reaches)
-    share = k_reach / np.repeat(network.k.astype(np.float64), sub_reaches)  # of the river's k, and of its runoff
-    dt_div_k = np.repeat(dt_runoff / subcycles, sub_reaches) / k_reach  # each sub-reach's own step over its k
-    denominator = dt_div_k + 2 * (1 - x_reach)
-    c1 = (dt_div_k - 2 * x_reach) / denominator
-    c2 = (dt_div_k + 2 * x_reach) / denominator
-    c3 = (2 * (1 - x_reach) - dt_div_k) / denominator
+    step = dt_routing or dt_runoff
+    layout = network.conditioning(step, use_subreaches=configs.use_subreaches, use_subcycles=configs.use_subcycles)
+    network.check_routable(layout.sub_reaches)
+    network.check_validity(step, action=configs.invalid_coefficients, layout=layout)
+    share = layout.k / np.repeat(network.k.astype(np.float64), layout.sub_reaches)  # of the river's k and runoff
+    subcycles = dt_runoff // step * layout.subcycles  # the steps of its own each sub-reach takes in each runoff step
+    dt_div_k = dt_runoff / subcycles / layout.k  # each sub-reach's own step over its k
+    denominator = dt_div_k + 2 * (1 - layout.x)
+    c1 = (dt_div_k - 2 * layout.x) / denominator
+    c2 = (dt_div_k + 2 * layout.x) / denominator
+    c3 = (2 * (1 - layout.x) - dt_div_k) / denominator
     c4 = (c1 + c2) * share / dt_runoff
-    c1, c2, c3, c4 = _combine_subcycles(c1, c2, c3, c4, np.repeat(subcycles, sub_reaches))
+    c1, c2, c3, c4 = _combine_subcycles(c1, c2, c3, c4, subcycles)
     if not np.allclose(c1 + c2 + c3, 1):
         raise ValueError('Muskingum coefficients do not sum to 1, check k and x of the network file and dt_routing')
     sub_reach_starts = np.zeros(network.size + 1, dtype=np.int32)
-    sub_reach_starts[1:] = np.cumsum(sub_reaches)
+    sub_reach_starts[1:] = np.cumsum(layout.sub_reaches)
     return Coefficients(sub_reach_starts, *(c.astype(np.float32) for c in (c1, c2, c3, c4)))
 
 
@@ -88,18 +80,26 @@ def _combine_subcycles(
     Q_j = c3 Q_(j-1) + c1 I(j/s) + c2 I((j-1)/s) + c4 V, so Q_s = c3^s Q_0 plus the terms of each subcycle j times
     c3^(s-j), whose inflows split between I_t and I_{t+1}: Q_(t+1) = c3' Q_t + c1' I_{t+1} + c2' I_t + c4' V with
     c3' = c3^s. Like each subcycle's, c1' + c2' + c3' is 1, and none is negative where none of the subcycle's is.
+
+    With G the sum of c3^i and A the sum of i c3^i over i from 0 to s - 1, c1' = c1 (G - A/s) + c2 (G - (A + G)/s),
+    c2' = (c1 A + c2 (A + G))/s, and c4' = c4 G. G, A, and c3^s are built over the bits of s, doubling the count of
+    terms at each bit and adding one more where the bit is set, so a reach of s subcycles costs log2(s) steps.
     """
-    combined_c1 = np.zeros_like(c1)
-    combined_c2 = np.zeros_like(c2)
-    combined_c4 = np.zeros_like(c4)
-    weight = np.ones_like(c3)  # c3^(s - j) of subcycle j, from the last subcycle back to the first
-    for subcycles_after in range(int(subcycles.max())):
-        subcycle = subcycles - subcycles_after  # j, from 1
-        taken = subcycle >= 1
-        end = subcycle / subcycles  # the fraction of the step at the end of subcycle j
-        start = (subcycle - 1) / subcycles
-        combined_c1 += np.where(taken, weight * (c1 * end + c2 * start), 0.0)
-        combined_c2 += np.where(taken, weight * (c1 * (1 - end) + c2 * (1 - start)), 0.0)
-        combined_c4 += np.where(taken, weight * c4, 0.0)
-        weight = np.where(taken, weight * c3, weight)
-    return combined_c1, combined_c2, weight, combined_c4
+    power = np.ones_like(c3)  # c3^n, of the n terms summed so far
+    geometric = np.zeros_like(c3)  # G of n terms
+    weighted = np.zeros_like(c3)  # A of n terms
+    terms = np.zeros_like(subcycles)
+    for bit in range(int(subcycles.max()).bit_length() - 1, -1, -1):
+        # the second n terms are the first n times c3^n, each i of them n more
+        weighted = weighted + power * (weighted + terms * geometric)
+        geometric = geometric + power * geometric
+        power = power * power
+        terms = 2 * terms
+        taken = (subcycles >> bit) & 1 == 1
+        weighted = np.where(taken, weighted + terms * power, weighted)
+        geometric = np.where(taken, geometric + power, geometric)
+        power = np.where(taken, power * c3, power)
+        terms = terms + taken
+    combined_c1 = c1 * (geometric - weighted / subcycles) + c2 * (geometric - (weighted + geometric) / subcycles)
+    combined_c2 = (c1 * weighted + c2 * (weighted + geometric)) / subcycles
+    return combined_c1, combined_c2, power, c4 * geometric

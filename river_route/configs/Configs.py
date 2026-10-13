@@ -4,10 +4,8 @@ import json
 import logging
 import numbers
 import os
-import types
-from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any, ClassVar, Literal, Self, TypeAliasType, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, Self, get_args, get_origin, get_type_hints
 
 import numpy as np
 import pandas as pd
@@ -19,7 +17,6 @@ __all__ = ['Configs', 'check_channel_state_rivers', 'is_dev_null']
 
 logger = logging.getLogger(__name__)
 
-_PATH_INPUT_TYPES: frozenset[type] = frozenset(get_args(PathInput))
 _DEV_NULL: frozenset[str] = frozenset({os.devnull, '/dev/null'})
 
 
@@ -61,79 +58,69 @@ def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
     return result
 
 
-def _unalias(hint: Any) -> Any:
-    """The type a ``type X = ...`` alias names, such as list[PathInput] for PathList, whose origin is otherwise None."""
-    return hint.__value__ if isinstance(hint, TypeAliasType) else hint
+def _path_fields(cls: type, kind: str) -> frozenset[str]:
+    """The names of the fields whose metadata marks them as a path of the given kind, 'single' or 'list'."""
+    return frozenset(f.name for f in fields(cls) if f.metadata.get('path') == kind)
 
 
-def _derive_path_sets(cls: type) -> tuple[frozenset[str], frozenset[str]]:
-    """The names of the fields annotated PathInput or PathInput | None, and of the fields annotated PathList."""
-    single, lists = set(), set()
-    for name, hint in get_type_hints(cls).items():
-        if name.startswith('_'):
-            continue
-        hint = _unalias(hint)
-        if get_origin(hint) is list:
-            lists.add(name)  # PathList
-        elif get_origin(hint) is types.UnionType and set(get_args(hint)) >= _PATH_INPUT_TYPES:
-            single.add(name)  # PathInput or PathInput | None
-    return frozenset(single), frozenset(lists)
+def _with_derived_sets(cls: type[Configs]) -> type[Configs]:
+    """Set the path fields and allowed values of Configs on the class, read from its fields once it is a dataclass."""
+    cls._SINGLE_PATH_FIELDS = _path_fields(cls, 'single')
+    cls._LIST_PATH_FIELDS = _path_fields(cls, 'list')
+    cls._VALID_VALUES = _derive_valid_values(cls)
+    return cls
 
 
+@_with_derived_sets
 @dataclass(kw_only=True, frozen=True)
 class Configs:
     """
     Accepts and validates every option of a routing run and of preparing its runoff.
     """
-
-    # annotate file path fields with PathInput or PathList
-    # _derive_path_sets() will detect them by inspecting class annotations
+    # Network definition
+    network_file: PathInput | None = field(default=None, metadata={'path': 'single'})  # required to route
 
     # Routing procedure selector — the Router chooses the reader of the forcing files from it
     forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
 
     # Compute options
-    # 'auto' gives each river its own step, the fewest subcycles of the runoff step that keep its coefficients valid
-    dt_routing: int | Literal['auto'] = 'auto'  # or every river's step in seconds, a divisor of the runoff step
+    dt_routing: Literal['auto'] | int = 'auto'  # or every river's step in seconds, a divisor of the runoff step
     use_subreaches: bool = True  # split rivers too long for their step into sub-reaches; auto requires it
     use_subcycles: bool = True  # route rivers too short for their step in subcycles of it; auto requires it
     invalid_coefficients: Literal['log', 'raise', 'ignore'] = 'raise'  # action when a coefficient is negative at dt
 
-    # Network and routing descriptor
-    network_file: PathInput | None = None
+    # Model state files
+    channel_state_init_file: PathInput | None = field(default=None, metadata={'path': 'single'})
+    channel_state_final_file: PathInput | None = field(default=None, metadata={'path': 'single'})
 
-    # Core Routing Files
-    discharge_dir: PathInput | None = None
-    discharge_files: PathList = field(default_factory=list)  # optional override for explicit output paths
-    channel_state_init_file: PathInput | None = None
-    channel_state_final_file: PathInput | None = None
+    # Output location
+    discharge_dir: PathInput | None = field(default=None, metadata={'path': 'single'})
+    discharge_files: PathList = field(default_factory=list, metadata={'path': 'list'})  # alternative output specifier
 
-    # Types of runoff data handling
-    grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
-    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
-    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
-    force_positive_runoff: bool = False  # clip negative runoff depths to zero
-    as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
+    # Time options - Channel routing only
+    start_datetime: str = '1970-01-01'
+    dt_discharge: int = 0  # Interval in seconds between discharge outputs, dt_routing when 0
+    dt_total: int = 0  # Length in seconds of the simulation, an integer multiple of dt_discharge
 
-    # Forcing files: catchment runoff, or gridded runoff aggregated to catchments with a weight table
-    forcing_files: PathList = field(default_factory=list)  # read as the forcing names
-    grid_weights_file: PathInput | None = None  # required for the grid runoff types
-    # the names of variables in the gridded forcing files that are read; every file river-route writes uses the defaults
-    var_grid_runoff: str = 'ro'
+    # Forcing files
+    forcing_files: PathList = field(default_factory=list, metadata={'path': 'list'})  # read as the forcing names
+    grid_weights_file: PathInput | None = field(default=None, metadata={'path': 'single'})  # required for grid forcing
+    var_runoff: str = 'ro'
     var_x: str = 'x'  # grid x dimension
     var_y: str = 'y'  # grid y dimension
     var_t: str = 'time'
 
-    # Time options
-    # channel routing only: forced routing routes and writes every time step of each forcing file
-    dt_discharge: int = 0  # Interval in seconds between discharge outputs, dt_routing when 0
-    dt_total: int = 0  # Length in seconds of the simulation, an integer multiple of dt_discharge
-    start_datetime: str = '1970-01-01'
+    # Types of runoff data handling
+    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
+    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
+    force_positive_runoff: bool = False  # clip negative runoff depths to zero
+    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
+    as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
 
     # Misc behavior that users may want to override
-    log: bool = True
     progress_bar: bool = True
     log_level: Literal['DEBUG', 'INFO', 'PROGRESS', 'WARNING', 'ERROR', 'CRITICAL'] = 'PROGRESS'
+    log: bool = True
     log_stream: str = 'stdout'
     log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
 
@@ -151,7 +138,7 @@ class Configs:
     # the time steps of channel routing given in whole seconds, where 0 leaves the step unset
     _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_discharge', 'dt_total')
 
-    # Populated at module level below
+    # Set by _with_derived_sets
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
     _LIST_PATH_FIELDS: ClassVar[frozenset[str]]
     _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
@@ -182,18 +169,13 @@ class Configs:
 
     @classmethod
     def from_json(cls, path: PathInput) -> Self:
-        """
-        Build Configs from a JSON file. Relative paths in it are made absolute against the working directory.
-
-        Args:
-            path: JSON file holding an object of config keys and values, as ``to_json`` writes
-
-        Raises:
-            ValueError: if the file has a key that is not a config option
-        """
+        """Build Configs from a JSON file"""
         with open(path, encoding='utf-8') as f:
             raw = json.load(f)
-        cls._check_keys(raw)
+        known = {f.name for f in fields(cls) if f.init}
+        unknown = sorted(set(raw) - known)
+        if unknown:
+            raise ValueError(f'Unrecognized config key(s): {", ".join(map(repr, unknown))}')
         return cls(**raw)
 
     def to_dict(self) -> dict[str, Any]:
@@ -205,22 +187,9 @@ class Configs:
         return values
 
     def to_json(self, path: PathInput) -> None:
-        """
-        Write every option to a JSON file that ``from_json`` reads back.
-
-        Args:
-            path: JSON file to write
-        """
+        """Write every option to a JSON file"""
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)
-
-    @classmethod
-    def _check_keys(cls, raw: Mapping[str, Any]) -> None:
-        known = {f.name for f in fields(cls) if f.init}
-        unknown = sorted(set(raw) - known)
-        if unknown:
-            raise ValueError(f'Unrecognized config key(s): {", ".join(map(repr, unknown))}')
-        return
 
     def _coerce_path_list_fields(self) -> None:
         """Normalize any list-of-paths field given as a single string to [str]."""
@@ -230,16 +199,20 @@ class Configs:
                 object.__setattr__(self, key, [str(val)])
         return
 
+    @staticmethod
+    def _relative_to_absolute(path: PathInput) -> PathInput:
+        return str(path) if is_dev_null(path) else os.path.abspath(path)
+
     def _absolutize_paths(self) -> None:
         """Convert all path fields to absolute path strings in-place. The null device is kept as it is named."""
         for key in self._SINGLE_PATH_FIELDS:
-            val = getattr(self, key, None)
-            if val:
-                object.__setattr__(self, key, str(val) if is_dev_null(val) else os.path.abspath(val))
+            value = getattr(self, key, None)
+            if value:
+                object.__setattr__(self, key, self._relative_to_absolute(value))
         for key in self._LIST_PATH_FIELDS:
-            val = getattr(self, key, [])
-            if val:
-                object.__setattr__(self, key, [str(p) if is_dev_null(p) else os.path.abspath(p) for p in val])
+            values = getattr(self, key, [])
+            if values:
+                object.__setattr__(self, key, [self._relative_to_absolute(value) for value in values])
         return
 
     def _verify_input_files_exist(self) -> None:
@@ -290,9 +263,9 @@ class Configs:
         """Raise NotADirectoryError for any output path whose parent directory does not exist."""
         paths: list[str] = []
         for key in self._OUTPUT_FILES:
-            val = getattr(self, key, None)
-            if val:
-                paths.append(val)
+            value = getattr(self, key, None)
+            if value:
+                paths.append(value)
         for key in self._OUTPUT_FILE_LISTS:
             paths.extend(getattr(self, key, []))
         for path in paths:
@@ -302,9 +275,9 @@ class Configs:
             if not os.path.exists(d):
                 raise NotADirectoryError(f'Directory not found for specified output: {path}')
         for key in self._OUTPUT_DIRS:
-            val = getattr(self, key, None)
-            if val and not is_dev_null(val) and not os.path.isdir(val):
-                raise NotADirectoryError(f'Output directory not found: {val}')
+            value = getattr(self, key, None)
+            if value and not is_dev_null(value) and not os.path.isdir(value):
+                raise NotADirectoryError(f'Output directory not found: {value}')
         return
 
     def validate_routing(self) -> Self:
@@ -491,7 +464,3 @@ class Configs:
             state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.use_subreaches, state_file
         )
         return
-
-
-Configs._SINGLE_PATH_FIELDS, Configs._LIST_PATH_FIELDS = _derive_path_sets(Configs)
-Configs._VALID_VALUES = _derive_valid_values(Configs)

@@ -34,7 +34,8 @@ type DatetimeArray = NDArray[np.datetime64]
 # the blocks one job routes, as (block_starts, block_stops), each the rivers from a start up to a stop; see
 # Network.routing_blocks
 type JobBlocks = tuple[Int32Array, Int32Array]
-# what Runoff.generator yields for each forcing file: its dates, its runoff in the form routing reads, and the file
+# what RunoffForcing.generator yields for each forcing file: its dates, its runoff in the form routing reads, and
+# the file
 type RunoffGenerator = Generator[tuple[DatetimeArray, CatchmentRunoffVolumes | GridCellRunoff, PathInput]]
 # the runoff the kernels route, chosen by the forcing config: None is channel routing
 type Forcing = CatchmentRunoffVolumes | GridCellRunoff | None

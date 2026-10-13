@@ -98,7 +98,7 @@ contain exactly the same IDs **and** be sorted in the same order as the `riverId
 The `units` attribute of `catchment_runoff` is required and says which form it takes: `m3` for volumes, or a depth unit
 (`m` or `mm`). Depths and volumes are equivalent: routing uses volumes, so depths are converted to meters and
 multiplied by `catchment_area` when they are read. `catchment_runoff` names the area variable with the CF attribute
-`cell_measures = "area: catchment_area"`. `Runoff.to_netcdf` writes this schema, and the grid runoff classes write it
+`cell_measures = "area: catchment_area"`. `RunoffForcing.to_netcdf` writes this schema, and the grid runoff classes write it
 from their grids with `aggregate_to_file`.
 
 ### Gridded Runoff Depths
@@ -119,7 +119,7 @@ from their grids with `aggregate_to_file`.
 
 Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`. The dimension names
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden
-with `var_grid_runoff` (default `'ro'`).
+with `var_runoff` (default `'ro'`).
 
 Weights need to be recomputed if the grid resolution, grid extent, or catchment boundaries change.
 The grid weights netCDF has the following variables, each with the one dimension `index`, a row per weight:
@@ -147,17 +147,17 @@ these names.
     "/path/to/ro_20260927_00z_cf.grib"
   ],
   "grid_weights_file": "/path/to/gridweights_O1280.nc",
-  "grid_accumulation_type": "cumulative"
+  "accumulation_type": "cumulative"
 }
 ```
 
 Runoff depths are given as ECMWF GRIB files on a global reduced gaussian grid, such as the octahedral O1280 grid
 of the IFS. This forcing is specialized to that format; runoff in any other form must be prepared as `catchment` or
 `grid` forcing. Every message whose shortName is
-`var_grid_runoff` (default `'ro'`) is read with eccodes as one time step, in the order of the files and of their
+`var_runoff` (default `'ro'`) is read with eccodes as one time step, in the order of the files and of their
 messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the weight table
 and the routing is left to the caller. IFS forecast runoff accumulates from the start of the forecast, so it is
-routed with `grid_accumulation_type` cumulative.
+routed with `accumulation_type` cumulative.
 
 `river_route.forcings.ReducedGaussianGrid.from_grib` reads the grid of a file from its metadata: `N` and the number of
 cells on each row. Its `cell_polygons` are the area each cell represents, one polygon per cell of the

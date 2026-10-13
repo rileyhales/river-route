@@ -1,11 +1,11 @@
 """
 The abstract bases of the runoff classes and the forms of runoff they hand to routing.
 
-``Runoff`` is the base of every runoff class. Each is built from a Configs with ``from_configs`` and yields its runoff
-one file at a time from ``generator``, in one of the NamedTuples defined here. ``BaseGridRunoff`` is the base of the
-gridded runoff classes, which read runoff depths at the grid cells of a weight table and aggregate them onto rivers. A
-subclass names the weight table columns that locate a cell with ``cell_dimensions`` and may read its files its own way
-by overriding ``read_runoff``.
+``RunoffForcing`` is the base of every runoff class. Each is built from a Configs with ``from_configs`` and yields its
+runoff one file at a time from ``generator``, in one of the NamedTuples defined here. ``BaseGridRunoffForcing`` is the
+base of the gridded runoff classes, which read runoff depths at the grid cells of a weight table and aggregate them onto
+rivers. A subclass names the weight table columns that locate a cell with ``cell_dimensions`` and may read its files its
+own way by overriding ``read_runoff``.
 
 The forms of runoff routing reads:
 
@@ -45,8 +45,8 @@ __all__ = [
     'VOLUME_UNITS',
     'CatchmentRunoffVolumes',
     'GridCellRunoff',
-    'Runoff',
-    'BaseGridRunoff',
+    'RunoffForcing',
+    'BaseGridRunoffForcing',
 ]
 
 # the fixed schema of a catchment runoff file: one depth or volume series per catchment and the area of each catchment
@@ -66,8 +66,8 @@ def _check_river_order(runoff_river_ids: IntArray, river_ids: IntArray) -> None:
         return
     row = int(np.argmax(runoff_river_ids != river_ids))
     raise ValueError(
-        f'row {row} of the runoff is riverId {runoff_river_ids[row]} where the network has {river_ids[row]}. The '
-        f'runoff must list the rivers of the network file in the same order.'
+        f'Row {row} of the runoff is riverId {runoff_river_ids[row]} where the network has {river_ids[row]}. '
+        f'The runoff must list the rivers of the network file in the same order.'
     )
 
 
@@ -101,7 +101,6 @@ class GridCellRunoff(NamedTuple):
     One file of gridded runoff depths read at the weight table's grid cells, with the weights that turn them into each
     river's catchment runoff volume as routing routes it.
     """
-
     runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths, each cell's time series contiguous
     indptr: IntArray  # (n_rivers + 1,) sparse row pointers to the weights of each river_index
     cell: IntArray  # (n_weights,) row of runoff_by_cell each weight applies to
@@ -134,18 +133,18 @@ class GridCellRunoff(NamedTuple):
         )
 
 
-class Runoff(ABC):
+class RunoffForcing(ABC):
     """
     Base class for the sources of catchment runoff, the runoff volume each catchment adds to its river in each step.
     Each subclass is built from a Configs with ``from_configs`` and provides a
     ``generator`` that yields its runoff in the form routing reads, and every subclass writes catchment runoff to disk
-    with ``to_netcdf`` in the one format ``CatchmentRunoff`` reads.
+    with ``to_netcdf`` in the one format ``CatchmentRunoffForcing`` reads.
     """
 
     @classmethod
     @abstractmethod
     def from_configs(cls, configs: Configs) -> Self:
-        """Build this Runoff from the options on a Configs, as a Router does."""
+        """Build this RunoffForcing from the options on a Configs, as a Router does."""
 
     @abstractmethod
     def generator(self, forcing_files: PathList) -> RunoffGenerator:
@@ -176,8 +175,8 @@ class Runoff(ABC):
         as_volumes: bool,
     ) -> None:
         """
-        Write a catchment runoff array to a netCDF file that ``CatchmentRunoff`` reads, routed as ``forcing_files``
-        with ``forcing`` catchment.
+        Write a catchment runoff array to a netCDF file that ``CatchmentRunoffForcing`` reads, routed as
+        ``forcing_files`` with ``forcing`` catchment.
 
         Args:
             path: netCDF file to write
@@ -186,10 +185,12 @@ class Runoff(ABC):
             river_ids: (n_rivers,) river id of each row
             catchment_area: (n_rivers,) area of each catchment in m², the factor between depths and volumes
             as_volumes: whether catchment_runoff holds volumes (m³) rather than depths (m), which sets the units
-                written. It is given with the array rather than read from a Runoff's options, since
+                written. It is given with the array rather than read from a RunoffForcing's options, since
                 ``catchment_reader`` yields volumes whatever ``as_volumes`` option a grid runoff was built with.
         """
-        Runoff._catchment_runoff_dataset(dates, catchment_runoff, river_ids, catchment_area, as_volumes).to_netcdf(path)
+        RunoffForcing._catchment_runoff_dataset(
+            dates, catchment_runoff, river_ids, catchment_area, as_volumes
+        ).to_netcdf(path)
         return
 
     @staticmethod
@@ -257,7 +258,7 @@ class Runoff(ABC):
 
 
 @dataclass(eq=False, repr=False)
-class BaseGridRunoff(Runoff):
+class BaseGridRunoffForcing(RunoffForcing):
     """
     Prepares catchment runoff for routing from gridded runoff depths and a grid weight table. Each subclass names the
     weight table columns that locate a grid cell and the runoff dimension each one indexes, with ``cell_dimensions``.
@@ -274,12 +275,11 @@ class BaseGridRunoff(Runoff):
 
     grid_weights_file: PathInput  # weight table netCDF produced by the functions in ``river_route.forcings.weights``
     _: KW_ONLY
-    var_grid_runoff: str = 'ro'  # name of the runoff variable in the gridded forcing files
+    var_runoff: str = 'ro'  # name of the runoff variable in the gridded forcing files
     var_t: str = 'time'  # name of the time coordinate variable
-    # ``incremental`` runoff per step, or ``cumulative`` totals to difference
-    grid_accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
-    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
+    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
     force_positive_runoff: bool = False  # clip negative runoff depths to zero
+    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
     as_volumes: bool = False  # prepare volumes (m3) instead of depths (m); routing always uses volumes
 
     # Weight table read once by __post_init__, in row order of the table which follows the network file order
@@ -308,7 +308,7 @@ class BaseGridRunoff(Runoff):
     @property
     def cumulative(self) -> bool:
         """Whether the runoff values are cumulative totals to difference rather than incremental per step."""
-        return self.grid_accumulation_type == 'cumulative'
+        return self.accumulation_type == 'cumulative'
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
@@ -517,10 +517,10 @@ class BaseGridRunoff(Runoff):
             tuple: (runoff as a C-order (time, n_cells) array, time values, factor converting the depth unit to meters)
         """
         with xr.open_mfdataset(runoff_data) as ds:
-            runoff_depth_unit = self.runoff_depth_unit or ds[self.var_grid_runoff].attrs.get('units', 'm')
+            runoff_depth_unit = self.runoff_depth_unit or ds[self.var_runoff].attrs.get('units', 'm')
             conversion_factor = self._get_conversion_factor(runoff_depth_unit)
             runoff = (
-                ds[self.var_grid_runoff]
+                ds[self.var_runoff]
                 .isel(
                     {
                         dimension: xr.DataArray(self.cell_indexes[column], dims='points')

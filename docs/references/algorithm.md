@@ -68,6 +68,34 @@ step $\Delta t = k/N$, so the river needs $\lceil k/\Delta t \rceil$ sub-reaches
 count grows with the river's travel time alone. Such a river can be made valid only when its $k$ is exactly a whole
 multiple of $\Delta t$, so most rivers at $x = 1/2$ are kept whole and reported.
 
+### Sub-reaches that take subcycles of their own
+
+Equal sub-reaches can be too short for the step, with a negative $c_3$ in the shortest, when
+$\Delta t > k/N + (1-2x)k$. That happens only for $x > 3/8$, and a river too short for the step can likewise fall
+between two whole counts of subcycles only for $x > 1/3$. With `use_subreaches` and `use_subcycles` both, such a river
+is split into sub-reaches of unequal travel times $k_i$, each taking $m_i$ subcycles of its own. Every one takes
+$x_i = 1/2 - (1/2 - x)\,k/k_i$, the river's own diffusion, which keeps its travel time variance whatever the $k_i$,
+and its window is
+
+$$
+\left| \frac{\Delta t}{m_i} - k_i \right| \le (1-2x)k
+$$
+
+as wide for every sub-reach as for the river's equal ones. The travel times a sub-reach may take are windows about
+$\Delta t$, $\Delta t/2$, $\Delta t/3$, and so on, none shorter than $(1-2x)k$, where $x_i = 0$, and the river splits
+into $n$ sub-reaches when $k$ is a sum of $n$ of them. `river_route.network.splitting` finds the fewest by growing the
+sums of 1, 2, 3, ... windows as intervals, and each sub-reach takes the fewest subcycles whose step is in its window.
+They are never fewer than the $N$ above, and in 200,000 rivers of random travel times, from a hundredth of the step to
+fifty steps, and x from 1/3 to 0.4999, never more than $\lceil 1/(1-2x) \rceil$. A river of
+$\Delta t = 0.6k$ at $x = 0.49$, which no count of equal sub-reaches makes valid, splits into three, of 0.601, 0.301,
+and 0.098 of its $k$ in 1, 2, and 6 subcycles.
+
+No sub-reach is shorter than 1/64 of the river or of the step, whichever is shorter. Near $x = 1/2$ the windows
+narrow, and a split can need a sub-reach far shorter, taking thousands of subcycles only to make the travel times sum
+to $k$; a river whose every split needs one is kept whole and reported, as is a river with no valid split into the 256
+sub-reaches the kernels route one river as. Subcycles add no routing work, so the work of a river is still its count of
+sub-reaches.
+
 ### An example
 
 The sub-reaches of rivers routed at an hourly step, $\Delta t$ = 1 h, and the spread of each river's response, the

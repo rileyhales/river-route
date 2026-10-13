@@ -1,12 +1,12 @@
 # Forcings
 
-The `river_route.forcings` package holds the Runoff classes, which aggregate runoff to catchments. There is one for each
+The `river_route.forcings` package holds the RunoffForcing classes, which aggregate runoff to catchments. There is one for each
 `forcing` that routes runoff, and
 `RUNOFF_CLASS_FOR_FORCING[configs.forcing]` is the class the `forcing` of a `Configs` names:
 
 | `forcing`    | Class                  | Aggregates                                                                          |
 |--------------|------------------------|-------------------------------------------------------------------------------------|
-| `catchment`  | `CatchmentRunoff`      | nothing: its files are already aggregated to catchments, as volumes or depths       |
+| `catchment`  | `CatchmentRunoffForcing`      | nothing: its files are already aggregated to catchments, as volumes or depths       |
 | `grid`       | `GridRunoff`           | grids with x and y dimensions, with a weight table                                  |
 | `ecmwf_grib` | `ECMWFGribReducedGrid` | ECMWF GRIB files on a reduced gaussian grid, read with eccodes, with a weight table |
 
@@ -15,8 +15,8 @@ Build a `GridRunoff` with `GridRunoff(grid_weights_file, ...)`, or with
 `GridRunoff.from_configs(configs)` to read those same values off a `Configs`, which is how a `Router` builds one.
 Only `from_configs` validates, since a directly built `GridRunoff` has no `Configs` to check.
 
-Every class subclasses the abstract `Runoff`, whose `to_netcdf` writes a catchment runoff array in the format
-`CatchmentRunoff` reads. The grid classes precompute that file from their grids with `aggregate_to_file`, so it can be
+Every class subclasses the abstract `RunoffForcing`, whose `to_netcdf` writes a catchment runoff array in the format
+`CatchmentRunoffForcing` reads. The grid classes precompute that file from their grids with `aggregate_to_file`, so it can be
 routed later with `forcing` catchment. Routing the grids directly is faster, because the aggregation then happens
 inside the routing kernel, except for cumulative or clipped runoff, which is aggregated before it is routed.
 
@@ -34,14 +34,14 @@ for dates, catchment_runoff, forcing_file in runoff.catchment_reader(configs.for
     ...  # each file's catchment runoff volumes, a (river, time) array overwritten by the next file
 ```
 
-::: river_route.forcings.Runoff
+::: river_route.forcings.RunoffForcing
     handler: python
     options:
       members_order: source
       show_root_heading: true
       show_source: false
 
-::: river_route.forcings.BaseGridRunoff
+::: river_route.forcings.BaseGridRunoffForcing
     handler: python
     options:
       members_order: source
@@ -56,7 +56,7 @@ for dates, catchment_runoff, forcing_file in runoff.catchment_reader(configs.for
       show_source: false
       show_root_full_path: false
 
-::: river_route.forcings.CatchmentRunoff.CatchmentRunoff
+::: river_route.forcings.CatchmentRunoff.CatchmentRunoffForcing
     handler: python
     options:
       members_order: source

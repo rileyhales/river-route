@@ -543,6 +543,19 @@ river at $x = 0.2$ take 0.724 and 0.276 of its $k$, which keeps its variance and
 too long at $x = 0.2$ non-negative. In general the fewest is $N = \lceil k / (\Delta t + (1-2x)k) \rceil$, and
 each sub-reach takes its share of the river's runoff.
 
+Equal sub-reaches can themselves be too short for the step, the shortest with $c_3 < 0$, which happens only for
+$x > 3/8$. With subcycles as well, the sub-reaches may then differ in travel time and each take subcycles of its own,
+$m_i$ steps of $\Delta t / m_i$. Each takes
+
+$$
+x_i = \frac{1}{2} - \left(\frac{1}{2} - x\right) \frac{k}{k_i},
+$$
+
+so that $k_i^2(1 - 2x_i) = (1-2x)\,k\,k_i$, and the variances of any travel times that sum to $k$ sum to
+$k^2(1-2x)$. Every sub-reach keeps the river's diffusion, and its window, $|\Delta t / m_i - k_i| \le (1-2x)k$, is as
+wide as that of the river's equal sub-reaches. [The sub-reaches a river needs](algorithm.md#the-sub-reaches-a-river-needs)
+gives how the fewest are found.
+
 ### When dt >>> k
 
 A river too short for the step, $\Delta t > 2k(1-x)$, has $c_3 < 0$: its discharge alternates from step to step,

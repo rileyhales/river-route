@@ -126,7 +126,7 @@ def route(
         no_areas = np.full(river_ids.shape[0], np.nan)  # volumes are read without their catchment areas
         forcing_files = [directory / f'catchment_runoff_{i}.nc' for i in range(len(files))]
         for (dates, volumes), forcing_file in zip(files, forcing_files, strict=True):
-            rr.CatchmentRunoff.to_netcdf(forcing_file, dates, volumes, river_ids, no_areas, as_volumes=True)
+            rr.CatchmentRunoffForcing.to_netcdf(forcing_file, dates, volumes, river_ids, no_areas, as_volumes=True)
         options |= {'forcing': 'catchment', 'forcing_files': forcing_files}
     n_outputs = len(options.get('forcing_files', [])) or 1
     defaults = {

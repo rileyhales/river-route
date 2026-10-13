@@ -28,6 +28,11 @@ import river_route as rr
 V2_UNIT_HYDROGRAPH_KEYS = ('uh_kernel_file', 'uh_state_init_file', 'uh_state_final_file')
 # v3 reads dt_runoff from the forcing files, and names the river id riverId and the discharge Q in every file
 V2_KEYS_V3_DOES_NOT_TAKE = ('dt_runoff', 'var_river_id', 'var_discharge')
+V2_TO_V3_KEYS = {
+    'params_file': 'network_file',
+    'var_grid_runoff': 'var_runoff',
+    'grid_accumulation_type': 'accumulation_type',
+}
 V2_TO_V3_COLUMNS = {'river_id': 'riverId', 'downstream_river_id': 'nextRiverId', 'k': 'muskingumK', 'x': 'muskingumX'}
 
 
@@ -136,7 +141,7 @@ def convert_qlateral(qlateral_path: str, river_ids: np.ndarray, catchment_area: 
     """
     with xr.open_dataset(qlateral_path) as ds:
         rows = positions_of(river_ids, ds['river_id'].to_numpy(), qlateral_path)
-        rr.CatchmentRunoff.to_netcdf(
+        rr.CatchmentRunoffForcing.to_netcdf(
             output_path,
             dates=ds['time'].to_numpy(),
             catchment_runoff=ds['qlateral'].transpose('river_id', 'time').to_numpy()[rows],
@@ -161,8 +166,8 @@ def convert_channel_state(state_path: str, v2_river_ids: np.ndarray, river_ids: 
 def convert_config(config_path: str, output_path: str) -> None:
     """
     Write a v2 YAML or JSON config as a v3 JSON config. The forcing is the form of the forcing files the v2 config
-    routed, params_file becomes network_file, and the keys of V2_KEYS_V3_DOES_NOT_TAKE are dropped. Paths are copied
-    unchanged, so point them at the converted files.
+    routed, the keys of V2_TO_V3_KEYS are renamed, and the keys of V2_KEYS_V3_DOES_NOT_TAKE are dropped. Paths are
+    copied unchanged, so point them at the converted files.
     Reading YAML needs pyyaml.
     """
     with open(config_path, encoding='utf-8') as f:
@@ -181,8 +186,9 @@ def convert_config(config_path: str, output_path: str) -> None:
         raise ValueError(f'{config_path} sets both qlateral_files and grid_runoff_files')
     config['forcing'] = 'catchment' if qlateral_files else 'grid' if grid_runoff_files else 'channel'
     config['forcing_files'] = qlateral_files or grid_runoff_files
-    if 'params_file' in config:
-        config['network_file'] = config.pop('params_file')
+    for v2_key, v3_key in V2_TO_V3_KEYS.items():
+        if v2_key in config:
+            config[v3_key] = config.pop(v2_key)
     for key in V2_KEYS_V3_DOES_NOT_TAKE:
         config.pop(key, None)
     unknown = set(config) - {field.name for field in fields(rr.Configs) if field.init}

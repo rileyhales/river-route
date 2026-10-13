@@ -10,7 +10,7 @@ from tqdm import tqdm
 from .. import kernels
 from .._logging import PROGRESS, configure_logging
 from ..configs import Configs, check_channel_state_rivers, is_dev_null
-from ..forcings import RUNOFF_CLASS_FOR_FORCING, Runoff
+from ..forcings import RUNOFF_CLASS_FOR_FORCING, RunoffForcing
 from ..network import Network
 from ..types import DatetimeArray, Float64Array, FloatArray, Forcing, PathInput, WriteDischargesFn
 from . import static_muskingum
@@ -38,7 +38,7 @@ class Router:
 
     configs: Configs
     network: Network  # ids, topology, k, x, the partition, and the coefficient signs
-    runoff: Runoff | None  # reads forcing_files, built from the configs the first time runoff is routed
+    runoff: RunoffForcing | None  # reads forcing_files, built from the configs the first time runoff is routed
 
     # what static_muskingum prepared for the current time steps
     coefficients: Coefficients  # each river's sub-reaches and the Muskingum coefficients of each

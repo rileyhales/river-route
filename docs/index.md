@@ -73,7 +73,7 @@ rr.Router(configs).route()
 | `Router`  | One simulation over a `Network`: coefficients, time options, channel state, the routing loop.            |
 | `GridRunoff` | Gridded runoff to catchment runoff, reusing one weight table across many forcing files.             |
 
-`Router` takes only a `Configs`, and builds its `Network` and the `Runoff` class its `forcing` names from it.
+`Router` takes only a `Configs`, and builds its `Network` and the `RunoffForcing` class its `forcing` names from it.
 `Network` and `GridRunoff` take the options they need as ordinary arguments and each has a `from_configs` classmethod
 that reads those same values off a `Configs`. `examples/config.json` lists every option.
 

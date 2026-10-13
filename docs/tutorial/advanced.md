@@ -194,12 +194,12 @@ def save_partial_results(router, dates, discharge_array, discharge_file, forcing
 
 ## Customizing Runoff Inputs
 
-Routing reads `forcing_files` with the Runoff class for the `forcing`: `CatchmentRunoff` for `catchment`, or
+Routing reads `forcing_files` with the RunoffForcing class for the `forcing`: `CatchmentRunoffForcing` for `catchment`, or
 `GridRunoff` for `grid`, which aggregates the grids to catchments with `grid_weights_file`, or `ECMWFGribReducedGrid`
 for `ecmwf_grib`. The `Router` builds the one its `forcing` names the first time it routes runoff, and reuses its
 weight table for every forcing file.
 
-Runoff in a format or a place this package does not read can be written to netCDF with `Runoff.to_netcdf` and
+Runoff in a format or a place this package does not read can be written to netCDF with `RunoffForcing.to_netcdf` and
 routed as `forcing_files` with `forcing` catchment. The grid classes precompute that file from their grids with
 `aggregate_to_file`, although routing the grids directly is faster: the aggregation then happens inside the routing
 kernel. Cumulative runoff, and runoff clipped with `force_positive_runoff`, are the exception: each river needs its

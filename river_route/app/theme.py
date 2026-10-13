@@ -1,5 +1,3 @@
-"""The window's colors and fonts, river-route-app's dark theme, set on every widget through ttk's clam theme."""
-
 import tkinter as tk
 from tkinter import font, ttk
 from typing import Literal

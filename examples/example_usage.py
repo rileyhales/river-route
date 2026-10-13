@@ -10,8 +10,8 @@ if __name__ == '__main__':
     # Amazon: 6020006540, Caribbean: 7020065090
     parser = argparse.ArgumentParser()
     parser.add_argument('--bucket-root', default=Path.home() / 'data' / 'rfsv3')
-    parser.add_argument('--region', default='7020065090')
-    parser.add_argument('--threads', type=int, default=1)
+    parser.add_argument('--region', default='6020006540')
+    parser.add_argument('--threads', type=int, default=3)
     args = parser.parse_args()
 
     # find the routing files for the region
@@ -41,7 +41,7 @@ if __name__ == '__main__':
         # the forcing files and how to read them
         forcing_files=forcing_files,
         grid_weights_file=grid_weights_file,
-        var_grid_runoff='ro',
+        var_runoff='ro',
         var_x='longitude',
         var_y='latitude',
         var_t='valid_time',
@@ -52,4 +52,4 @@ if __name__ == '__main__':
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()
     with pool_context as pool:
-        rr.Router(conf).route(thread_pool=pool, threads=args.threads, kernel='numba')
+        rr.Router(conf).route(thread_pool=pool, threads=args.threads, kernel='c')

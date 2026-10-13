@@ -56,8 +56,8 @@ def test_steady_state_is_a_fixed_point(
     state, river_ids = steady, willamette.network.river_ids
     if conditioning:
         # each sub-reach of a river carries its inflow plus the shares of its runoff of it and the sub-reaches above it
-        sub_reaches, _, _ = willamette.network.conditioning(DT if dt_routing == 'auto' else dt_routing)
-        k_reach, _ = willamette.network.sub_reach_k_and_x(sub_reaches)
+        layout = willamette.network.conditioning(DT if dt_routing == 'auto' else dt_routing)
+        sub_reaches, k_reach = layout.sub_reaches, layout.k
         share = k_reach / np.repeat(willamette.network.k.astype(np.float64), sub_reaches)
         first_sub_reach = np.concatenate(([0], np.cumsum(sub_reaches)[:-1]))
         runoff_above = np.cumsum(share) - np.repeat(
@@ -125,7 +125,7 @@ def test_months_in_sequence_match_one_combined_series(package: Path, manifest: d
     """Route the four months of catchment runoff as one file, and compare with the reference run that routed them as
     four files in sequence, handing the channel state from each to the next."""
     run = manifest['runs']['catchment_file']
-    months = list(rr.CatchmentRunoff().generator([package / path for path in run['configs']['forcing_files']]))
+    months = list(rr.CatchmentRunoffForcing().generator([package / path for path in run['configs']['forcing_files']]))
     dates = np.concatenate([month_dates for month_dates, _, _ in months])
     volumes = np.concatenate([month.runoff for _, month, _ in months], axis=1)
     routed = route(tmp_path, [(dates, volumes)], network_file=package / run['configs']['network_file'])
@@ -183,7 +183,7 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
 
     A discrete Muskingum reach delays what flows in at its top by exactly k, so each river below the headwater adds its
     k. Runoff enters along a reach instead, and one reach delays it by k (1 - x). A headwater split into the
-    sub-reaches of Network.sub_reach_k_and_x, each taking its share of the river's k and of its runoff, delays the
+    sub-reaches of Network.conditioning, each taking its share of the river's k and of its runoff, delays the
     runoff of each sub-reach by k_i (1 - x_i) through it and by the k of every sub-reach below it. The outlet writes
     its discharge at the end of each step.
     """
@@ -194,8 +194,8 @@ def test_a_pulse_keeps_its_volume_and_arrives_after_the_travel_time(willamette: 
         if downstream[river] >= 0:
             below[river] = network.k[downstream[river]] + below[downstream[river]]
     headwater, outlet = int(np.argmax(below + network.k)), outlet_of(willamette)
-    sub_reaches = network.conditioning(DT)[0]
-    k_reach, x_reach = network.sub_reach_k_and_x(sub_reaches)
+    layout = network.conditioning(DT)
+    sub_reaches, k_reach, x_reach = layout.sub_reaches, layout.k, layout.x
     first_sub_reach = int(sub_reaches[:headwater].sum())
     k, x = (values[first_sub_reach : first_sub_reach + sub_reaches[headwater]] for values in (k_reach, x_reach))
     below_in_river = k[::-1].cumsum()[::-1] - k  # the k of the headwater's sub-reaches below each one
@@ -298,6 +298,33 @@ def test_split_networks_route_like_dt_routing_auto(willamette: Basin, tmp_path: 
     assert comparable.sum() > willamette.network.size / 2
     for split_discharge, kernel_discharge in zip(split.discharge, in_kernel.discharge, strict=True):
         assert_same(split_discharge[comparable], kernel_discharge[comparable])
+
+
+def test_rivers_near_x_of_one_half_conserve_water_and_route_like_their_stabilized_network(
+    willamette: Basin, tmp_path: Path
+) -> None:
+    """
+    At x = 0.49 many rivers of the basin are valid only as sub-reaches of unequal travel times that take subcycles of
+    their own. Routed so, all the runoff of two wet months leaves through the outlet over two dry ones, and the network
+    stabilized with those sub-reaches as rows routes the same.
+    """
+    network_file = tmp_path / 'x_of_049.parquet'
+    pd.read_parquet(willamette.network_file).assign(muskingumX=np.float32(0.49)).to_parquet(network_file)
+    network = rr.Network(network_file)
+    too_long, _ = network.invalid_mask(DT)
+    _, split = network.sub_reaches(DT)
+    assert np.any(too_long & ~split), 'equal sub-reaches make every river of the basin valid'
+    wet = [(dates, np.maximum(volumes, 0)) for dates, volumes in willamette.months[:2]]
+    dry = [(dates, np.zeros_like(volumes)) for dates, volumes in willamette.months[2:]]
+    routed = route(tmp_path, wet + dry, network_file=network_file)
+    volume_in = sum(volumes.sum(dtype=np.float64) for _, volumes in wet)
+    volume_out = sum(discharge[outlet_of(willamette)].sum(dtype=np.float64) for discharge in routed.discharge) * DT
+    assert abs(volume_out - volume_in) <= TOLERANCE * volume_in, f'{volume_out:.6g} m³ left of {volume_in:.6g} m³'
+    split_file = rr.Network(network_file).write_stabilized(DT, tmp_path / 'split.parquet')
+    stabilized = route(tmp_path, **(willamette.gridded(months=2) | {'network_file': split_file}))
+    in_kernel = route(tmp_path, **(willamette.gridded(months=2) | {'network_file': network_file}))
+    for stabilized_discharge, kernel_discharge in zip(stabilized.discharge, in_kernel.discharge, strict=True):
+        assert_same(stabilized_discharge, kernel_discharge)
 
 
 def test_rivers_are_routed_with_the_x_given(willamette: Basin, tmp_path: Path) -> None:

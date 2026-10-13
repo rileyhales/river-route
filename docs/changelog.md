@@ -26,20 +26,26 @@ file format.
   step in seconds, a divisor of the runoff step, is the step of every river. `use_subreaches` and `use_subcycles`, on
   by default, then make every coefficient non-negative at that step, and `'auto'` requires both. Without
   them every river is routed whole at its step, and a river with a negative coefficient at it is reported. The subcycles of each sub-reach are combined
-  into one step of coefficients that give the discharge of taking them one at a time, so they cost one step. `Network.largest_valid_dt` is gone, since no step is searched for.
+  into one step of coefficients that give the discharge of taking them one at a time, built over the bits of the
+  count of subcycles, so they cost one step however many there are. `Network.largest_valid_dt` is gone, since no step
+  is searched for.
 - `use_subreaches` and `use_subcycles`, the defaults, route each river with non-negative coefficients in its own
   step, the condition for valid Muskingum routing, where they can: with `use_subreaches` a river too long for its
   step is split into sub-reaches, the fewest
-  sub-reaches in series inside the kernel, laid out by `Network.sub_reach_k_and_x` to keep the river's mean travel
+  sub-reaches in series inside the kernel, laid out by `Network.conditioning` to keep the river's mean travel
   time and travel time variance with x never negative (equal sub-reaches with `x = 1/2 - N*(1/2 - x)` where that is not
   negative, otherwise linear reservoirs of unequal travel times, 0.724 and 0.276 of k at `x = 0.2`), and with
-  `use_subcycles` a river too short for it is routed in subcycles, shorter steps of its own. They route at any step,
-  with every forcing, and with `use_subreaches` state files hold one row per sub-reach.
-- `Network.stabilize(dt)` rewrites a network in place with the sub-reaches of the rivers too long for dt as rows of
-  their own, laid out as `use_subreaches` routes them, and `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
+  `use_subcycles` a river too short for it is routed in subcycles, shorter steps of its own. With both, a river that
+  neither makes valid, which only a river with x above 1/3 can be, is split into the fewest sub-reaches of unequal
+  travel times that each take subcycles of their own and keep the river's diffusion, `x_i = 1/2 - (1/2 - x) k / k_i`,
+  found by `river_route.network.splitting`. A river at `x = 0.49` with a step of 0.6 of its k splits into three. They
+  route at any step, with every forcing, and with `use_subreaches` state files hold one row per sub-reach.
+- `Network.stabilize(dt)` rewrites a network in place with the sub-reaches `Network.conditioning(dt)` splits rivers
+  into as rows of their own, laid out as `use_subreaches` and `use_subcycles` route them, and
+  `Network.write_stabilized(dt)` writes it as a network table, in which added reaches are numbered
   down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
-  Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose Runoff classes share each
-  river's runoff among its sub-reaches with `Runoff.distribute`.
+  Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose RunoffForcing classes share each
+  river's runoff among its sub-reaches with `RunoffForcing.distribute`.
 - Rivers with a negative coefficient in their own step, outside `2*k*x <= step <= 2*k*(1-x)`, are reported as
   errors. The new `invalid_coefficients` config chooses `raise` (the default), which refuses to route them, `log`,
   which logs the error at the error level and routes on, or `ignore`.
@@ -84,7 +90,8 @@ file format.
   params file as a network file in DFS order with both columns, and the grid weights, qlateral files, and channel
   state files in the same order.
 - `Network` analyzes the validity of Muskingum coefficients with `validity_window`, `invalid_mask`, `sub_reaches`,
-  `subcycles`, `conditioning`, and `check_validity`, refuses with `check_routable`, before any runoff is read, a
+  `subcycles`, `conditioning`, which gives the `Layout` of each river's sub-reaches, and `check_validity`, refuses
+  with `check_routable`, before any runoff is read, a
   network the kernels cannot route, such as a river split into more than 256 sub-reaches, and divides the rivers
   into the blocks threads route with `routing_blocks`, sized for the thread count. Each block is read from `upstreamCount`, so a
   `Network` refuses a table whose `upstreamCount` does not describe its DFS order.
@@ -97,12 +104,13 @@ file format.
 
 - `forcing_files` replaces `qlateral_files` and `grid_runoff_files`, and is read in the form `forcing` names.
   `grid_weights_file` is required for the `grid` and `ecmwf_grib` forcings and refused for `catchment`.
+- `var_grid_runoff` is renamed `var_runoff`, and `grid_accumulation_type` is renamed `accumulation_type`.
 - Catchment runoff files replace qlateral files. A file holds a `catchment_runoff` variable with dimensions
   `(riverId, time)`, in that order, and a `catchment_area` variable (m²) with dimension `riverId`, linked by the CF
   attribute `cell_measures = "area: catchment_area"`. The `units` attribute of `catchment_runoff` is required and
   marks it as volumes (`m3`) or depths (`m`, `mm`), which are multiplied by the catchment area when read.
-  `Runoff.to_netcdf` writes this schema.
-- The runoff classes `CatchmentRunoff`, `GridRunoff`, and `ECMWFGribReducedGrid` read the runoff of each forcing.
+  `RunoffForcing.to_netcdf` writes this schema.
+- The runoff classes `CatchmentRunoffForcing`, `GridRunoff`, and `ECMWFGribReducedGrid` read the runoff of each forcing.
   A Router builds the one its `forcing` names the first time it routes runoff. `GridRunoff` reads and indexes its
   weight table once for every forcing file, and routing reads each river's grid cells directly into its forcing as the
   river is routed. `GridRunoff.to_dataset` and `GridRunoff.aggregate_to_file` replace `runoff.runoff_to_qlateral`.

@@ -25,7 +25,7 @@ from reference_solution import GRID_NAMES, WILLAMETTE, Basin, assert_same, route
 
 import river_route as rr
 from river_route import metrics
-from river_route.network import streams
+from river_route.network import splitting, streams
 from river_route.router import static_muskingum, writers
 
 DT = 3600
@@ -222,11 +222,15 @@ def test_configs_refuse_inconsistent_options(changes, error, message, willamette
 
 
 def test_discharge_dir_names_outputs_for_the_default_writer(tmp_path: Path) -> None:
-    configs = rr.Configs(discharge_dir=tmp_path, forcing_files=['runoff/2020.nc', 'runoff/2021.zarr'])
+    network_file = tmp_path / 'network.parquet'
+    configs = rr.Configs(
+        network_file=network_file, discharge_dir=tmp_path, forcing_files=['runoff/2020.nc', 'runoff/2021.zarr']
+    )
     assert configs.discharge_files == [str(tmp_path / 'discharge_2020.zarr'), str(tmp_path / 'discharge_2021.zarr')]
-    assert rr.Configs(discharge_dir=tmp_path).discharge_files == [str(tmp_path / 'discharge.zarr')]
+    channel = rr.Configs(network_file=network_file, discharge_dir=tmp_path)
+    assert channel.discharge_files == [str(tmp_path / 'discharge.zarr')]
     with pytest.raises(ValueError, match='same output file'):
-        rr.Configs(discharge_dir=tmp_path, forcing_files=['a/2020.nc', 'b/2020.zarr'])
+        rr.Configs(network_file=network_file, discharge_dir=tmp_path, forcing_files=['a/2020.nc', 'b/2020.zarr'])
 
 
 @pytest.mark.parametrize('outputs', ['files', 'null device'])
@@ -319,9 +323,7 @@ def test_the_routing_blocks_route_every_river_once(threads: int, package: Path, 
 @pytest.mark.parametrize('dt', [3600, 900])
 def test_conditioning_makes_every_river_valid(dt: int, package: Path, manifest: dict) -> None:
     network = rr.Network(package / manifest['runs']['static_standard']['configs']['network_file'])
-    sub_reaches, subcycles, resolvable = network.conditioning(dt)
-    assert resolvable.all()
-    too_long, too_short = network.invalid_mask(dt, sub_reaches, subcycles)
+    too_long, too_short = network.invalid_mask(dt, network.conditioning(dt))
     assert not too_long.any() and not too_short.any()
 
 
@@ -333,8 +335,8 @@ def test_a_given_dt_routing_without_conditioning_routes_every_river_whole_at_it(
     a shorter step.
     """
     network = willamette.network
-    sub_reaches, subcycles, _ = network.conditioning(DT)
-    assert sub_reaches.max() > 1 and subcycles.max() > 1, 'the basin needs no sub-reaches or subcycles at the step'
+    layout = network.conditioning(DT)
+    assert layout.sub_reaches.max() > 1 and layout.subcycles.max() > 1, 'the basin needs no sub-reaches or subcycles'
     configs = rr.Configs(network_file=willamette.network_file, invalid_coefficients='raise')
     static_muskingum.prepare_routing(network, configs, DT, None)
     unconditioned = rr.Configs(
@@ -368,13 +370,118 @@ def test_conditioning_at_a_given_dt_routing_makes_every_river_valid_at_it(dt_rou
     network = willamette.network
     configs = rr.Configs(network_file=willamette.network_file, dt_routing=dt_routing, invalid_coefficients='raise')
     coefficients = static_muskingum.prepare_routing(network, configs, DT, dt_routing)
-    np.testing.assert_array_equal(np.diff(coefficients.sub_reach_starts), network.conditioning(dt_routing)[0])
+    np.testing.assert_array_equal(np.diff(coefficients.sub_reach_starts), network.conditioning(dt_routing).sub_reaches)
     if dt_routing != DT:
         return
     auto = rr.Configs(network_file=willamette.network_file, invalid_coefficients='raise')
     auto_coefficients = static_muskingum.prepare_routing(network, auto, DT, None)
     for given, chosen in zip(coefficients, auto_coefficients, strict=True):
         np.testing.assert_array_equal(given, chosen)
+
+
+def separate_rivers(k: np.ndarray, x: np.ndarray) -> rr.Network:
+    """A network of rivers of travel times k and weights x, each a basin of its own."""
+    n_rivers = k.shape[0]
+    table = pd.DataFrame(
+        {
+            'riverId': np.arange(1, n_rivers + 1),
+            'nextRiverId': np.full(n_rivers, -1),
+            'muskingumK': np.float32(k),
+            'muskingumX': np.float32(x),
+            'riverIndex': np.arange(n_rivers, dtype=np.int32),
+            'upstreamCount': np.zeros(n_rivers, dtype=np.int32),
+        }
+    )
+    return rr.Network(table)
+
+
+@pytest.mark.parametrize(
+    ('step_over_k', 'x', 'sub_reaches'), [(0.6, 0.49, 3), (0.45, 0.49, 3), (0.7, 0.48, 2), (0.35, 0.495, 4)]
+)
+def test_rivers_equal_sub_reaches_cannot_make_valid_split_unequally(step_over_k: float, x: float, sub_reaches: int):
+    """
+    However many equal sub-reaches a river near x = 1/2 is split into, they can be too short for the step, and such a
+    river was kept whole. Sub-reaches of unequal travel times that take subcycles of their own make it valid: a river
+    of k = dt / 0.6 and x = 0.49 splits into three, such as 0.6, 0.2, and 0.2 of its k in 1, 3, and 3 subcycles.
+    """
+    network = separate_rivers(np.array([DT / step_over_k]), np.array([x]))
+    _, split = network.sub_reaches(DT)
+    assert not split.any(), 'equal sub-reaches make the river valid'
+    layout = network.conditioning(DT)
+    np.testing.assert_array_equal(layout.sub_reaches, [sub_reaches])
+    assert layout.subcycles.max() > 1
+    too_long, too_short = network.invalid_mask(DT, layout)
+    assert not too_long.any() and not too_short.any()
+
+
+def test_unequal_sub_reaches_keep_each_rivers_travel_time_and_variance() -> None:
+    """
+    Rivers of any travel time and of x from 1/3 to 1/2 are all made valid. None takes fewer than the
+    ceil(k / (dt + (1-2x) k)) sub-reaches no split can do with, and each river's sub-reaches keep its mean travel time
+    k and its travel time variance k^2 (1 - 2x), to which each sub-reach contributes k_i^2 (1 - 2 x_i).
+    """
+    rng = np.random.default_rng(0)
+    network = separate_rivers(DT / rng.uniform(0.05, 4, 2000), rng.uniform(1 / 3, 0.4995, 2000))
+    k, x = network.k.astype(np.float64), network.x.astype(np.float64)
+    layout = network.conditioning(DT)
+    too_long, too_short = network.invalid_mask(DT, layout)
+    assert not too_long.any() and not too_short.any()
+    river = np.repeat(np.arange(network.size), layout.sub_reaches)
+    np.testing.assert_allclose(np.bincount(river, weights=layout.k), k, rtol=1e-9)
+    np.testing.assert_allclose(
+        np.bincount(river, weights=layout.k**2 * (1 - 2 * layout.x)), k**2 * (1 - 2 * x), rtol=1e-9
+    )
+    assert np.all(layout.x >= 0)
+    assert np.all(layout.sub_reaches >= np.ceil(k / (DT + (1 - 2 * x) * k)))
+    subcycled = np.bincount(river, weights=layout.subcycles > 1) > 0
+    assert np.any(subcycled & (layout.sub_reaches > 1)), 'no river was split into sub-reaches with subcycles'
+
+
+def test_rivers_of_x_up_to_one_third_keep_their_equal_sub_reaches_and_subcycles() -> None:
+    """
+    For x <= 1/3 equal sub-reaches make every river too long for the step valid and subcycles every river too short
+    for it, so no river is split unequally: routing with both is routing each river as one of them alone would.
+    """
+    rng = np.random.default_rng(1)
+    network = separate_rivers(DT / rng.uniform(0.05, 4, 2000), rng.uniform(0, 1 / 3, 2000))
+    both = network.conditioning(DT)
+    split = network.conditioning(DT, use_subcycles=False)
+    cycled = network.conditioning(DT, use_subreaches=False)
+    for together, alone in zip(both[:3], split[:3], strict=True):
+        np.testing.assert_array_equal(together, alone)
+    np.testing.assert_array_equal(both.subcycles, np.repeat(cycled.subcycles, both.sub_reaches))
+
+
+def fewest_sub_reaches_of_any_subcycles(k: float, x: float, dt: float, most: int) -> int:
+    """
+    The fewest sub-reaches that make a river valid, at most ``most``, found by trying every combination of their
+    subcycles: n sub-reaches in m_1 ... m_n subcycles make k when their windows sum to a range that holds it. 0 if none.
+    """
+    half = (1 - 2 * x) * k * (1 - splitting.MARGIN)
+    shortest = max((1 - 2 * x) * k, splitting.SHORTEST_SHARE * min(k, dt))
+    m = np.arange(1, int(dt / (shortest - half)) + 1)
+    lower, upper = np.maximum(shortest, dt / m - half), dt / m + half
+    for count in range(1, most + 1):
+        grid = np.ix_(*[np.arange(m.size)] * count)
+        total_lower = sum(lower[index] for index in grid)
+        total_upper = sum(upper[index] for index in grid)
+        if np.any((total_lower <= k) & (k <= total_upper)):
+            return count
+    return 0
+
+
+@pytest.mark.parametrize('seed', range(4))
+def test_unequal_splits_are_the_fewest_any_subcycles_make(seed: int) -> None:
+    """
+    Against every combination of up to three subcycle counts, for rivers whose shortest sub-reach is a share of the
+    river or the step, so that the counts to try are few.
+    """
+    rng = np.random.default_rng(seed)
+    for _ in range(6):
+        k, x = DT / rng.uniform(0.5, 2.0), rng.uniform(0.498, 0.4995)
+        travel_times, _ = splitting.fewest_sub_reaches(k, x, float(DT), 256)
+        fewest = fewest_sub_reaches_of_any_subcycles(k, x, float(DT), 3)
+        assert travel_times.size == fewest or (fewest == 0 and travel_times.size > 3), (k, x)
 
 
 def test_write_stabilized_writes_only_its_output(willamette: Basin, tmp_path: Path) -> None:
@@ -432,7 +539,7 @@ def test_stabilize_splits_each_river_into_non_negative_sub_reaches_that_keep_its
     assert np.all(2 * sub_reach_k[split] * sub_reach_x[split] <= DT * (1 + 1e-6))
     assert np.all(2 * sub_reach_k[split] * (1 - sub_reach_x[split]) >= DT * (1 - 1e-6))
     assert np.any(sub_reaches > 1), 'no river of the basin is too long to route at dt'
-    np.testing.assert_array_equal(sub_reaches, willamette.network.conditioning(DT)[0])
+    np.testing.assert_array_equal(sub_reaches, willamette.network.conditioning(DT).sub_reaches)
 
 
 def test_stabilize_follows_explicit_weights(willamette: Basin) -> None:
@@ -480,13 +587,13 @@ def test_networks_refuse_more_sub_reaches_than_the_kernels_route() -> None:
         }
     )
     network = rr.Network(table)
-    sub_reaches = network.conditioning(DT)[0]
+    sub_reaches = network.conditioning(DT).sub_reaches
     np.testing.assert_array_equal(sub_reaches, [296])
     with pytest.raises(ValueError, match='more sub-reaches than the 256 the kernels route one river as'):
         network.check_routable(sub_reaches)
     held = rr.Network(table.assign(muskingumX=np.float32(0.45)))
-    np.testing.assert_array_equal(held.conditioning(DT)[0], [10])
-    held.check_routable(held.conditioning(DT)[0])
+    np.testing.assert_array_equal(held.conditioning(DT).sub_reaches, [10])
+    held.check_routable(held.conditioning(DT).sub_reaches)
 
 
 @pytest.fixture(scope='module')
@@ -511,7 +618,7 @@ def test_cumulative_runoff_becomes_runoff_per_step(willamette: Basin, march) -> 
     cells, _, factor = march
     per_step = grid(willamette).aggregate(cells, factor)
     totals = np.cumsum(cells, axis=0, dtype=np.float32)
-    from_totals = grid(willamette, grid_accumulation_type='cumulative').aggregate(totals, factor)
+    from_totals = grid(willamette, accumulation_type='cumulative').aggregate(totals, factor)
     assert_same(from_totals, per_step)
 
 
@@ -543,9 +650,11 @@ def test_depth_files_are_read_as_volumes(willamette: Basin, march, tmp_path: Pat
     depth_grid = grid(willamette)
     depths = depth_grid.aggregate(cells, factor)
     areas = depth_grid.catchment_area
-    rr.CatchmentRunoff.to_netcdf(tmp_path / 'depths.nc', dates, depths, depth_grid.river_ids, areas, as_volumes=False)
+    rr.CatchmentRunoffForcing.to_netcdf(
+        tmp_path / 'depths.nc', dates, depths, depth_grid.river_ids, areas, as_volumes=False
+    )
     volumes = grid(willamette, as_volumes=True).aggregate(cells, factor)
-    ((_, read, _),) = rr.CatchmentRunoff().generator([tmp_path / 'depths.nc'])
+    ((_, read, _),) = rr.CatchmentRunoffForcing().generator([tmp_path / 'depths.nc'])
     assert_same(read.runoff, volumes)
 
 
@@ -553,8 +662,10 @@ def test_catchment_reader_volumes_are_written_as_volumes(willamette: Basin, tmp_
     depth_grid = grid(willamette)
     dates, volumes, _ = next(depth_grid.catchment_reader(willamette.forcing_files[:1]))
     areas = depth_grid.catchment_area
-    rr.CatchmentRunoff.to_netcdf(tmp_path / 'volumes.nc', dates, volumes, depth_grid.river_ids, areas, as_volumes=True)
-    ((_, read, _),) = rr.CatchmentRunoff().generator([tmp_path / 'volumes.nc'])
+    rr.CatchmentRunoffForcing.to_netcdf(
+        tmp_path / 'volumes.nc', dates, volumes, depth_grid.river_ids, areas, as_volumes=True
+    )
+    ((_, read, _),) = rr.CatchmentRunoffForcing().generator([tmp_path / 'volumes.nc'])
     assert_same(read.runoff, volumes)
 
 
@@ -573,7 +684,7 @@ def test_catchment_runoff_in_another_river_order_is_refused(willamette: Basin, t
     volume_grid = grid(willamette, as_volumes=True)
     reversed_file = tmp_path / 'reversed.nc'
     river_ids, areas = volume_grid.river_ids[::-1], volume_grid.catchment_area[::-1]
-    rr.CatchmentRunoff.to_netcdf(reversed_file, dates, volumes[::-1], river_ids, areas, as_volumes=True)
+    rr.CatchmentRunoffForcing.to_netcdf(reversed_file, dates, volumes[::-1], river_ids, areas, as_volumes=True)
     changes = {'forcing': 'catchment', 'grid_weights_file': None, 'forcing_files': [reversed_file]}
     with pytest.raises(ValueError, match='in the same order'):
         route(tmp_path, **(willamette.gridded(months=1) | changes))
@@ -641,7 +752,7 @@ def test_dt_routing_auto_refuses_sub_reaches_that_change_between_files(willamett
     n_steps = april.shape[1] // 3 * 3
     three_hourly = april[:, :n_steps].reshape(april.shape[0], -1, 3).sum(axis=2)
     network = willamette.network
-    hourly_reaches, three_hourly_reaches = (network.conditioning(dt)[0].sum() for dt in (DT, 3 * DT))
+    hourly_reaches, three_hourly_reaches = (network.conditioning(dt).sub_reaches.sum() for dt in (DT, 3 * DT))
     assert hourly_reaches != three_hourly_reaches, 'both time steps route the same sub-reaches'
     months = [(march_dates, march), (april_dates[:n_steps:3], three_hourly)]
     with pytest.raises(ValueError, match='sub-reaches'):

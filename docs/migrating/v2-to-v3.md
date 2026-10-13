@@ -89,19 +89,21 @@ rr.Router(conf1).route()
 Config files are JSON only. Copy `examples/config.json`, which lists every key, and move the values of your YAML
 file into it. The following config keys have been renamed, removed, or added.
 
-| v2 Key                | v3 Key                                    |
-|-----------------------|-------------------------------------------|
-| `params_file`         | `network_file`                            |
-| `qlateral_files`      | `forcing_files` with `forcing: catchment` |
-| `grid_runoff_files`   | `forcing_files` with `forcing: grid`      |
-| `uh_kernel_file`      | _(removed)_                               |
-| `uh_state_init_file`  | _(removed)_                               |
-| `uh_state_final_file` | _(removed)_                               |
-| `dt_runoff`           | _(removed)_, read from the forcing files  |
-| `dt_discharge`        | `dt_discharge` with `forcing: channel`    |
-| `dt_total`            | `dt_total` with `forcing: channel`        |
-| `var_river_id`        | _(removed)_, every file uses `riverId`    |
-| `var_discharge`       | _(removed)_, discharge is always `Q`      |
+| v2 Key                   | v3 Key                                    |
+|--------------------------|-------------------------------------------|
+| `params_file`            | `network_file`                            |
+| `qlateral_files`         | `forcing_files` with `forcing: catchment` |
+| `grid_runoff_files`      | `forcing_files` with `forcing: grid`      |
+| `uh_kernel_file`         | _(removed)_                               |
+| `uh_state_init_file`     | _(removed)_                               |
+| `uh_state_final_file`    | _(removed)_                               |
+| `dt_runoff`              | _(removed)_, read from the forcing files  |
+| `dt_discharge`           | `dt_discharge` with `forcing: channel`    |
+| `dt_total`               | `dt_total` with `forcing: channel`        |
+| `var_grid_runoff`        | `var_runoff`                              |
+| `grid_accumulation_type` | `accumulation_type`                       |
+| `var_river_id`           | _(removed)_, every file uses `riverId`    |
+| `var_discharge`          | _(removed)_, discharge is always `Q`      |
 
 `dt_routing` keeps its name, but its default is now `'auto'`, which routes in sub-reaches or subcycles the rivers v2
 routed whole with a negative coefficient. Give it the runoff step in seconds with `use_subreaches: false` and
@@ -121,8 +123,8 @@ New keys, each with a default that matches v2 except `forcing`, which must be se
 | `use_subreaches`        | `True`      | Sub-reaches for rivers too long for their step; `False` routes them whole; `dt_routing: auto` requires it                                        |
 | `use_subcycles`         | `True`      | Subcycles for rivers too short for their step; `False` routes them whole; `dt_routing: auto` requires it                                         |
 | `invalid_coefficients`  | `'raise'`   | `'raise'` refuses, `'log'` logs an error for, or `'ignore'` routes silently rivers with a negative coefficient in their own step                 |
-| `runoff_depth_unit`     | `None`      | Unit of gridded runoff depths; `None` reads the file attributes                                                                                  |
 | `force_positive_runoff` | `false`     | Clip negative runoff depths to zero                                                                                                              |
+| `runoff_depth_unit`     | `None`      | Unit of gridded runoff depths; `None` reads the file attributes                                                                                  |
 | `as_volumes`            | `false`     | Prepare catchment runoff as volumes (m³) instead of depths (m)                                                                                   |
 
 `forcing` must be set to route runoff: with the default, `channel`, any `forcing_files` are ignored.
@@ -177,7 +179,7 @@ v2 files which were always of shape `(time, river_id)`. Every v3 file names the 
 
 The kernels route one river's whole time series at a time, so keeping each river's series contiguous is what makes reading it fast. The
 variable is renamed `catchment_runoff` and needs a `units` attribute, `m3` for volumes or `m` or `mm` for depths. The file also holds a
-`catchment_area` variable (m²) which converts depths to volumes. v2 qlateral files were volumes. `Runoff.to_netcdf` writes this format.
+`catchment_area` variable (m²) which converts depths to volumes. v2 qlateral files were volumes. `RunoffForcing.to_netcdf` writes this format.
 
 ```python
 import xarray as xr
@@ -191,7 +193,7 @@ with xr.open_dataset('/path/to/weights.nc') as weights:
 """pivot the v2 qlateral array to (river, time) and write the v3 file, which names its river dimension riverId"""
 with xr.open_dataset('/path/to/qlateral.nc') as ds:
     river_ids = ds['river_id'].values
-    rr.CatchmentRunoff.to_netcdf(
+    rr.CatchmentRunoffForcing.to_netcdf(
         '/path/to/catchment_runoff.nc',
         dates=ds['time'].values,
         catchment_runoff=ds['qlateral'].transpose('river_id', 'time').values,

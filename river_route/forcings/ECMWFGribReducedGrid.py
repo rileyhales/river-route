@@ -1,11 +1,3 @@
-"""
-``ECMWFGribReducedGrid`` reads runoff depths from ECMWF GRIB files on a reduced gaussian grid with eccodes, the
-forcing ecmwf_grib. It is a ``BaseGridRunoff`` (bases.py) that overrides only ``read_runoff``, so it yields the same
-``GridCellRunoff``, or ``CatchmentRunoffVolumes`` when a file must be aggregated first, routed with the overloads
-registered in bases.py. It defines no form of runoff or overload of its own. ``ReducedGaussianGrid`` is the grid of
-those files, read from their metadata, on which ``reduced_grid_weights`` (weights.py) builds a weight table.
-"""
-
 import os
 from dataclasses import dataclass
 from typing import NamedTuple, Self
@@ -16,7 +8,7 @@ import numpy as np
 import shapely
 
 from ..types import DatetimeArray, FloatArray, IntArray, PathInput
-from .bases import BaseGridRunoff
+from .bases import BaseGridRunoffForcing
 
 __all__ = ['ECMWFGribReducedGrid', 'ReducedGaussianGrid']
 
@@ -112,8 +104,15 @@ class ReducedGaussianGrid(NamedTuple):
 
 
 @dataclass(eq=False, repr=False)
-class ECMWFGribReducedGrid(BaseGridRunoff):
+class ECMWFGribReducedGrid(BaseGridRunoffForcing):
     """
+    ``ECMWFGribReducedGrid`` reads runoff depths from ECMWF GRIB files on a reduced gaussian grid with eccodes, the
+    forcing ecmwf_grib. It is a ``BaseGridRunoffForcing`` (bases.py) that overrides only ``read_runoff``, so it yields
+    the same ``GridCellRunoff``, or ``CatchmentRunoffVolumes`` when a file must be aggregated first, routed with the
+    overloads registered in bases.py. It defines no form of runoff or overload of its own. ``ReducedGaussianGrid`` is
+    the grid of those files, read from their metadata, on which ``reduced_grid_weights`` (weights.py) builds a weight
+    table.
+
     Runoff from ECMWF GRIB files on a reduced gaussian grid, such as the octahedral O1280 grid of the IFS, with a
     weight table made by ``reduced_grid_weights`` that locates each cell by its ``cell_index``, its position in the
     values of a GRIB message. This reader is specialized to that format; runoff in any other form must be prepared as
@@ -123,11 +122,11 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
     cells are kept. At the 18,721 cells of the Columbia River basin in a 145 step O1280 forecast that took 0.72 s with
     memory for one message, where xarray and cfgrib took 5.8 s and built the whole (step, cell) array in 4 GB.
 
-    Every message whose shortName is ``var_grid_runoff`` is read as one time step, in the order of the files and of
+    Every message whose shortName is ``var_runoff`` is read as one time step, in the order of the files and of
     their messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the
     weight table and the routing is left to the caller. A GRIB message has no named dimensions, so ``var_t`` is not
     read: each cell is taken by its position in the message's values. IFS forecast runoff accumulates from the start of
-    the forecast, so it is routed with ``grid_accumulation_type`` cumulative.
+    the forecast, so it is routed with ``accumulation_type`` cumulative.
     """
 
     @property
@@ -164,7 +163,7 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
                 for _ in range(n_messages):
                     handle = eccodes.codes_grib_new_from_file(file)
                     try:
-                        if eccodes.codes_get(handle, 'shortName') != self.var_grid_runoff:
+                        if eccodes.codes_get(handle, 'shortName') != self.var_runoff:
                             continue
                         dates[n_steps] = self._read_message(handle, cell_index, runoff[n_steps], forcing_file)
                         units.add(eccodes.codes_get(handle, 'units'))
@@ -172,9 +171,9 @@ class ECMWFGribReducedGrid(BaseGridRunoff):
                     finally:
                         eccodes.codes_release(handle)
         if n_steps == 0:
-            raise ValueError(f'no GRIB message in {runoff_data} has shortName {self.var_grid_runoff}')
+            raise ValueError(f'no GRIB message in {runoff_data} has shortName {self.var_runoff}')
         if len(units) != 1:
-            raise ValueError(f'the {self.var_grid_runoff} messages of {runoff_data} have units {sorted(units)}')
+            raise ValueError(f'the {self.var_runoff} messages of {runoff_data} have units {sorted(units)}')
         conversion_factor = self._get_conversion_factor(self.runoff_depth_unit or units.pop())
         return runoff[:n_steps], dates[:n_steps], conversion_factor
 

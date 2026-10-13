@@ -1,6 +1,5 @@
 """The form's fields, described from the Configs annotations, and the Configs options and Python of their values."""
 
-import dataclasses
 import glob
 import os
 from pathlib import Path
@@ -16,7 +15,9 @@ FORCING_GROUP = 'forcing options'  # the group of the forcing's own options, who
 FORM_GROUPS = (  # each group's comment and fields, as the Configs of examples/example_usage.py has them
     (None, ('network_file',)),
     ('primary modeling choices', ('forcing',)),
-    ('Compute Options', ('use_subreaches', 'use_subcycles', 'invalid_coefficients', 'dt_routing')),
+    ('Compute Options', ('dt_routing', 'use_subreaches', 'use_subcycles', 'invalid_coefficients')),
+    ('model state files', ('channel_state_init_file', 'channel_state_final_file')),
+    ('Outputs Location', ('discharge_dir', 'discharge_to_devnull')),
     (
         FORCING_GROUP,
         (
@@ -25,17 +26,15 @@ FORM_GROUPS = (  # each group's comment and fields, as the Configs of examples/e
             'dt_total',
             'forcing_files',
             'grid_weights_file',
-            'var_grid_runoff',
+            'var_runoff',
             'var_x',
             'var_y',
             'var_t',
-            'grid_accumulation_type',
+            'accumulation_type',
             'runoff_processing_mode',
             'force_positive_runoff',
         ),
     ),
-    ('model state files', ('channel_state_init_file', 'channel_state_final_file')),
-    ('Outputs Location', ('discharge_dir', 'discharge_to_devnull')),
     ('logging and validation options', ('progress_bar', 'log_level')),
 )
 FORCINGS_OF_FIELD = {  # the fields only some forcings read; the form shows every other field for every forcing
@@ -44,11 +43,11 @@ FORCINGS_OF_FIELD = {  # the fields only some forcings read; the form shows ever
     'dt_total': ('channel',),
     'forcing_files': RUNOFF_FORCINGS,
     'grid_weights_file': GRID_FORCINGS,
-    'var_grid_runoff': ('grid',),
+    'var_runoff': ('grid',),
     'var_x': ('grid',),
     'var_y': ('grid',),
     'var_t': ('grid',),
-    'grid_accumulation_type': GRID_FORCINGS,
+    'accumulation_type': GRID_FORCINGS,
     'runoff_processing_mode': RUNOFF_FORCINGS,
     'force_positive_runoff': GRID_FORCINGS,
 }
@@ -64,7 +63,7 @@ def describe_fields() -> list[dict[str, Any]]:
     group it belongs with. Choices and defaults are read from the Configs annotations, so they never go stale.
     """
     hints = get_type_hints(Configs)
-    defaults = {f.name: f.default for f in dataclasses.fields(Configs) if f.init} | FORM_DEFAULTS
+    defaults = Configs().to_dict() | FORM_DEFAULTS
     described = []
     for group, names in FORM_GROUPS:
         for name in names:

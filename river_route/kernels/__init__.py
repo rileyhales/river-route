@@ -206,7 +206,7 @@ def route_region(
     Route one forcing file, or the channel alone, over every river of the network: every job of sub-watershed blocks,
     concurrently on thread_pool when given, then the main stem job, which reads the discharge rows of the blocks that
     drain into it. discharge is a (river, time) array with a column for the discharge at the start and one for the end
-    of each runoff step, and forcing is None for channel routing or what a Runoff generator yielded.
+    of each runoff step, and forcing is None for channel routing or what a RunoffForcing generator yielded.
     """
     n_steps = discharge.shape[1] - 1
     kernel_network, depth = kernel_arrays(network, coefficients, forcing, n_steps)

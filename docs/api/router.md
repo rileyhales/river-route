@@ -6,8 +6,8 @@ the `forcing` configuration key, and how each river computes by the compute opti
 
 A `Router` takes a `Configs` and nothing else: `Router(configs)`. It owns one simulation: the coefficients, the time
 options, the channel state, and the routing loop. The network it routes over belongs to [`Network`](network.md) and
-the weight table gridded runoff is aggregated with belongs to a [`Runoff`](forcings.md) class chosen by `forcing`, and
-the Router builds both from its `Configs`. The Runoff is only built when runoff is routed, so channel routing never
+the weight table gridded runoff is aggregated with belongs to a [`RunoffForcing`](forcings.md) class chosen by `forcing`, and
+the Router builds both from its `Configs`. The RunoffForcing is only built when runoff is routed, so channel routing never
 reads a weight table.
 
 ::: river_route.router.Router.Router

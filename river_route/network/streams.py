@@ -30,14 +30,13 @@ def assign_depth_first_search_order(df: pd.DataFrame) -> pd.DataFrame:
     already in DFS order keeps its order. The DataFrame given is not changed.
 
     Args:
-        df: the network table, with a riverId column and a nextRiverId column that is -1 at a basin outlet
+        df: the network table, with a riverId column and a nextRiverId column that is -1 at an outlet
 
     Returns:
-        pd.DataFrame: a copy of the table in DFS order, its riverIndex numbering the rows from 0
+        pd.DataFrame: df copy with new riverIndex and upstreamCount columns ascending sorted by the new riverIndex
 
     Raises:
-        ValueError: if a column is missing, a riverId repeats, a nextRiverId is not a riverId, or rivers drain in a
-            cycle
+        ValueError: column is missing, riverId repeats, nextRiverId is not a riverId, river drains to itself
     """
     missing = [column for column in ('riverId', 'nextRiverId') if column not in df.columns]
     if missing:
@@ -63,12 +62,6 @@ def assign_blocks(upstream_counts: IntArray, downstream_indices: Int32Array, thr
     """
     Divide a region in DFS order into sub-watershed blocks, pack the blocks into ``threads`` jobs that route
     concurrently, and leave every other river to the main stem, the last job, which routes after them.
-
-    In DFS order the watershed of river r is the rows ``r - upstream_counts[r]`` through r, so a block is known by its
-    outlet alone. Under a cap on the rivers in a block, the block outlets are the rivers whose watershed fits the cap
-    and whose downstream river's watershed does not, or that are a basin outlet. A river's watershed always holds more
-    rivers than the watershed of any river upstream of it, so these blocks never overlap, and each drains into a river
-    over the cap, which is in no block: the main stem.
 
     A loose cap leaves a short main stem but packs unevenly, a tight one packs evenly but leaves more rivers to the main
     stem, and the trade turns over at a different cap per network. So each cap of _BLOCK_CAP_FRACTIONS is tried, and the
@@ -136,7 +129,7 @@ def analyze_partitioning(network: Network, threads: int = 4) -> dict:
     main_stem = int(np.sum(main_stem_job[1] - main_stem_job[0]))
     n_rivers = network.size
 
-    summary = {
+    return {
         'threads': threads,
         'n_rivers': n_rivers,
         'n_blocks': len(block_sizes),
@@ -147,17 +140,6 @@ def analyze_partitioning(network: Network, threads: int = 4) -> dict:
         'main_stem_fraction': main_stem / n_rivers if n_rivers else 0.0,
         'predicted_speedup': n_rivers / (span + main_stem) if n_rivers else 1.0,
     }
-
-    print(f'Partitioning analysis for threads={threads}')
-    print(f'  rivers in:              {summary["n_rivers"]:,}')
-    print(
-        f'  sub-watershed blocks:   {summary["n_blocks"]:,} '
-        f'(largest {summary["largest_block"]:,}, smallest {summary["smallest_block"]:,})'
-    )
-    print(f'  parallel span:          {summary["parallel_span"]:,} rivers on the busiest thread')
-    print(f'  sequential main stem:   {summary["main_stem"]:,} ({summary["main_stem_fraction"]:.1%})')
-    print(f'  predicted speedup:      {summary["predicted_speedup"]:.2f}x (work only; ignores memory bandwidth)')
-    return summary
 
 
 def subset_network_to_river(

@@ -1,22 +1,19 @@
-"""
-``CatchmentRunoff`` reads runoff already aggregated to catchments and yields each as ``CatchmentRunoffVolumes``
-(bases.py), whose rows routing reads in place, a cell per river. It defines no form of runoff of its own.
-"""
-
 from typing import Self
 
 import numpy as np
 import xarray as xr
 
+from .bases import CATCHMENT_AREA, CATCHMENT_RUNOFF, VOLUME_UNITS, CatchmentRunoffVolumes, RunoffForcing
 from ..configs import Configs
 from ..types import PathList, RunoffGenerator
-from .bases import CATCHMENT_AREA, CATCHMENT_RUNOFF, VOLUME_UNITS, CatchmentRunoffVolumes, Runoff
 
-__all__ = ['CatchmentRunoff']
+__all__ = ['CatchmentRunoffForcing']
 
 
-class CatchmentRunoff(Runoff):
+class CatchmentRunoffForcing(RunoffForcing):
     """
+    Reads runoff already aggregated to catchments and yields each as ``CatchmentRunoffVolumes`` (bases.py),
+    whose rows routing reads in place, a cell per river. It defines no form of runoff of its own.
     A degenerate Runoff aggregator class which only allows for iterating over files already converted to
     catchment level volumes or depths.
     """
@@ -57,7 +54,8 @@ class CatchmentRunoff(Runoff):
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
         """
-        Build a CatchmentRunoff. The catchment runoff file schema is fixed, so no option of the ``Configs`` is read.
+        Build a CatchmentRunoffForcing. The catchment runoff file schema is fixed, so no option of the ``Configs`` is
+        read.
         """
         if not isinstance(configs, Configs):
             raise TypeError(
