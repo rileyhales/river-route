@@ -18,7 +18,7 @@
     "LICENSE.txt"
   ],
   "scripts": {
-    "prepack": "rr compile --wasm . --checks && cp ../LICENSE.txt LICENSE.txt",
+    "prepack": "python3 ../river_route/kernels/build.py --wasm . --checks && cp ../LICENSE.txt LICENSE.txt",
     "postpack": "rm LICENSE.txt"
   }
 }

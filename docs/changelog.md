@@ -2,6 +2,16 @@
 
 ---
 
+### [v3.0.1](https://github.com/rileyhales/river-route/tree/v3.0.1) — 2026-10-13
+
+- The npm package's WebAssembly is compiled by `python river_route/kernels/build.py --wasm <folder>`, which needs
+  nothing beyond Python's standard library. `rr compile --wasm <folder>` still compiles it too.
+- `river_route.kernels.build.build(llvm_bin, checks, wasm)` compiles either the shared library or, given `wasm`, the
+  WebAssembly modules. `build_wasm` is removed, and `build` no longer returns the library's path.
+- npm releases are staged, then approved, before they go live.
+
+---
+
 ### [v3.0.0](https://github.com/rileyhales/river-route/tree/v3.0.0) — 2026-10-13
 
 The [v2 to v3 migration guide](migrating/v2-to-v3.md) gives the replacement for each removed class, config key, and

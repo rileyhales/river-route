@@ -1,10 +1,4 @@
-"""
-Compile the C kernel, SOURCES, with the clang of LLVM on this machine: into the shared library the kernel is loaded
-from, for this machine's processor, or into the WebAssembly modules of the npm package in wasm/. ``rr compile`` runs
-it. With ``checks``, the C must also compile without one warning of clang's strictest set and pass clang-tidy and
-clang's static analyzer, the checks it is developed under.
-"""
-
+import argparse
 import os
 import platform
 import shutil
@@ -12,15 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-__all__ = ['LIBRARY', 'build', 'build_wasm']
+__all__ = ['LIBRARY', 'build']
 
 HERE = Path(__file__).parent
 SOURCES = (HERE / 'c' / 'routing.c', HERE / 'c' / 'checks.c')  # which include routing.h, checks.h, and simd.h
 LIBRARY = HERE / 'build' / ('routing.dylib' if sys.platform == 'darwin' else 'routing.so')
 EXPORTS = ('rr_route_rivers', 'rr_describe_problem')
-# the processor the library is compiled for: this machine's, since it is compiled on the machine that routes with it
 NATIVE = {'arm64': '-mcpu=native', 'aarch64': '-mcpu=native'}.get(platform.machine().lower(), '-march=native')
-# each module's features beyond WASM_TARGET: relaxed SIMD's fused multiply-adds, or none for runtimes without them
 WASM_MODULES = {'routing-relaxed.wasm': ('-mrelaxed-simd',), 'routing.wasm': ()}
 WASM_TARGET = (
     '--target=wasm32',  # 32 bit WebAssembly, which every browser runs
@@ -64,74 +56,65 @@ TIDY_CHECKS = ','.join(
 )
 
 
-def build(llvm_bin: str | Path | None = None, checks: bool = False) -> Path:
+def build(llvm_bin: str | None = None, checks: bool = False, wasm: str | None = None) -> None:
     """
-    Compile the C kernel into LIBRARY and return its path.
+    Compile the C kernel into LIBRARY, or into the WebAssembly modules of WASM_MODULES in the folder wasm, printing each
+    command it runs.
 
     Args:
         llvm_bin: the folder of LLVM's clang (and clang-tidy, for the checks), or None for LLVM_BIN in the environment,
             or else the clang on the PATH
         checks: also compile with every warning of clang as an error, and run clang-tidy and clang's static analyzer
+        wasm: the folder the WebAssembly modules are written into, such as the npm package's wasm/, or None to compile
+            LIBRARY
 
     Raises:
-        FileNotFoundError: if no clang is found
+        FileNotFoundError: if no clang is found, or no clang-tidy beside it for the checks
+        NotADirectoryError: if wasm is not a folder
         subprocess.CalledProcessError: if a compile or a check fails
     """
-    clang = _find_clang(llvm_bin)
-    if checks:
-        _check(clang)
-    warnings = STRICT_WARNINGS if checks else ('-Wall', '-Wextra')
-    LIBRARY.parent.mkdir(exist_ok=True)
-    _run(clang, '-std=c17', '-O3', NATIVE, '-shared', '-fPIC', *warnings, '-o', LIBRARY, *SOURCES)
-    return LIBRARY
-
-
-def build_wasm(folder: str | Path, llvm_bin: str | Path | None = None, checks: bool = False) -> list[Path]:
-    """
-    Compile the C kernel into the WebAssembly modules of WASM_MODULES in ``folder`` and return their paths. clang links
-    them with LLVM's wasm-ld, which it looks for beside itself and then on the PATH.
-
-    Args:
-        folder: the folder the modules are written into, such as the npm package's wasm/
-        llvm_bin: the folder of LLVM's clang (and clang-tidy, for the checks), or None for LLVM_BIN in the environment,
-            or else the clang on the PATH
-        checks: also compile with every warning of clang as an error, and run clang-tidy and clang's static analyzer
-
-    Raises:
-        NotADirectoryError: if folder is not a folder
-        FileNotFoundError: if no clang is found
-        subprocess.CalledProcessError: if a compile or a check fails
-    """
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise NotADirectoryError(f'the WebAssembly modules are written into a folder, and {folder} is not one')
-    clang = _find_clang(llvm_bin)
-    if checks:
-        _check(clang)
-    warnings = STRICT_WARNINGS if checks else ('-Wall', '-Wextra')
-    for name, features in WASM_MODULES.items():
-        _run(clang, '-std=c17', '-O3', *WASM_TARGET, *features, *warnings, *WASM_LINK, '-o', folder / name, *SOURCES)
-    return [folder / name for name in WASM_MODULES]
-
-
-def _find_clang(llvm_bin: str | Path | None) -> Path:
     folder = llvm_bin or os.environ.get('LLVM_BIN')
     clang = Path(folder) / 'clang' if folder else shutil.which('clang')
     if clang is None or not Path(clang).exists():
         raise FileNotFoundError(
             "the C kernel is compiled with LLVM's clang: install LLVM, or give its folder as LLVM_BIN"
         )
-    return Path(clang)
-
-
-def _check(clang: Path) -> None:
+    clang = Path(clang)
     tidy = clang.with_name('clang-tidy')
-    tidy_options = ('--quiet', '--header-filter=.*', '--warnings-as-errors=*', f'--checks={TIDY_CHECKS}')  # headers too
-    _run(tidy, *SOURCES, *tidy_options, '--', '-std=c17')
-    for source in SOURCES:  # one at a time: the analyzer writes one output, here none, for each
-        _run(clang, '--analyze', '-std=c17', '-Xclang', '-analyzer-werror', '-o', os.devnull, source)
+    if checks and not tidy.exists():
+        raise FileNotFoundError(f'the checks run clang-tidy, and there is none at {tidy}')
+    if wasm is not None and not Path(wasm).is_dir():
+        raise NotADirectoryError(f'the WebAssembly modules are written into a folder, and {wasm} is not one')
+
+    warnings = STRICT_WARNINGS if checks else ('-Wall', '-Wextra')
+    commands: list[tuple[str | Path, ...]] = []
+    if checks:
+        # --header-filter=.* checks the headers too
+        tidy_options = ('--quiet', '--header-filter=.*', '--warnings-as-errors=*', f'--checks={TIDY_CHECKS}')
+        commands.append((tidy, *SOURCES, *tidy_options, '--', '-std=c17'))
+        for source in SOURCES:  # one at a time: the analyzer writes one output, here none, for each
+            commands.append((clang, '--analyze', '-std=c17', '-Xclang', '-analyzer-werror', '-o', os.devnull, source))
+    if wasm is None:
+        LIBRARY.parent.mkdir(exist_ok=True)
+        commands.append((clang, '-std=c17', '-O3', NATIVE, '-shared', '-fPIC', *warnings, '-o', LIBRARY, *SOURCES))
+    else:
+        for name, features in WASM_MODULES.items():
+            wasm_flags = (*WASM_TARGET, *features, *warnings, *WASM_LINK)
+            commands.append((clang, '-std=c17', '-O3', *wasm_flags, '-o', Path(wasm) / name, *SOURCES))
+
+    for command in commands:
+        print(' '.join(str(part) for part in command), flush=True)
+        subprocess.run([str(part) for part in command], check=True)
+    print(f'Compiled the C routing kernel into {LIBRARY if wasm is None else wasm}')
 
 
-def _run(*command: str | Path) -> None:
-    print(' '.join(str(part) for part in command), flush=True)
-    subprocess.run([str(part) for part in command], check=True)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(prog='build.py', description='Compile the C routing kernel with LLVM')
+    parser.add_argument('--llvm-bin', type=str, default=None, help='Folder of LLVM clang (default: LLVM_BIN, or PATH)')
+    parser.add_argument('--checks', action='store_true', help='Also require clang-tidy, and its static analyzer')
+    parser.add_argument('--wasm', type=str, default=None, metavar='FOLDER', help='Compile the WASM into FOLDER instead')
+    args = parser.parse_args()
+    try:
+        build(args.llvm_bin, args.checks, args.wasm)
+    except (FileNotFoundError, NotADirectoryError, subprocess.CalledProcessError) as error:
+        parser.error(str(error))

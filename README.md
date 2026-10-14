@@ -9,4 +9,4 @@ file reference, the file schemas, and the math are in the documentation at
 
 ## Installation
 
-`river-route` requires Python 3.14 or newer, and runs on macOS and Linux. This code
+`river-route` requires Python 3.14 or newer, and runs on macOS and Linux.
