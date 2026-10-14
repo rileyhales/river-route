@@ -1,1 +1,1 @@
-{% include "../LICENSE.txt" %}
+--8<-- "LICENSE.txt"

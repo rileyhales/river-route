@@ -1,19 +1,31 @@
-.matrix-grid {
+.storage-figure {
+    overflow-x: auto;
+}
+.storage-table {
+    width: 100%;
+    min-width: 560px;
+    table-layout: fixed;
+    border-collapse: collapse;
+}
+.storage-table th {
+    padding: 0.25em;
     text-align: center;
+    vertical-align: middle;
 }
-.matrix-grid table {
-    width: auto !important;
-    margin: 0 auto !important;
-    border-collapse: collapse !important;
+.storage-table th:first-child {
+    width: 4.5em;
 }
-.matrix-grid th, .matrix-grid td {
-    width: 30px !important;
-    min-width: 30px !important;
-    max-width: 30px !important;
-    height: 30px !important;
-    padding: 0 !important;
-    text-align: center !important;
-    vertical-align: middle !important;
-    font-size: 0.85em !important;
-    border: 1px solid #ccc !important;
+.storage-table td {
+    padding: 0.25em;
+}
+.storage-table svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+.algorithm-figure svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
 }

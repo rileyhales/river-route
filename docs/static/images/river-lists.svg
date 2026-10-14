@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 452 400" width="452" role="img" aria-label="Each river list kept in one array, with a starts array giving where each river list begins" font-size="13" fill="currentColor">
+<text x="64" y="19" text-anchor="end" font-size="11" fill-opacity="0.7">river</text>
+<text x="88" y="19" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="120" y="19" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="152" y="19" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="184" y="19" text-anchor="middle" font-size="11" fill-opacity="0.7">end</text>
+<rect x="72" y="24" width="32" height="28" fill="#1e88e5" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="88" y="43" text-anchor="middle">0</text>
+<rect x="104" y="24" width="32" height="28" fill="#fb8c00" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="120" y="43" text-anchor="middle">1</text>
+<rect x="136" y="24" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="152" y="43" text-anchor="middle">2</text>
+<rect x="168" y="24" width="32" height="28" fill="none" stroke="currentColor" stroke-width="1"/>
+<text x="184" y="43" text-anchor="middle">4</text>
+<text x="216" y="43" text-anchor="start" style="font-family: var(--md-code-font-family, monospace)">sub_reach_starts</text>
+<line x1="88" y1="52" x2="75.7" y2="79.8" stroke="#1e88e5" stroke-width="1.5"/>
+<polygon points="72,88 71.5,77.9 79.8,81.6" fill="#1e88e5"/>
+<line x1="120" y1="52" x2="107.7" y2="79.8" stroke="#fb8c00" stroke-width="1.5"/>
+<polygon points="104,88 103.5,77.9 111.8,81.6" fill="#fb8c00"/>
+<line x1="152" y1="52" x2="139.7" y2="79.8" stroke="#43a047" stroke-width="1.5"/>
+<polygon points="136,88 135.5,77.9 143.8,81.6" fill="#43a047"/>
+<line x1="184" y1="52" x2="196.3" y2="79.8" stroke="currentColor" stroke-width="1.5"/>
+<polygon points="200,88 192.2,81.6 200.5,77.9" fill="currentColor"/>
+<rect x="72" y="88" width="32" height="28" fill="#1e88e5" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<rect x="104" y="88" width="32" height="28" fill="#fb8c00" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<rect x="136" y="88" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<rect x="168" y="88" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="216" y="107" text-anchor="start" style="font-family: var(--md-code-font-family, monospace)">c1, c2, c3, c4, channel_state</text>
+<text x="64" y="129" text-anchor="end" font-size="11" fill-opacity="0.7">position</text>
+<text x="88" y="129" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="120" y="129" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="152" y="129" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="184" y="129" text-anchor="middle" font-size="11" fill-opacity="0.7">3</text>
+<text x="64" y="151" text-anchor="end" font-size="11" fill-opacity="0.7">river</text>
+<text x="88" y="151" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="120" y="151" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="152" y="151" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="184" y="151" text-anchor="middle" font-size="11" fill-opacity="0.7">end</text>
+<rect x="72" y="156" width="32" height="28" fill="#1e88e5" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="88" y="175" text-anchor="middle">0</text>
+<rect x="104" y="156" width="32" height="28" fill="#fb8c00" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="120" y="175" text-anchor="middle">0</text>
+<rect x="136" y="156" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="152" y="175" text-anchor="middle">0</text>
+<rect x="168" y="156" width="32" height="28" fill="none" stroke="currentColor" stroke-width="1"/>
+<text x="184" y="175" text-anchor="middle">2</text>
+<text x="216" y="175" text-anchor="start" style="font-family: var(--md-code-font-family, monospace)">inflow_river_starts</text>
+<line x1="88" y1="184" x2="75.7" y2="211.8" stroke="#1e88e5" stroke-width="1.5"/>
+<polygon points="72,220 71.5,209.9 79.8,213.6" fill="#1e88e5"/>
+<line x1="120" y1="184" x2="79.2" y2="214.6" stroke="#fb8c00" stroke-width="1.5"/>
+<polygon points="72,220 76.5,211.0 81.9,218.2" fill="#fb8c00"/>
+<line x1="152" y1="184" x2="80.2" y2="216.3" stroke="#43a047" stroke-width="1.5"/>
+<polygon points="72,220 78.4,212.2 82.1,220.4" fill="#43a047"/>
+<line x1="184" y1="184" x2="143.2" y2="214.6" stroke="currentColor" stroke-width="1.5"/>
+<polygon points="136,220 140.5,211.0 145.9,218.2" fill="currentColor"/>
+<rect x="72" y="220" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="88" y="239" text-anchor="middle">0</text>
+<rect x="104" y="220" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="120" y="239" text-anchor="middle">1</text>
+<text x="216" y="239" text-anchor="start" style="font-family: var(--md-code-font-family, monospace)">inflow_rivers</text>
+<text x="64" y="261" text-anchor="end" font-size="11" fill-opacity="0.7">position</text>
+<text x="88" y="261" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="120" y="261" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="64" y="283" text-anchor="end" font-size="11" fill-opacity="0.7">river</text>
+<text x="88" y="283" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="120" y="283" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="152" y="283" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="184" y="283" text-anchor="middle" font-size="11" fill-opacity="0.7">end</text>
+<rect x="72" y="288" width="32" height="28" fill="#1e88e5" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="88" y="307" text-anchor="middle">0</text>
+<rect x="104" y="288" width="32" height="28" fill="#fb8c00" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="120" y="307" text-anchor="middle">1</text>
+<rect x="136" y="288" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="152" y="307" text-anchor="middle">2</text>
+<rect x="168" y="288" width="32" height="28" fill="none" stroke="currentColor" stroke-width="1"/>
+<text x="184" y="307" text-anchor="middle">4</text>
+<text x="216" y="307" text-anchor="start" style="font-family: var(--md-code-font-family, monospace)">weight_starts</text>
+<line x1="88" y1="316" x2="75.7" y2="343.8" stroke="#1e88e5" stroke-width="1.5"/>
+<polygon points="72,352 71.5,341.9 79.8,345.6" fill="#1e88e5"/>
+<line x1="120" y1="316" x2="107.7" y2="343.8" stroke="#fb8c00" stroke-width="1.5"/>
+<polygon points="104,352 103.5,341.9 111.8,345.6" fill="#fb8c00"/>
+<line x1="152" y1="316" x2="139.7" y2="343.8" stroke="#43a047" stroke-width="1.5"/>
+<polygon points="136,352 135.5,341.9 143.8,345.6" fill="#43a047"/>
+<line x1="184" y1="316" x2="196.3" y2="343.8" stroke="currentColor" stroke-width="1.5"/>
+<polygon points="200,352 192.2,345.6 200.5,341.9" fill="currentColor"/>
+<rect x="72" y="352" width="32" height="28" fill="#1e88e5" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="88" y="371" text-anchor="middle">0</text>
+<rect x="104" y="352" width="32" height="28" fill="#fb8c00" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="120" y="371" text-anchor="middle">1</text>
+<rect x="136" y="352" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="152" y="371" text-anchor="middle">0</text>
+<rect x="168" y="352" width="32" height="28" fill="#43a047" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="184" y="371" text-anchor="middle">1</text>
+<text x="216" y="371" text-anchor="start" style="font-family: var(--md-code-font-family, monospace)">weight_cells, weights</text>
+<text x="64" y="393" text-anchor="end" font-size="11" fill-opacity="0.7">position</text>
+<text x="88" y="393" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="120" y="393" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="152" y="393" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="184" y="393" text-anchor="middle" font-size="11" fill-opacity="0.7">3</text>
+</svg>

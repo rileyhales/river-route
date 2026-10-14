@@ -11,3 +11,9 @@ __pycache__/
 .DS_Store
 plans/
 experiments/
+.venv/
+benchmarks/
+correctness_tests/
+rewrite/
+*.wasm
+wasm/LICENSE.txt

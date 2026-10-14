@@ -1,0 +1,498 @@
+"""The frozen Configs object that holds and validates every option of a routing run and of preparing its runoff."""
+
+import json
+import logging
+import numbers
+import os
+from dataclasses import dataclass, field, fields
+from typing import Any, ClassVar, Literal, Self, get_args, get_origin, get_type_hints
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+from river_route.types import IntArray, PathInput, PathList
+
+__all__ = ['Configs', 'check_channel_state_rivers', 'is_dev_null']
+
+logger = logging.getLogger(__name__)
+
+_DEV_NULL: frozenset[str] = frozenset({os.devnull, '/dev/null'})
+
+
+def is_dev_null(path: PathInput) -> bool:
+    """True for the null device, which always counts as a path that exists and discards whatever is written."""
+    return str(path) in _DEV_NULL
+
+
+def check_channel_state_rivers(
+    state_river_ids: IntArray, river_ids: IntArray, per_sub_reach: bool, state_file: PathInput
+) -> None:
+    """
+    Raise ValueError unless the riverId column of a channel state file lists the rivers of the network in network
+    order: one row per river, or with ``per_sub_reach``, as the final state of a run with use_subreaches is written, a
+    run of rows per river, one per sub-reach. The number of sub-reaches depends on the routing step and is checked
+    when routing.
+    """
+    if per_sub_reach and state_river_ids.shape[0]:
+        first_row_of_river = np.ones(state_river_ids.shape[0], dtype=bool)
+        first_row_of_river[1:] = state_river_ids[1:] != state_river_ids[:-1]
+        state_river_ids = state_river_ids[first_row_of_river]
+    if state_river_ids.shape != river_ids.shape:
+        raise ValueError(f'{state_file} holds {state_river_ids.shape[0]} rivers, the network has {river_ids.shape[0]}')
+    if np.array_equal(state_river_ids, river_ids):
+        return
+    river = int(np.argmax(state_river_ids != river_ids))
+    raise ValueError(
+        f'{state_file} lists riverId {state_river_ids[river]} where the network has {river_ids[river]}. A channel '
+        f'state must list the rivers of the network file in the same order.'
+    )
+
+
+def _derive_valid_values(cls: type) -> dict[str, frozenset[str]]:
+    """The allowed values of every field annotated with a Literal, by field name."""
+    result = {}
+    for name, hint in get_type_hints(cls).items():
+        if not name.startswith('_') and get_origin(hint) is Literal:
+            result[name] = frozenset(get_args(hint))
+    return result
+
+
+def _path_fields(cls: type, kind: str) -> frozenset[str]:
+    """The names of the fields whose metadata marks them as a path of the given kind, 'single' or 'list'."""
+    return frozenset(f.name for f in fields(cls) if f.metadata.get('path') == kind)
+
+
+def _with_derived_sets(cls: type[Configs]) -> type[Configs]:
+    """Set the path fields and allowed values of Configs on the class, read from its fields once it is a dataclass."""
+    cls._SINGLE_PATH_FIELDS = _path_fields(cls, 'single')
+    cls._LIST_PATH_FIELDS = _path_fields(cls, 'list')
+    cls._VALID_VALUES = _derive_valid_values(cls)
+    return cls
+
+
+@_with_derived_sets
+@dataclass(kw_only=True, frozen=True)
+class Configs:
+    """
+    Accepts and validates every option of a routing run and of preparing its runoff.
+    """
+
+    # Network definition
+    network_file: PathInput | None = field(default=None, metadata={'path': 'single'})  # required to route
+
+    # Routing procedure selector — the Router chooses the reader of the forcing files from it
+    forcing: Literal['channel', 'catchment', 'grid', 'ecmwf_grib'] = 'channel'
+
+    # Compute options
+    dt_routing: Literal['auto'] | int = 'auto'  # or every river's step in seconds, a divisor of the runoff step
+    use_subreaches: bool = True  # split rivers too long for their step into sub-reaches; auto requires it
+    use_subcycles: bool = True  # route rivers too short for their step in subcycles of it; auto requires it
+    invalid_coefficients: Literal['log', 'raise', 'ignore'] = 'raise'  # action when a coefficient is negative at dt
+
+    # Model state files
+    channel_state_init_file: PathInput | None = field(default=None, metadata={'path': 'single'})
+    channel_state_final_file: PathInput | None = field(default=None, metadata={'path': 'single'})
+
+    # Output location
+    discharge_dir: PathInput | None = field(default=None, metadata={'path': 'single'})
+    discharge_files: PathList = field(default_factory=list, metadata={'path': 'list'})  # alternative output specifier
+
+    # Time options - Channel routing only
+    start_datetime: str = '1970-01-01'
+    dt_discharge: int = 0  # Interval in seconds between discharge outputs, dt_routing when 0
+    dt_total: int = 0  # Length in seconds of the simulation, an integer multiple of dt_discharge
+
+    # Forcing files
+    forcing_files: PathList = field(default_factory=list, metadata={'path': 'list'})  # read as the forcing names
+    grid_weights_file: PathInput | None = field(default=None, metadata={'path': 'single'})  # required for grid forcing
+    var_runoff: str = 'ro'
+    var_x: str = 'x'  # grid x dimension
+    var_y: str = 'y'  # grid y dimension
+    var_t: str = 'time'
+
+    # Types of runoff data handling
+    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'  # grid only; ecmwf_grib is cumulative
+    runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
+    force_positive_runoff: bool = False  # clip negative runoff depths to zero
+    runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
+    as_volumes: bool = False  # prepare volumes (m³) instead of depths (m); routing always uses volumes
+
+    # Misc behavior that users may want to override
+    progress_bar: bool = True
+    log_level: Literal['DEBUG', 'INFO', 'PROGRESS', 'WARNING', 'ERROR', 'CRITICAL'] = 'PROGRESS'
+    log: bool = True
+    log_stream: str = 'stdout'
+    log_format: str = '%(levelname)s - %(asctime)s - %(message)s'
+
+    # False until validate_routing, or validate_runoff, passes; neither satisfies the other
+    _routing_validated: bool = field(default=False, init=False, repr=False, compare=False)
+    _runoff_validated: bool = field(default=False, init=False, repr=False, compare=False)
+
+    # the single path fields that name outputs, so their directory needs to exist rather than the file
+    _OUTPUT_FILES: ClassVar[frozenset[str]] = frozenset({'channel_state_final_file'})
+    # 2 options for specifying how the computed discharge files are saved
+    _OUTPUT_DIRS: ClassVar[frozenset[str]] = frozenset({'discharge_dir'})
+    _OUTPUT_FILE_LISTS: ClassVar[frozenset[str]] = frozenset({'discharge_files'})
+    # extension of the outputs named in discharge_dir, the store written by zarr_writer, the default writer
+    _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
+    # the time steps of channel routing given in whole seconds, where 0 leaves the step unset
+    _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_discharge', 'dt_total')
+    # the runoff options each forcing does not read, which must be left at their defaults: a catchment runoff file has
+    # a fixed schema, and ecmwf_grib runoff is always cumulative
+    _UNUSED_RUNOFF_OPTIONS: ClassVar[dict[str, tuple[str, ...]]] = {
+        'catchment': (
+            'grid_weights_file',
+            'var_runoff',
+            'var_x',
+            'var_y',
+            'var_t',
+            'accumulation_type',
+            'force_positive_runoff',
+            'runoff_depth_unit',
+            'as_volumes',
+        ),
+        'grid': (),
+        'ecmwf_grib': ('accumulation_type',),
+    }
+
+    # Set by _with_derived_sets
+    _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
+    _LIST_PATH_FIELDS: ClassVar[frozenset[str]]
+    _VALID_VALUES: ClassVar[dict[str, frozenset[str]]]
+
+    def __post_init__(self) -> None:
+        for name, allowed in self._VALID_VALUES.items():
+            value = getattr(self, name)
+            if value not in allowed:
+                raise ValueError(f'{name} must be one of {sorted(allowed)}, got {value!r}')
+        for name in self._TIME_STEPS:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < 0:
+                raise ValueError(f'{name} must be a whole number of seconds, or 0 to leave it unset, got {value!r}')
+        step: object = self.dt_routing  # a dataclass does not enforce its annotations
+        if step != 'auto' and (isinstance(step, bool) or not isinstance(step, numbers.Integral) or step <= 0):
+            raise ValueError(f"dt_routing must be 'auto' or a positive whole number of seconds, got {step!r}")
+        if step == 'auto' and not (self.use_subreaches and self.use_subcycles):
+            raise ValueError(
+                "dt_routing 'auto' requires use_subreaches and use_subcycles; give dt_routing in seconds to turn "
+                'either off'
+            )
+        # turn off progress bar if logging was turned off but progress was left at default on
+        object.__setattr__(self, 'progress_bar', bool(self.log) and bool(self.progress_bar))
+        self._coerce_path_list_fields()
+        self._absolutize_paths()
+        self._resolve_discharge_dir()
+        return
+
+    @classmethod
+    def from_json(cls, path: PathInput) -> Self:
+        """Build Configs from a JSON file"""
+        with open(path, encoding='utf-8') as f:
+            raw = json.load(f)
+        known = {f.name for f in fields(cls) if f.init}
+        unknown = sorted(set(raw) - known)
+        if unknown:
+            raise ValueError(f'Unrecognized config key(s): {", ".join(map(repr, unknown))}')
+        return cls(**raw)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Every option by name, with discharge_files left empty when they were named from discharge_dir."""
+        values = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
+        values = {key: list(value) if isinstance(value, list) else value for key, value in values.items()}
+        if self.discharge_dir:
+            values['discharge_files'] = []
+        return values
+
+    def to_json(self, path: PathInput) -> None:
+        """Write every option to a JSON file"""
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    def _coerce_path_list_fields(self) -> None:
+        """Normalize any list-of-paths field given as a single string to [str]."""
+        for key in self._LIST_PATH_FIELDS:
+            val = getattr(self, key)
+            if isinstance(val, PathInput) and val:
+                object.__setattr__(self, key, [str(val)])
+        return
+
+    @staticmethod
+    def _relative_to_absolute(path: PathInput) -> PathInput:
+        return str(path) if is_dev_null(path) else os.path.abspath(path)
+
+    def _absolutize_paths(self) -> None:
+        """Convert all path fields to absolute path strings in-place. The null device is kept as it is named."""
+        for key in self._SINGLE_PATH_FIELDS:
+            value = getattr(self, key, None)
+            if value:
+                object.__setattr__(self, key, self._relative_to_absolute(value))
+        for key in self._LIST_PATH_FIELDS:
+            values = getattr(self, key, [])
+            if values:
+                object.__setattr__(self, key, [self._relative_to_absolute(value) for value in values])
+        return
+
+    def _verify_input_files_exist(self) -> None:
+        """Raise FileNotFoundError for any set input path that does not exist."""
+        input_single = self._SINGLE_PATH_FIELDS - self._OUTPUT_FILES - self._OUTPUT_DIRS
+        input_list = self._LIST_PATH_FIELDS - self._OUTPUT_FILE_LISTS
+        for key in input_single:
+            val = getattr(self, key, None)
+            if val and not os.path.exists(val):
+                raise FileNotFoundError(f'{key} not found: {val}')
+        for key in input_list:
+            for path in getattr(self, key, []):
+                if not os.path.exists(path):
+                    raise FileNotFoundError(f'{key}: {path} not found')
+        return
+
+    def _resolve_discharge_dir(self) -> None:
+        """Populate discharge_files from discharge_dir when explicit paths are not given."""
+        if not self.discharge_dir:
+            return
+        if self.discharge_files:
+            raise ValueError('Provide discharge_dir or discharge_files, not both')
+
+        d = self.discharge_dir
+        if is_dev_null(d):
+            # every output is discarded, so one null device per input rather than names under a directory
+            object.__setattr__(self, 'discharge_files', [d] * (len(self.forcing_files) or 1))
+            return
+
+        input_files = self.forcing_files
+        if input_files:
+            # each output is named for its input but takes the writer's extension, not the extension of the input
+            stems = [os.path.splitext(os.path.basename(f))[0] for f in input_files]
+            duplicates = sorted({stem for stem in stems if stems.count(stem) > 1})
+            if duplicates:
+                raise ValueError(
+                    f'Input files with duplicate names would resolve to the same output file in discharge_dir: '
+                    f'{", ".join(duplicates)}. Use discharge_files to give explicit output paths.'
+                )
+            discharge_files = [os.path.join(d, f'discharge_{stem}{self._DISCHARGE_SUFFIX}') for stem in stems]
+        else:
+            # channel routing has no forcing files to name its one output after
+            discharge_files = [os.path.join(d, f'discharge{self._DISCHARGE_SUFFIX}')]
+        object.__setattr__(self, 'discharge_files', discharge_files)
+        return
+
+    def _verify_output_directories_exist(self) -> None:
+        """Raise NotADirectoryError for any output path whose parent directory does not exist."""
+        paths: list[str] = []
+        for key in self._OUTPUT_FILES:
+            value = getattr(self, key, None)
+            if value:
+                paths.append(value)
+        for key in self._OUTPUT_FILE_LISTS:
+            paths.extend(getattr(self, key, []))
+        for path in paths:
+            if is_dev_null(path):  # devnull is a special case that is allowed to take outputs
+                continue
+            d = os.path.dirname(path)
+            if not os.path.exists(d):
+                raise NotADirectoryError(f'Directory not found for specified output: {path}')
+        for key in self._OUTPUT_DIRS:
+            value = getattr(self, key, None)
+            if value and not is_dev_null(value) and not os.path.isdir(value):
+                raise NotADirectoryError(f'Output directory not found: {value}')
+        return
+
+    def validate_routing(self) -> Self:
+        """
+        Validate the options for routing: the options the chosen procedure requires are set and consistent, input
+        paths exist, and outputs are in existing directories. Called by Router.route. Returns immediately once the
+        Configs has passed it. The contents of the input files are not read; call deep_validate for that.
+
+        Raises:
+            ValueError, FileNotFoundError, NotADirectoryError: if any option is missing or invalid
+        """
+        if not self.network_file:
+            raise ValueError('network_file is required to route')
+        if self._routing_validated:
+            return self
+        self._verify_input_files_exist()
+        self._verify_output_directories_exist()
+        # the Router picks the null writer for the whole run, so a mix of discarded and written outputs has no meaning
+        null_outputs = [is_dev_null(f) for f in self.discharge_files]
+        if any(null_outputs) and not all(null_outputs):
+            raise ValueError('discharge_files mixes the null device with real paths; use one or the other')
+        if self.forcing == 'channel':
+            if not self.discharge_files:
+                raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
+            for key in ('channel_state_init_file', 'dt_total'):
+                if not getattr(self, key, None):
+                    raise ValueError(f'{key} is required for channel routing')
+            if not self.dt_discharge and self.dt_routing == 'auto':
+                raise ValueError('dt_discharge, or dt_routing in seconds, is required for channel routing')
+            runoff_source = [key for key in ('forcing_files', 'grid_weights_file') if getattr(self, key)]
+            if runoff_source:
+                ignored = ', '.join(runoff_source)
+                logger.warning(f'forcing is channel, so {ignored} will be ignored and no runoff is routed')
+            if len(self.discharge_files) != 1:
+                raise ValueError('Channel routing requires exactly one entry in discharge_files')
+        else:
+            if not self.discharge_files:
+                raise ValueError('Provide discharge_dir (or discharge_files for explicit output paths)')
+            if not self.forcing_files:
+                raise ValueError(f'forcing_files is required with forcing {self.forcing}')
+            for key in self._TIME_STEPS:
+                if getattr(self, key):
+                    raise ValueError(f'{key} is only used with forcing channel; each forcing file is routed whole')
+            # an option left at its default, or empty as examples/config.json leaves an unset path, is not set
+            defaults = {f.name: f.default for f in fields(self)}
+            unused = [
+                key
+                for key in self._UNUSED_RUNOFF_OPTIONS[self.forcing]
+                if getattr(self, key) not in (defaults[key], '')
+            ]
+            if unused:
+                raise ValueError(
+                    f'{", ".join(unused)} not used with forcing {self.forcing}; remove them from the configs'
+                )
+            if self.forcing != 'catchment' and not self.grid_weights_file:
+                raise ValueError(f'grid_weights_file is required with forcing {self.forcing}')
+            if len(self.discharge_files) != len(self.forcing_files):
+                raise ValueError('Number of resolved discharge output files must match number of input files')
+            outputs = [f for f in self.discharge_files if not is_dev_null(f)]
+            if len(set(outputs)) != len(outputs):
+                raise ValueError('discharge_files contains duplicate paths; each input file needs a distinct output')
+        object.__setattr__(self, '_routing_validated', True)
+        return self
+
+    def validate_runoff(self) -> Self:
+        """
+        Validate the options for preparing gridded runoff: grid_weights_file is set and every input path exists.
+        Called by the grid runoff classes. Returns immediately once the Configs has passed it, which does not validate
+        it for routing. The contents of the input files are not read; call deep_validate for that.
+
+        Raises:
+            ValueError, FileNotFoundError: if any option is missing or invalid
+        """
+        if not self.grid_weights_file:
+            raise ValueError('grid_weights_file is required to prepare runoff')
+        if self._runoff_validated:
+            return self
+        self._verify_input_files_exist()
+        object.__setattr__(self, '_runoff_validated', True)
+        return self
+
+    def deep_validate(self) -> Self:
+        """
+        Validate the contents of the network file, the grid weight table, and the initial channel state, whichever are
+        set, and their consistency with each other: the network file columns, types, and value ranges and that it is
+        topologically sorted, that the grid weight table matches the network file and its proportions sum to 1 per
+        river, and that the initial channel state has one row per river, or with use_subreaches one per sub-reach.
+        The forcing files are not read.
+
+        Nothing calls this for you. It reads every input file, which is the same work routing is about to do, so
+        run it once on inputs you have not checked before rather than on every route. ``validate_routing`` and
+        ``validate_runoff`` check the options and the paths only.
+
+        Raises:
+            ValueError: if any file or combination of files is invalid
+        """
+        network_df = self._deep_validate_network_file() if self.network_file else None
+        if self.grid_weights_file:
+            self._deep_validate_grid_weights_file(self.grid_weights_file, network_df)
+        if self.channel_state_init_file:
+            self._deep_validate_channel_state_init_file(self.channel_state_init_file, network_df)
+        return self
+
+    def _deep_validate_network_file(self) -> pd.DataFrame:
+        # the columns and their values are checked here. Building the Network then checks the topology: unique ids,
+        # every nextRiverId a riverId or -1, rows sorted upstream to downstream, and upstreamCount describing their
+        # DFS order. It is imported here because the network module imports Configs.
+        from river_route.network.Network import REQUIRED_COLUMNS, Network
+
+        try:
+            network_df = pd.read_parquet(self.network_file)
+        except Exception as e:
+            raise ValueError('Error reading network file. Must be valid parquet file') from e
+        for column in REQUIRED_COLUMNS:
+            if column not in network_df.columns:
+                raise ValueError(f'{self.network_file} missing {column} column')
+        for column in ('riverId', 'nextRiverId', 'riverIndex', 'upstreamCount'):
+            if network_df[column].isna().any():
+                raise ValueError(f'{self.network_file} {column} column contains null values')
+            if not pd.api.types.is_integer_dtype(network_df[column]):
+                raise ValueError(f'{self.network_file} {column} column must be integer type')
+        if np.any(network_df['riverId'] == -1):
+            raise ValueError(f'{self.network_file} riverId must not be -1, which marks a basin outlet in nextRiverId')
+        if network_df[['muskingumK', 'muskingumX']].isna().any(axis=None):
+            raise ValueError(f'{self.network_file} muskingumK and muskingumX columns must not contain null values')
+        if np.any(network_df['muskingumK'] <= 0):
+            raise ValueError(f'{self.network_file} muskingumK column must be positive')
+        if np.any((network_df['muskingumX'] < 0) | (network_df['muskingumX'] > 0.5)):
+            raise ValueError(f'{self.network_file} muskingumX column must be from 0 to 0.5')
+
+        Network(self.network_file)
+        # riverIndex numbers the rows of a river's watershed, the rows riverIndex - upstreamCount to riverIndex
+        if np.any(np.diff(network_df['riverIndex'].to_numpy(dtype=np.int64)) != 1):
+            raise ValueError(f'{self.network_file} riverIndex must increase by one from each row to the next')
+        return network_df
+
+    def _deep_validate_grid_weights_file(self, grid_weights_file: PathInput, network_df: pd.DataFrame | None) -> None:
+        # weights should be netcdf with variables riverId, the cell index columns, x, y, area_sqm, proportion.
+        # A reduced grid locates its cells with cell_index, a grid with x_index and y_index.
+        try:
+            ds = xr.load_dataset(grid_weights_file)
+        except Exception as e:
+            raise ValueError('Error reading grid weights file. Must be valid netCDF file') from e
+        cell_columns = ('cell_index',) if self.forcing == 'ecmwf_grib' else ('x_index', 'y_index')
+        expected_variables = ('riverId', *cell_columns, 'x', 'y', 'area_sqm', 'proportion')
+        for variable in expected_variables:
+            if variable not in ds:
+                raise ValueError(f'Grid weights file missing {variable} variable')
+        if np.any(ds['riverId'].isnull()):
+            raise ValueError('Grid weights riverId variable contains null values')
+        if not pd.api.types.is_integer_dtype(ds['riverId'].dtype):
+            raise ValueError('Grid weights riverId variable must be integer type')
+        if network_df is not None and not np.isin(ds['riverId'].values, network_df['riverId'].to_numpy()).all():
+            raise ValueError('Grid weights riverId values must exist in the riverId column of the network file')
+        for variable in expected_variables[1:]:
+            if np.any(ds[variable].isnull()):
+                raise ValueError(f'Grid weights {variable} variable contains null values')
+            if not pd.api.types.is_numeric_dtype(ds[variable].dtype):
+                raise ValueError(f'Grid weights {variable} variable must be numeric type')
+        if np.any(ds['area_sqm'] <= 0):
+            raise ValueError('Grid weights area_sqm variable must be positive')
+        if np.any(ds['proportion'] <= 0) or np.any(ds['proportion'] > 1):
+            raise ValueError('Grid weights proportion variable must be in the range (0, 1]')
+        # pandas groups the rows by hashing each river id once. xarray's groupby materializes a DataArray per group and
+        # concatenates them, which on a weight table with a group per river costs more than the routing it validates.
+        proportions_sum = pd.Series(ds['proportion'].values).groupby(ds['riverId'].values).sum()
+        if not np.allclose(proportions_sum.to_numpy(), 1.0):
+            raise ValueError('Grid weights proportion variable must sum to 1 for each riverId')
+        return
+
+    def _deep_validate_channel_state_init_file(self, state_file: PathInput, network_df: pd.DataFrame | None) -> None:
+        # initial channel state should be parquet with an integer riverId column and a column named Q, non-null and
+        # numeric. Negative Q is warned of rather than refused, since routing writes negative discharge as routed.
+        # riverId lists the rivers of the network file in the same order, one row per river, or with use_subreaches one
+        # row per sub-reach, whose count is checked when routing.
+        try:
+            state_df = pd.read_parquet(state_file)
+        except Exception as e:
+            raise ValueError('Error reading initial state file. Must be valid parquet file') from e
+        for column in ('riverId', 'Q'):
+            if column not in state_df.columns:
+                raise ValueError(f'Initial state file missing {column} column')
+        if not pd.api.types.is_integer_dtype(state_df['riverId']):
+            raise ValueError('Initial state file riverId column must be integer type')
+        if state_df['Q'].isna().any():
+            raise ValueError('Initial state file Q column contains null values')
+        if not pd.api.types.is_numeric_dtype(state_df['Q']):
+            raise ValueError('Initial state file Q column must be numeric type')
+        negative = int(np.count_nonzero(state_df['Q'] < 0))
+        if negative:
+            logger.warning(
+                f'{state_file} has negative discharge in {negative:,} of its {len(state_df):,} rows, which those '
+                f'sub-reaches start from'
+            )
+        if network_df is None:
+            return
+        check_channel_state_rivers(
+            state_df['riverId'].to_numpy(), network_df['riverId'].to_numpy(), self.use_subreaches, state_file
+        )
+        return

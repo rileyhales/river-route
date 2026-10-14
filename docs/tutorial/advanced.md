@@ -2,45 +2,45 @@
 
 ```mermaid
 graph TD
-    A[route method] --> B[validate configs]
-    B --> C[set network vectors]
-    C --> D[read initial state]
-    D --> E[hook: before route]
-    E --> F{_execute_routing}
+    A[Router] --> C[build Network from network_file<br/>topology, k and x]
+    C --> B[route method: validate config for forcing/dt_routing]
+    B --> D[read initial state]
+    D --> E{forcing}
 
-    F -->|Muskingum| G[set time params from config]
-    G --> H[set Muskingum coefficients]
-    H --> I[route for num_output_steps]
-    I --> J[generate date array]
-    J --> K[write discharges]
+    E -->|channel| F[set time params from config]
+    F --> G[set Muskingum coefficients]
+    G --> H[route channel-only over dt_total]
+    H --> I[generate date array]
+    I --> J[write discharges]
 
-    F -->|TransformMuskingum| L[init ensemble state]
-    L --> M[loop: catchment runoff generator]
-    M --> N[set time params from dates]
-    N --> O[prepare qlateral]
-    O --> P[set Muskingum coefficients]
-    P --> Q[_router: route with lateral inflow]
-    Q --> R{dt_discharge > dt_runoff?}
-    R -->|yes| S[resample to discharge timestep]
-    R -->|no| T[write discharges]
-    S --> T
-    T --> U{more runoff files?}
-    U -->|yes| M
-    U -->|no| V{ensemble mode?}
-    V -->|yes| W[mean of member states]
-    V -->|no| X[done]
-    W --> X
+    E -->|runoff| K[loop: forcing files generator]
+    K --> L[set time params from dates]
+    L --> M[prepare catchment runoff]
+    M --> N[set coefficients]
+    N --> O[route with catchment runoff]
+    O --> R[write discharges]
+    R --> S{more forcing files?}
+    S -->|yes| K
+    S -->|no| T{ensemble mode?}
+    T -->|yes| U[mean of member states]
+    T -->|no| V[done]
+    U --> V
 
-    K --> Y[write final state]
-    X --> Y
-    Y --> Z[hook: after route]
-    Z --> AA[log timing]
+    J --> W[write final state]
+    V --> W
+    W --> X[log timing]
 ```
 
-**Muskingum** reads time parameters directly from the config and runs a single routing pass for
-a fixed number of output steps. **TransformMuskingum** (used by `RapidMuskingum` and
-`UnitMuskingum`) loops over runoff input files, inferring time parameters from each file's date
-array, and optionally resamples output to a coarser discharge timestep.
+A `Router` builds its [`Network`](../api/network.md) from the network file when it is created. The network supplies
+the topology and the `k` and `x` vectors, from which the router builds the static Muskingum coefficients of each river.
+The network divides its rivers into the blocks threads route the first time it routes with each thread count.
+`Router.route()` first validates the required config keys and runoff source for the selected `forcing`, `dt_routing`,
+`use_subreaches`, and `use_subcycles` before any runoff is read. The `Network` and its blocks are built once and reused, so routing repeatedly on one
+`Router` reads and partitions the network only once, and each `route()` starts again from `channel_state_init_file`.
+When `forcing` is `'channel'`, time parameters are read directly from the config and the channel alone is routed once
+over `dt_total`. Otherwise the router loops over the forcing files (processed sequentially or as an ensemble),
+reading `dt_runoff` from each file's dates, routes every step of each one, and writes the discharge at the end of
+each step.
 
 ## Finding Inputs and Config Files at Runtime
 
@@ -49,9 +49,9 @@ routing. This is useful when you have a large number of routing runs to perform 
 Depending on your preference, you may want to generate many config files in advance or store them for repeatability and
 future use.
 
-The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword arguments
-to the `RapidMuskingum` class. You could alternatively write the inputs to a YAML or JSON file and use that config file
-instead.
+The following code snippet demonstrates how to identify the essential input arguments and pass them as keyword
+arguments to a `Configs`, which is then given to the `Router`. You could alternatively write the inputs to a JSON
+file and use that config file instead.
 
 ```python
 import glob
@@ -60,65 +60,88 @@ import os
 import river_route as rr
 
 root_dir = '/path/to/root/directory'
-vpu_name = 'sample-project'
+region = 'sample-region'
 
-configs = os.path.join(root_dir, 'configs', vpu_name)
-params_file = os.path.join(configs, 'params.parquet')
+network_file = os.path.join(root_dir, 'configs', region, 'network.parquet')
 
-runoff_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
+forcing_files = sorted(glob.glob(f'/path/to/catchment_runoff/directory/*.nc'))
 
-outputs = os.path.join(root_dir, 'outputs', vpu_name)
+outputs = os.path.join(root_dir, 'outputs', region)
 os.makedirs(outputs, exist_ok=True)
 
-m = (
-    rr
-    .RapidMuskingum(**{
-        'params_file': params_file,
-        'qlateral_files': runoff_files,
-        'discharge_dir': outputs,
-    })
-    .route()
+configs = rr.Configs(
+    forcing='catchment',
+    network_file=network_file,
+    forcing_files=forcing_files,
+    discharge_dir=outputs,
 )
+m = rr.Router(configs).route()
 ```
 
 ## Customizing Outputs
 
 You can override the default function used by `river-route` when writing routed flows to disk.
-The default function writes discharge to netCDF.
+The default function, `river_route.router.writers.zarr_writer`, writes each output as a zarr store with dimensions
+`(riverId, time)`, built to write as fast as possible. When `Router.route` is given a thread pool and more than one
+thread, it writes its chunks concurrently on that pool, rounding each chunk to `writers.ZARR_KEEPBITS` mantissa bits
+and compressing it with `writers.ZARR_COMPRESSOR`.
 
-A single netCDF is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
+Premade writers are in `river_route.router.writers`. `netcdf_writer` writes the same `(riverId, time)` layout to an
+uncompressed netCDF file, with every value unrounded. `discharge_dir` names outputs `discharge_<name>.zarr` for the
+default writer, so give any other writer its output paths with `discharge_files`, such as `.nc` paths for
+`netcdf_writer`.
+
+```python title="Write Routed Flows to netCDF"
+import river_route as rr
+
+(
+    rr
+    .Router(rr.Configs.from_json('config.json'))
+    .set_discharge_writer(rr.router.writers.netcdf_writer)
+    .route()
+)
+```
+
+A zarr store is not ideal for all use cases, so you can override it to store your data how you prefer. Some examples
 of reasons you would want to do this include appending the outputs to an existing file, writing values to a
 database, or to add metadata or attributes to the file.
 
-You can override the `write_discharges` method directly in your code or use the
-`set_write_discharges` method. Your custom function must accept exactly 4 arguments:
+Use the `set_discharge_writer` method to supply a custom writer function; it returns the `Router`
+so you can chain it onto the constructor. The writer is called once per routed input file, or once for channel
+routing, with 5 arguments and 2 keywords:
 
-1. `dates`: datetime array for rows in the discharge array.
-2. `discharge_array`: routed discharge array with shape `(time, river_id)`.
-3. `discharge_file`: path to the output file.
-4. `runoff_file`: path to the runoff input used to produce this output.
+1. `router`: the `Router` doing the routing, which provides the network as `router.network`, such as
+   `router.network.original_river_ids`, the river of each row of `discharge_array`, and the options as
+   `router.configs`.
+2. `dates`: datetime array for the columns of the discharge array.
+3. `discharge_array`: routed discharge array, C-order with shape `(riverId, time)`. The kernels route one river's
+   whole series at a time and write it into that river's row, so this is the layout every writer is handed. The next
+   file is routed into the same array, so a writer that keeps it after returning must keep a copy.
+4. `discharge_file`: path to the output file.
+5. `forcing_file`: path to the forcing file used to produce this output, or `''` for channel routing.
+6. `thread_pool`: the thread pool given to `Router.route`, or `None`, for a writer that writes concurrently.
+7. `threads`: the thread count given to `Router.route`.
 
-As an example, you might want to write output as Parquet instead.
+As an example, you might want to write output as Parquet instead. The snippets below focus on the writer; their
+configs give the output paths with `discharge_files`, in the format each writer writes.
 
 ```python title="Write Routed Flows to Parquet"
 import pandas as pd
-import xarray as xr
 
 import river_route as rr
 
 
-def custom_write_discharges(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+def custom_write_discharges(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
+    # discharge_array is (riverId, time), so transpose it for a frame indexed by time
+    df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=router.network.original_river_ids)
     df.to_parquet(discharge_file)
     return
 
 
 (
     rr
-    .RapidMuskingum('../../examples/config.yaml')
-    .set_write_discharges(custom_write_discharges)
+    .Router(rr.Configs.from_json('../../examples/config.json'))
+    .set_discharge_writer(custom_write_discharges)
     .route()
 )
 ```
@@ -131,8 +154,8 @@ import xarray as xr
 import river_route as rr
 
 
-def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    ensemble_number = os.path.basename(runoff_file).split('_')[1]
+def append_to_existing_file(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
+    ensemble_number = os.path.basename(forcing_file).split('_')[1]
     ds = xr.load_dataset(discharge_file)
     ds['Q'].loc[dict(ensemble=ensemble_number)] = discharge_array
     ds.to_netcdf(discharge_file)
@@ -141,23 +164,20 @@ def append_to_existing_file(dates, discharge_array, discharge_file: str, runoff_
 
 (
     rr
-    .RapidMuskingum('config.yaml')
-    .set_write_discharges(append_to_existing_file)
+    .Router(rr.Configs.from_json('config.json'))
+    .set_discharge_writer(append_to_existing_file)
     .route()
 )
 ```
 
 ```python title="Save a Subset of the Routed Flows"
 import pandas as pd
-import xarray as xr
 
 import river_route as rr
 
 
-def save_partial_results(dates, discharge_array, discharge_file: str, runoff_file: str) -> None:
-    with xr.open_dataset(runoff_file) as runoff_ds:
-        river_ids = runoff_ds['river_id'].values
-    df = pd.DataFrame(discharge_array, index=pd.to_datetime(dates), columns=river_ids)
+def save_partial_results(router, dates, discharge_array, discharge_file, forcing_file, *, thread_pool, threads):
+    df = pd.DataFrame(discharge_array.T, index=pd.to_datetime(dates), columns=router.network.original_river_ids)
     river_ids_to_save = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     df = df[river_ids_to_save]
     df.to_parquet(discharge_file)
@@ -166,8 +186,21 @@ def save_partial_results(dates, discharge_array, discharge_file: str, runoff_fil
 
 (
     rr
-    .RapidMuskingum('config.yaml')
-    .set_write_discharges(save_partial_results)
+    .Router(rr.Configs.from_json('config.json'))
+    .set_discharge_writer(save_partial_results)
     .route()
 )
 ```
+
+## Customizing Runoff Inputs
+
+Routing reads `forcing_files` with the RunoffForcing class for the `forcing`: `CatchmentRunoffForcing` for `catchment`, or
+`GridRunoff` for `grid`, which aggregates the grids to catchments with `grid_weights_file`, or `ECMWFGribReducedGrid`
+for `ecmwf_grib`. The `Router` builds the one its `forcing` names the first time it routes runoff, and reuses its
+weight table for every forcing file.
+
+Runoff in a format or a place this package does not read can be written to netCDF with `RunoffForcing.to_netcdf` and
+routed as `forcing_files` with `forcing` catchment. The grid classes precompute that file from their grids with
+`aggregate_to_file`, although routing the grids directly is faster: the aggregation then happens inside the routing
+kernel. Cumulative runoff, and runoff clipped with `force_positive_runoff`, are the exception: each river needs its
+whole series first, so those files are aggregated on one thread before they are routed.

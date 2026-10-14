@@ -8,17 +8,17 @@ dynamic = ["version"]
 description = "Perform river routing computations on large river networks"
 readme = "README.md"
 license = { file = "LICENSE.txt" }
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 authors = [
     { name = "Riley Hales PhD" },
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
@@ -27,19 +27,38 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
-    "geopandas",
-    "netcdf4",
-    "networkx",
-    "numba",
-    "numpy",
-    "pandas",
-    "pyyaml",
-    "scipy",
-    "shapely",
-    "tqdm",
-    "xarray",
-    "dask",
-    "pyarrow",
+    "dask>=2026.8.0",
+    "eccodes>=2.49.0,<3",
+    "geopandas>=1.2.0,<2",
+    "netcdf4>=1.6,<2",
+    "numba>=0.68,<1",
+    "numpy>=2.5.3,<3",
+    "pandas>=3.0.6,<4",
+    "pyarrow>=26.0.0",
+    "pyproj>=3.8.0,<4",
+    "scipy>=1.18.1,<2",
+    "shapely>=2.2.0,<3",
+    "tqdm>=4.70.1,<5",
+    "xarray>=2026.9.0",
+    "zarr>=3.4.1,<4",
+]
+
+[dependency-groups]
+test = [
+    "pytest",
+]
+docs = [
+    "zensical",
+    "mkdocstrings-python",
+]
+lint = [
+    "ruff",
+    "mypy",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "docs" },
+    { include-group = "lint" },
 ]
 
 [project.urls]
@@ -48,6 +67,37 @@ Repository = "https://github.com/rileyhales/river-route"
 
 [project.scripts]
 rr = "river_route._cli:main"
+
+[tool.uv]
+# river-route runs on macOS and Linux only, and the lock resolves for the Python that eccodeslib publishes wheels for
+environments = [
+    "sys_platform == 'darwin' and python_full_version < '3.15'",
+    "sys_platform == 'linux' and python_full_version < '3.15'",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.format]
+exclude = ["benchmarks/*", "examples/example_usage.py"]
+skip-magic-trailing-comma = true
+quote-style = "single"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "NPY", "SIM"]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: checks that take a minute or more, such as compiling every kernel from an empty numba cache",
+]
 
 [tool.hatch.version]
 path = "river_route/_metadata.py"

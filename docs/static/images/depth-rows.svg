@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 238" width="432" role="img" aria-label="Runoff depth of two cells over six steps, as a table and as one row after another in memory" font-size="13" fill="currentColor">
+<text x="78" y="18" text-anchor="end" font-size="11" fill-opacity="0.7">t</text>
+<text x="102" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="134" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="166" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="198" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">3</text>
+<text x="230" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">4</text>
+<text x="262" y="18" text-anchor="middle" font-size="11" fill-opacity="0.7">5</text>
+<text x="78" y="45" text-anchor="end">cell 0</text>
+<rect x="86" y="26" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="102" y="45" text-anchor="middle">0</text>
+<rect x="118" y="26" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="134" y="45" text-anchor="middle">1</text>
+<rect x="182" y="26" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="198" y="45" text-anchor="middle">3</text>
+<rect x="214" y="26" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="230" y="45" text-anchor="middle">4</text>
+<rect x="246" y="26" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="262" y="45" text-anchor="middle">5</text>
+<rect x="150" y="26" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="2.5"/>
+<text x="166" y="45" text-anchor="middle">2</text>
+<text x="78" y="73" text-anchor="end">cell 1</text>
+<rect x="86" y="54" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="102" y="73" text-anchor="middle">0</text>
+<rect x="118" y="54" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="134" y="73" text-anchor="middle">1</text>
+<rect x="182" y="54" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="198" y="73" text-anchor="middle">3</text>
+<rect x="214" y="54" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="230" y="73" text-anchor="middle">4</text>
+<rect x="246" y="54" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="262" y="73" text-anchor="middle">5</text>
+<rect x="150" y="54" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="2.5"/>
+<text x="166" y="73" text-anchor="middle">2</text>
+<rect x="24" y="150" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="40" y="169" text-anchor="middle">0</text>
+<rect x="56" y="150" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="72" y="169" text-anchor="middle">1</text>
+<rect x="120" y="150" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="136" y="169" text-anchor="middle">3</text>
+<rect x="152" y="150" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="168" y="169" text-anchor="middle">4</text>
+<rect x="184" y="150" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="200" y="169" text-anchor="middle">5</text>
+<rect x="216" y="150" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="232" y="169" text-anchor="middle">0</text>
+<rect x="248" y="150" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="264" y="169" text-anchor="middle">1</text>
+<rect x="312" y="150" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="328" y="169" text-anchor="middle">3</text>
+<rect x="344" y="150" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="360" y="169" text-anchor="middle">4</text>
+<rect x="376" y="150" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="1"/>
+<text x="392" y="169" text-anchor="middle">5</text>
+<rect x="88" y="150" width="32" height="28" fill="#8e24aa" fill-opacity="0.25" stroke="currentColor" stroke-width="2.5"/>
+<text x="104" y="169" text-anchor="middle">2</text>
+<rect x="280" y="150" width="32" height="28" fill="#00897b" fill-opacity="0.25" stroke="currentColor" stroke-width="2.5"/>
+<text x="296" y="169" text-anchor="middle">2</text>
+<path d="M104 149 C104 102, 296 102, 296 141" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<polygon points="296,149 291.5,140 300.5,140"/>
+<text x="200" y="108" text-anchor="middle" style="font-family: var(--md-code-font-family, monospace)">+ cell_stride = 6</text>
+<text x="40" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">0</text>
+<text x="72" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">1</text>
+<text x="104" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">2</text>
+<text x="136" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">3</text>
+<text x="168" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">4</text>
+<text x="200" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">5</text>
+<text x="232" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">6</text>
+<text x="264" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">7</text>
+<text x="296" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">8</text>
+<text x="328" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">9</text>
+<text x="360" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">10</text>
+<text x="392" y="192" text-anchor="middle" font-size="11" fill-opacity="0.7">11</text>
+<path d="M27 200 V206 H213 V200 M120 206 V211" fill="none" stroke="currentColor"/>
+<text x="120" y="226" text-anchor="middle">cell 0</text>
+<path d="M219 200 V206 H405 V200 M312 206 V211" fill="none" stroke="currentColor"/>
+<text x="312" y="226" text-anchor="middle">cell 1</text>
+</svg>
