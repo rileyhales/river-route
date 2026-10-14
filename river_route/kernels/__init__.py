@@ -43,12 +43,19 @@ class _Network(ctypes.Structure):
     _fields_ = [
         ('n_rivers', ctypes.c_int32),
         ('n_sub_reaches', ctypes.c_int32),
+        ('n_inflow_entries', ctypes.c_int32),
+        ('n_weights', ctypes.c_int32),
         *((field.name, ctypes.c_void_p) for field in fields(KernelNetwork)),
     ]
 
 
 class _Runoff(ctypes.Structure):
-    _fields_ = [('n_cells', ctypes.c_int32), ('cell_stride', ctypes.c_ssize_t), ('depth', ctypes.c_void_p)]
+    _fields_ = [
+        ('n_cells', ctypes.c_int32),
+        ('cell_stride', ctypes.c_ssize_t),
+        ('depth_size', ctypes.c_ssize_t),
+        ('depth', ctypes.c_void_p),
+    ]
 
 
 class _Job(ctypes.Structure):
@@ -60,6 +67,7 @@ class _Job(ctypes.Structure):
         ('channel_state', ctypes.c_void_p),
         ('discharge', ctypes.c_void_p),
         ('river_stride', ctypes.c_ssize_t),
+        ('discharge_size', ctypes.c_ssize_t),
     ]
 
 
@@ -137,13 +145,28 @@ def _route_with_c(
     channel_state: FloatArray,
     discharge: FloatArray,
 ) -> tuple[int, str]:
-    """The problem rr_route_rivers returned, and its description."""
+    """
+    The problem rr_route_rivers returned, and its description. Each count of the structs is the length of the arrays it
+    counts, which the C reads nothing beyond. The arrays that share one count must share its length, which the C cannot
+    see, so they are checked here, as the numba kernel checks them.
+    """
     block_starts = np.ascontiguousarray(block_starts, dtype=np.int32)
     block_stops = np.ascontiguousarray(block_stops, dtype=np.int32)
     n_rivers = network.sub_reach_starts.shape[0] - 1
-    n_sub_reaches = int(network.sub_reach_starts[n_rivers])
-    network_struct = _Network(n_rivers, n_sub_reaches, *(array.ctypes.data for array in network.arrays()))
-    runoff_struct = _Runoff(depth.shape[0], depth.strides[0] // depth.itemsize, depth.ctypes.data)
+    n_sub_reaches = channel_state.shape[0]
+    starts = (network.sub_reach_starts, network.inflow_river_starts, network.weight_starts)
+    coefficients = (network.c1, network.c2, network.c3, network.c4)
+    if (
+        any(array.shape[0] != n_rivers + 1 for array in starts)
+        or any(array.shape[0] != n_sub_reaches for array in coefficients)
+        or network.weight_cells.shape != network.weights.shape
+    ):
+        return numba_kernel.RR_PROBLEM_SIZES, numba_kernel.PROBLEMS[numba_kernel.RR_PROBLEM_SIZES]
+    counts = (n_rivers, n_sub_reaches, network.inflow_rivers.shape[0], network.weights.shape[0])
+    network_struct = _Network(*counts, *(array.ctypes.data for array in network.arrays()))
+    depth_flat, cell_stride = numba_kernel.flat_view(depth)
+    runoff_struct = _Runoff(depth.shape[0], cell_stride, depth_flat.shape[0], depth.ctypes.data)
+    discharge_flat, river_stride = numba_kernel.flat_view(discharge)
     job_struct = _Job(
         n_steps,
         block_starts.shape[0],
@@ -151,7 +174,8 @@ def _route_with_c(
         block_stops.ctypes.data,
         channel_state.ctypes.data,
         discharge.ctypes.data,
-        discharge.strides[0] // discharge.itemsize,
+        river_stride,
+        discharge_flat.shape[0],
     )
     library = _library()
     structs = (ctypes.byref(struct) for struct in (network_struct, runoff_struct, job_struct))

@@ -1,7 +1,7 @@
 # River-Route
 
-`river-route` routes runoff and discharge through large river networks using numba-accelerated Muskingum-family
-solvers that route each river's whole time series in turn, from upstream to downstream.
+`river-route` routes runoff and discharge through large river networks with Muskingum routing kernels, in C and
+its numba twin, that route each river's whole time series in turn, from upstream to downstream.
 
 ## Describe your routing
 

@@ -16,7 +16,7 @@ __all__ = ['LIBRARY', 'build', 'build_wasm']
 
 HERE = Path(__file__).parent
 SOURCES = (HERE / 'c' / 'routing.c', HERE / 'c' / 'checks.c')  # which include routing.h, checks.h, and simd.h
-LIBRARY = HERE / 'build' / {'darwin': 'routing.dylib', 'win32': 'routing.dll'}.get(sys.platform, 'routing.so')
+LIBRARY = HERE / 'build' / ('routing.dylib' if sys.platform == 'darwin' else 'routing.so')
 EXPORTS = ('rr_route_rivers', 'rr_describe_problem')
 # the processor the library is compiled for: this machine's, since it is compiled on the machine that routes with it
 NATIVE = {'arm64': '-mcpu=native', 'aarch64': '-mcpu=native'}.get(platform.machine().lower(), '-march=native')
@@ -59,6 +59,7 @@ TIDY_CHECKS = ','.join(
         '-readability-magic-numbers',  # the lane numbers of a shuffle and the eight steps at a time
         '-misc-include-cleaner',
         '-performance-enum-size',  # the problems of routing.h are a C enum, an int in every language that calls it
+        '-readability-trailing-comma',  # initializers end without a trailing comma, as the Python's calls do
     )
 )
 
@@ -79,10 +80,9 @@ def build(llvm_bin: str | Path | None = None, checks: bool = False) -> Path:
     clang = _find_clang(llvm_bin)
     if checks:
         _check(clang)
-    exports = [f'-Wl,/EXPORT:{name}' for name in EXPORTS] if sys.platform == 'win32' else ['-fPIC']
     warnings = STRICT_WARNINGS if checks else ('-Wall', '-Wextra')
     LIBRARY.parent.mkdir(exist_ok=True)
-    _run(clang, '-std=c17', '-O3', NATIVE, '-shared', *exports, *warnings, '-o', LIBRARY, *SOURCES)
+    _run(clang, '-std=c17', '-O3', NATIVE, '-shared', '-fPIC', *warnings, '-o', LIBRARY, *SOURCES)
     return LIBRARY
 
 

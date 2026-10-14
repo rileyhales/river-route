@@ -49,13 +49,16 @@ def prepare_routing(network: Network, configs: Configs, dt_runoff: int, dt_routi
     the end of it, as a river hands its discharge downstream.
 
     Raises:
-        ValueError: if the coefficients do not sum to 1, or invalid_coefficients is raise and a coefficient is negative
+        ValueError: if the coefficients do not sum to 1, invalid_coefficients is raise and a coefficient is negative,
+            or use_subreaches or use_subcycles is on and a river's x is above MAX_STABILIZED_X
     """
     step = dt_routing or dt_runoff
+    if configs.use_subreaches or configs.use_subcycles:
+        network.check_stabilizable()
     layout = network.conditioning(step, use_subreaches=configs.use_subreaches, use_subcycles=configs.use_subcycles)
     network.check_routable(layout.sub_reaches)
     network.check_validity(step, action=configs.invalid_coefficients, layout=layout)
-    share = layout.k / np.repeat(network.k.astype(np.float64), layout.sub_reaches)  # of the river's k and runoff
+    share = layout.k / np.repeat(network.k, layout.sub_reaches)  # of the river's k and runoff
     subcycles = dt_runoff // step * layout.subcycles  # the steps of its own each sub-reach takes in each runoff step
     dt_div_k = dt_runoff / subcycles / layout.k  # each sub-reach's own step over its k
     denominator = dt_div_k + 2 * (1 - layout.x)

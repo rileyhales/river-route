@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 __all__ = ['null_writer', 'netcdf_writer', 'zarr_writer', 'bitround']
 
 ZARR_RIVERS_PER_CHUNK = 500
-ZARR_CHUNKS_PER_SHARD: int | None = None
 ZARR_KEEPBITS = 12
 ZARR_COMPRESSOR = BloscCodec(cname='lz4', clevel=5, shuffle='bitshuffle')
 
@@ -141,7 +140,6 @@ def zarr_writer(
             'Q',
             shape=(n_rivers, n_steps),
             chunks=(ZARR_RIVERS_PER_CHUNK, -1),
-            shards=(ZARR_RIVERS_PER_CHUNK * ZARR_CHUNKS_PER_SHARD, -1) if ZARR_CHUNKS_PER_SHARD else None,
             dtype=discharge_array.dtype,
             filters=None,
             compressors=ZARR_COMPRESSOR,

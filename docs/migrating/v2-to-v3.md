@@ -217,6 +217,16 @@ channel state file holds a `Q` column and must now also hold each row's `riverId
 file. If your network file was reordered, these files need to be reordered with it. The migration script does this for you, and renames the
 river id of both.
 
+A v2 channel state file has one row per river. With `use_subreaches`, the default, v3 splits each river too long for its step into
+sub-reaches, and a state file then holds one row per sub-reach, each river's `riverId` repeated for every one of its sub-reaches, as v3 writes
+its final state files. A state file with one row per river starts a run only when no river is split at the step it routes at. Give the
+migration script `--dt`, the step v3 routes at (`dt_routing` when you set it, otherwise the runoff step), and it writes the state with a row per
+sub-reach, each sub-reach starting at the discharge of its river.
+
+The migration script also drops the config options v3 refuses for the forcing being routed: `dt_discharge` and `dt_total` when routing runoff,
+since v3 routes every step of each forcing file and writes the discharge at the end of each, and the gridded runoff options for catchment
+runoff. It prints the ones it drops that were set to anything but their defaults.
+
 ### Routed Discharge
 
 The default writer is now zarr instead of netCDF and outputs in `discharge_dir` are named `discharge_<input name>.zarr`. Discharge is river-major

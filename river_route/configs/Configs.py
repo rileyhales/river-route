@@ -77,6 +77,7 @@ class Configs:
     """
     Accepts and validates every option of a routing run and of preparing its runoff.
     """
+
     # Network definition
     network_file: PathInput | None = field(default=None, metadata={'path': 'single'})  # required to route
 
@@ -111,7 +112,7 @@ class Configs:
     var_t: str = 'time'
 
     # Types of runoff data handling
-    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
+    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'  # grid only; ecmwf_grib is cumulative
     runoff_processing_mode: Literal['sequential', 'ensemble'] = 'sequential'
     force_positive_runoff: bool = False  # clip negative runoff depths to zero
     runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
@@ -137,6 +138,23 @@ class Configs:
     _DISCHARGE_SUFFIX: ClassVar[str] = '.zarr'
     # the time steps of channel routing given in whole seconds, where 0 leaves the step unset
     _TIME_STEPS: ClassVar[tuple[str, ...]] = ('dt_discharge', 'dt_total')
+    # the runoff options each forcing does not read, which must be left at their defaults: a catchment runoff file has
+    # a fixed schema, and ecmwf_grib runoff is always cumulative
+    _UNUSED_RUNOFF_OPTIONS: ClassVar[dict[str, tuple[str, ...]]] = {
+        'catchment': (
+            'grid_weights_file',
+            'var_runoff',
+            'var_x',
+            'var_y',
+            'var_t',
+            'accumulation_type',
+            'force_positive_runoff',
+            'runoff_depth_unit',
+            'as_volumes',
+        ),
+        'grid': (),
+        'ecmwf_grib': ('accumulation_type',),
+    }
 
     # Set by _with_derived_sets
     _SINGLE_PATH_FIELDS: ClassVar[frozenset[str]]
@@ -321,8 +339,17 @@ class Configs:
             for key in self._TIME_STEPS:
                 if getattr(self, key):
                     raise ValueError(f'{key} is only used with forcing channel; each forcing file is routed whole')
-            if self.forcing == 'catchment' and self.grid_weights_file:
-                raise ValueError('grid_weights_file is not used with forcing catchment')
+            # an option left at its default, or empty as examples/config.json leaves an unset path, is not set
+            defaults = {f.name: f.default for f in fields(self)}
+            unused = [
+                key
+                for key in self._UNUSED_RUNOFF_OPTIONS[self.forcing]
+                if getattr(self, key) not in (defaults[key], '')
+            ]
+            if unused:
+                raise ValueError(
+                    f'{", ".join(unused)} not used with forcing {self.forcing}; remove them from the configs'
+                )
             if self.forcing != 'catchment' and not self.grid_weights_file:
                 raise ValueError(f'grid_weights_file is required with forcing {self.forcing}')
             if len(self.discharge_files) != len(self.forcing_files):
@@ -440,9 +467,10 @@ class Configs:
         return
 
     def _deep_validate_channel_state_init_file(self, state_file: PathInput, network_df: pd.DataFrame | None) -> None:
-        # initial channel state should be parquet with an integer riverId column and a column named Q, non-null,
-        # numeric, and non-negative. riverId lists the rivers of the network file in the same order, one row per
-        # river, or with use_subreaches one row per sub-reach, whose count is checked when routing.
+        # initial channel state should be parquet with an integer riverId column and a column named Q, non-null and
+        # numeric. Negative Q is warned of rather than refused, since routing writes negative discharge as routed.
+        # riverId lists the rivers of the network file in the same order, one row per river, or with use_subreaches one
+        # row per sub-reach, whose count is checked when routing.
         try:
             state_df = pd.read_parquet(state_file)
         except Exception as e:
@@ -456,8 +484,12 @@ class Configs:
             raise ValueError('Initial state file Q column contains null values')
         if not pd.api.types.is_numeric_dtype(state_df['Q']):
             raise ValueError('Initial state file Q column must be numeric type')
-        if np.any(state_df['Q'] < 0):
-            raise ValueError('Initial state file Q column must be non-negative')
+        negative = int(np.count_nonzero(state_df['Q'] < 0))
+        if negative:
+            logger.warning(
+                f'{state_file} has negative discharge in {negative:,} of its {len(state_df):,} rows, which those '
+                f'sub-reaches start from'
+            )
         if network_df is None:
             return
         check_channel_state_rivers(

@@ -9,9 +9,13 @@ import river_route as rr
 if __name__ == '__main__':
     # Amazon: 6020006540, Caribbean: 7020065090
     parser = argparse.ArgumentParser()
-    parser.add_argument('--bucket-root', default=Path.home() / 'data' / 'rfsv3')
-    parser.add_argument('--region', default='6020006540')
-    parser.add_argument('--threads', type=int, default=3)
+    parser.add_argument(
+        '--bucket-root',
+        required=True,
+        help='folder holding routing/region=<region>/ with its network and ERA5 grid weights, and forcings/era5/',
+    )
+    parser.add_argument('--region', default='6020006540', help='the region to route')
+    parser.add_argument('--threads', type=int, default=3, help='threads to route with')
     args = parser.parse_args()
 
     # find the routing files for the region
@@ -52,4 +56,5 @@ if __name__ == '__main__':
 
     pool_context = ThreadPoolExecutor(args.threads) if args.threads > 1 else contextlib.nullcontext()
     with pool_context as pool:
-        rr.Router(conf).route(thread_pool=pool, threads=args.threads, kernel='c')
+        # 'auto' routes with the C kernel once rr compile has compiled it, and with numba until then
+        rr.Router(conf).route(thread_pool=pool, threads=args.threads, kernel='auto')

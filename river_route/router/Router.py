@@ -12,7 +12,7 @@ from .._logging import PROGRESS, configure_logging
 from ..configs import Configs, check_channel_state_rivers, is_dev_null
 from ..forcings import RUNOFF_CLASS_FOR_FORCING, RunoffForcing
 from ..network import Network
-from ..types import DatetimeArray, Float64Array, FloatArray, Forcing, PathInput, WriteDischargesFn
+from ..types import DatetimeArray, Float64Array, FloatArray, Forcing, IntArray, PathInput, WriteDischargesFn
 from . import static_muskingum
 from .static_muskingum import Coefficients
 from .writers import null_writer, zarr_writer
@@ -45,6 +45,7 @@ class Router:
 
     # State variables
     channel_state: FloatArray  # one value per river, or with use_subreaches one per sub-reach
+    channel_state_river_ids: IntArray  # the riverId of each value, repeated for each sub-reach of its river
 
     # Time options, in seconds
     dt_routing: int | None  # every river's step when given, a divisor of dt_runoff; None for each river's own
@@ -88,6 +89,7 @@ class Router:
         if not state_file:
             logger.warning('channel_state_init_file not provided. Defaulting to zero initial conditions')
             self.channel_state = np.zeros(n_rivers, dtype=np.float32)
+            self.channel_state_river_ids = self.network.river_ids
             return
         logger.debug('Reading Initial State from Parquet')
         state = pd.read_parquet(state_file)
@@ -99,26 +101,39 @@ class Router:
             state['riverId'].to_numpy(), self.network.river_ids, self.configs.use_subreaches, state_file
         )
         self.channel_state = state['Q'].to_numpy(dtype=np.float32)
+        self.channel_state_river_ids = state['riverId'].to_numpy(dtype=np.int64)
         return
 
     def _check_channel_state(self) -> None:
         """
-        Require channel_state to have one value per routed reach: one per river, or with use_subreaches one per
-        sub-reach. Without an initial state file every sub-reach starts from zero. Any other state
-        that does not match the sub-reaches raises, whether it was read from a state file or carried from the previous
-        forcing file; its values are never changed to fit.
+        Require channel_state to have one value per routed reach, river by river: one per river, or with
+        use_subreaches one per sub-reach, each river's riverId repeated for every one of its sub-reaches, the riverIds
+        a final state file is written with. Without an initial state file every sub-reach starts from zero. Any other
+        state raises, whether it was read from a state file or carried from the previous forcing file; its values are
+        never changed to fit.
         """
-        n_reaches = int(self.coefficients.sub_reach_starts[-1])
-        if self.channel_state.shape[0] == n_reaches:
+        sub_reaches = np.diff(self.coefficients.sub_reach_starts)
+        routed_river_ids = np.repeat(self.network.river_ids, sub_reaches)
+        if np.array_equal(self.channel_state_river_ids, routed_river_ids):
             return
         if not self.configs.channel_state_init_file and not self.channel_state.any():
-            self.channel_state = np.zeros(n_reaches, dtype=np.float32)  # a zero state is zero for any sub-reaches
+            self.channel_state = np.zeros(routed_river_ids.shape[0], dtype=np.float32)  # zero for any sub-reaches
+            self.channel_state_river_ids = routed_river_ids
             return
+        # the state lists the rivers in network order, as reading it checked, so it differs in some river's row count
+        ids = self.channel_state_river_ids
+        state_rows = np.diff(np.flatnonzero(np.concatenate(([True], ids[1:] != ids[:-1], [True]))))
+        if state_rows.shape != sub_reaches.shape:
+            raise ValueError(
+                f'the channel state lists {state_rows.shape[0]} rivers, the network has {self.network.size}'
+            )
+        river = int(np.argmax(state_rows != sub_reaches))
         raise ValueError(
-            f'the channel state has {self.channel_state.shape[0]} values, but use_subreaches routes {n_reaches} '
-            f'sub-reaches at a runoff step of {self.dt_runoff} s. A channel_state_init_file must have one row per '
-            f'sub-reach in the order a final state file is written, and the sub-reaches cannot change between the '
-            f'forcing files of one sequential run, which they do when the files have different time steps.'
+            f'the channel state has {state_rows[river]} rows for river {self.network.river_ids[river]}, but '
+            f'use_subreaches routes it as {sub_reaches[river]} sub-reaches at a runoff step of {self.dt_runoff} s. A '
+            f'channel_state_init_file must have one row per sub-reach of each river, in the order a final state file '
+            f'is written, and the sub-reaches cannot change between the forcing files of one sequential run, which '
+            f'they do when the files have different time steps.'
         )
 
     def _write_final_state(self) -> None:
@@ -126,8 +141,8 @@ class Router:
         if not final_state_file:
             return
         logger.debug('Writing Final State to Parquet')
-        ids = np.repeat(self.network.river_ids, np.diff(self.coefficients.sub_reach_starts))  # a row per sub-reach
-        pd.DataFrame({'riverId': ids, 'Q': self.channel_state}).to_parquet(self.configs.channel_state_final_file)
+        state = pd.DataFrame({'riverId': self.channel_state_river_ids, 'Q': self.channel_state})  # a row per sub-reach
+        state.to_parquet(self.configs.channel_state_final_file)
         return
 
     ################################################

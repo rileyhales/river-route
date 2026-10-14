@@ -36,7 +36,8 @@ routing.
   unequal travel times that each take subcycles of their own. `False`
   routes such a river whole at its step, and reports its negative coefficient; `dt_routing: 'auto'` requires it.
   Sub-reaches multiply the routing work
-  by the average number of sub-reaches per river, and a river with an x near 0.5 can need very many; see
+  by the average number of sub-reaches per river, and a river with an x near 0.5 can need very many, so with either
+  `use_subreaches` or `use_subcycles` a network with any river of x above 0.49 is refused; see
   [the work of sub-reaches](algorithm.md#how-x-sets-the-work-of-a-river) for why, and for holding x lower.
   The state files then hold one value per sub-reach, each river's sub-reaches upstream to downstream, in the order a
   final state file is written, with each row's `riverId` repeated for every sub-reach of its river. A state file with
@@ -123,7 +124,7 @@ uses fixed names, such as `riverId` for the river id.
 | `var_x`                  | X-dimension name in `grid` forcing files                 | `'x'`                                         |
 | `var_y`                  | Y-dimension name in `grid` forcing files                 | `'y'`                                         |
 | `var_t`                  | Time dimension name in depth grids                       | `'time'`                                      |
-| `accumulation_type`      | Is runoff grid `'incremental'` or `'cumulative'`         | `'incremental'`                               |
+| `accumulation_type`      | Is `grid` runoff `'incremental'` or `'cumulative'`       | `'incremental'`                               |
 | `runoff_processing_mode` | Are runoff `'sequential'` or `'ensemble'` inputs         | `'sequential'`                                |
 | `force_positive_runoff`  | Clip negative grid runoff depths to zero                 | `False`                                       |
 | `runoff_depth_unit`      | Unit of grid runoff depths, else read from the file      | `None`                                        |
@@ -139,7 +140,9 @@ uses fixed names, such as `riverId` for the river id.
 `Router.route()` validates the configs with `Configs.validate_routing` before it computes anything, and
 `GridRunoff.from_configs` validates them with `Configs.validate_runoff` before it reads the weight table. Configs are
 frozen, so once they pass they are not checked again. Passing one of the two does not pass the other. A `GridRunoff`
-built directly, without a `Configs`, has nothing to validate and so runs neither.
+built directly, without a `Configs`, has nothing to validate and so runs neither. `validate_routing` refuses runoff
+options the forcing does not read unless they are left at their defaults: `catchment` reads none of them, since its
+files have a fixed schema, and `ecmwf_grib` reads no `accumulation_type`, since its runoff is always cumulative.
 
 `Configs.deep_validate()` reads the network file, grid weights, and initial state and checks their columns,
 types, and value ranges, that the network is topologically sorted, and that the weight table proportions sum to

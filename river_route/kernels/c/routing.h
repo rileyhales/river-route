@@ -39,20 +39,25 @@ enum rr_problem {
     RR_PROBLEM_BLOCKS = -6,
 };
 
-/* The rivers of a network in routing order and the sub-reaches they are routed as. */
+/*
+ * The rivers of a network in routing order and the sub-reaches they are routed as. The counts are the lengths of the
+ * arrays, which the kernel reads nothing beyond.
+ */
 struct rr_network {
     int32_t n_rivers;
     int32_t n_sub_reaches;
+    int32_t n_inflow_entries; /* the length of inflow_rivers */
+    int32_t n_weights;        /* the length of weight_cells and of weights */
     const int32_t *sub_reach_starts;    /* n_rivers + 1: each river's first sub-reach, then n_sub_reaches */
     const int32_t *inflow_river_starts; /* n_rivers + 1: each river's first entry in inflow_rivers, then their count */
-    const int32_t *inflow_rivers;       /* the rivers draining into each river, every one before it in routing order */
+    const int32_t *inflow_rivers;       /* n_inflow_entries: the rivers draining into each river, each before it */
     const float *c1;                    /* n_sub_reaches: the Muskingum coefficients of each sub-reach */
     const float *c2;
     const float *c3;
     const float *c4;              /* n_sub_reaches: the coefficient of the river's runoff volume V */
     const int32_t *weight_starts; /* n_rivers + 1: each river's first weight, then the count of weights */
-    const int32_t *weight_cells;  /* the runoff cell each weight reads */
-    const float *weights;         /* the runoff volume (m3) a meter of runoff depth in the cell gives the river */
+    const int32_t *weight_cells;  /* n_weights: the runoff cell each weight reads */
+    const float *weights;         /* n_weights: the runoff volume (m3) a meter of depth in the cell gives the river */
 };
 
 /*
@@ -62,6 +67,7 @@ struct rr_network {
 struct rr_runoff {
     int32_t n_cells;
     ptrdiff_t cell_stride;
+    ptrdiff_t depth_size; /* the length of depth */
     const float *depth;
 };
 
@@ -77,6 +83,7 @@ struct rr_job {
     float *channel_state;        /* n_sub_reaches: each sub-reach's discharge, at the start and then at the end */
     float *discharge; /* river r at time t is discharge[r * river_stride + t], t from 0 to n_steps */
     ptrdiff_t river_stride;
+    ptrdiff_t discharge_size; /* the length of discharge */
 };
 
 /* Route each river of the job over every step before the next river, eight steps at a time. */

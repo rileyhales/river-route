@@ -40,7 +40,24 @@ static int check_job(struct rr_network network, struct rr_runoff runoff, struct 
     if (network.n_rivers < 1 || network.n_rivers > MAX_RIVERS || network.n_sub_reaches < network.n_rivers
         || network.n_sub_reaches > MAX_SUB_REACHES || runoff.n_cells < 0 || runoff.n_cells > MAX_CELLS
         || job.n_steps < 1 || job.n_steps > MAX_STEPS || job.n_blocks < 0 || job.n_blocks > MAX_RIVERS
-        || job.river_stride <= job.n_steps || (runoff.n_cells > 0 && runoff.cell_stride < job.n_steps)) {
+        || job.river_stride <= job.n_steps || (runoff.n_cells > 0 && runoff.cell_stride < job.n_steps)
+        || network.n_inflow_entries < 0 || network.n_weights < 0) {
+        return RR_PROBLEM_SIZES;
+    }
+    if (network.sub_reach_starts[network.n_rivers] != network.n_sub_reaches) {
+        return RR_PROBLEM_SIZES;
+    }
+    /*
+     * The last river's row ends inside discharge, and the last cell's inside depth. They are compared by division,
+     * since a count times a stride can overflow the 32 bit ptrdiff_t of WebAssembly, and the strides are positive.
+     */
+    if (job.discharge_size <= job.n_steps
+        || (job.discharge_size - 1 - job.n_steps) / job.river_stride < network.n_rivers - 1) {
+        return RR_PROBLEM_SIZES;
+    }
+    if (runoff.n_cells > 0
+        && (runoff.depth_size < job.n_steps
+            || (runoff.depth_size - job.n_steps) / runoff.cell_stride < runoff.n_cells - 1)) {
         return RR_PROBLEM_SIZES;
     }
     int32_t routed_to = 0; /* the blocks come in routing order, none overlapping the one before */
@@ -64,7 +81,8 @@ static int check_river(struct rr_network network, int32_t n_cells, int32_t river
     }
     const int32_t first_entry = network.inflow_river_starts[river];
     const int32_t n_inflow_rivers = network.inflow_river_starts[river + 1] - first_entry;
-    if (first_entry < 0 || n_inflow_rivers < 0 || n_inflow_rivers > MAX_INFLOW_RIVERS_PER_RIVER) {
+    if (first_entry < 0 || n_inflow_rivers < 0 || n_inflow_rivers > MAX_INFLOW_RIVERS_PER_RIVER
+        || first_entry > network.n_inflow_entries - n_inflow_rivers) {
         return RR_PROBLEM_ORDER;
     }
     for (int32_t entry = first_entry; entry < first_entry + n_inflow_rivers; entry++) {
@@ -74,7 +92,8 @@ static int check_river(struct rr_network network, int32_t n_cells, int32_t river
     }
     const int32_t first_weight = network.weight_starts[river];
     const int32_t n_weights = network.weight_starts[river + 1] - first_weight;
-    if (first_weight < 0 || n_weights < 0 || n_weights > MAX_WEIGHTS_PER_RIVER) {
+    if (first_weight < 0 || n_weights < 0 || n_weights > MAX_WEIGHTS_PER_RIVER
+        || first_weight > network.n_weights - n_weights) {
         return RR_PROBLEM_WEIGHTS;
     }
     for (int32_t weight = first_weight; weight < first_weight + n_weights; weight++) {

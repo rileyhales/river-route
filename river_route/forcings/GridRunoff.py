@@ -6,6 +6,7 @@ in bases.py, so this module defines none of its own.
 """
 
 from dataclasses import KW_ONLY, dataclass
+from typing import Literal
 
 from .bases import BaseGridRunoffForcing
 
@@ -22,8 +23,14 @@ class GridRunoff(BaseGridRunoffForcing):
     _: KW_ONLY
     var_x: str = 'x'  # name of the grid x coordinate variable
     var_y: str = 'y'  # name of the grid y coordinate variable
+    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
 
     @property
     def cell_dimensions(self) -> dict[str, str]:
         """The weight table columns x_index and y_index, and the runoff dimensions each indexes."""
         return {'x_index': self.var_x, 'y_index': self.var_y}
+
+    @property
+    def cumulative(self) -> bool:
+        """Whether the runoff values are totals accumulated from the start of each file, as accumulation_type says."""
+        return self.accumulation_type == 'cumulative'

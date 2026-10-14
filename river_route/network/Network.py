@@ -5,21 +5,23 @@ from typing import Literal, NamedTuple, Self
 import numpy as np
 import pandas as pd
 
-from . import splitting, streams
 from ..configs.Configs import Configs
 from ..kernels.numba_kernel import MAX_INFLOW_RIVERS_PER_RIVER, MAX_RIVERS, MAX_SUB_REACHES, MAX_SUB_REACHES_PER_RIVER
-from ..types import Float64Array, FloatArray, Int32Array, IntArray, JobBlocks, PathInput
+from ..types import Float64Array, Int32Array, IntArray, JobBlocks, PathInput
+from . import splitting, streams
 
-__all__ = ['Layout', 'Network', 'NETWORK_DTYPES', 'REQUIRED_COLUMNS']
+__all__ = ['Layout', 'Network', 'MAX_STABILIZED_X', 'NETWORK_DTYPES', 'REQUIRED_COLUMNS']
 
 logger = logging.getLogger(__name__)
 
+# the largest x that routing with use_subreaches or use_subcycles, and stabilize, accept: 50 sub-reaches at most
+MAX_STABILIZED_X = 0.49
 # the dtype of every column a network table may have, enforced whenever one is written or stabilized
 NETWORK_DTYPES = {
     'riverId': np.int64,
     'nextRiverId': np.int64,
-    'muskingumK': np.float32,
-    'muskingumX': np.float32,
+    'muskingumK': np.float64,
+    'muskingumX': np.float64,
     'riverIndex': np.int32,
     'upstreamCount': np.int32,
     'synthetic': bool,
@@ -34,6 +36,7 @@ class Layout(NamedTuple):
     How each river is routed at a step: as one or more sub-reaches in series, each river's upstream to downstream, each
     with its own travel time, x, and subcycles of the step. A river routed whole is one sub-reach of its own k and x.
     """
+
     sub_reaches: IntArray  # (n,) sub-reaches of each river
     k: Float64Array  # (sub-reaches,) travel time of each sub-reach, in seconds
     x: Float64Array  # (sub-reaches,) Muskingum x of each sub-reach
@@ -48,6 +51,7 @@ class Network:
     When instantiating this class, the network file is eagerly read and the connectivity is set.
     This may make instantiation have a small but non-negligible time cost.
     """
+
     # inputs files
     network_file: PathInput | None  # the parquet file the network table was read from, None when given a DataFrame
 
@@ -74,12 +78,12 @@ class Network:
         return self._df['nextRiverId'].to_numpy()
 
     @property
-    def k(self) -> FloatArray:
+    def k(self) -> Float64Array:
         """(n,) Muskingum k of each river, its travel time in seconds."""
         return self._df['muskingumK'].to_numpy()
 
     @property
-    def x(self) -> FloatArray:
+    def x(self) -> Float64Array:
         """(n,) Muskingum x of each river, its weighting of inflow against outflow, from 0 to 0.5."""
         return self._df['muskingumX'].to_numpy()
 
@@ -122,6 +126,8 @@ class Network:
         missing = [column for column in REQUIRED_COLUMNS if column not in self._df.columns]
         if missing:
             raise ValueError(f'Network is missing the required column(s) {", ".join(missing)}')
+        # k and x are held in float64 whatever the table stores, so every travel time and x derived from them is exact
+        self._df = self._df.astype({column: NETWORK_DTYPES[column] for column in ('muskingumK', 'muskingumX')})
         self.set_connectivity()
         self.check_parameters()
         return
@@ -177,8 +183,8 @@ class Network:
 
     def check_parameters(self) -> None:
         """Check that k and x are in expected, valid ranges. np.isfinite checks for NaN and inf"""
-        k = self.k.astype(np.float64)
-        x = self.x.astype(np.float64)
+        k = self.k
+        x = self.x
         bad_k = ~(np.isfinite(k) & (k > 0))
         if bad_k.any():
             raise ValueError('muskingumK must be positive and finite,')
@@ -213,8 +219,8 @@ class Network:
         ``(2*k*x, 2*k*(1-x))``, the steps at which its routing is valid. Outside it the scheme is still stable and
         conserves mass, but its discharge can go negative.
         """
-        k = self.k.astype(np.float64)
-        x = self.x.astype(np.float64)
+        k = self.k
+        x = self.x
         return 2 * k * x, 2 * k * (1 - x)
 
     def invalid_mask(self, dt: float | Float64Array, layout: Layout | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -251,7 +257,7 @@ class Network:
         larger_share, last_share, x = self._sub_reach_shares_and_x(sub_reaches)
         share = np.repeat(larger_share, sub_reaches)
         share[np.cumsum(sub_reaches) - 1] = last_share
-        k = share * np.repeat(self.k.astype(np.float64), sub_reaches)
+        k = share * np.repeat(self.k, sub_reaches)
         return Layout(sub_reaches, k, np.repeat(x, sub_reaches), np.repeat(subcycles, sub_reaches))
 
     def _sub_reach_shares_and_x(self, sub_reaches: IntArray) -> tuple[Float64Array, Float64Array, Float64Array]:
@@ -260,7 +266,7 @@ class Network:
         they all take: the equal layout of _equal_layout, which keeps each river's mean travel time and its travel time
         variance with an x of 0 or more.
         """
-        x = self.x.astype(np.float64)
+        x = self.x
         n = sub_reaches.astype(np.float64)
         sub_reach_x = np.maximum(0.0, 0.5 - n * (0.5 - x))
         # the shares w that keep the variance at that x have sum(w**2) = (1 - 2x) / (1 - 2 x_N), which is 1/N where x_N
@@ -269,7 +275,7 @@ class Network:
         squared_shares = np.divide(1 - 2 * x, one_minus_two_sub_reach_x, out=1 / n, where=one_minus_two_sub_reach_x > 0)
         # the larger root p of (N - 1) p**2 + (1 - (N - 1) p)**2 = sum(w**2)
         others = n - 1
-        discriminant = np.maximum(others ** 2 - others * n * (1 - squared_shares), 0.0)
+        discriminant = np.maximum(others**2 - others * n * (1 - squared_shares), 0.0)
         larger_share = np.divide(others + np.sqrt(discriminant), others * n, out=np.ones_like(n), where=others > 0)
         return larger_share, 1 - others * larger_share, sub_reach_x
 
@@ -293,8 +299,8 @@ class Network:
         """
         if np.any(dt <= 0):
             raise ValueError(f'dt must be positive, got {dt}')
-        k = self.k.astype(np.float64)
-        x = self.x.astype(np.float64)
+        k = self.k
+        x = self.x
         sub_reaches = np.maximum(1, np.ceil(k / (dt + (1 - 2 * x) * k))).astype(np.int64)
         _, last_share, sub_reach_x = self._sub_reach_shares_and_x(sub_reaches)
         resolvable = dt <= 2 * last_share * k * (1 - sub_reach_x)
@@ -319,8 +325,8 @@ class Network:
         """
         if np.any(dt <= 0):
             raise ValueError(f'dt must be positive, got {dt}')
-        k = self.k.astype(np.float64)
-        x = self.x.astype(np.float64)
+        k = self.k
+        x = self.x
         subcycles = np.maximum(1, np.ceil(dt / (2 * k * (1 - x)))).astype(np.int64)
         resolvable = dt / subcycles >= 2 * k * x
         return np.where(resolvable, subcycles, 1), resolvable
@@ -355,8 +361,8 @@ class Network:
         """``layout`` with each of ``rivers`` laid out as the fewest unequal sub-reaches of splitting, where any are."""
         if rivers.size == 0:
             return layout
-        k = self.k.astype(np.float64)
-        x = self.x.astype(np.float64)
+        k = self.k
+        x = self.x
         steps = np.broadcast_to(np.asarray(dt, dtype=np.float64), (self.size,))
         counts, travel_times, subcycles = splitting.split_rivers(
             k[rivers], x[rivers], steps[rivers], MAX_SUB_REACHES_PER_RIVER
@@ -455,6 +461,27 @@ class Network:
         logger.error(message)
         return
 
+    def check_stabilizable(self) -> None:
+        """
+        Raise ValueError for rivers with an x above MAX_STABILIZED_X, which routing with use_subreaches or
+        use_subcycles, and ``stabilize``, refuse. A river needs up to ``ceil(1/(1-2x))`` sub-reaches, 50 at x = 0.49,
+        and many more above it, and at x = 1/2 its coefficients are all non-negative only at a step equal to its travel
+        time, so that it can be impossible to stabilize.
+        """
+        # compared to the limit as float32 holds it, a little above it, so that a network file storing x in float32
+        # at the limit is accepted
+        above = np.flatnonzero(self.x > np.float32(MAX_STABILIZED_X))
+        if above.size == 0:
+            return
+        first = above[0]
+        raise ValueError(
+            f'{above.size} rivers have a muskingumX above {MAX_STABILIZED_X}, such as river {self.river_ids[first]} '
+            f'with x = {self.x[first]}, which cannot be stabilized with use_subreaches or use_subcycles. A river needs '
+            f'up to ceil(1/(1-2x)) sub-reaches, 50 at x = {MAX_STABILIZED_X} and many more above it, and at x = 0.5 it '
+            f'can be impossible to stabilize. Hold x at or below {MAX_STABILIZED_X}, or route with dt_routing in '
+            f'seconds and use_subreaches and use_subcycles false.'
+        )
+
     def stabilize(self, dt: float, *, weights: list | None = None) -> Self:
         """
         Stabilize this network in place: every river that ``conditioning`` splits at ``dt`` is replaced by its
@@ -494,10 +521,11 @@ class Network:
         if dt <= 0:
             raise ValueError(f'dt must be positive, got {dt}')
 
-        k = self.k.astype(np.float64)
-        x = self.x.astype(np.float64)
+        k = self.k
+        x = self.x
         n_rivers = k.shape[0]
         if weights is None:
+            self.check_stabilizable()
             layout = self.conditioning(dt)
             sub_reaches, k_reach, x_reach = layout.sub_reaches, layout.k, layout.x
         else:

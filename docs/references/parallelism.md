@@ -95,6 +95,12 @@ routes with the C once it is built and with numba until then; `kernel='c'` or `k
 every river of a job eight steps at a time in vectors of four steps, give the same answers, and are tested against
 each other and the reference solution.
 
+!!! warning "Clear the compiled kernel when upgrading"
+    `rr compile` writes the C kernel into the installed package, and upgrading river-route does not remove it, so
+    `kernel='auto'` would keep routing with the C of the version it was compiled from. After every upgrade, delete it
+    or compile it again with `rr compile`. `python -c "from river_route.kernels.build import LIBRARY; print(LIBRARY)"`
+    prints where it is.
+
 On the Columbia, 29,405 rivers routed with `dt_routing: auto` for the 2,928 hours of March to
 June 2000, the kernels alone took, on an Apple M3 Max:
 

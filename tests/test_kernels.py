@@ -118,6 +118,23 @@ def route_more_steps_than_the_runoff_holds(network: kernels.KernelNetwork, n_riv
     return {'n_steps': 10**9}
 
 
+def write_into_one_discharge_row(network: kernels.KernelNetwork, n_rivers: int) -> dict:
+    """A discharge of one row, a view of a whole array, so a kernel that wrote past it would not crash the test."""
+    return {'discharge_rows': 1}
+
+
+def start_from_one_channel_state_short(network: kernels.KernelNetwork, n_rivers: int) -> dict:
+    return {'channel_state': np.zeros(network.c1.shape[0] - 1, dtype=np.float32)}
+
+
+def read_inflow_rivers_past_their_list(network: kernels.KernelNetwork, n_rivers: int) -> dict:
+    return {'network': replace(network, inflow_rivers=network.inflow_rivers[:-1])}
+
+
+def read_weights_past_their_list(network: kernels.KernelNetwork, n_rivers: int) -> dict:
+    return {'network': replace(network, weight_cells=network.weight_cells[:-1], weights=network.weights[:-1])}
+
+
 @pytest.mark.parametrize(
     ('breaks', 'problem'),
     [
@@ -126,6 +143,10 @@ def route_more_steps_than_the_runoff_holds(network: kernels.KernelNetwork, n_riv
         (give_the_first_river_no_sub_reaches, 'a river has no sub-reaches'),
         (route_the_blocks_out_of_order, 'the blocks of rivers are not in routing order'),
         (route_more_steps_than_the_runoff_holds, 'a count of rivers, sub-reaches, cells, steps, or blocks'),
+        (write_into_one_discharge_row, 'a count of rivers, sub-reaches, cells, steps, or blocks'),
+        (start_from_one_channel_state_short, 'a count of rivers, sub-reaches, cells, steps, or blocks'),
+        (read_inflow_rivers_past_their_list, 'a river drains into a river before it in routing order'),
+        (read_weights_past_their_list, 'a river has weights out of order or a weight reads a cell outside'),
     ],
 )
 @pytest.mark.parametrize('kernel', KERNELS)
@@ -133,6 +154,6 @@ def test_both_kernels_refuse_broken_arrays(kernel: str, breaks, problem: str, st
     network, depth = standard_month['network'], standard_month['depth']
     n_rivers = network.sub_reach_starts.shape[0] - 1
     changes = breaks(network, n_rivers)
-    discharge = np.empty((n_rivers, depth.shape[1] + 1), dtype=np.float32)
+    discharge = np.empty((n_rivers, depth.shape[1] + 1), dtype=np.float32)[: changes.pop('discharge_rows', n_rivers)]
     with pytest.raises(ValueError, match=f'the {kernel} kernel refused to route: {problem}'):
         route_every_river(kernel, changes.pop('network', network), depth, discharge, **changes)

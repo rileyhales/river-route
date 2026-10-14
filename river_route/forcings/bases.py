@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import KW_ONLY, dataclass, field, fields
-from typing import TYPE_CHECKING, Literal, NamedTuple, Self
+from typing import TYPE_CHECKING, NamedTuple, Self
 
 import numpy as np
 import pandas as pd
@@ -101,6 +101,7 @@ class GridCellRunoff(NamedTuple):
     One file of gridded runoff depths read at the weight table's grid cells, with the weights that turn them into each
     river's catchment runoff volume as routing routes it.
     """
+
     runoff_by_cell: FloatArray  # (n_cells, time) C-order runoff depths, each cell's time series contiguous
     indptr: IntArray  # (n_rivers + 1,) sparse row pointers to the weights of each river_index
     cell: IntArray  # (n_weights,) row of runoff_by_cell each weight applies to
@@ -246,10 +247,7 @@ class RunoffForcing(ABC):
         )
 
     @staticmethod
-    def _get_conversion_factor(unit: str | None) -> float:
-        if unit is None:
-            logger.warning('No units attribute found. Assuming meters')
-            return 1
+    def _get_conversion_factor(unit: str) -> float:
         if unit in ('m', 'meters'):
             return 1
         if unit in ('mm', 'millimeters', 'kg m-2'):  # a kilogram of water on a square meter is a millimeter deep
@@ -277,7 +275,6 @@ class BaseGridRunoffForcing(RunoffForcing):
     _: KW_ONLY
     var_runoff: str = 'ro'  # name of the runoff variable in the gridded forcing files
     var_t: str = 'time'  # name of the time coordinate variable
-    accumulation_type: Literal['incremental', 'cumulative'] = 'incremental'
     force_positive_runoff: bool = False  # clip negative runoff depths to zero
     runoff_depth_unit: str | None = None  # unit of the runoff depths; None reads the file attributes, else meters
     as_volumes: bool = False  # prepare volumes (m3) instead of depths (m); routing always uses volumes
@@ -306,9 +303,12 @@ class BaseGridRunoffForcing(RunoffForcing):
         """Each weight table column that locates a grid cell, and the runoff dimension it indexes."""
 
     @property
+    @abstractmethod
     def cumulative(self) -> bool:
-        """Whether the runoff values are cumulative totals to difference rather than incremental per step."""
-        return self.accumulation_type == 'cumulative'
+        """
+        Whether the runoff values are totals accumulated from the start of each file, differenced into the runoff of
+        each step, rather than the runoff of each step.
+        """
 
     @classmethod
     def from_configs(cls, configs: Configs) -> Self:
@@ -368,7 +368,7 @@ class BaseGridRunoffForcing(RunoffForcing):
         indptr = np.concatenate(([0], np.cumsum(counts))).astype(self.indptr.dtype)
         take = np.repeat(self.indptr[parent] - indptr[:-1], counts) + np.arange(indptr[-1])
         self.indptr, self.cell, self.proportion = indptr, self.cell[take], self.proportion[take]
-        k = network.k.astype(np.float64)
+        k = network.k
         share = k / np.bincount(parent, weights=k, minlength=len(self.river_ids))[parent]
         self.catchment_area = (self.catchment_area[parent] * share).astype(self.catchment_area.dtype)
         self.river_ids = network.river_ids
@@ -514,10 +514,18 @@ class BaseGridRunoffForcing(RunoffForcing):
             runoff_data: path(s) to gridded forcing files
 
         Returns:
-            tuple: (runoff as a C-order (time, n_cells) array, time values, factor converting the depth unit to meters)
+            tuple: (runoff as a C-order (time, n_cells) float32 array, time values, factor converting the depth unit to
+                meters)
         """
         with xr.open_mfdataset(runoff_data) as ds:
-            runoff_depth_unit = self.runoff_depth_unit or ds[self.var_runoff].attrs.get('units', 'm')
+            runoff_depth_unit = self.runoff_depth_unit or ds[self.var_runoff].attrs.get('units')
+            if runoff_depth_unit is None:
+                logger.warning(
+                    f'{self.var_runoff} in {runoff_data} has no units attribute and runoff_depth_unit is not set, so '
+                    f'its depths are read as meters. If they are millimeters, every runoff volume is 1000 times too '
+                    f'large: set runoff_depth_unit to the unit of the depths.'
+                )
+                runoff_depth_unit = 'm'
             conversion_factor = self._get_conversion_factor(runoff_depth_unit)
             runoff = (
                 ds[self.var_runoff]
@@ -531,7 +539,8 @@ class BaseGridRunoffForcing(RunoffForcing):
                 .to_numpy()
             )
             time_index = ds[self.var_t].to_numpy()
-        return np.ascontiguousarray(runoff), time_index, conversion_factor
+        # float32 whatever the file stores, such as float64 decoded from packed integers, since the kernels route it
+        return np.ascontiguousarray(runoff, dtype=np.float32), time_index, conversion_factor
 
     def aggregate(
         self,

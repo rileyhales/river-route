@@ -1,29 +1,26 @@
 # Forcings
 
 The `river_route.forcings` package holds the RunoffForcing classes, which aggregate runoff to catchments. There is one for each
-`forcing` that routes runoff, and
-`RUNOFF_CLASS_FOR_FORCING[configs.forcing]` is the class the `forcing` of a `Configs` names:
+`forcing` that routes runoff, and `RUNOFF_CLASS_FOR_FORCING[configs.forcing]` is the class the `forcing` of a `Configs` names:
 
-| `forcing`    | Class                  | Aggregates                                                                          |
-|--------------|------------------------|-------------------------------------------------------------------------------------|
-| `catchment`  | `CatchmentRunoffForcing`      | nothing: its files are already aggregated to catchments, as volumes or depths       |
-| `grid`       | `GridRunoff`           | grids with x and y dimensions, with a weight table                                  |
-| `ecmwf_grib` | `ECMWFGribReducedGrid` | ECMWF GRIB files on a reduced gaussian grid, read with eccodes, with a weight table |
+| `forcing`    | Class                    | Aggregates                                                                          |
+|--------------|--------------------------|-------------------------------------------------------------------------------------|
+| `catchment`  | `CatchmentRunoffForcing` | nothing: its files are already aggregated to catchments, as volumes or depths       |
+| `grid`       | `GridRunoff`             | grids with x and y dimensions, with a weight table                                  |
+| `ecmwf_grib` | `ECMWFGribReducedGrid`   | ECMWF GRIB files on a reduced gaussian grid, read with eccodes, with a weight table |
 
-Gridded runoff is aggregated with a grid weight table built with the functions in `river_route.forcings.weights`.
-Build a `GridRunoff` with `GridRunoff(grid_weights_file, ...)`, or with
-`GridRunoff.from_configs(configs)` to read those same values off a `Configs`, which is how a `Router` builds one.
-Only `from_configs` validates, since a directly built `GridRunoff` has no `Configs` to check.
+Gridded runoff is aggregated with a grid weight table built with the functions in `river_route.forcings.weights`. Build a `GridRunoff` with
+`GridRunoff(grid_weights_file, ...)`, or with `GridRunoff.from_configs(configs)` to read those same values off a `Configs`, which is how a `Router`
+builds one. Only `from_configs` validates, since a directly built `GridRunoff` has no `Configs` to check.
 
-Every class subclasses the abstract `RunoffForcing`, whose `to_netcdf` writes a catchment runoff array in the format
-`CatchmentRunoffForcing` reads. The grid classes precompute that file from their grids with `aggregate_to_file`, so it can be
-routed later with `forcing` catchment. Routing the grids directly is faster, because the aggregation then happens
-inside the routing kernel, except for cumulative or clipped runoff, which is aggregated before it is routed.
+Every class subclasses the abstract `RunoffForcing`, whose `to_netcdf` writes a catchment runoff array in the format `CatchmentRunoffForcing` reads. 
+The grid classes precompute that file from their grids with `aggregate_to_file`, so it can be routed later with `forcing` catchment. Routing the grids
+directly is faster, because the aggregation then happens inside the routing kernel, except for cumulative or clipped runoff, which is aggregated 
+before it is routed.
 
-Each class has a `generator` method that yields one `(dates, runoff, source_file)` tuple per input, with the runoff
-in the form routing reads: `CatchmentRunoffVolumes`, or a `GridCellRunoff` whose grid cells
-routing reads as it routes each river. It can be used on its own, and a `Router` builds the one its `forcing` names.
-See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
+Each class has a `generator` method that yields one `(dates, runoff, source_file)` tuple per input, with the runoff in the form routing reads:
+`CatchmentRunoffVolumes`, or a `GridCellRunoff` whose grid cells routing reads as it routes each river. It can be used on its own, and a `Router`
+builds the one its `forcing` names. See [Customizing Runoff Inputs](../tutorial/advanced.md#customizing-runoff-inputs).
 
 ```python
 import river_route as rr

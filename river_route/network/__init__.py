@@ -1,4 +1,4 @@
 from . import splitting, streams
-from .Network import Layout, Network
+from .Network import MAX_STABILIZED_X, Layout, Network
 
-__all__ = ['Layout', 'Network', 'splitting', 'streams']
+__all__ = ['Layout', 'MAX_STABILIZED_X', 'Network', 'splitting', 'streams']

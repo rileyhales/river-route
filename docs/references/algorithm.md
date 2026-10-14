@@ -66,7 +66,11 @@ for every river, whatever its travel time and whatever the step. That bound is w
 $x = 0.45$, 50 at $x = 0.49$, and 500 at $x = 0.499$. At $x = 1/2$ there is no bound. The window closes to the single
 step $\Delta t = k/N$, so the river needs $\lceil k/\Delta t \rceil$ sub-reaches, each exactly one step long, and their
 count grows with the river's travel time alone. Such a river can be made valid only when its $k$ is exactly a whole
-multiple of $\Delta t$, so most rivers at $x = 1/2$ are kept whole and reported.
+multiple of $\Delta t$, or of a whole number of subcycles of it, so it can be impossible to stabilize a network with
+rivers at $x = 1/2$. Routing with `use_subreaches` or `use_subcycles`, and `Network.stabilize`, refuse every river
+with an x above `MAX_STABILIZED_X`, 0.49, at which a river needs at most 50 sub-reaches, with an error that names
+one, whatever `invalid_coefficients` is. Rivers above it are routed only whole, with `dt_routing` in seconds and
+both options off.
 
 ### Sub-reaches that take subcycles of their own
 
@@ -153,7 +157,7 @@ import numpy as np
 import pandas as pd
 
 network = pd.read_parquet('network.parquet')
-network['muskingumX'] = np.minimum(network['muskingumX'], np.float32(0.45))
+network['muskingumX'] = np.minimum(network['muskingumX'], 0.45)
 network.to_parquet('network_x_at_most_045.parquet')
 ```
 
@@ -164,7 +168,8 @@ that the default, `'raise'`, refuses to route.
 ## The arrays of a call
 
 A call is given three structs, the network, the runoff, and the job, holding these arrays and the counts of rivers,
-sub-reaches, cells, steps, and blocks:
+sub-reaches, inflow entries, weights, cells, steps, and blocks, with the length of `depth` and of `discharge`. Each
+count is the length of the arrays it counts, and the kernels read nothing beyond it:
 
 | Struct       | Array                         | Length          | What it holds                                                                           |
 |--------------|-------------------------------|-----------------|-----------------------------------------------------------------------------------------|
@@ -245,8 +250,9 @@ runoff_volume = sum(
 
 The two tables have strides of their own: their rows hold different counts of values, and either can be part of a
 longer table, as in routing in windows. The kernels check that every row has room for the steps routed, `cell_stride`
-at least `n_steps` and `river_stride` more than `n_steps`, and read only the first `n_steps` values of each depth row
-and write only the first `n_steps + 1` values of each discharge row.
+at least `n_steps` and `river_stride` more than `n_steps`, and that the last row ends inside its array, `depth_size`
+and `discharge_size` values long. They read only the first `n_steps` values of each depth row and write only the
+first `n_steps + 1` values of each discharge row.
 
 ## Routing in windows
 

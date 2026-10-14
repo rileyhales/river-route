@@ -86,6 +86,9 @@ configs = rr.Configs(
 rr.Router(configs).route()
 ```
 
+Or route a config file from the command line with `rr route config.json`. `--threads 4` routes on 4 threads, and
+`rr route -` reads the config as JSON from stdin. `rr app` opens a window that sets up, saves, and runs configs.
+
 A `Configs` is set once, when it is built, and is frozen afterward. There is no method to copy one with an
 option changed: build the `Configs` you want. Use `configs.to_json(path)` to write the
 options to a file that `Configs.from_json` reads back, e.g. to prepare many jobs for a scheduler.
@@ -105,8 +108,11 @@ By default, the channel starts at zero discharge. Provide a state file to initia
 }
 ```
 
-The state file is a parquet with the columns `riverId` and `Q` and one row per river, listing the rivers of the
-network file in the same order. A final state file is written this way, so it can start the next run.
+The state file is a parquet with the columns `riverId` and `Q`, listing the rivers of the network file in the same
+order. It has one row per sub-reach: one per river, except that each river `use_subreaches` splits into sub-reaches at
+the routing step has its `riverId` repeated for every one of its sub-reaches. A final state file is written this way,
+so it can start the next run routed at the same step. A state file with one row per river starts a run only when no
+river is split at its step.
 
 ## Reading the Output
 

@@ -121,6 +121,13 @@ def compute_voronoi_catchment_intersects(
         raise KeyError('catchments_gdf must contain a riverId column')
     if not {'x_index', 'y_index', 'x', 'y'}.issubset(voronoi_gdf.columns):
         raise KeyError('voronoi_gdf must include x_index, y_index, x, and y columns')
+    grid_crs, catchments_crs = voronoi_gdf.crs, catchments_gdf.crs
+    if grid_crs is None or catchments_crs is None or grid_crs != catchments_crs:
+        logger.warning(
+            f'The grid cells are in CRS {grid_crs} and the catchments in CRS {catchments_crs}. They are intersected '
+            f'without reprojecting either, so unless they share one CRS the weight table is wrong or empty. Reproject '
+            f'the catchments to the CRS of the grid before computing weights.'
+        )
 
     logger.info('Performing overlay operation')
     intersections = gpd.overlay(voronoi_gdf, catchments_gdf, how='intersection')

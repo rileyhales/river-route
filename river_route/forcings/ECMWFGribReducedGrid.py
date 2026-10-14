@@ -126,8 +126,13 @@ class ECMWFGribReducedGrid(BaseGridRunoffForcing):
     their messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the
     weight table and the routing is left to the caller. A GRIB message has no named dimensions, so ``var_t`` is not
     read: each cell is taken by its position in the message's values. IFS forecast runoff accumulates from the start of
-    the forecast, so it is routed with ``accumulation_type`` cumulative.
+    the forecast, so it is always differenced into the runoff of each step and has no ``accumulation_type`` option.
     """
+
+    @property
+    def cumulative(self) -> bool:
+        """Always: IFS forecast runoff is the total accumulated from the start of the forecast."""
+        return True
 
     @property
     def cell_dimensions(self) -> dict[str, str]:

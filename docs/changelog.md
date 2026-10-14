@@ -2,7 +2,7 @@
 
 ---
 
-### [v3.0.0](https://github.com/rileyhales/river-route/tree/v3.0.0) — 2026-09-29
+### [v3.0.0](https://github.com/rileyhales/river-route/tree/v3.0.0) — 2026-10-13
 
 The [v2 to v3 migration guide](migrating/v2-to-v3.md) gives the replacement for each removed class, config key, and
 file format.
@@ -15,11 +15,16 @@ file format.
   the compute options `dt_routing` (`'auto'` or a step in seconds), `use_subreaches`, and `use_subcycles` (`True`
   or `False`).
 - Rivers are routed one at a time from upstream to downstream, each river's whole time series before the next river,
-  by numba kernels, instead of every river for one time step before the next step by sparse forward substitution.
-  A river routed whole with static coefficients is routed in one loop over eight steps at a time, held in two SIMD
-  vectors of four lanes, with the recurrence solved as prefix sums within each vector, as river-route-web's C kernel
-  does. It routed the Amazon 1.55 times faster than taking each river through its upstream terms, runoff, recurrence,
-  downstream inflow, and discharge in loops of their own.
+  instead of every river for one time step before the next step by sparse forward substitution. A river routed whole
+  with static coefficients is routed in one loop over eight steps at a time, held in two SIMD vectors of four lanes,
+  with the recurrence solved as prefix sums within each vector. It routed the Amazon 1.55 times faster than taking each
+  river through its upstream terms, runoff, recurrence, downstream inflow, and discharge in loops of their own.
+- Two routing kernels route the same way: a C kernel, `river_route/kernels/c`, and its numba twin. `rr compile`
+  compiles the C for this machine with the clang of LLVM, and `--checks` also requires it to compile without a
+  warning from clang's strictest set and to pass clang-tidy and clang's static analyzer. `Router.route(kernel='auto')`, the default, routes
+  with the C once it is compiled and with numba until then, and `kernel='c'` or `kernel='numba'` chooses one.
+- The C kernel is compiled to WebAssembly by `rr compile --wasm <folder>` and published to npm as `river-route`, with
+  one module for runtimes with relaxed SIMD's fused multiply-adds and one for those without.
 - Every river hands its discharge downstream, and records it, at the end of each runoff step, and computes within it
   in a plan of its own, settled in two jobs. `dt_routing` sets each river's step: `'auto'`, the default, gives each
   river its own valid step, the runoff step over the fewest subcycles that keep its coefficients non-negative, and a
@@ -46,6 +51,10 @@ file format.
   down from -1,000,000, `synthetic` marks them, and `parentRiverId` maps each reach to the river it was split from.
   Such a network is routed with the `channel`, `grid`, or `ecmwf_grib` forcing, whose RunoffForcing classes share each
   river's runoff among its sub-reaches with `RunoffForcing.distribute`.
+- Routing with `use_subreaches` or `use_subcycles`, and `Network.stabilize`, refuse a river with `muskingumX` above
+  0.49, `river_route.network.MAX_STABILIZED_X`. A river needs up to `ceil(1/(1-2x))` sub-reaches, 50 at 0.49 and
+  many more above it, and at x = 0.5 it is valid only at a step equal to its travel time, so that it can be
+  impossible to stabilize. Rivers above it are routed only whole, with `dt_routing` in seconds and both options off.
 - Rivers with a negative coefficient in their own step, outside `2*k*x <= step <= 2*k*(1-x)`, are reported as
   errors. The new `invalid_coefficients` config chooses `raise` (the default), which refuses to route them, `log`,
   which logs the error at the error level and routes on, or `ignore`.
@@ -55,8 +64,8 @@ file format.
   subcycle of its last runoff step. It was the mean of the discharges computed at
   its routing steps. Channel routing writes the discharge at the end of each `dt_discharge` rather than their mean.
 - A Network refuses a river with `muskingumK` not positive and finite, such as a river of zero length, which no step
-  can route and which is resolved in the topology before routing; a river with `muskingumX` above 0.5, at which the
-  scheme amplifies its inflow; and a river that drains into itself. `muskingumX` may be negative.
+  can route and which is resolved in the topology before routing; a river with `muskingumX` below 0, or above 0.5, at
+  which the scheme amplifies its inflow; and a river that drains into itself.
 - `Router.route(thread_pool=pool, threads=n)` routes concurrently on a `ThreadPoolExecutor` the caller passes. The
   region's rivers are divided into blocks, contiguous index ranges of rivers, and the blocks are packed into one job
   per thread. The pool is used as given and never shut down, and the package never creates one: without a pool,
@@ -77,6 +86,8 @@ file format.
   Network from it, and reuses it, with its partition, for every `route()` call. A Network is built from a network
   file or a DataFrame, is stabilized once, since `stabilize` refuses a network that already is, and is written with
   `to_parquet(path)`. `Router.river_ids`, `k`, and `x` are read off the network, as `router.network.river_ids`.
+- A Network holds `muskingumK` and `muskingumX` in float64, whatever the network file stores, and writes them in
+  float64, so the travel times and x of a stabilized network are written exactly as they were split.
 - The params file is renamed the network file, set with the `network_file` config in place of `params_file`: it
   describes the network the `Network` class is built from, not only its Muskingum parameters. Its columns are
   camelCase: `riverId`, `nextRiverId` (was `downstream_river_id`), `muskingumK` (was `k`), and `muskingumX` (was
@@ -103,7 +114,8 @@ file format.
 **Runoff**
 
 - `forcing_files` replaces `qlateral_files` and `grid_runoff_files`, and is read in the form `forcing` names.
-  `grid_weights_file` is required for the `grid` and `ecmwf_grib` forcings and refused for `catchment`.
+  `grid_weights_file` is required for the `grid` and `ecmwf_grib` forcings. Runoff options a forcing does not read
+  are refused unless left at their defaults: `catchment` reads none, `grid_weights_file` included.
 - `var_grid_runoff` is renamed `var_runoff`, and `grid_accumulation_type` is renamed `accumulation_type`.
 - Catchment runoff files replace qlateral files. A file holds a `catchment_runoff` variable with dimensions
   `(riverId, time)`, in that order, and a `catchment_area` variable (m²) with dimension `riverId`, linked by the CF
@@ -119,7 +131,8 @@ file format.
   Columbia in a 145 step O1280 forecast that reads in 0.72 s with memory for one message, where xarray and cfgrib
   took 5.8 s and 4 GB. `ReducedGaussianGrid.from_grib` reads a file's grid from its metadata,
   `ReducedGaussianGrid.cell_polygons` gives the area each cell represents, and `reduced_grid_weights` builds a weight
-  table that locates each cell by its `cell_index`.
+  table that locates each cell by its `cell_index`. IFS forecast runoff accumulates from the start of the forecast, so
+  `ecmwf_grib` runoff is always cumulative and has no `accumulation_type` option.
 - `runoff_depth_unit`, `force_positive_runoff`, and `as_volumes`, arguments of `runoff_to_qlateral` in v2, are
   configs.
 - Runoff must come in uniform time steps. `force_uniform_timesteps`, which resampled irregular gridded runoff in v2,
@@ -192,6 +205,9 @@ file format.
   commands `rr Muskingum`, `rr RapidMuskingum`, and `rr UnitMuskingum`.
 - `rr subset <riverId> --network <in> --out-network <out>` cuts a network file, and optionally a grid weight table with
   `--weights` and `--out-weights`, to a river and every river upstream of it.
+- `rr route --threads <n>` routes on a thread pool of n threads, and `rr route -` reads the config as JSON from stdin.
+- `rr compile` compiles the C routing kernel, and `rr app` opens a window that sets up, saves, and runs routing
+  configs.
 
 **Packaging**
 
@@ -199,6 +215,8 @@ file format.
 - Added lower version bounds to every dependency, and major version upper bounds to those that follow semantic
   versioning: `dask` and `xarray`, versioned by date, and `pyarrow` have none. Added `zarr`, `eccodes`, and
   `pyproj`, and removed `pyyaml` and `networkx`.
+- river-route runs on macOS and Linux only. Importing it on any other platform, such as Windows, raises an
+  ImportError.
 
 ---
 

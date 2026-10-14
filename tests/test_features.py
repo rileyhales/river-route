@@ -13,19 +13,22 @@ import pkgutil
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+import shapely
 import xarray as xr
 import zarr
 from reference_solution import GRID_NAMES, WILLAMETTE, Basin, assert_same, route
 
 import river_route as rr
 from river_route import metrics
-from river_route.network import splitting, streams
+from river_route.network import MAX_STABILIZED_X, splitting, streams
 from river_route.router import static_muskingum, writers
 
 DT = 3600
@@ -41,7 +44,17 @@ REFUSED_CONFIGS = {
     'catchment runoff takes no grid weights': (
         lambda basin, d: {'forcing': 'catchment'},
         ValueError,
-        'grid_weights_file is not used',
+        'grid_weights_file.* not used with forcing catchment',
+    ),
+    'catchment runoff reads no runoff options': (
+        lambda basin, d: {'forcing': 'catchment', 'grid_weights_file': None, 'force_positive_runoff': True},
+        ValueError,
+        'force_positive_runoff not used with forcing catchment',
+    ),
+    'ecmwf_grib runoff is always cumulative': (
+        lambda basin, d: {'forcing': 'ecmwf_grib', 'accumulation_type': 'cumulative'},
+        ValueError,
+        'accumulation_type not used with forcing ecmwf_grib',
     ),
     'gridded runoff needs grid weights': (
         lambda basin, d: {'grid_weights_file': None},
@@ -281,6 +294,15 @@ def test_deep_validate_checks_a_state_against_use_subreaches(willamette: Basin, 
         rr.Configs(**(sub_reach_state | {'channel_state_init_file': tmp_path / 'no_ids.parquet'})).deep_validate()
 
 
+def test_deep_validate_warns_of_negative_discharge_in_a_state(willamette: Basin, package_log, tmp_path: Path) -> None:
+    """Routing writes negative discharge as routed, so a final state holding it still starts the next run."""
+    state = pd.DataFrame({'riverId': willamette.network.river_ids, 'Q': np.float32(-1.0)})
+    state.to_parquet(tmp_path / 'state.parquet')
+    options = {'network_file': willamette.network_file, 'channel_state_init_file': tmp_path / 'state.parquet'}
+    rr.Configs(**options, dt_routing=DT, use_subreaches=False).deep_validate()
+    assert any('negative discharge in 1,390' in record.getMessage() for record in package_log.records)
+
+
 def test_deep_validate_finds_weights_that_do_not_sum_to_one(willamette: Basin, tmp_path: Path) -> None:
     with xr.open_dataset(willamette.weights_file) as weights:
         broken = weights.load()
@@ -377,6 +399,23 @@ def test_conditioning_at_a_given_dt_routing_makes_every_river_valid_at_it(dt_rou
     auto_coefficients = static_muskingum.prepare_routing(network, auto, DT, None)
     for given, chosen in zip(coefficients, auto_coefficients, strict=True):
         np.testing.assert_array_equal(given, chosen)
+
+
+def test_rivers_of_x_above_the_most_stabilized_are_refused_where_they_would_be_stabilized() -> None:
+    """Above x = 0.49 a river needs more than 50 sub-reaches, and at x = 0.5 it can be impossible to stabilize."""
+    at_most = separate_rivers(np.array([1.5 * DT]), np.array([MAX_STABILIZED_X]))
+    static_muskingum.prepare_routing(at_most, rr.Configs(), DT, None)
+    at_most.stabilize(DT)
+    for x in (0.495, 0.5):
+        above = separate_rivers(np.array([1.5 * DT]), np.array([x]))
+        with pytest.raises(ValueError, match=f'muskingumX above {MAX_STABILIZED_X}'):
+            above.stabilize(DT)
+        for subreaches, subcycles in ((True, True), (True, False), (False, True)):
+            options = {'dt_routing': DT, 'use_subreaches': subreaches, 'use_subcycles': subcycles}
+            with pytest.raises(ValueError, match=f'muskingumX above {MAX_STABILIZED_X}'):
+                static_muskingum.prepare_routing(above, rr.Configs(**options, invalid_coefficients='ignore'), DT, DT)
+        routed_whole = {'dt_routing': DT, 'use_subreaches': False, 'use_subcycles': False}
+        static_muskingum.prepare_routing(above, rr.Configs(**routed_whole, invalid_coefficients='ignore'), DT, DT)
 
 
 def separate_rivers(k: np.ndarray, x: np.ndarray) -> rr.Network:
@@ -679,15 +718,74 @@ def test_reading_runoff_for_routing_leaves_depths_as_depths(willamette: Basin, m
     np.testing.assert_array_equal(depth_grid.aggregate(cells, factor), depths)
 
 
+@pytest.fixture
+def package_log(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureFixture]:
+    """caplog given the warnings of the river_route logger, which does not propagate to caplog's handler on the root."""
+    package_logger = logging.getLogger('river_route')
+    package_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger='river_route'):
+            yield caplog
+    finally:
+        package_logger.removeHandler(caplog.handler)
+
+
+def write_grid(path: Path, basin: Basin, cells: np.ndarray, dates: np.ndarray, attrs: dict, **encoding) -> None:
+    """Write runoff at the basin's weight table cells as a grid file, every other cell zero, encoded as given."""
+    cell_indexes = grid(basin).cell_indexes
+    y_index, x_index = cell_indexes['y_index'], cell_indexes['x_index']
+    runoff = np.zeros((cells.shape[0], int(y_index.max()) + 1, int(x_index.max()) + 1))
+    runoff[:, y_index, x_index] = cells
+    dimensions = (GRID_NAMES['var_t'], GRID_NAMES['var_y'], GRID_NAMES['var_x'])
+    runoff_grid = xr.Dataset({'ro': (dimensions, runoff, attrs)}, coords={GRID_NAMES['var_t']: dates})
+    runoff_grid.to_netcdf(path, encoding={'ro': encoding})
+
+
+def test_runoff_decoded_as_float64_is_routed(willamette: Basin, march, tmp_path: Path) -> None:
+    """
+    Runoff a file decodes as float64, as xarray decodes integers packed with a float64 scale factor, is read as the
+    float32 the routing kernels require.
+    """
+    cells, dates, _ = march
+    packed = tmp_path / 'packed.nc'
+    write_grid(packed, willamette, cells[:4], dates[:4], {'units': 'm'}, dtype='int16', scale_factor=1e-5)
+    with xr.open_dataset(packed) as runoff_grid:
+        assert runoff_grid['ro'].dtype == np.float64
+    read, _, _ = grid(willamette).read_runoff(packed)
+    assert read.dtype == np.float32
+    np.testing.assert_allclose(read, cells[:4], atol=1e-5)
+    routed = route(tmp_path, **(willamette.gridded() | {'forcing_files': [packed]}))
+    assert routed.discharge[0].shape == (willamette.network.size, 4)
+
+
+def test_runoff_without_units_is_read_as_meters_and_warns(
+    willamette: Basin, march, package_log, tmp_path: Path
+) -> None:
+    cells, dates, _ = march
+    no_units = tmp_path / 'no_units.nc'
+    write_grid(no_units, willamette, cells[:4], dates[:4], {}, dtype='float32')
+    read, _, factor = grid(willamette).read_runoff(no_units)
+    assert factor == 1
+    np.testing.assert_array_equal(read, cells[:4])
+    assert any('has no units attribute' in record.getMessage() for record in package_log.records)
+
+
+def test_grid_weights_warn_when_the_catchments_are_in_another_crs(package_log) -> None:
+    cells = rr.forcings.voronoi_diagram_from_regular_xy(np.arange(3.0), np.arange(3.0), crs=4326)
+    catchments = gpd.GeoDataFrame({'riverId': [1]}, geometry=[shapely.box(0, 0, 2, 2)], crs=3857)
+    rr.forcings.compute_voronoi_catchment_intersects(cells, catchments)
+    assert any('Reproject the catchments' in record.getMessage() for record in package_log.records)
+
+
 def test_catchment_runoff_in_another_river_order_is_refused(willamette: Basin, tmp_path: Path) -> None:
     dates, volumes = willamette.months[0]
     volume_grid = grid(willamette, as_volumes=True)
     reversed_file = tmp_path / 'reversed.nc'
     river_ids, areas = volume_grid.river_ids[::-1], volume_grid.catchment_area[::-1]
     rr.CatchmentRunoffForcing.to_netcdf(reversed_file, dates, volumes[::-1], river_ids, areas, as_volumes=True)
-    changes = {'forcing': 'catchment', 'grid_weights_file': None, 'forcing_files': [reversed_file]}
+    options = {'network_file': willamette.network_file, 'forcing': 'catchment', 'forcing_files': [reversed_file]}
     with pytest.raises(ValueError, match='in the same order'):
-        route(tmp_path, **(willamette.gridded(months=1) | changes))
+        route(tmp_path, **options)
 
 
 def test_a_weight_table_in_another_river_order_is_refused(willamette: Basin, tmp_path: Path) -> None:
@@ -745,6 +843,21 @@ def test_a_channel_state_for_other_rivers_is_refused(columns, message, willamett
 def test_runoff_must_come_in_uniform_time_steps(cut, message, willamette: Basin, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=message):
         route(tmp_path, [cut(*willamette.months[0])], network_file=willamette.network_file)
+
+
+def test_a_channel_state_giving_one_rivers_row_to_another_is_refused(willamette: Basin, tmp_path: Path) -> None:
+    """Its rows add up to the network's sub-reaches, but one river would start from a row of another."""
+    network = willamette.network
+    sub_reaches = network.conditioning(DT).sub_reaches.copy()
+    split, whole = int(np.flatnonzero(sub_reaches > 1)[0]), int(np.flatnonzero(sub_reaches == 1)[0])
+    sub_reaches[split] -= 1
+    sub_reaches[whole] += 1
+    river_ids = np.repeat(network.river_ids, sub_reaches)
+    state = pd.DataFrame({'riverId': river_ids, 'Q': np.ones(river_ids.shape[0], dtype=np.float32)})
+    state.to_parquet(tmp_path / 'state.parquet')
+    options = {'network_file': willamette.network_file, 'channel_state_init_file': tmp_path / 'state.parquet'}
+    with pytest.raises(ValueError, match=f'rows for river {network.river_ids[min(split, whole)]},'):
+        route(tmp_path, willamette.months[:1], **options)
 
 
 def test_dt_routing_auto_refuses_sub_reaches_that_change_between_files(willamette: Basin, tmp_path: Path) -> None:

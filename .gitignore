@@ -16,3 +16,4 @@ benchmarks/
 correctness_tests/
 rewrite/
 *.wasm
+wasm/LICENSE.txt

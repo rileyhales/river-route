@@ -3,9 +3,9 @@ from typing import Self
 import numpy as np
 import xarray as xr
 
-from .bases import CATCHMENT_AREA, CATCHMENT_RUNOFF, VOLUME_UNITS, CatchmentRunoffVolumes, RunoffForcing
 from ..configs import Configs
 from ..types import PathList, RunoffGenerator
+from .bases import CATCHMENT_AREA, CATCHMENT_RUNOFF, VOLUME_UNITS, CatchmentRunoffVolumes, RunoffForcing
 
 __all__ = ['CatchmentRunoffForcing']
 

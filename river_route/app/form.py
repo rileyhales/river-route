@@ -47,7 +47,7 @@ FORCINGS_OF_FIELD = {  # the fields only some forcings read; the form shows ever
     'var_x': ('grid',),
     'var_y': ('grid',),
     'var_t': ('grid',),
-    'accumulation_type': GRID_FORCINGS,
+    'accumulation_type': ('grid',),
     'runoff_processing_mode': RUNOFF_FORCINGS,
     'force_positive_runoff': GRID_FORCINGS,
 }

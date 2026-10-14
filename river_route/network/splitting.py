@@ -19,8 +19,8 @@ from ..types import Float64Array, IntArray
 
 __all__ = ['split_rivers', 'fewest_sub_reaches']
 
-# the share of a river's diffusion that its windows are held inside their edges by, so that rounding, as in the float32
-# a stabilized network is written in, cannot flip the sign of a coefficient
+# the share of a river's diffusion that its windows are held inside their edges by, so that rounding, as in a network
+# file stored in float32, cannot flip the sign of a coefficient
 MARGIN = 1e-3
 # the shortest sub-reach, as a share of the shorter of the river's travel time and the step. Near x = 1/2 the windows
 # narrow, and a split can need a sub-reach a tiny share of the river long, taking tens of thousands of subcycles only

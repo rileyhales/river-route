@@ -10,7 +10,7 @@ files) is converted in that same river order so they stay aligned with the netwo
         --params v2/params.parquet --out-network v3/network.parquet \
         --weights v2/weights.nc --out-weights v3/weights.nc \
         --qlateral v2/qlateral_2020.nc v2/qlateral_2021.nc --out-catchment-runoff-dir v3/ \
-        --channel-state v2/state.parquet --out-channel-state v3/state.parquet \
+        --channel-state v2/state.parquet --out-channel-state v3/state.parquet --dt 3600 \
         --config v2/config.yaml --out-config v3/config.json
 """
 
@@ -34,6 +34,10 @@ V2_TO_V3_KEYS = {
     'grid_accumulation_type': 'accumulation_type',
 }
 V2_TO_V3_COLUMNS = {'river_id': 'riverId', 'downstream_river_id': 'nextRiverId', 'k': 'muskingumK', 'x': 'muskingumX'}
+# the v3 options a forcing refuses: channel routing's time steps when routing runoff, since each forcing file is routed
+# whole, and the gridded runoff options for catchment runoff, whose files have a fixed schema
+CHANNEL_ONLY_KEYS = ('dt_discharge', 'dt_total')
+GRID_ONLY_KEYS = ('grid_weights_file', 'var_runoff', 'var_x', 'var_y', 'var_t', 'accumulation_type')
 
 
 def dfs_order(river_ids: np.ndarray, next_river_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -151,23 +155,41 @@ def convert_qlateral(qlateral_path: str, river_ids: np.ndarray, catchment_area: 
         )
 
 
-def convert_channel_state(state_path: str, v2_river_ids: np.ndarray, river_ids: np.ndarray, output_path: str) -> None:
+def convert_channel_state(
+    state_path: str, v2_river_ids: np.ndarray, network_path: str, output_path: str, dt: int | None
+) -> None:
     """
-    Write a channel state file, one Q per river in v2 params file order, in the river order of the v3 file with the
-    riverId column v3 requires.
+    Write a channel state file, one Q per river in v2 params file order, in the river order of the v3 network file with
+    the riverId column v3 requires. With dt, the step v3 routes at (dt_routing when it is given, else the runoff step),
+    each river's Q is repeated for every sub-reach the default use_subreaches and use_subcycles split the river into at
+    dt, the rows of a v3 final state file, so that each sub-reach starts at the discharge of its river. Without dt the
+    file has one row per river, which v3 starts from only when no river is split into sub-reaches at its step.
     """
+    network = rr.Network(network_path)
     state = pd.read_parquet(state_path, columns=['Q'])
     if state.shape[0] != v2_river_ids.shape[0]:
         raise ValueError(f'{state_path} has {state.shape[0]} rows but the params file has {v2_river_ids.shape[0]}')
-    discharge = state['Q'].to_numpy()[positions_of(river_ids, v2_river_ids, state_path)]
-    pd.DataFrame({'riverId': river_ids, 'Q': discharge}).to_parquet(output_path, index=False)
+    discharge = state['Q'].to_numpy()[positions_of(network.river_ids, v2_river_ids, state_path)]
+    sub_reaches = network.conditioning(dt).sub_reaches if dt else np.ones(network.size, dtype=np.int64)
+    pd.DataFrame(
+        {'riverId': np.repeat(network.river_ids, sub_reaches), 'Q': np.repeat(discharge, sub_reaches)}
+    ).to_parquet(output_path, index=False)
+
+
+def is_unset(key: str, value: object) -> bool:
+    """Whether a v2 template leaves an option unset: an empty path or list of paths, or a dt_routing of 0."""
+    empty_list = isinstance(value, list) and not any(value)
+    return value is None or value == '' or empty_list or (key == 'dt_routing' and value == 0)
 
 
 def convert_config(config_path: str, output_path: str) -> None:
     """
     Write a v2 YAML or JSON config as a v3 JSON config. The forcing is the form of the forcing files the v2 config
-    routed, the keys of V2_TO_V3_KEYS are renamed, and the keys of V2_KEYS_V3_DOES_NOT_TAKE are dropped. Paths are
-    copied unchanged, so point them at the converted files.
+    routed, the keys of V2_TO_V3_KEYS are renamed, and the keys of V2_KEYS_V3_DOES_NOT_TAKE are dropped. So are the
+    options the v2 templates leave unset, such as an empty path or a dt_routing of 0, which v3 sets itself, and the
+    options the forcing does not read: CHANNEL_ONLY_KEYS when routing runoff, since v3 routes every step of each forcing
+    file and writes the discharge at the end of each, and GRID_ONLY_KEYS for catchment runoff. Paths are copied
+    unchanged, so point them at the converted files.
     Reading YAML needs pyyaml.
     """
     with open(config_path, encoding='utf-8') as f:
@@ -191,6 +213,14 @@ def convert_config(config_path: str, output_path: str) -> None:
             config[v3_key] = config.pop(v2_key)
     for key in V2_KEYS_V3_DOES_NOT_TAKE:
         config.pop(key, None)
+    unread = (CHANNEL_ONLY_KEYS if config['forcing'] != 'channel' else ()) + (
+        GRID_ONLY_KEYS if config['forcing'] == 'catchment' else ()
+    )
+    defaults = {field.name: field.default for field in fields(rr.Configs)}
+    dropped = [key for key in unread if config.pop(key, defaults[key]) not in (defaults[key], '')]
+    if dropped:
+        print(f'{config_path}: dropped {", ".join(dropped)}, which forcing {config["forcing"]} does not use')
+    config = {key: value for key, value in config.items() if not is_unset(key, value)}
     unknown = set(config) - {field.name for field in fields(rr.Configs) if field.init}
     if unknown:
         raise ValueError(f'{config_path} has keys that are not v3 configs: {sorted(unknown)}')
@@ -208,6 +238,11 @@ def main() -> None:
     parser.add_argument('--out-catchment-runoff-dir', help='directory to write the v3 catchment runoff files in')
     parser.add_argument('--channel-state', help='v2 channel state parquet')
     parser.add_argument('--out-channel-state', help='v3 channel state parquet to write')
+    parser.add_argument(
+        '--dt',
+        type=int,
+        help='seconds v3 routes at, dt_routing or else the runoff step, to write the state a row per sub-reach',
+    )
     parser.add_argument('--config', help='v2 YAML or JSON config')
     parser.add_argument('--out-config', help='v3 JSON config to write')
     args = parser.parse_args()
@@ -237,7 +272,7 @@ def main() -> None:
         output_path = Path(args.out_catchment_runoff_dir) / f'catchment_runoff_{Path(qlateral_path).stem}.nc'
         convert_qlateral(qlateral_path, river_ids, catchment_area, str(output_path))
     if args.channel_state:
-        convert_channel_state(args.channel_state, v2_river_ids, river_ids, args.out_channel_state)
+        convert_channel_state(args.channel_state, v2_river_ids, args.out_network, args.out_channel_state, args.dt)
 
 
 if __name__ == '__main__':

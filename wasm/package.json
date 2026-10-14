@@ -14,9 +14,11 @@
   },
   "files": [
     "routing.wasm",
-    "routing-relaxed.wasm"
+    "routing-relaxed.wasm",
+    "LICENSE.txt"
   ],
   "scripts": {
-    "prepack": "rr compile --wasm . --checks"
+    "prepack": "rr compile --wasm . --checks && cp ../LICENSE.txt LICENSE.txt",
+    "postpack": "rm LICENSE.txt"
   }
 }

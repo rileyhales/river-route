@@ -21,6 +21,9 @@ Required for all routing:
 | `riverIndex`    | integer   | Position of the river in depth first search order, one more than the row before |
 | `upstreamCount` | integer   | Number of rivers upstream of the river, not counting itself                     |
 
+`muskingumK` and `muskingumX` may be stored in any float type. A `Network` holds them in float64 whatever the file
+stores, and writes them in float64.
+
 Optional columns:
 
 | Column          | Data Type | Description                                                                    |
@@ -72,7 +75,7 @@ You need a time series of per-catchment runoff to be routed. It is given as `for
     runoff depths. You should be certain you can correctly calculate catchment volumes from runoff depth grids
     separately before using the calculations performed by `river-route`. Do not blindly trust this result!
 
-### Pre-aggregated Catchment Files (recommended)
+### Pre-aggregated Catchment Files
 
 ```json
 {
@@ -121,6 +124,12 @@ Runoff depths are given in a netCDF file with 3 dimensions: `time`, `y`, and `x`
 can be overridden with `var_t`, `var_y`, and `var_x`. The runoff depth variable name can be overridden
 with `var_runoff` (default `'ro'`).
 
+With `accumulation_type: cumulative`, each file's runoff is a running total, differenced into each step's runoff
+within that file: the first step of a file is its total at that step, never differenced against the last step of
+the file before it. This is the convention of forecast files, each accumulating from the start of its own forecast.
+Files that continue one accumulation, such as one forecast split into several files, are each routed as if their
+accumulation began at their first step.
+
 Weights need to be recomputed if the grid resolution, grid extent, or catchment boundaries change.
 The grid weights netCDF has the following variables, each with the one dimension `index`, a row per weight:
 
@@ -146,8 +155,7 @@ these names.
   "forcing_files": [
     "/path/to/ro_20260927_00z_cf.grib"
   ],
-  "grid_weights_file": "/path/to/gridweights_O1280.nc",
-  "accumulation_type": "cumulative"
+  "grid_weights_file": "/path/to/gridweights_O1280.nc"
 }
 ```
 
@@ -156,8 +164,9 @@ of the IFS. This forcing is specialized to that format; runoff in any other form
 `grid` forcing. Every message whose shortName is
 `var_runoff` (default `'ro'`) is read with eccodes as one time step, in the order of the files and of their
 messages, at its validity date and time. Choosing files whose grid, ensemble member, and steps suit the weight table
-and the routing is left to the caller. IFS forecast runoff accumulates from the start of the forecast, so it is
-routed with `accumulation_type` cumulative.
+and the routing is left to the caller. IFS forecast runoff accumulates from the start of the forecast, so this
+forcing is always cumulative, differenced within each file as gridded cumulative runoff is, and has no
+`accumulation_type` option.
 
 `river_route.forcings.ReducedGaussianGrid.from_grib` reads the grid of a file from its metadata: `N` and the number of
 cells on each row. Its `cell_polygons` are the area each cell represents, one polygon per cell of the

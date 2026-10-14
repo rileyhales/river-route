@@ -1,23 +1,34 @@
 # Mathematical Derivations
 
-Derivations of the Muskingum routing equation and alternative methods for the most efficient methods for solving the linear system.
+Derivations of the Muskingum routing equation, and the forms the routing kernels rewrite it into to solve it. Every form
+routes the same discharge. Each one needs fewer instructions per step, makes fewer of those instructions wait on the
+step before, or stores less.
 
-Note that the `river-route` implementation uses float32 precision for speed and efficiency since discharge and runoff measurements
-are not known to a level needing 64-bit precision during the computation.
+`river-route` computes in float32. Discharge and runoff are not known to more digits than a float32 holds, and a
+float32 takes half the memory of a float64 and fits twice as many values in a vector register.
 
 ---
 
 ## Summary
 
-Some key insights applying linear algebra and graph theory to river networks and the Muskingum equation are:
-
-1. River networks are directed acyclic graphs (DAGs).
-2. River segments can be topologically sorted so that upstream always comes before downstream.
-3. Topological ordering makes the adjacency matrix $A$ strictly lower triangular.
-4. River network adjacency matrices are extremely sparse with exactly one nonzero entry per column (except for outlets).
-5. The Muskingum equation LHS $\mathbf{I} - c_1 A$ is unit lower triangular. The identity contributes ones on the
-   diagonal; $c_1 A$ contributes entries only below.
-6. Unit lower triangular systems are best solved with forward substitution.
+1. River networks are directed acyclic graphs. Their rivers can be sorted so that every river comes after every river
+   upstream of it, and `river-route` requires the order of a depth first search, which also makes every river's
+   watershed one contiguous range of rows.
+2. Rivers are routed in that order, so every river is routed after the rivers draining into it and reads their
+   discharge rows. Routing each river's whole time series before the next river leaves every inflow known before a
+   river's first step. Each river is then one recurrence, $Q_{t+1} = c_3 Q_t + b_t$, whose terms $b_t$ are all known in
+   advance.
+3. Computing $b_t$ first and adding $c_3 Q_t$ last, in one fused multiply-add, leaves one instruction per step that
+   waits on the step before.
+4. A vector register holds four float32 lanes, and one instruction computes all four. The kernels put four consecutive
+   steps of one river in the lanes, so everything that does not wait on the step before is computed four steps at a
+   time.
+5. Applied eight times, the recurrence is $Q_{t+j} = c_3^{\,j} Q_t + S_j$, where the partial sums $S_j$ do not depend
+   on $Q$. One multiply-add per eight steps waits on the steps before, against eight one step at a time.
+6. Constants fold into the coefficients once per run, and a river's subcycles fold into one step, so neither costs
+   anything per step.
+7. Only the discharge and the runoff depth grow with the number of steps. Inflow, runoff volume, terms, and sub-reach
+   discharge are computed where they are used and never stored.
 
 ## River Network Ordering
 
@@ -260,227 +271,356 @@ Note that:
 - $c_1 + c_2 + c_3 = 1$
 - Every time step depends on the step before. The solution must be found sequentially rather than parallelized across time steps.
 
-The Muskingum Cunge equation adds the term $c_4$ to weight adding a lateral inflow term $Q_l$ to
-each segment. In the RAPID assumption, lateral flow is the runoff volume divided by the runoff
-time step, meaning all runoff enters the channel and exits the basin in the interval it is generated.
-No overland flow time or attenuation occurs.
+The Muskingum-Cunge equation adds a fourth term for the runoff of the river's own catchment. As RAPID does (David,
+2011), the runoff volume $V_t$ of the step from $t$ to $t + 1$ enters as a constant flow $V_t / \Delta t$ added to the
+inflow at both ends of the step, so $c_1$ and $c_2$ each multiply it. All runoff enters the channel in the step it is
+generated, with no overland flow time or attenuation.
 
 $$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, Q_{l,t} \tag{9}
+Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, V_t \tag{9}
 $$
 
-where $c_4 = c_1 + c_2$.
+where $c_4 = (c_1 + c_2) / \Delta t$, $I_t$ is the summed discharge of the rivers draining into the river, in m³/s, and
+$V_t$ is in m³.
 
-## Derivation of Matrix Muskingum
+Written as it stands, each step of each river sums the rows of its inflow rivers twice, once at $t$ and once at
+$t + 1$, sums its runoff over its weights, and computes four products and three sums. The sections that follow rewrite
+that work into the form the routing kernels solve.
 
-### Adjacency matrix
+## Every step of a river before the next river
 
-An adjacency matrix $A$ encodes the connectivity of the river network into a square matrix of size $n_\text{segments} \times n_\text{segments}$.
-The entry $A_{ij}$ is 1 if segment $j$ flows into segment $i$, and 0 otherwise. Because of the topological sorting, $A$ is strictly lower
-triangular (all zeros on the diagonal and above). In each row, the 1 indicates that the river in that column is directly upstream. Conversely,
-in each column, a 1 indicates that the river is directly downstream. Every column should have exactly 1 nonzero entry except for outlets which
-have no values. Rows with no values are headwater segments. $A^T$ is also common and has an inverse interpretation of rows and columns.
+Rivers are routed in the [depth first search order](#depth-first-search-dfs-order) of the network file, every river
+after every river upstream of it, with every river's watershed one contiguous range of rows ending at that river. That
+is what divides the rivers into blocks for threads (see [Parallelism](parallelism.md)) and what keeps few rows needed
+at once (see [Memory](#memory)).
 
-<div class="matrix-grid">
-<table>
-  <caption><em>Table 1: Adjacency matrix for the river network in Figure 1. Entry A<sub>ij</sub> = 1 indicates segment j flows into segment i.</em></caption>
-  <tr><th></th><th>R1</th><th>R2</th><th>R3</th><th>R4</th><th>R5</th><th>R6</th><th>R7</th><th>R8</th><th>R9</th></tr>
-  <tr><th>R1</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R2</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R3</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R4</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R5</th><td>1</td><td>1</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R6</th><td></td><td></td><td>1</td><td>1</td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R7</th><td></td><td></td><td></td><td></td><td>1</td><td>1</td><td></td><td></td><td></td></tr>
-  <tr><th>R8</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><th>R9</th><td></td><td></td><td></td><td></td><td></td><td></td><td>1</td><td>1</td><td></td></tr>
-</table>
-</div>
-
-When you matrix-multiply $A$ (shape $(n_\text{segments}, n_\text{segments})$) by a column vector of discharges $Q_t$ (shape $(n_\text{segments}, 1)$),
-the result is a column vector of inflows $I_t$ with shape $(n_\text{segments}, 1)$. The zero entries of $A$ drop the rows of $Q_t$ that are not directly
-upstream. The upstream segments are summed for the total inflow.
-
-$$
-I_t = A\, Q_t
-$$
-
-Because the rivers are listed in a topological order, $A$ is strictly lower triangular and the diagonal is zero. $A$ is extremely sparse so computationally
-it's more efficient to store it in a sparse format and do math only on the non-zero elements.
-
-### Matrix Muskingum
-
-Using the adjacency matrix and the definition that $I_t$ is the sum of upstream discharges, we can replace all $I$ with $A\, Q$.
-
-Muskingum equation:
-
-$$
-Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t
-$$
-
-Substitute all $I$ terms with $A\, Q$:
-
-$$
-Q_{t+1} = c_1\, \bigl(A\, Q_{t+1}\bigr) + c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
-$$
-
-Move all $Q_{t+1}$ terms to the left-hand side:
-
-$$
-Q_{t+1} - c_1\, \bigl(A\, Q_{t+1}\bigr) = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
-$$
-
-Factor out $Q_{t+1}$ by right side matrix multiplication:
-
-$$
-\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t
-$$
-
-With the lateral inflow term of Muskingum Cunge:
-
-$$
-\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{t+1} = c_2\, \bigl(A\, Q_t\bigr) + c_3\, Q_t + c_4\, Q_{l,t}
-$$
-
-Notes:
-
-- The LHS is the same for every time step (only depends on $A$ and $c_1$).
-- The RHS changes every sequential time step because it depends on the previous discharge.
-- $c_2$ and $c_3$ can be expressed as 1D vectors of length $n_\text{segments}$ for vector multiplication.
-- $c_1$ is an $NxN$ diagonal matrix so it can be subtracted from $I$ after multiplication with A.
-
-## Unit Hydrograph Lateral Inflow (Planned)
-
-### Derivation
-
-The planned unit-hydrograph routing procedure would combine Muskingum channel routing with unit hydrograph lateral inflow. The unit hydrograph shape is developed
-in a way that accounts for all the attenuation and travel time during the overland flow process. Thus, we cannot directly
-add it to the equation using the $c_4$ term as in the Muskingum Cunge equation because additional attenuation and travel time
-will be applied. Instead, a unique method for solving uses the superposition principle where the unit hydrograph convolution
-discharge is superimposed on the routed discharge so the signal of the runoff transformation is preserved. In this form,
-$Q_l$ represents the discharge generated from a unit hydrograph convolution during the current timestep, $t$.
-
-Establish the relationship between total, routed, and lateral flow.
-
-$$
-Q_{\text{total},t+1} = Q_{\text{channel},t+1} + Q_{\text{lateral},t+1}
-$$
-
-$$
-I_{\text{total},t+1} = I_{\text{channel},t+1} + I_{\text{lateral},t+1}
-$$
-
-Annotate the Matrix Muskingum equation with a subscript "ch" or "total".
-
-$$
-Q_{\text{channel},t+1} = c_1\, I_{\text{total},t+1} + c_2\, I_{\text{total},t} + c_3\, Q_{\text{channel},t}
-$$
-
-Substitute the relationship $I_t = A\, Q_t$
-
-$$
-Q_{\text{channel},t+1} = c_1\, \bigl(A\, Q_{\text{channel},t+1} + A\, Q_{\text{lateral},t+1}\bigr) + c_2\, \bigl(A\, Q_{\text{total},t}\bigr) + c_3\, Q_{\text{channel},t}
-$$
-
-Move all $Q_{\text{channel},t+1}$ terms to the left-hand side:
-
-$$
-Q_{\text{channel},t+1} - c_1\, \bigl(A\, Q_{\text{channel},t+1}\bigr) = c_1\, \bigl(A\, Q_{\text{lateral},t+1}\bigr) + c_2\, \bigl(A\, Q_{\text{total},t}\bigr) + c_3\, Q_{\text{channel},t}
-$$
-
-Factor out $Q_{\text{channel},t+1}$ by right side matrix multiplication:
-
-$$
-\bigl(\mathbf{I} - c_1\, A\bigr)\; Q_{\text{channel},t+1} = c_1\, \bigl(A\, Q_{\text{lateral},t+1}\bigr) + c_2\, \bigl(A\, Q_{\text{total},t}\bigr) + c_3\, Q_{\text{channel},t}
-$$
-
-Calculate the superposition of the channel and lateral flow:
-
-$$
-Q_{\text{total},t+1} = Q_{\text{channel},t+1} + Q_{\text{lateral},t+1}
-$$
-
-### Reduced Inner System
-
-The headwater segments have no upstream dependencies and their discharge would be the unit hydrograph convolution output. In the planned 
-procedure they could be excluded from the matrix solve and their outflow would enter the system as a known right-hand-side contribution 
-during the superposition step.
-
-### Kernel Structure
-
-A unit hydrograph kernel has shape $(n_\text{steps},\; n_\text{basins})$. It is a 2D array of each basin's unit hydrograph, discretized 
-to the routing time step, and concatenated into 1 array.
-
-- Each column is the discretized unit hydrograph for one basin assuming a unit runoff depth ($R = 1\,\text{m}$).
-- Each row value is the average flow ($\text{m}^2/\text{s}$) over the corresponding time step.
-- Volume conservation requires: $\displaystyle\sum_{i} K_{i,j} \cdot \Delta t = A_j$ where $A_j$ is the basin area ($\text{m}^2$).
-
-### Unit Hydrograph Convolution
-
-Given a timeseries of runoff depths $r_t$ (meters per time step), the lateral inflow at time $t$ is found by convolving the runoff with the kernel:
-
-$$
-Q_{l,t} = \sum_{\tau=0}^{n_\text{steps}-1} K_\tau \cdot r_{t-\tau}
-$$
-
-The planned implementation would compute this as a fourier transform over the full timeseries using `scipy.signal.fftconvolve`.
-That convolution helper is not part of the current release and is not wired into routing.
-
-## Forward Substitution Algorithm
-
-Because of the careful preparation of the routing matrices, the linear system can be solved for directly by forward substitution, 
-one river at a time from upstream to downstream, without iterative methods, preconditioning, or factorization. This is a significant simplification and efficiency gain in terms of the 
-complexity of the algorithm as well as how efficiently it can be implemented and compiled in code.
-
-For a unit lower triangular system $L\, x = b$ of size $n$:
-
-$$
-x_i = b_i - \sum_{j < i} L_{ij}\, x_j \qquad \text{for } i = 1, 2, \ldots, n
-$$
-
-Because $L_{ii} = 1$, no division is needed. Each unknown $x_i$ depends only on previously
-solved values $x_1, \ldots, x_{i-1}$, so the system is solved sequentially from the first
-row to the last. `river-route` does not store the matrix $L$ at all, and it does not solve it one time step at a
-time. Once every river upstream of a river is routed, the whole right-hand side of that river is known at every step,
-so v3 solves the system one river at a time: each river's whole time series is routed before the next river, in
-topological order, each river reading the discharge of the rivers draining directly into it.
-
-```
-for j = 1, 2, ..., n:
-    x[j] = b[j]                          # diagonal is 1, so x[j] = b[j] directly
-    for each row i where L[i,j] != 0:    # only the nonzero entries below the diagonal
-        b[i] -= L[i,j] * x[j]            # subtract the now-known contribution
-```
-
-*Listing 1: Conceptual column-oriented forward substitution pseudocode for a generic unit lower triangular system (not river-route's storage layout).*
-
-In the routing kernels (`routing.c` in `river_route/kernels/c`, and its numba twin `numba_kernel.py`) there is no
-matrix. Every river's discharge is a row: its value at the start, then at the end of each step. Rivers are routed in
-topological order, so when a river is reached the rows of the rivers draining directly into it, its inflow rivers, are
-complete, and its inflow at every step is their sum. Its whole series is then the recurrence
-$Q_{t+1} = c_1\, I_{t+1} + c_2\, I_t + c_3\, Q_t + c_4\, V_t$ with every $I$ known, written into its own row, which the
-river downstream reads in turn:
+The kernels keep each river's inflow rivers in one list, `inflow_rivers`, with each river's first entry in it in
+`inflow_river_starts`, and route the rivers of a job in routing order, each river's whole time series before the next
+river:
 
 ```python
-for i in range(n_rivers):                        # topological order: upstream before downstream
-    discharge[i, 0] = q[i]
-    for t in range(n_steps):
-        inflow_after = sum(discharge[j, t + 1] for j in inflow_rivers[i])   # the rivers draining into i
-        inflow_before = sum(discharge[j, t] for j in inflow_rivers[i])
-        q[i] = c1[i] * inflow_after + c2[i] * inflow_before + c3[i] * q[i] + c4[i] * runoff_volume[i, t]
-        discharge[i, t + 1] = q[i]
+for river in range(n_rivers):   # routing order
+    for t in range(n_steps):    # every step of the river before the next river
+        discharge[river, t + 1] = ...   # Equation 9, its inflow summed from the rows of its inflow rivers
 ```
 
-*Listing 2: River-at-a-time forward substitution, each river reading the rows of its inflow rivers, the order in which
-the routing kernels route. They solve the recurrence eight steps at a time, as two vectors of four steps.*
+When a river is reached, the rows of its inflow rivers are complete. Its inflow is known at every step before its first
+step is routed, and so is its runoff. Everything in Equation 9 except $c_3 Q_t$ is known in advance:
 
-- **Time:** $O((n + m)\, T)$ where $n$ is the number of river segments, $m$ is the number of edges
-  (upstream-downstream connections), and $T$ is the number of routing steps. For tree-structured river networks,
-  $m = n - 1$.
-- **Space:** No matrix is stored, and nothing beyond the discharge that is written: each river reads its inflow from
-  the rows of the rivers upstream of it, which were written just before it.
+$$
+Q_{t+1} = c_3\, Q_t + b_t, \qquad b_t = c_1\, I_{t+1} + c_2\, I_t + c_4\, V_t \tag{10}
+$$
 
-This is optimal — every edge is visited exactly once per routing step.
+Each river is now one first order recurrence with known terms $b_t$, routed one river at a time. The kernels call
+$b_t$ the river's *terms*.
+
+A river reads each row from start to end, and the rows it reads were written by the rivers routed shortly before it,
+so they are still in the processor's cache.
+
+## Adding c3 Q last
+
+A fused multiply-add computes $a \cdot b + c$ as one instruction, rounded once. Equation 10 in fused multiply-adds is
+
+$$
+b_t = \operatorname{fma}\bigl(c_1, I_{t+1}, \operatorname{fma}(c_2, I_t, c_4 V_t)\bigr), \qquad
+Q_{t+1} = \operatorname{fma}(c_3, Q_t, b_t)
+$$
+
+Seven floating point operations, four products and three sums, become four instructions: one multiply and three
+multiply-adds. Only the last of the four reads $Q_t$. The first three of the next step do not depend on this step, so
+the processor computes them while the last multiply-add of this step is still running. One multiply-add per step waits
+on the step before.
+
+The order matters even though the algebra does not. The same equation written with $Q_t$ innermost,
+$\operatorname{fma}(c_1, I_{t+1}, \operatorname{fma}(c_2, I_t, \operatorname{fma}(c_3, Q_t, c_4 V_t)))$, makes three
+multiply-adds wait one after another at every step. A compiler keeps the written order, since reordering
+floating point sums changes their rounding. In a Rust version of the kernel routing one step at a time, $Q_t$
+innermost took 4.4 s and $c_3 Q_t$ added last 1.5 s. Every time on this page was measured while the kernels were
+designed, on one thread of an Apple M3 Max routing the Columbia region's 58,358 rivers through a year of hourly ERA5
+runoff (1940).
+
+A multiply-add takes about four cycles before its result can be used. Routing one step at a time therefore takes at
+least four cycles per step of every sub-reach, however few other instructions it has.
+
+The inflow at $t$ of one step is the inflow at $t + 1$ of the step before. Keeping it, each step reads the rows of the
+inflow rivers once instead of twice.
+
+## SIMD: four lanes in one register
+
+A processor's vector registers hold several values at once, and one instruction does the same operation on each of
+them: single instruction, multiple data, or SIMD. Each value's place in the register is a *lane*. The registers every
+target of `routing.c` has are 128 bits wide: SSE on x86 processors, NEON on ARM processors, and SIMD128 in
+WebAssembly. A float32 is 32 bits, so one register holds four float32 lanes, and one vector multiply-add does four
+multiply-adds in the time of one. Wider registers, such as the 256 bits of AVX on many x86 processors, would hold eight
+lanes, but WebAssembly has only 128 bit vectors and the same C file is compiled for both, so the kernels use four.
+
+### What a lane holds
+
+The four lanes hold four consecutive steps of one sub-reach, not four rivers. A river's discharge row and a cell's
+runoff depths are stored one step after another, so one load reads four consecutive steps of a row into the four lanes
+of a register. Four rivers would need four reads from four rows for every vector, and one river may drain into another.
+
+The lanes of one sub-reach do depend on one another, through $Q_t$: lane 1 needs the result of lane 0. Everything that
+does not depend on $Q_t$ (the inflow, the runoff, the terms $b_t$, and the partial sums of
+[Eight steps at a time](#eight-steps-at-a-time)) is computed in all four lanes at once. Only the multiply-add that
+carries $Q_t$ from one group of steps to the next waits.
+
+### How routing.c writes it
+
+`routing.c` declares a vector of four floats with the vector type of GCC and clang,
+
+```c
+typedef float four_lanes __attribute__((vector_size(16)));
+```
+
+on which `+`, `-`, `*`, and `/` work lane by lane. clang compiles it to the vector instructions of each target, so no
+processor's instructions are named in the C. A handful of functions, named the same in the numba kernel's `_simd.py`,
+do everything the kernels need with lanes:
+
+```text
+broadcast(c)                      ( c,         c,         c,         c        )
+load_four(row + t)                ( row[t],    row[t+1],  row[t+2],  row[t+3] )
+store_four(row + t, q)            row[t] to row[t+3] = q0, q1, q2, q3
+multiply_add(a, b, c)             ( a0 b0+c0,  a1 b1+c1,  a2 b2+c2,  a3 b3+c3 )
+shift_in_one_lane(before, x)      ( before3,   x0,        x1,        x2       )
+shift_in_two_lanes(before, x)     ( before2,   before3,   x0,        x1       )
+last_lane_in_every_lane(x)        ( x3,        x3,        x3,        x3       )
+```
+
+- `broadcast` puts a coefficient in every lane, once per sub-reach, so it multiplies four steps at once.
+- `load_four` and `store_four` read and write four steps from any step of a row. They do not require a row to start on
+  a 16 byte boundary, so a group of steps can start at any step.
+- `multiply_add` is fused where the target has a fused multiply-add: every 64 bit ARM processor, x86 processors with
+  FMA3 (the native build compiles for the processor it is built on), and WebAssembly with relaxed SIMD. Plain SIMD128
+  has none, so there it is a multiply and an add; that build routed 40 to 60% slower than the relaxed SIMD build.
+- `shift_in_one_lane` and `shift_in_two_lanes` move each lane up one or two lanes and fill the first lanes from the
+  last lanes of another vector. They give the inflow one step earlier without reading the row again, and they line up
+  the lanes that the partial sums add together.
+- `last_lane_in_every_lane` hands the result of the last of four steps to every lane of the next four.
+
+A real vector type is required. The first C kernel kept its lanes in a `struct { float lane[4]; }`, which clang kept as
+four separate floats wherever the struct was carried from one loop iteration to the next, and it took 0.58 s against
+0.39 s with the vector type. numba has no vector type and turns off the LLVM optimization that would combine four
+floats into one register, so its lanes as tuples took 4.3 s. `_simd.py` builds the same operations from LLVM vector
+instructions through llvmlite (`multiply_add` is LLVM's `llvm.fma.v4f32`), and the numba kernel took 0.37 s, within 9%
+of the C.
+
+## Terms four steps at a time
+
+Because $b_t$ does not depend on $Q$, the terms of four consecutive steps are computed in the four lanes of one
+register. Writing an arrow over a symbol for its four consecutive steps,
+$\vec{I}_\text{after} = (I_{t+1}, I_{t+2}, I_{t+3}, I_{t+4})$,
+$\vec{I}_\text{before} = (I_t, I_{t+1}, I_{t+2}, I_{t+3})$, and $\vec{V} = (V_t, V_{t+1}, V_{t+2}, V_{t+3})$,
+
+$$
+\vec{b} = c_1\, \vec{I}_\text{after} + c_2\, \vec{I}_\text{before} + c_4\, \vec{V}
+$$
+
+- $\vec{I}_\text{after}$ is one `load_four` from the row of each inflow river, added together.
+- $\vec{I}_\text{before}$ is $\vec{I}_\text{after}$ moved up one lane, with the last inflow of the four steps before in
+  the first lane (`shift_in_one_lane`). No row is read twice.
+- $\vec{V}$ is, for each weight, one `load_four` of the weight's cell and one `multiply_add` with the weight in
+  every lane.
+- $\vec{b}$ is then one multiply and two multiply-adds for four steps.
+
+The recurrence itself still waits: four multiply-adds, one after another, carry $Q$ through the four steps. Routing
+stays bound by the four cycles each of them waits.
+
+## Eight steps at a time
+
+Applying Equation 10 $j$ times from step $t$ gives
+
+$$
+Q_{t+j} = c_3^{\,j}\, Q_t + S_j, \qquad S_j = \sum_{i=0}^{j-1} c_3^{\,j-1-i}\, b_{t+i} \tag{11}
+$$
+
+which holds for $j = 1$ and carries from $j$ to $j + 1$, since
+$Q_{t+j+1} = c_3 Q_{t+j} + b_{t+j} = c_3^{\,j+1} Q_t + (c_3 S_j + b_{t+j})$. The partial sums $S_j$ follow the same
+recurrence from $S_0 = 0$, $S_{j+1} = c_3 S_j + b_{t+j}$, and hold only terms. They do not depend on $Q_t$, so they are
+computed before $Q_t$ is known, in lanes.
+
+### Partial sums in lanes
+
+Writing $b_i$ for $b_{t+i}$, the partial sums of four lanes take two shifted multiply-adds (`scan_four_steps`):
+
+$$
+\begin{aligned}
+\vec{s} &= \vec{b} + c_3\,(0,\ b_0,\ b_1,\ b_2) = (b_0,\ b_1 + c_3 b_0,\ b_2 + c_3 b_1,\ b_3 + c_3 b_2) \\
+\vec{S} &= \vec{s} + c_3^2\,(0,\ 0,\ s_0,\ s_1)
+= (b_0,\ b_1 + c_3 b_0,\ b_2 + c_3 b_1 + c_3^2 b_0,\ b_3 + c_3 b_2 + c_3^2 b_1 + c_3^3 b_0)
+\end{aligned}
+$$
+
+so lane $j$ holds $S_{j+1}$. Each lane adds $c_3$ times the lane before it, then $c_3^2$ times the sum two lanes before
+it: four lanes take $\log_2 4 = 2$ shifted multiply-adds (Hillis and Steele, 1986). The second four steps take their
+own partial sums the same way, then add $S_4$ carried through them, $S_{4+j} = c_3^{\,j} S_4 + {}$ the $j$-th partial
+sum of $b_4$ to $b_7$: one multiply-add of $(c_3, c_3^2, c_3^3, c_3^4)$ by $S_4$ in every lane.
+
+### The discharge of eight steps
+
+With the partial sums known, Equation 11 gives all eight discharges from $Q_t$ in two multiply-adds:
+
+$$
+\begin{aligned}
+(Q_{t+1},\ Q_{t+2},\ Q_{t+3},\ Q_{t+4}) &= (c_3,\ c_3^2,\ c_3^3,\ c_3^4)\; Q_t + (S_1,\ S_2,\ S_3,\ S_4) \\
+(Q_{t+5},\ Q_{t+6},\ Q_{t+7},\ Q_{t+8}) &= (c_3^5,\ c_3^6,\ c_3^7,\ c_3^8)\; Q_t + (S_5,\ S_6,\ S_7,\ S_8)
+\end{aligned}
+$$
+
+with $Q_t$ in every lane. The last lane, $Q_{t+8}$, goes into every lane for the next eight steps. The powers of $c_3$
+are computed once per sub-reach.
+
+Only these two multiply-adds read $Q_t$, and the next eight steps need only the second. One multiply-add and one
+shuffle per eight steps wait on the steps before, against eight multiply-adds one step at a time. The loads, terms, and
+partial sums of the next eight steps do not depend on $Q$, so the processor computes them while that multiply-add runs.
+Routing one step at a time took 1.40 s, and eight steps at a time 0.34 s, 4.1 times faster. Any steps left after the
+last whole eight are routed one step at a time by Equation 10.
+
+The eight-step form adds the same products in a different order, so its discharge differs from one step at a time only
+by float32 rounding. With non-negative coefficients (see [Signs of the coefficients](#signs-of-the-coefficients)),
+every power of $c_3$ is from 0 to 1, and with non-negative inflow and runoff every product is non-negative, so no sum
+loses digits to cancellation.
+
+## Operation counts
+
+Counted from the source for one sub-reach over eight steps, with $N_u$ inflow rivers and $N_w$ weights. A vector
+instruction counts as one. Reading the index of each inflow river and the cell and weight of each weight is left out;
+it favors one step at a time, which reads them at every step rather than once per eight steps.
+
+| Work, per sub-reach and eight steps | As written (Equation 9) | Equation 10, $c_3 Q$ last | Eight steps at a time |
+|-------------------------------------|-------------------------|--------------------------|-----------------------|
+| Read inflow                         | $16N_u$ loads, $16N_u$ adds | $8N_u$ loads, $8N_u$ adds | $2N_u$ loads, $2N_u$ adds |
+| Read runoff                         | $8N_w$ loads, $8N_w$ multiplies, $8N_w$ adds | $8N_w$ loads, $8N_w$ multiply-adds | $2N_w$ loads, $2N_w$ multiply-adds |
+| Terms and recurrence                | 32 multiplies, 24 adds  | 8 multiplies, 24 multiply-adds | 2 multiplies, 11 multiply-adds, 8 shuffles |
+| Write discharge                     | 8 stores                | 8 stores                 | 2 stores              |
+| Total, $N_u = N_w = 2$              | 176                     | 104                      | 39                    |
+| Wait on the step before             | 24 (a multiply and two adds per step) | 8 multiply-adds | 1 multiply-add, 1 shuffle |
+
+The eight-step column is two multiplies and four multiply-adds for the terms of two vectors, four multiply-adds for
+their partial sums, one to carry $S_4$ into the second four, and two for the discharge, with two shuffles for the
+inflow before each step, four in the partial sums, and two to put one lane in every lane.
+
+The measured gain is larger than the 2.7 times fewer instructions from one step at a time to eight, because one step
+at a time is bound by waiting, not by instructions. A current processor starts several instructions every cycle, so
+its 104 instructions take fewer cycles than its eight multiply-adds that wait one after another, about 32 cycles.
+Eight steps at a time waits about 6 cycles per eight steps and is bound by its 39 instructions instead.
+
+## Folding constants into the coefficients
+
+Any product of values that are the same at every step is computed once per run instead of once per step.
+
+- **The runoff coefficient.** A sub-reach taking a share $w$ of its river's runoff has $c_4 = (c_1 + c_2)\, w / \Delta t$:
+  the weight of the runoff in the Muskingum step, the river's share, and the conversion from a volume to a flow in one
+  coefficient, one multiply per step instead of three.
+- **Runoff weights.** A weight is the volume a meter of runoff depth in its cell gives the river, in m³, which is the
+  area of the river's catchment inside the cell. The runoff volume is $V_t = \sum_c w_c\, d_{c,t}$, one multiply-add
+  per weight per step, with no area or unit conversion left to do. Runoff already aggregated to catchments is a grid
+  with one cell per river, and channel routing is a network with no weights.
+
+## Folding subcycles into one step
+
+A river too short for the runoff step is routed in $s$ subcycles of its own within each step (see
+[Signs of the coefficients](#signs-of-the-coefficients)), with its inflow rising linearly from $I_t$ to $I_{t+1}$
+across them and its runoff spread evenly over them. Subcycle $j$ of $s$ ends at the fraction $j / s$ of the step, where
+the inflow is $I(j/s) = (1 - j/s)\, I_t + (j/s)\, I_{t+1}$:
+
+$$
+Q_j = c_3\, Q_{j-1} + c_1\, I(j/s) + c_2\, I\bigl((j-1)/s\bigr) + c_4\, V_t
+$$
+
+This is Equation 10 with $s$ steps, so Equation 11 gives $Q_s$ from $Q_0 = Q_t$. Collecting the products of $I_t$,
+$I_{t+1}$, and $V_t$ gives one step of the whole runoff step:
+
+$$
+\begin{gathered}
+Q_{t+1} = c_1'\, I_{t+1} + c_2'\, I_t + c_3'\, Q_t + c_4'\, V_t, \qquad c_3' = c_3^{\,s}, \\
+c_1' = \sum_{j=1}^{s} c_3^{\,s-j}\, \frac{c_1\, j + c_2\, (j - 1)}{s}, \qquad
+c_2' = \sum_{j=1}^{s} c_3^{\,s-j}\, \frac{c_1\, (s - j) + c_2\, (s - j + 1)}{s}, \qquad
+c_4' = c_4 \sum_{j=1}^{s} c_3^{\,s-j} = c_4\, \frac{1 - c_3^{\,s}}{1 - c_3}
+\end{gathered} \tag{12}
+$$
+
+The folded coefficients keep every property of a subcycle's:
+
+- $c_1' + c_2' = (c_1 + c_2) \sum_j c_3^{\,s-j} = (1 - c_3)\, \frac{1 - c_3^{\,s}}{1 - c_3} = 1 - c_3'$, so they sum
+  to one.
+- $c_4' = (c_1' + c_2')\, w / \Delta t$, the same relation as before folding.
+- None is negative where none of the subcycle's is.
+
+`static_muskingum._combine_subcycles` computes them once per run in float64. The kernels never see subcycles: a river
+of $s$ subcycles costs one step, not $s$, and Equation 11 applies to it unchanged. At an hourly runoff step with
+`dt_routing: auto`, 830 of the Columbia region's 58,358 rivers take subcycles, one of them 210. Folded, the region
+routes 84,007 sub-reach steps each hour instead of 89,855. In the Amazon region, 6,295 rivers take up to 141
+subcycles, and folding routes 448,165 sub-reach steps each hour instead of 468,491.
+
+## Sub-reaches in series
+
+A river too long for its step is split into $N$ sub-reaches in series, and those do not fold. Eliminating the first
+sub-reach's discharge from the second's recurrence leaves a recurrence that reaches back two steps; $N$ sub-reaches make
+one that reaches back $N$ steps, with coefficients built from sums and products of theirs, and Equation 11 no longer
+applies. A river of $N$ sub-reaches costs $N$ recurrences, so the kernels route its sub-reaches one after another, each
+over every step. The Columbia region's 84,007 sub-reaches at an hourly step are 1.44 per river.
+
+They are routed in place in the river's own discharge row. The first sub-reach reads the rows of the river's inflow
+rivers and writes the river's row. Each later sub-reach reads the row, the discharge the sub-reach before it left, and
+writes its own over it. That works because each group of eight steps loads its inflow at all eight steps before it
+stores anything, and the inflow before its first step comes from the last lane of the group before, carried in a
+register, since the row already holds the sub-reach's own discharge there. A river needs one row however many
+sub-reaches it has, and `channel_state` holds each sub-reach's discharge at the end of the steps routed. Chaining the
+sub-reaches in registers instead, each eight steps through every sub-reach in turn, took 0.52 s against 0.34 s, since
+each eight steps then waited on the whole chain.
+
+## Memory
+
+### What is stored
+
+Only two arrays grow with the number of steps $T$:
+
+- the discharge, a row of $T + 1$ float32 values for every river: the output;
+- the runoff depth, $T$ float32 values for every cell that a weight reads: the input.
+
+Routing the Amazon region's 302,199 rivers through a year of hourly steps writes 10.6 GB of discharge. Everything else
+is sized by rivers, sub-reaches, or weights: the inflow river lists, four coefficients and one `channel_state` value
+per sub-reach, and a cell and a weight per weight.
+
+### What is never stored
+
+Each form above computes a quantity where it is used instead of storing it:
+
+| Quantity                       | Stored, it would take | What the kernels keep instead                       |
+|--------------------------------|-----------------------|-----------------------------------------------------|
+| Inflow $I$                     | $n \times T$          | the inflow rivers' rows, read eight steps at a time |
+| Runoff volume $V$              | $n \times T$          | weights times cell depths, eight steps at a time    |
+| Terms $b$ and partial sums $S$ | $n \times T$          | two vectors of four lanes                           |
+| Sub-reach discharge            | sub-reaches × $T$     | the river's own row, written over in place          |
+
+Computing them in place also costs less time. Summing the inflow into a row of its own before routing took 11% longer
+than reading the inflow rows in the eight-step loop. Aggregating the runoff to each river first made the kernel 12%
+faster, 0.30 s against 0.34 s, but the aggregating took 0.55 s.
+
+### Options that store less
+
+**Route fewer steps at once.** `channel_state` carries everything a river needs from one set of steps to the next, so
+the discharge needs rows only as long as the steps being routed: $n \times (W + 1)$ values for $W$ steps. The Router
+already routes each runoff file as its own set of steps, into the memory of the file before. Shorter sets bound the
+memory further at a cost per river for each set: routing every river over windows of 64 steps before the next window
+took about twice as long as routing every step at once.
+
+**Release each row once it has been read.** In routing order, a river's row is read only by the river it drains into,
+and only when that river is routed. A river can write its own discharge over the row of one of its inflow rivers, the
+way a sub-reach writes over the row it reads. The rows that must be held at once are only those written and not yet
+read. In the depth first order of their network files, the Columbia region's 58,358 rivers never need more than 19 rows
+at once, and the Amazon region's 302,199 rivers never more than 18. For the Amazon region's year of hourly steps, that
+is 631 KB instead of 10.6 GB. Routing first the inflow river whose watershed needs the most rows lowers it to the least
+any order can reach (Sethi and Ullman, 1970), which for confluences of two rivers is the network's Strahler order
+(Ershov, 1958; Flajolet et al., 1979). These networks' Strahler orders are 8 and 9; their least are 17 and 16, set by confluences of 17 and 16
+rivers. The kernels write every river's row because the rows are the output. Releasing rows pays when only some
+rivers' discharge is kept, such as outlets or gauges, or when each row is written to the output file as soon as it is
+complete.
+
+**Keep only the rivers that are needed.** Rivers that contribute nothing to the results do not have to be in the
+network, and with released rows, rivers that contribute but are not reported cost no memory beyond the rows held at
+once.
 
 ## Signs of the coefficients
 
@@ -556,6 +696,11 @@ $k^2(1-2x)$. Every sub-reach keeps the river's diffusion, and its window, $|\Del
 wide as that of the river's equal sub-reaches. [The sub-reaches a river needs](algorithm.md#the-sub-reaches-a-river-needs)
 gives how the fewest are found.
 
+The sub-reaches keep the travel time variance of the river's parameters, which is not quite that of its routed
+discharge. They hand discharge to one another only at the ends of runoff steps, and each one routed in subcycles
+interpolates its inflow linearly within the step. That spreads a flood wave further than its $k$ and $x$ do, by an
+amount set by the step rather than the river, and a river is spread more the more of its sub-reaches take subcycles.
+
 ### When dt >>> k
 
 A river too short for the step, $\Delta t > 2k(1-x)$, has $c_3 < 0$: its discharge alternates from step to step,
@@ -563,8 +708,10 @@ amplifies its own runoff by up to $\Delta t / (2k(1-x))$ at the period of two st
 runoff. Many delineated networks place confluences within a few pixels of each other, making short rivers between
 them, and lake outlets are often short too. Such a river is real, and `river-route` routes it in
 **_"subcycles"_**, $m = \lceil \Delta t / (2k(1-x)) \rceil$ steps of its own within each runoff step, with its upstream
-inflow interpolated linearly. This changes nothing about the river. With static coefficients the $m$ subcycles of a river
-of one reach are combined into one step of coefficients that give the same discharge, so they cost one step.
+inflow interpolated linearly. This keeps the river's $k$ and $x$, though interpolating its inflow within the step
+spreads a flood wave somewhat further than they do, by an amount set by the step. With static coefficients the $m$
+subcycles of a river of one reach are combined into one step of coefficients that give the same discharge, so they cost
+one step (see [Folding subcycles into one step](#folding-subcycles-into-one-step)).
 
 The alternatives change the river. Raising $k$ to $\Delta t / (2(1-x))$ adds travel time. Deleting the river and
 joining the rivers upstream of it to the river downstream of it removes its travel time, its storage, and its
@@ -582,13 +729,25 @@ window, which sub-reaches or subcycles treat.
 
 ## References
 
-- HEC-HMS Users Manual introduction to Muskingum Model
+- Blelloch, G. E. (1990). *Prefix Sums and Their Applications*. Technical Report CMU-CS-90-190, Carnegie Mellon
+  University.
+- Cunge, J. A. (1969). On the subject of a flood propagation computation method (Muskingum method). *Journal of
+  Hydraulic Research*, 7(2), 205–230. [doi:10.1080/00221686909500264](https://doi.org/10.1080/00221686909500264)
+- David, C. H. (2011). River Network Routing on the NHDPlus Dataset. *Journal of Hydrometeorology*.
+  [doi:10.1175/2011JHM1345.1](https://doi.org/10.1175/2011JHM1345.1)
+- Ershov, A. P. (1958). On programming of arithmetic operations. *Communications of the ACM*, 1(8), 3–6.
+  [doi:10.1145/368892.368907](https://doi.org/10.1145/368892.368907)
+- Flajolet, P., Raoult, J.-C., and Vuillemin, J. (1979). The number of registers required for evaluating arithmetic
+  expressions. *Theoretical Computer Science*, 9(1), 99–125.
+  [doi:10.1016/0304-3975(79)90009-4](https://doi.org/10.1016/0304-3975(79)90009-4)
+- HEC-HMS Users Manual introduction to the Muskingum Model
   <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-model>
-- HEC-HMS Users Manual introduction to Muskingum Cunge Model
+- HEC-HMS Users Manual introduction to the Muskingum Cunge Model
   <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/channel-flow/muskingum-cunge-model>
-- HEC-HMS Users Manual introduction to Unit Hydrographs
-  <https://www.hec.usace.army.mil/confluence/hmsdocs/hmstrm/transform/unit-hydrograph-basic-concepts>
-- David, C. H. (2011) River Network Routing on the NHDPlus Dataset *Journal of Hydrometeorology* [doi:10.1175/2011JHM1345.1](https://doi.org/10.1175/2011JHM1345.1)
-- NRCS (2010). *National Engineering Handbook*, Part 630: Hydrology, Chapter 16: Hydrographs. United States Department of Agriculture.
-- Wikipedia: [Triangular matrix — Forward substitution](https://en.wikipedia.org/wiki/Triangular_matrix#Forward_substitution).
+- Hillis, W. D., and Steele, G. L. (1986). Data parallel algorithms. *Communications of the ACM*, 29(12), 1170–1183.
+  [doi:10.1145/7902.7903](https://doi.org/10.1145/7902.7903)
+- Sethi, R., and Ullman, J. D. (1970). The generation of optimal code for arithmetic expressions. *Journal of the
+  ACM*, 17(4), 715–728. [doi:10.1145/321607.321620](https://doi.org/10.1145/321607.321620)
+- Strahler, A. N. (1957). Quantitative analysis of watershed geomorphology. *Transactions, American Geophysical
+  Union*, 38(6), 913–920. [doi:10.1029/TR038i006p00913](https://doi.org/10.1029/TR038i006p00913)
 - Wikipedia: [Topological sorting](https://en.wikipedia.org/wiki/Topological_sorting).
