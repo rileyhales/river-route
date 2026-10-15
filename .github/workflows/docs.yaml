@@ -31,7 +31,7 @@ jobs:
         run: uv run zensical build --clean --strict
 
       - name: Write CNAME for custom domain
-        run: echo 'river-route.code.hales.app' > site/CNAME
+        run: echo 'river-route.hales.app' > site/CNAME
 
       - uses: actions/upload-pages-artifact@v3
         with:
