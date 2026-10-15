@@ -6,7 +6,7 @@ on:
 
 jobs:
   publish:
-    name: Build WebAssembly and publish to npm
+    name: Build WebAssembly and stage it on npm
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -18,13 +18,6 @@ jobs:
       LLVM_BIN: /usr/lib/llvm-22/bin
     steps:
       - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-      - name: Install river-route, whose rr compile builds the WebAssembly
-        working-directory: .
-        run: |
-          uv sync --locked --no-dev --python 3.14
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -35,5 +28,5 @@ jobs:
           sudo apt-get install -y clang-tidy-22
       - name: Set the version from the release tag
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
-      - name: Build and publish
-        run: npm publish ${{ contains(github.ref_name, '-') && '--tag next' || '' }}
+      - name: Build and stage for approval
+        run: npm stage publish ${{ contains(github.ref_name, '-') && '--tag next' || '' }}

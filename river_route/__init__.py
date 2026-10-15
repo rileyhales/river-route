@@ -1,8 +1,3 @@
-import sys
-
-if sys.platform not in ('darwin', 'linux'):  # its C kernel is compiled and its GRIB library installed on these only
-    raise ImportError(f'river-route runs on macOS and Linux, not {sys.platform}')
-
 from . import forcings, kernels, metrics, network, router
 from ._metadata import __author__, __url__, __version__
 from .configs import Configs
