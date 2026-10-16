@@ -10,7 +10,9 @@ from .kernels.build import build
 from .network.streams import subset_network_to_river
 from .router import Router
 
-if __name__ == '__main__':
+
+def main() -> None:
+    """Parse the command line and run the requested river-route command."""
     parser = argparse.ArgumentParser(prog='rr', description='river-route: configurable Muskingum river routing')
     subparsers = parser.add_subparsers(dest='command')
 
@@ -38,7 +40,7 @@ if __name__ == '__main__':
 
     if args.command is None:
         parser.print_help()
-        exit(0)
+        return
 
     if args.command == 'route':
         if args.threads < 1:
@@ -65,3 +67,7 @@ if __name__ == '__main__':
             open_window(args.home, args.threads)
         except (NotADirectoryError, ValueError, ImportError) as error:
             app.error(str(error))
+
+
+if __name__ == '__main__':
+    main()

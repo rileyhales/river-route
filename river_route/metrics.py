@@ -36,10 +36,9 @@ def pearson_r(y_true: ArrayLike, y_pred: ArrayLike) -> float:
 
 def kling_gupta_efficiency_2012(y_true: ArrayLike, y_pred: ArrayLike) -> float:
     """
-    Kling-Gupta efficiency per Kling et al. (2012): 1 - sqrt((r - 1)^2 + (beta - 1)^2 + (gamma - 1)^2), with r the
-    correlation, beta the ratio of the simulated to the observed mean, and gamma the ratio of the simulated to the
-    observed coefficient of variation. 1 is a perfect simulation. NaN when either series is constant or has a mean of
-    zero, where a coefficient of variation is undefined.
+    Kling-Gupta efficiency per Kling et al. (2012): 1 - sqrt((r - 1)^2 + (beta - 1)^2 + (gamma - 1)^2)
+    R is Pearson R, beta is the ratio simulated to observed mean, and gamma is the ratio simulated to observed
+    coefficient of variation. 1 is a perfect simulation. Skill threshold is KGE > 1 - sqrt(2) = -0.41.
     """
     observed, simulated = np.asarray(y_true), np.asarray(y_pred)
     mean_observed, mean_simulated = observed.mean(), simulated.mean()
